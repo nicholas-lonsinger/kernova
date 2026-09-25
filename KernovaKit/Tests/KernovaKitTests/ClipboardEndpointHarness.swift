@@ -20,7 +20,7 @@ final class EndpointSide {
     let channel: VsockChannel
     /// The ceiling `maxPasteBytes` reads, so a test can move it mid-connection.
     let pasteLimit: Box<Int>
-    private let stagingRoot: URL?
+    private let stagingRoot: TestStagingRoot?
 
     init(
         channel: VsockChannel,
@@ -40,11 +40,10 @@ final class EndpointSide {
         let clock = TestEngineClock()
         self.clock = clock
         if receives {
-            let root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("endpoint-\(UUID().uuidString)", isDirectory: true)
+            let root = TestStagingRoot()
             stagingRoot = root
             staging = ClipboardFileStaging(
-                label: label, tempRoot: root, freeSpaceProvider: freeSpaceProvider)
+                label: label, root: root.root, freeSpaceProvider: freeSpaceProvider)
         } else {
             stagingRoot = nil
             staging = nil
@@ -72,7 +71,6 @@ final class EndpointSide {
         endpoint.stop()
         channel.close()
         staging?.sweep()
-        if let stagingRoot { try? FileManager.default.removeItem(at: stagingRoot) }
     }
 
     /// Fires a blocking `.fileURL` serve off the test's main actor, as the

@@ -16,11 +16,10 @@ import UniformTypeIdentifiers
 /// grouping and the on-demand read without touching a real `NSPasteboard`.
 @Suite("HostClipboardPublisher pasteboard items", .admissionGated)
 struct ClipboardHostPasteboardItemsTests {
+    private let stagingRoot = TestStagingRoot()
+
     private func makeStaging() -> ClipboardFileStaging {
-        ClipboardFileStaging(
-            label: "hostwrite-test-\(UUID().uuidString)",
-            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true))
+        ClipboardFileStaging(label: "hostwrite-test-\(UUID().uuidString)", root: stagingRoot.root)
     }
 
     /// The file URL a spec serves for `.fileURL`, or `nil` when it promises none.

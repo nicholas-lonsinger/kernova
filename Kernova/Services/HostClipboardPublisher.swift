@@ -16,8 +16,8 @@ final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
     ///
     /// Never swept on window/VM teardown — that would invalidate a just-copied
-    /// file URL still on the pasteboard — so `AppDelegate` reclaims orphans at
-    /// launch instead.
+    /// file URL still on the pasteboard — so it goes with its process root, once
+    /// the process has exited.
     static let stagingLabel = "host"
 
     /// The shared write choke point every publication goes through.
@@ -30,7 +30,7 @@ final class HostClipboardPublisher {
     /// stays valid across a couple more copies.
     private let staging: ClipboardFileStaging
 
-    /// Monotonic generation for the launch-swept staging root, bumped per publish
+    /// Monotonic generation for the staging root, bumped per publish
     /// so each supersedes older staged artifacts within the recency window.
     private var stagingGeneration: UInt64 = 1
 
@@ -50,17 +50,17 @@ final class HostClipboardPublisher {
     var beforePasteboardWriteForTesting: (@MainActor () async -> Void)?
     #endif
 
-    /// Tests pass `stagingTempRoot` to isolate the staging directory between
-    /// parallel runs.
+    /// Stages under `stagingRoot`, `ClipboardFileStaging.processRoot` in
+    /// production.
     init(
         writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory
+        stagingRoot: ProcessStagingRoot
     ) {
         self.publisher = ClipboardPasteboardPublisher(
             pasteboard: writePasteboard, providerRegistry: providerRegistry)
         self.staging = ClipboardFileStaging(
-            label: HostClipboardPublisher.stagingLabel, tempRoot: stagingTempRoot)
+            label: HostClipboardPublisher.stagingLabel, root: stagingRoot)
     }
 
     /// Builds the service's "Copy to Mac" items and writes them to the host

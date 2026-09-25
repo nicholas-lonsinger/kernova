@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 
 /// Where files dragged onto a VM display as *promises* — a Photos image, a Mail
@@ -10,38 +11,22 @@ import KernovaLogging
 /// drop at a time, so a batch queued behind a large one is not read until its
 /// turn comes. Each drop gets a directory of its own, released by ``release(_:)``
 /// once that drop settles — the drop's own end is the only thing that can tell a
-/// queued drop from a stale one. ``reclaimAll`` at launch is the crash backstop,
-/// the way `ClipboardFileStaging` bounds a paste's.
+/// queued drop from a stale one. An exited process's drops are reclaimed with its
+/// whole ``ProcessStagingRoot`` by the next launch.
 struct DropPromiseStaging {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "DropPromiseStaging")
 
+    /// This process's root for promise drops.
+    static let processRoot = ProcessStagingRoot(
+        parent: FileManager.default.temporaryDirectory.appendingPathComponent(
+            "DisplayDropPromises", isDirectory: true))
+
     /// The root every drop's directory sits under.
-    let root: URL
+    let root: ProcessStagingRoot
 
-    /// - Parameter tempRoot: the directory the root sits in. The app reclaims
-    ///   that root whole at launch and every test-host process shares one app
-    ///   container, so a test stages under a root of its own: another host can
-    ///   launch while a test is mid-drag.
-    init(tempRoot: URL = FileManager.default.temporaryDirectory) {
-        root = tempRoot.appendingPathComponent("DisplayDropPromises", isDirectory: true)
-    }
-
-    /// Removes every drop's staged files, crash orphans included.
-    ///
-    /// Call once at process launch, before anything stages a drop: an earlier
-    /// run's drops ended with it, so nothing left under the root is still being
-    /// pulled from. A drop this run stages is freed by ``release(_:)`` instead.
-    static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
-        do {
-            try FileManager.default.removeItem(at: Self(tempRoot: tempRoot).root)
-        } catch CocoaError.fileNoSuchFile {
-            // Nothing was staged last run.
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Could not reclaim staged drop files: \(error.localizedDescription, privacy: .public)"
-            )
-        }
+    /// - Parameter root: ``processRoot`` in production.
+    init(root: ProcessStagingRoot) {
+        self.root = root
     }
 
     /// Removes one drop's directory, once nothing can read from it again.
@@ -70,8 +55,9 @@ struct DropPromiseStaging {
     /// `nil` when it cannot be created, which leaves the drop with nowhere to put
     /// the promised files and is reported as a drop that produced nothing.
     func makeDropDirectory() -> URL? {
-        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let directory = root.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
+            try root.claim()
             try FileManager.default.createDirectory(
                 at: directory, withIntermediateDirectories: true)
         } catch {

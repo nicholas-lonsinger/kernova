@@ -244,7 +244,9 @@ extension VsockFeatureDescriptor {
             channel: channel, label: instance.name, reporter: instance.clipboardTransfers,
             maxPasteBytes: { [weak instance] in
                 instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-            })
+            },
+            stagingRoot: ClipboardFileStaging.processRoot,
+            stagingKey: instance.instanceID.uuidString)
         let publisher = instance.hostClipboardPublisher
         service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
         service.retractStaleHostWrite = { [weak instance] in

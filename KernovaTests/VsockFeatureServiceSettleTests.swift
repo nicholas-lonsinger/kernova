@@ -25,6 +25,8 @@ private enum ServiceKind: String, CaseIterable, Sendable, CustomStringConvertibl
 @Suite("Vsock feature service settle contract", .admissionGated)
 @MainActor
 struct VsockFeatureServiceSettleTests {
+    private let stagingRoot = TestStagingRoot()
+
     // MARK: - Harness
 
     /// Builds `kind` over `channel`, with a label unique to this case so a
@@ -43,7 +45,8 @@ struct VsockFeatureServiceSettleTests {
                 channel: channel, label: label, reporter: ClipboardTransferReporter())
         case .clipboard:
             return VsockClipboardService(
-                channel: channel, label: label, reporter: ClipboardTransferReporter())
+                channel: channel, label: label, reporter: ClipboardTransferReporter(),
+                stagingRoot: stagingRoot.root, stagingKey: label)
         }
     }
 

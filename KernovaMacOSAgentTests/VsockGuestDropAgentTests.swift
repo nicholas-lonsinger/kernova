@@ -24,6 +24,7 @@ struct VsockGuestDropAgentTests {
         /// Every set of URLs handed to the Finder reveal, in order.
         let revealed = AtomicBox<[URL]>()
         let reporter: ClipboardTransferReporter
+        let stagingRoot = TestStagingRoot()
 
         init(freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil) throws {
             root = FileManager.default.temporaryDirectory
@@ -50,7 +51,7 @@ struct VsockGuestDropAgentTests {
                 client: client, reporter: reporter,
                 // Zeroed delays so a live transfer's readout is observable.
                 progressRevealDelay: 0, progressIdleGap: 0, downloadsDirectory: downloads,
-                stagingTempRoot: root.appendingPathComponent("staging", isDirectory: true),
+                stagingRoot: stagingRoot.root,
                 freeSpaceProvider: freeSpaceProvider,
                 dataDialer: dialled.dialer,
                 revealInFinder: { urls in revealed.set(urls) })

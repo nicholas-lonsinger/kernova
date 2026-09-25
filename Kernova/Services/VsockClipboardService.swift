@@ -179,8 +179,10 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
 
     /// Creates the service for one accepted channel.
     ///
-    /// Tests pass `stagingTempRoot` to isolate the staging directory between
-    /// parallel runs.
+    /// `label` is the VM's name, for logs and reports. `stagingKey` names this
+    /// VM's staging under `stagingRoot` (`ClipboardFileStaging.processRoot` in
+    /// production): stable for the VM and unique to it, so a later session
+    /// reclaims only this VM's earlier ones.
     init(
         channel: VsockChannel, label: String, reporter: ClipboardTransferReporter,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
@@ -188,18 +190,19 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory
+        stagingRoot: ProcessStagingRoot,
+        stagingKey: String
     ) {
         self.label = label
         self.reporter = reporter
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         let staging = ClipboardFileStaging(
-            label: "host-\(label)", tempRoot: stagingTempRoot,
+            label: "host-\(stagingKey)", root: stagingRoot,
             freeSpaceProvider: freeSpaceProvider)
         self.staging = staging
         self.dropStaging = ClipboardFileStaging(
-            label: "host-drops-\(label)", tempRoot: stagingTempRoot,
+            label: "host-drops-\(stagingKey)", root: stagingRoot,
             freeSpaceProvider: freeSpaceProvider)
         self.endpoint = ClipboardEndpoint(
             channel: channel,

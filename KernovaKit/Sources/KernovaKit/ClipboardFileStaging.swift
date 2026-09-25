@@ -12,11 +12,13 @@ import Foundation
 /// a paste still being copied out by Finder survives, and `sweep()` clears
 /// everything.
 ///
-/// Each instance owns a private root (the label plus a per-instance component),
-/// so no instance's `sweep()` can delete files another instance staged — a URL
-/// vended to a pasteboard outlives the session that staged it. Roots left behind
-/// by earlier instances are reclaimed at process launch by `reclaimAll`, and
-/// mid-process by `reclaimSiblingRoots()` once nothing can be serving from them.
+/// Each instance owns a private root (the label plus a per-instance component)
+/// under its process's ``ProcessStagingRoot``, so no instance's `sweep()` can
+/// delete files another instance staged — a URL vended to a pasteboard outlives
+/// the session that staged it. Roots left behind by the same process's earlier
+/// instances are reclaimed by `reclaimSiblingRoots()` once nothing can be serving
+/// from them; an exited process's whole root, by the next launch's
+/// ``ProcessStagingRoot/reclaimAbandonedRoots()``.
 public final class ClipboardFileStaging: @unchecked Sendable {
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
@@ -89,6 +91,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         }
     }
 
+    private let processRoot: ProcessStagingRoot
     private let root: URL
     private let freeSpaceProvider: FreeSpaceProvider
     private let lock = NSLock()
@@ -97,38 +100,31 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// `maxGenerations`.
     private var generationDirs: [(generation: UInt64, dir: URL)] = []
 
-    /// Directory under `tempRoot` that every staging root nests in, so a launch
-    /// reclaim (`reclaimAll`) sweeps all co-resident label families at once.
-    public static let parentDirectoryName = "KernovaClipboardStaging"
+    /// This process's root for clipboard staging, the host's and the guest
+    /// agent's alike.
+    public static let processRoot = ProcessStagingRoot(
+        parent: FileManager.default.temporaryDirectory.appendingPathComponent(
+            "KernovaClipboardStaging", isDirectory: true))
 
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
     ///     The root nests a unique per-instance component under the label, so two
     ///     same-label instances (a VM's next session) never share a root.
-    ///   - tempRoot: parent directory for the shared staging parent.
+    ///   - root: the process root the label nests under — ``processRoot`` in
+    ///     production.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
     public init(
         label: String,
-        tempRoot: URL = FileManager.default.temporaryDirectory,
+        root: ProcessStagingRoot,
         freeSpaceProvider: FreeSpaceProvider? = nil
     ) {
-        root =
-            tempRoot
-            .appendingPathComponent(Self.parentDirectoryName, isDirectory: true)
+        processRoot = root
+        self.root =
+            root.url
             .appendingPathComponent(label, isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         self.freeSpaceProvider = freeSpaceProvider ?? Self.defaultFreeSpace
-    }
-
-    /// Removes the shared staging parent under `tempRoot` — every label
-    /// family's root, crash orphans included.
-    ///
-    /// Call once at process launch, before any staging root is used; a live
-    /// instance's `sweep()` still clears only its own root.
-    public static func reclaimAll(tempRoot: URL = FileManager.default.temporaryDirectory) {
-        try? FileManager.default.removeItem(
-            at: tempRoot.appendingPathComponent(parentDirectoryName, isDirectory: true))
     }
 
     /// Available capacity for important writes at the staging root's volume, in
@@ -228,7 +224,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// once.
     ///
     /// A previous instance's root is out of reach by construction;
-    /// `reclaimSiblingRoots` and `reclaimAll` reclaim those.
+    /// `reclaimSiblingRoots` reclaims those.
     public func sweep() {
         lock.lock()
         defer { lock.unlock() }
@@ -252,8 +248,9 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     }
 
     /// Removes every sibling root under this instance's label — staging left
-    /// behind by the same label's earlier instances — leaving this instance's
-    /// own root untouched.
+    /// behind by the same label's earlier instances in this process — leaving
+    /// this instance's own root untouched. Another process's staging is under
+    /// another process root, out of reach.
     ///
     /// Call only when nothing can still be serving from those roots: for a
     /// receive root, once the host pasteboard no longer holds (or has just
@@ -281,6 +278,7 @@ public final class ClipboardFileStaging: @unchecked Sendable {
         if let existing = generationDirs.first(where: { $0.generation == generation }) {
             return existing.dir
         }
+        try processRoot.claim()
         let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         generationDirs.append((generation: generation, dir: dir))
@@ -318,8 +316,12 @@ public final class ClipboardFileStaging: @unchecked Sendable {
     /// (Apple's documented key for user-initiated/important writes, vs. the
     /// opportunistic key for predictive downloads).
     private static let defaultFreeSpace: FreeSpaceProvider = { url in
-        // The root may not exist yet; query its parent, which does.
-        let probe = FileManager.default.fileExists(atPath: url.path) ? url : url.deletingLastPathComponent()
+        // The root and any of its parents may not exist yet; a volume query
+        // needs a path that does.
+        var probe = url
+        while !FileManager.default.fileExists(atPath: probe.path), probe.pathComponents.count > 1 {
+            probe.deleteLastPathComponent()
+        }
         guard
             let values = try? probe.resourceValues(forKeys: [
                 .volumeAvailableCapacityForImportantUsageKey

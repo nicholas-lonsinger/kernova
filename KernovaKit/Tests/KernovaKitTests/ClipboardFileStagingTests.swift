@@ -6,14 +6,14 @@ import Testing
 
 @Suite("ClipboardFileStaging", .admissionGated)
 struct ClipboardFileStagingTests {
-    /// A fresh staging instance rooted in a unique temp directory.
+    private let stagingRoot = TestStagingRoot()
+
+    /// A fresh staging instance under this test's own process root.
     private func makeStaging(
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil
     ) -> ClipboardFileStaging {
         ClipboardFileStaging(
-            label: "test-\(UUID().uuidString)",
-            tempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true),
+            label: "test-\(UUID().uuidString)", root: stagingRoot.root,
             freeSpaceProvider: freeSpaceProvider
         )
     }
@@ -113,18 +113,13 @@ struct ClipboardFileStagingTests {
         #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
 
-    @Test("roots nest under one shared parent, one child per label")
-    func rootsNestUnderSharedParent() throws {
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        let staging = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+    @Test("roots nest under the process root, one child per label")
+    func rootsNestUnderProcessRoot() throws {
+        let staging = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
         let sink = try staging.makeSink(generation: 1, filename: "x.bin")
         try sink.commit()
 
-        let parent = tempRoot.appendingPathComponent(
-            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
-        let labelRoot = parent.appendingPathComponent("host-vm", isDirectory: true)
+        let labelRoot = stagingRoot.root.url.appendingPathComponent("host-vm", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: labelRoot.path))
         #expect(sink.url.path.hasPrefix(labelRoot.path + "/"))
     }
@@ -133,11 +128,8 @@ struct ClipboardFileStagingTests {
     func perLabelRootsAreDisjoint() throws {
         // Every label's counter starts at 1, so the same generation number must
         // land in different roots.
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        let receive = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
-        let drops = ClipboardFileStaging(label: "host-drops-vm", tempRoot: tempRoot)
+        let receive = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
+        let drops = ClipboardFileStaging(label: "host-drops-vm", root: stagingRoot.root)
 
         let received = try receive.makeSink(generation: 1, filename: "in.bin")
         try received.write(Data("in".utf8))
@@ -162,11 +154,8 @@ struct ClipboardFileStagingTests {
         // A VM restart mints a fresh staging instance under the same label; its
         // sweeps must never delete the previous session's files, which can still
         // back URLs on the pasteboard.
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
-        let nextSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
+        let previousSession = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
+        let nextSession = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
 
         let kept = try previousSession.makeSink(generation: 1, filename: "kept.bin")
         try kept.write(Data("kept".utf8))
@@ -184,12 +173,9 @@ struct ClipboardFileStagingTests {
 
     @Test("reclaimSiblingRoots removes earlier same-label roots, leaving its own and other labels")
     func reclaimSiblingRootsScopesToLabel() throws {
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        let previousSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
-        let liveSession = ClipboardFileStaging(label: "host-vm", tempRoot: tempRoot)
-        let otherLabel = ClipboardFileStaging(label: "host-other", tempRoot: tempRoot)
+        let previousSession = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
+        let liveSession = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
+        let otherLabel = ClipboardFileStaging(label: "host-other", root: stagingRoot.root)
 
         let orphan = try previousSession.makeSink(generation: 1, filename: "orphan.bin")
         try orphan.commit()
@@ -205,23 +191,27 @@ struct ClipboardFileStagingTests {
         #expect(FileManager.default.fileExists(atPath: unrelated.url.path))
     }
 
-    @Test("reclaimAll removes every label family under the shared parent")
-    func reclaimAllSweepsEveryFamily() throws {
-        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-        // Crash leftovers from every family the host mints.
-        for label in ["host", "host-vm", "host-send-vm"] {
-            let staging = ClipboardFileStaging(label: label, tempRoot: tempRoot)
-            let sink = try staging.makeSink(generation: 1, filename: "orphan.bin")
-            try sink.commit()
-        }
-        let parent = tempRoot.appendingPathComponent(
-            ClipboardFileStaging.parentDirectoryName, isDirectory: true)
-        #expect(FileManager.default.fileExists(atPath: parent.path))
+    @Test("reclaimSiblingRoots never reaches another process root's same-label staging")
+    func reclaimSiblingRootsNeverCrossesProcessRoots() throws {
+        let otherProcess = stagingRoot.makeSibling()
+        let theirs = ClipboardFileStaging(label: "host-vm", root: otherProcess)
+        let ours = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
 
-        ClipboardFileStaging.reclaimAll(tempRoot: tempRoot)
-        #expect(!FileManager.default.fileExists(atPath: parent.path))
+        let kept = try theirs.makeSink(generation: 1, filename: "kept.bin")
+        try kept.commit()
+        let own = try ours.makeSink(generation: 1, filename: "own.bin")
+        try own.commit()
+
+        ours.reclaimSiblingRoots()
+
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+        #expect(FileManager.default.fileExists(atPath: own.url.path))
+    }
+
+    @Test("the default free-space query answers before the label directory exists")
+    func capacityIsKnownBeforeTheLabelExists() {
+        let staging = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
+        #expect(staging.availableCapacity() != nil)
     }
 
     @Test("hasCapacity reflects the injected free-space provider")

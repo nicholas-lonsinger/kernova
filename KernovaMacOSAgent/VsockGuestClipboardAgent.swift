@@ -105,8 +105,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Materializes streamed file payloads to local temp files.
     ///
     /// Never swept on teardown/disable — its files may still back vended
-    /// pasteboard URLs; the generation window bounds it, and `reclaimAll` at
-    /// agent launch clears earlier processes' roots.
+    /// pasteboard URLs; the generation window bounds it, and the next agent
+    /// launch reclaims it once this process has exited.
     private let staging: ClipboardFileStaging
 
     /// `true` while an off-main resolve of copied files for an outbound offer is
@@ -173,15 +173,17 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     // MARK: - Init
 
     /// Production init — uses real `NSPasteboard.general` on the clipboard port,
-    /// reporting progress through the agent-wide `reporter` and clipboard
-    /// refusals through `onClipboardNotice`.
+    /// staging under `stagingRoot`, reporting progress through the agent-wide
+    /// `reporter` and clipboard refusals through `onClipboardNotice`.
     convenience init(
+        stagingRoot: ProcessStagingRoot,
         reporter: ClipboardTransferReporter,
         onClipboardNotice: @escaping @Sendable () -> Void
     ) {
         self.init(
             pasteboard: NSPasteboard.general,
             client: VsockGuestClient(port: KernovaVsockPort.clipboard, label: "clipboard"),
+            stagingRoot: stagingRoot,
             reporter: reporter,
             onClipboardNotice: onClipboardNotice
         )
@@ -190,8 +192,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     /// Designated init; tests inject a fake pasteboard and socketpair-backed
     /// client, and optionally a manually advanced `clock` to cross the
     /// refusal-burst window without waiting, a `freeSpaceProvider` to simulate a
-    /// full disk, a `stagingTempRoot` to isolate the staging directory between
-    /// parallel tests, a `reporter` to observe the readout the status item
+    /// full disk, a `stagingRoot` of their own, a `reporter` to observe the
+    /// readout the status item
     /// renders, an `onClipboardNotice` sink to observe refusals, and zeroed
     /// reveal/idle delays so a test transfer surfaces while in flight.
     ///
@@ -202,7 +204,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         pasteboard: Pasteboard, client: VsockGuestClient,
         clock: any EngineClock = makePlatformEngineClock(),
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory,
+        stagingRoot: ProcessStagingRoot,
         reporter: ClipboardTransferReporter,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
@@ -222,7 +224,7 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         self.staging = ClipboardFileStaging(
-            label: "agent", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "agent", root: stagingRoot, freeSpaceProvider: freeSpaceProvider)
         self.lastPasteboardChangeCount = pasteboard.changeCount
         // Default-disabled: pause the reconnect loop until the host enables.
         self.client.pause()

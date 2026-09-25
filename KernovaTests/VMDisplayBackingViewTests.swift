@@ -9,16 +9,20 @@ import Testing
 @Suite("VMDisplayBackingView Tests", .admissionGated)
 @MainActor
 struct VMDisplayBackingViewTests {
-    /// A display whose promise staging has a root of its own, alongside the
-    /// scratch directory that root sits in — the caller's to remove.
-    private func makeBacking() throws -> (backing: VMDisplayBackingView, scratch: URL) {
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "VMDisplayBackingViewTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    private let stagingRoot = TestStagingRoot()
+
+    /// A display whose promise staging has a root of its own.
+    private func makeBacking() -> VMDisplayBackingView {
         let backing = VMDisplayBackingView(frame: .zero)
-        backing.staging = DropPromiseStaging(tempRoot: scratch)
-        return (backing, scratch)
+        backing.staging = DropPromiseStaging(root: stagingRoot.root)
+        return backing
+    }
+
+    /// A directory for files a test drags, removed with the staging root.
+    private func makeScratchDirectory() throws -> URL {
+        let scratch = stagingRoot.parent.appendingPathComponent("scratch", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        return scratch
     }
 
     private func settings(autoResize: Bool, capturesSystemKeys: Bool) -> VMDisplayViewSettings {
@@ -28,8 +32,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("update carries both settings through to the machine view")
     func updateAppliesSettings() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
 
         backing.update(
             display: nil, isPaused: false, transitionText: nil,
@@ -46,8 +49,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("each setting moves on its own")
     func settingsMoveIndependently() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
 
         backing.apply(settings(autoResize: true, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
@@ -64,8 +66,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("apply reaches the machine view without an update pass")
     func applySettingsStandalone() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
 
         backing.apply(settings(autoResize: false, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
@@ -81,8 +82,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("detach clears the machine view and leaves the applied settings alone")
     func detachClearsWithoutTouchingTheSettings() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.apply(settings(autoResize: false, capturesSystemKeys: true))
 
         backing.detach()
@@ -158,8 +158,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a VM that never ran the agent is not a drag destination at all")
     func neverConnectedRegistersNothing() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .none }
 
         backing.applyDropRegistration()
@@ -169,8 +168,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a VM whose agent has connected before registers, even while disconnected")
     func disconnectedStillRegisters() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         var availability = DisplayDropAvailability.disconnected
         backing.dropAvailability = { availability }
 
@@ -189,8 +187,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a disconnected agent refuses the drag with the empty operation")
     func disconnectedRefusesTheDrag() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .disconnected }
         backing.applyDropRegistration()
         let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
@@ -203,8 +200,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a reachable agent accepts a file drag with .copy")
     func availableAcceptsFileURLs() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.applyDropRegistration()
         let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
@@ -215,8 +211,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a drag carrying no file URL is refused even when the agent is reachable")
     func refusesNonFileDrags() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.applyDropRegistration()
 
@@ -225,8 +220,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a drop forwards every dragged file URL")
     func dropForwardsTheURLs() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         var received: [URL] = []
         backing.onDropFiles = { urls, _ in
@@ -241,8 +235,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a drop re-checks availability, so a session lost mid-drag springs back")
     func dropRechecksAvailability() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         var availability = DisplayDropAvailability.available
         backing.dropAvailability = { availability }
         var forwarded = false
@@ -261,8 +254,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a refused send reports the drop as not taken")
     func reportsARefusedSend() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.onDropFiles = { _, _ in false }
 
@@ -271,8 +263,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a file promise's types are registered alongside concrete file URLs")
     func registersPromiseTypes() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
 
         backing.applyDropRegistration()
@@ -286,8 +277,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a refused drag shows the not-allowed cursor, and leaving clears it")
     func refusedDragShowsTheRejectCursor() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .disconnected }
         var pushes: [Bool] = []
         backing.applyRejectCursor = { pushes.append($0) }
@@ -306,8 +296,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a drag this display accepts pushes no cursor at all")
     func acceptedDragPushesNothing() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         var pushes: [Bool] = []
         backing.applyRejectCursor = { pushes.append($0) }
@@ -318,8 +307,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("availability changing mid-drag flips the cursor on the next update")
     func cursorFollowsAvailabilityMidDrag() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         var availability = DisplayDropAvailability.disconnected
         backing.dropAvailability = { availability }
         var pushes: [Bool] = []
@@ -408,8 +396,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a drag carrying only promises is accepted")
     func promiseOnlyDragIsAccepted() throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
 
@@ -419,8 +406,8 @@ struct VMDisplayBackingViewTests {
 
     @Test("a mixed drag is offered once, with the promised files written")
     func mixedPromiseDragIsOfferedTogether() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
+        let scratch = try makeScratchDirectory()
         let concrete = scratch.appendingPathComponent("dropped.txt")
         try Data("a".utf8).write(to: concrete)
 
@@ -450,8 +437,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a promise its source never writes is reported rather than dropped in silence")
     func failedPromiseReportsTheDrop() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.promiseSource = makePromiseSource([
             StubPromiseReceiver(fileNames: ["a.png", "b.png"], fails: true)
@@ -480,8 +466,7 @@ struct VMDisplayBackingViewTests {
         "a promise that names nothing until its files land is still offered",
         arguments: [1, 2])
     func unnamedPromiseIsOffered(promiseCount: Int) async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         let names = (0..<promiseCount).map { "a\($0).png" }
         backing.promiseSource = makePromiseSource([
@@ -515,8 +500,8 @@ struct VMDisplayBackingViewTests {
 
     @Test("a dragged item its promise speaks for is not sent as its URL as well")
     func promisedItemIsNotAlsoSentAsItsURL() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
+        let scratch = try makeScratchDirectory()
         let concrete = scratch.appendingPathComponent("dropped.txt")
         try Data("a".utf8).write(to: concrete)
         let derivative = scratch.appendingPathComponent("derivative.jpeg")
@@ -550,8 +535,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a promise drag hands the drop the directory its files were staged in")
     func promiseDragHandsOverItsStagingDirectory() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
         let gate = AsyncGate()
@@ -581,8 +565,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a promise reporting after the drop was taken leaves its staging alone")
     func lateReportLeavesATakenStagingDirectoryAlone() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         // A receiver whose names never account for what it writes settles the
         // drop on its first file, so the second reports after the drop was
@@ -614,8 +597,7 @@ struct VMDisplayBackingViewTests {
 
     @Test("a promise drag the VM refuses frees what it staged")
     func refusedPromiseDragReleasesItsStagingDirectory() async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
         let gate = AsyncGate()
@@ -637,8 +619,7 @@ struct VMDisplayBackingViewTests {
         "a promise its source never writes frees the directory it staged",
         arguments: [1, 2])
     func failedPromiseReleasesItsStagingDirectory(promiseCount: Int) async throws {
-        let (backing, scratch) = try makeBacking()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let backing = makeBacking()
         backing.dropAvailability = { .available }
         let receiver = StubPromiseReceiver(
             fileNames: (0..<promiseCount).map { "a\($0).png" }, fails: true)

@@ -145,6 +145,8 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 @Suite("VsockGuestClipboardAgent state machine", .admissionGated)
 struct VsockGuestClipboardAgentTests {
+    private let stagingRoot = TestStagingRoot()
+
     // Every `…ForTesting` lifecycle poll in this suite is the no-signal kind —
     // `liveChannelForTesting` and `inboundPromiseGenerationForTesting` read
     // main-queue-confined SUT internals that are neither `@Observable` nor
@@ -169,7 +171,6 @@ struct VsockGuestClipboardAgentTests {
         pasteboard: FakePasteboard, agentFd: Int32,
         dialled: DialledDataConnections = DialledDataConnections(),
         clock: any EngineClock = MonotonicEngineClock(),
-        stagingTempRoot: URL? = nil,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
@@ -188,9 +189,7 @@ struct VsockGuestClipboardAgentTests {
         let agent = VsockGuestClipboardAgent(
             pasteboard: pasteboard, client: client, clock: clock,
             freeSpaceProvider: freeSpaceProvider,
-            stagingTempRoot: stagingTempRoot
-                ?? FileManager.default.temporaryDirectory.appendingPathComponent(
-                    UUID().uuidString, isDirectory: true),
+            stagingRoot: stagingRoot.root,
             reporter: reporter,
             progressRevealDelay: progressRevealDelay, progressIdleGap: progressIdleGap,
             dataDialer: dialled.dialer,
@@ -569,14 +568,10 @@ struct VsockGuestClipboardAgentTests {
         hostChannel.start()
         defer { hostChannel.close() }
 
-        let agentStagingRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: agentStagingRoot) }
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
         let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled,
-            stagingTempRoot: agentStagingRoot)
+            pasteboard: pasteboard, agentFd: agentFd, dialled: dialled)
         defer { agent.stop() }
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
@@ -615,7 +610,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.reply.totalBytes == 0)
         #expect(transfer.isComplete)
         // The tree was compressed onto the wire, so nothing was staged to send it.
-        #expect(materializedFiles(under: agentStagingRoot).isEmpty)
+        #expect(materializedFiles(under: stagingRoot.root.url).isEmpty)
 
         let dest = try extractedClipboardArchive(transfer.payload)
         defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
@@ -2120,8 +2115,8 @@ struct VsockGuestClipboardAgentTests {
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
-            dataDialer: dialled.dialer)
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
+            reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         agent.start()
@@ -2188,8 +2183,8 @@ struct VsockGuestClipboardAgentTests {
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
-            dataDialer: dialled.dialer)
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
+            reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
@@ -2270,8 +2265,8 @@ struct VsockGuestClipboardAgentTests {
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
-            dataDialer: dialled.dialer)
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
+            reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
 
         agent.start()
@@ -2387,8 +2382,8 @@ struct VsockGuestClipboardAgentTests {
         let dialled = DialledDataConnections()
         defer { dialled.closeAll() }
         let agent = VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client, reporter: ClipboardTransferReporter(),
-            dataDialer: dialled.dialer)
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
+            reporter: ClipboardTransferReporter(), dataDialer: dialled.dialer)
         defer { agent.stop() }
         agent.start()
         // Production agents are default-disabled until host policy enables them.
@@ -2509,9 +2504,7 @@ struct VsockGuestClipboardAgentTests {
             provided.increment() == 1 ? .success(agentFd) : .failure(.transient("test: no fd"))
         }
         return VsockGuestClipboardAgent(
-            pasteboard: pasteboard, client: client,
-            stagingTempRoot: FileManager.default.temporaryDirectory.appendingPathComponent(
-                UUID().uuidString, isDirectory: true),
+            pasteboard: pasteboard, client: client, stagingRoot: stagingRoot.root,
             reporter: ClipboardTransferReporter(),
             dataDialer: { _ in
                 let (near, far) = try makeRawSocketPair()

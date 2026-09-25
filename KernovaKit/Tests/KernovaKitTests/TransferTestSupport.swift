@@ -224,7 +224,7 @@ final class StagingProbe: @unchecked Sendable {
 /// adopts the accepted end. Both run the shipping code on both ends.
 final class TransferHarness: @unchecked Sendable {
     private let staging: ClipboardFileStaging
-    private let stagingTempRoot: URL
+    private let stagingRoot = TestStagingRoot()
     private let socketTimeout: TimeInterval
     private let maxResidentInlineBytes: Int
     private let minimumExtractAllowance: Int
@@ -286,10 +286,8 @@ final class TransferHarness: @unchecked Sendable {
         self.maxResidentInlineBytes = maxResidentInlineBytes
         self.minimumExtractAllowance = minimumExtractAllowance
         self.extractPacingBytes = extractPacingBytes
-        stagingTempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: true)
         staging = ClipboardFileStaging(
-            label: "transfer-\(UUID().uuidString)", tempRoot: stagingTempRoot,
+            label: "transfer-\(UUID().uuidString)", root: stagingRoot.root,
             freeSpaceProvider: freeSpaceProvider)
         let collector = self.collector
         inbox = ClipboardTransferInbox(
@@ -308,7 +306,6 @@ final class TransferHarness: @unchecked Sendable {
         inbox.cancelAll()
         outbox.cancelAll()
         staging.sweep()
-        try? FileManager.default.removeItem(at: stagingTempRoot)
     }
 
     /// A receiver on this harness's staging, for a test driving one transfer's

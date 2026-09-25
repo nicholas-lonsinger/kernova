@@ -484,9 +484,8 @@ enum ClipboardArchiveCodec {
     ///
     /// Either bit blocks `unlink` on the entry *and* on every directory above
     /// it, so one locked entry makes `removeItem` fail for the whole extracted
-    /// tree — taking out the generation sweep with it, and, since
-    /// `ClipboardFileStaging.reclaimAll` is a single `removeItem` on the shared
-    /// staging parent, every later reclaim of that parent too. The peer chooses
+    /// tree — taking out the generation sweep with it, and every later reclaim of
+    /// the process root that holds it. The peer chooses
     /// what an entry's `FLG` carries, so the receiver is the only place the
     /// guarantee can hold; the sender writes the source's flags unaltered.
     ///

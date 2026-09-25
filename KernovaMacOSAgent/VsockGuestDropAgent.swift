@@ -83,14 +83,14 @@ final class VsockGuestDropAgent: @unchecked Sendable {
 
     /// Production init — the real drop port and the guest user's Downloads
     /// folder.
-    convenience init(reporter: ClipboardTransferReporter) {
+    convenience init(stagingRoot: ProcessStagingRoot, reporter: ClipboardTransferReporter) {
         self.init(
             client: VsockGuestClient(port: KernovaVsockPort.drop, label: "drop"),
-            reporter: reporter)
+            reporter: reporter, stagingRoot: stagingRoot)
     }
 
     /// Designated init; tests inject a socketpair-backed client, a Downloads
-    /// directory under a temp root, an isolated staging root, a
+    /// directory under a temp root, a staging root of their own, a
     /// `freeSpaceProvider` to simulate a full disk, and a `revealInFinder` sink
     /// in place of opening a real Finder window.
     ///
@@ -106,7 +106,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         ).first
             ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads", isDirectory: true),
-        stagingTempRoot: URL = FileManager.default.temporaryDirectory,
+        stagingRoot: ProcessStagingRoot,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         pullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         dataDialer: @escaping @Sendable (UInt32) throws -> Int32 = {
@@ -125,7 +125,7 @@ final class VsockGuestDropAgent: @unchecked Sendable {
         self.pullTimeout = pullTimeout
         self.revealInFinder = revealInFinder
         self.staging = ClipboardFileStaging(
-            label: "agent-drop", tempRoot: stagingTempRoot, freeSpaceProvider: freeSpaceProvider)
+            label: "agent-drop", root: stagingRoot, freeSpaceProvider: freeSpaceProvider)
         // Default-paused: nothing dials until the host's `Hello` says it has a
         // drop listener.
         client.pause()
