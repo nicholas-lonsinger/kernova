@@ -133,6 +133,12 @@ enum Relauncher {
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
+        // `false` would hand back whichever copy of Kernova is running, by
+        // bundle identifier — Apple's documentation: it "causes the system to
+        // open the already running app when present" — so with another copy up,
+        // this one would never come back. The copy this helper watched has
+        // exited, taking its `AppCopyClaim` with it, so the new process claims.
+        configuration.createsNewApplicationInstance = true
 
         let timeout = DispatchWorkItem { MainActor.assumeIsolated { giveUpOnOpen() } }
         openWatchTimeout = timeout

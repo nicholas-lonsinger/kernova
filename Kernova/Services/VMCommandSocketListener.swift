@@ -11,9 +11,11 @@ import KernovaLogging
 /// through ``VMCommandEnvelopeRouter`` and neither adds a vocabulary of its
 /// own.
 ///
-/// A build with no group container to bind in, or no team to authorize peers
-/// against, publishes no socket and logs why: the capability is absent rather
-/// than present and broken.
+/// It binds only at the path its ``AppCopyClaim`` names, so only the one
+/// process of a copy holding that claim ever unlinks and rebinds the copy's
+/// socket. A build with no claim, or no team to authorize peers against,
+/// publishes no socket and logs why: the capability is absent rather than
+/// present and broken.
 @MainActor
 final class VMCommandSocketListener {
     /// Owner-only on the socket file, so the group container's own rules are
@@ -25,7 +27,7 @@ final class VMCommandSocketListener {
 
     private let router: VMCommandEnvelopeRouter
     private let authorizer: (any PeerAuthorizing)?
-    private let socketPath: Result<String, KernovaAppGroup.SocketPathFailure>
+    private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
     private let awaitReady: @MainActor @Sendable () async -> Void
     private let onSurfaceRequested: @MainActor @Sendable () -> Void
     private let queue = DispatchQueue(label: "app.kernova.command-socket")
@@ -46,7 +48,7 @@ final class VMCommandSocketListener {
 
     /// Prepares the socket, which nothing binds until `start()`.
     ///
-    /// A `socketPath` that names no socket, or a `nil` `authorizer`, is the
+    /// A `copyClaim` this build could not make, or a `nil` `authorizer`, is the
     /// degraded build: `start()` binds nothing and says why once.
     ///
     /// `awaitReady` is the app's first library read. The socket is bound before
@@ -56,13 +58,13 @@ final class VMCommandSocketListener {
     init(
         router: VMCommandEnvelopeRouter,
         authorizer: (any PeerAuthorizing)?,
-        socketPath: Result<String, KernovaAppGroup.SocketPathFailure>,
+        copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>,
         awaitReady: @MainActor @Sendable @escaping () async -> Void,
         onSurfaceRequested: @MainActor @Sendable @escaping () -> Void
     ) {
         self.router = router
         self.authorizer = authorizer
-        self.socketPath = socketPath
+        self.copyClaim = copyClaim
         self.awaitReady = awaitReady
         self.onSurfaceRequested = onSurfaceRequested
     }
@@ -70,18 +72,24 @@ final class VMCommandSocketListener {
     /// Binds the socket and begins accepting same-team clients.
     func start() {
         let socketPath: String
-        switch self.socketPath {
-        case .success(let path):
-            socketPath = path
-        case .failure(.noContainer):
+        switch copyClaim {
+        case .success(let claim):
+            socketPath = claim.socketPath
+        case .failure(.unnamed(.noContainer)):
             #log(
                 Self.logger, .warning,
                 "No app-group container resolved — the command socket is unavailable in this build")
             return
-        case .failure(.unresolvableBundle(let error)):
+        case .failure(.unnamed(.unresolvableBundle(let error))):
             #log(
                 Self.logger, .error,
                 "This app's bundle could not be looked up (\(error.description, privacy: .public)) — the command socket is unavailable"
+            )
+            return
+        case .failure(.unlockable(let error)):
+            #log(
+                Self.logger, .error,
+                "This copy's lock file could not be opened (\(error.description, privacy: .public)) — the command socket is unavailable"
             )
             return
         }

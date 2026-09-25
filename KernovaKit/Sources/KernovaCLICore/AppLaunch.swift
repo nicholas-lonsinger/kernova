@@ -13,18 +13,9 @@ enum AppLaunch {
     /// rather than spending its whole deadline on an app that will never come.
     static var reportedFailure: CLIFailure? { failure.value }
 
-    /// Asks Launch Services for the app at `app`, hidden and unactivated.
+    /// Asks Launch Services for the app at `app`, as ``configuration`` says.
     ///
     /// Answers as soon as the request is away, not when the app is up.
-    ///
-    /// `hides` is the whole of what a sandboxed launcher can say, and it says
-    /// enough: a command typed in a terminal is not a request for a window, and
-    /// a hidden launch is the one the app answers by staying headless
-    /// (`AppResidencyController.launchPosture(for:keepInMenuBar:)`). Measured
-    /// 2026-09-05 (#1143) on macOS 27, the App Sandbox drops `arguments`,
-    /// `environment` and a custom `appleEvent` from
-    /// `NSWorkspace.OpenConfiguration` before they reach the app; `hides`
-    /// arrives.
     ///
     /// The wait ahead of it is what keeps the open off a registration Launch
     /// Services has not released yet. Only an instance whose process is already
@@ -40,21 +31,38 @@ enum AppLaunch {
         AppRegistryWait.awaitDeregistration(
             ofBundleAt: app, scope: .exitedProcesses, by: deadline)
 
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.hides = true
-        configuration.activates = false
-        // Without it, a launch request can spawn a second process managing the
-        // same VM bundles.
-        configuration.createsNewApplicationInstance = false
-        configuration.addsToRecentItems = false
-
         let box = failure
-        NSWorkspace.shared.openApplication(at: app, configuration: configuration) { _, error in
+        NSWorkspace.shared.openApplication(at: app, configuration: Self.configuration) { _, error in
             guard let error else { return }
             box.store(
                 CLIFailure(
                     .unavailable, "Kernova could not be started: \(error.localizedDescription)"))
         }
+    }
+
+    /// How ``launch(_:by:)`` asks for the app: a new process of the copy at the
+    /// given path, hidden and unactivated.
+    static var configuration: NSWorkspace.OpenConfiguration {
+        let configuration = NSWorkspace.OpenConfiguration()
+        // The whole of what a sandboxed launcher can say, and enough: a command
+        // typed in a terminal is not a request for a window, and a hidden launch
+        // is the one the app answers by staying headless
+        // (`AppResidencyController.launchPosture(for:keepInMenuBar:)`). Measured
+        // 2026-09-05 (#1143) on macOS 27, the App Sandbox drops `arguments`,
+        // `environment` and a custom `appleEvent` before they reach the app;
+        // `hides` arrives.
+        configuration.hides = true
+        configuration.activates = false
+        // The API has two modes, and `false` is not "reuse this copy": Apple's
+        // documentation says it "causes the system to open the already running
+        // app when present", matched by bundle identifier, so with another copy
+        // running the open answers with that copy and this one never starts.
+        // `true` always starts a process at the path; that a copy runs as one
+        // process is the app's own `AppCopyClaim`, which a second process of a
+        // running copy fails to take and exits.
+        configuration.createsNewApplicationInstance = true
+        configuration.addsToRecentItems = false
+        return configuration
     }
 
     /// Holds what the launch reported, written from the completion handler's

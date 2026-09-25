@@ -48,9 +48,10 @@ public enum KernovaAppGroup {
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier)
     }
 
-    /// Why a copy of Kernova has no command socket to name.
-    public enum SocketPathFailure: Error, Sendable, Equatable {
-        /// This build resolves no app-group container to hold a socket.
+    /// Why a copy of Kernova has no files of its own in the group container
+    /// to name.
+    public enum CopyPathFailure: Error, Sendable, Equatable {
+        /// This build resolves no app-group container to hold them.
         case noContainer
         /// The bundle's path could not be looked up, with the `errno` the
         /// lookup failed with: nothing is there once that copy has moved or
@@ -59,38 +60,46 @@ public enum KernovaAppGroup {
     }
 
     /// The command socket of the copy of Kernova at `appBundle`, as the
-    /// filesystem path the socket calls take.
+    /// filesystem path a client connects to.
     ///
-    /// Every copy answers on its own socket, named for its bundle's
-    /// ``CanonicalPath``: the app passes its own bundle and the tool the bundle
-    /// it is inside, so the two ends name one socket however each spelled the
-    /// path, and no two copies share one.
-    public static func socketPath(forAppBundle appBundle: URL) throws(SocketPathFailure) -> String {
+    /// The tool passes the bundle it is inside. Every copy answers on its own
+    /// socket, named for its bundle's ``CanonicalPath``, so this names the
+    /// socket that copy's ``AppCopyClaim`` binds however the path was spelled,
+    /// and no two copies share one. The app binds only through its claim.
+    public static func socketPath(forAppBundle appBundle: URL) throws(CopyPathFailure) -> String {
         guard let container = containerURL() else { throw .noContainer }
-        return try socketPath(forAppBundle: appBundle, in: container)
+        return try CopyFiles(forAppBundle: appBundle, in: container).socketPath
     }
 
-    /// ``socketPath(forAppBundle:)`` inside `container`.
-    static func socketPath(
-        forAppBundle appBundle: URL, in container: URL
-    ) throws(SocketPathFailure) -> String {
-        let bundlePath: String
-        do throws(Errno) {
-            bundlePath = try CanonicalPath.of(appBundle)
-        } catch {
-            throw .unresolvableBundle(error)
+    /// The files in the group container that belong to one copy of Kernova,
+    /// all named for one digest of its bundle's ``CanonicalPath``.
+    struct CopyFiles: Equatable {
+        /// Where the copy's command socket binds.
+        let socketPath: String
+        /// The file whose lock marks the copy's one running process
+        /// (``AppCopyClaim``).
+        let lockURL: URL
+
+        init(forAppBundle appBundle: URL, in container: URL) throws(CopyPathFailure) {
+            let bundlePath: String
+            do throws(Errno) {
+                bundlePath = try CanonicalPath.of(appBundle)
+            } catch {
+                throw .unresolvableBundle(error)
+            }
+            let name = SHA256.hash(data: Data(bundlePath.utf8))
+                .prefix(Self.nameDigestBytes)
+                .map { String(format: "%02x", $0) }
+                .joined()
+            socketPath = container.appendingPathComponent("\(name).sock", isDirectory: false).path
+            lockURL = container.appendingPathComponent("\(name).lock", isDirectory: false)
         }
-        let name = SHA256.hash(data: Data(bundlePath.utf8))
-            .prefix(socketNameDigestBytes)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return container.appendingPathComponent("\(name).sock", isDirectory: false).path
-    }
 
-    /// Leading bytes of the bundle-path digest a socket's name carries: enough
-    /// to keep every copy on a Mac apart, and few enough that the whole path
-    /// fits `sun_path` under a long account name.
-    private static let socketNameDigestBytes = 6
+        /// Leading bytes of the bundle-path digest each name carries: enough to
+        /// keep every copy on a Mac apart, and few enough that the socket's
+        /// whole path fits `sun_path` under a long account name.
+        private static let nameDigestBytes = 6
+    }
 
     private static let resolved: String? = {
         guard let task = SecTaskCreateFromSelf(nil),
