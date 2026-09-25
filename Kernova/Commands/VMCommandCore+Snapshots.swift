@@ -280,7 +280,7 @@ extension VMCommandCore {
     /// Returns an Ephemeral Mode VM to its baseline after a power-off; a no-op
     /// for every other VM.
     ///
-    /// Reached from ``VMInstance/onPoweredOff``, which fires inside the stop
+    /// Reached from ``VMActivity/onPoweredOff``, which fires inside the stop
     /// that caused it — so the revert runs in its own task, after that stop has
     /// released the VM.
     func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {

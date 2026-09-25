@@ -1,14 +1,14 @@
 import Foundation
 import KernovaKit
 
-/// Where a VM is in its lifecycle — the one value ``VMInstance`` stores, and
+/// Where a VM is in its lifecycle — the one value ``VMActivity`` stores, and
 /// what its ``VMStatus``, its failure message and every liveness predicate
 /// project from.
 ///
 /// A phase naming a session is installed only while that session is the one the
-/// instance holds (``VMInstance/settle(_:for:)``,
-/// ``VMInstance/attachSession(from:)``) and released together with it
-/// (``VMInstance/tearDownSession(restingAt:)``), so a live phase cannot outlive
+/// instance holds (``VMActivity/settle(_:for:)``,
+/// ``VMActivity/attachSession(from:)``) and released together with it
+/// (``VMActivity/tearDownSession(restingAt:)``), so a live phase cannot outlive
 /// the `VZVirtualMachine` it describes.
 enum VMLifecyclePhase: Sendable, Equatable {
     /// Powered off, with no saved state to come back on.
@@ -294,10 +294,10 @@ enum VMLifecyclePhase: Sendable, Equatable {
 }
 
 /// A phase a VM leaves rest into to bring a guest up — the only phases
-/// ``VMInstance/attachSession(from:)`` promotes to name a session, so the only
+/// ``VMActivity/attachSession(from:)`` promotes to name a session, so the only
 /// ones that can put a machine identity and a MAC address in front of VZ.
 ///
-/// Entered only through ``VMInstance/beginBringUp(_:)``, which refuses one
+/// Entered only through ``VMActivity/beginBringUp(_:)``, which refuses one
 /// another live VM's identity already claims.
 enum VMBringUpPhase: Sendable, Equatable {
     case starting

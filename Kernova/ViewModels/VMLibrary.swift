@@ -540,7 +540,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Called at every `VMInstance` construction site the library and its
     /// adapter own.
     func wireHooks(for instance: VMInstance) {
-        // Every closure is stored *on* `instance`, so it must capture it weakly:
+        // Every closure is stored on `instance` or on the activity it owns, so it
+        // must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `entries`.
         instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
@@ -552,7 +553,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             return self.updateSettings(
                 of: instance, configuration: configuration, hostState: hostState)
         }
-        instance.liveIdentityConflict = { [weak self, weak instance] in
+        instance.activity.liveIdentityConflict = { [weak self, weak instance] in
             guard let self, let instance else { return nil }
             return self.liveIdentities.conflict(for: instance)
         }
@@ -563,13 +564,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             self.onAgentBecameCurrent?(instance)
         }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
-        instance.onPoweredOff = { [weak self, weak instance] in
+        instance.activity.onPoweredOff = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.onPoweredOff?(instance)
         }
         // A guest that has just become attachable takes back the accessories
         // paired with it, and is a running guest whose address can be watched.
-        instance.onSessionBecameAttachable = { [weak self, weak instance] in
+        instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in
             guard let self, let instance else { return }
             self.guestAddresses.watch()
             self.onSessionBecameAttachable?(instance)

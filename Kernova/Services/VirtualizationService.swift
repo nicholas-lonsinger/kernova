@@ -1123,8 +1123,8 @@ final class VirtualizationService {
     ///
     /// The caller has already entered
     /// ``VMLifecyclePhase/restoringSavedState(sessionID:)``
-    /// (``VMInstance/beginBringUp(_:)``), the phase
-    /// ``VMInstance/attachSession(from:)`` promotes to name each attempt's
+    /// (``VMActivity/beginBringUp(_:)``), the phase
+    /// ``VMActivity/attachSession(from:)`` promotes to name each attempt's
     /// session.
     ///
     /// `attemptSessionID` carries out the session the attempt in flight owns

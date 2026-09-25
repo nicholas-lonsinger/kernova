@@ -28,7 +28,7 @@ enum DetailPaneMode: Sendable {
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
 @Observable
-final class VMInstance {
+final class VMInstance: VMActivityOwner {
     // MARK: - Properties
 
     let instanceID: UUID
@@ -47,39 +47,8 @@ final class VMInstance {
     /// ``configuration`` and ``hostState`` as one value.
     var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
 
-    /// Where this VM is in its lifecycle — the one stored value its status, its
-    /// failure message and every liveness predicate here are read off.
-    ///
-    /// Moved by ``enter(_:)`` for a transition that names no session, by
-    /// ``settle(_:for:)`` for one concluding work a session did, and by
-    /// ``tearDownSession(restingAt:)``, which releases the session and rests in
-    /// the same call.
-    private(set) var phase: VMLifecyclePhase
-
-    /// The vocabulary the wire and every label read.
-    var status: VMStatus { phase.status }
-
-    /// The permanent-failure message the error banner and the status tooltip
-    /// show.
-    ///
-    /// A payload of ``VMLifecyclePhase/failed(message:)`` rather than a field of
-    /// its own, so it cannot survive the move to another phase.
-    var errorMessage: String? { phase.errorMessage }
-
-    /// Everything scoped to the current `VZVirtualMachine`'s lifetime, opened by
-    /// ``beginSessionContext(bootedIntoRecovery:)`` and released whole by
-    /// ``tearDownSession(restingAt:)``.
-    ///
-    /// The read-only projections below (``liveRemovableMedia``, etc.) are the
-    /// read surface; the methods in "Runtime Removable Media" below are the
-    /// write surface for the fields they cover. A write that arrives with no
-    /// session open is dropped and logged rather than resurrecting a
-    /// torn-down context.
-    private(set) var sessionContext: VMSessionContext?
-
-    /// The live VM's isolation domain — the only type that calls into the
-    /// `VZVirtualMachine` and its device objects.
-    var session: VMSession? { sessionContext?.session }
+    /// Where this VM is in its lifecycle, and the live session it holds.
+    let activity: VMActivity
 
     var bundleURL: URL { bundle.url }
 
@@ -103,7 +72,7 @@ final class VMInstance {
     /// Where this VM's display currently lives.
     ///
     /// ``VMDisplayPlacementController`` owns every transition; the model writes
-    /// this only in ``tearDownSession(restingAt:)``, to the sole mode a
+    /// this only once the session ends (``sessionDidEnd()``), to the sole mode a
     /// sessionless VM can rest in.
     var displayMode: VMDisplayMode = .inline
 
@@ -206,39 +175,12 @@ final class VMInstance {
                 -> VMLibrary.SettingsWrite
         )?
 
-    /// The live VM whose identity bringing this one up would duplicate, or `nil`
-    /// when nothing collides — what ``beginBringUp(_:)`` refuses on.
-    ///
-    /// Wired by `VMLibrary.wireHooks(for:)`; an instance outside a library has
-    /// no peers, and passes.
-    @ObservationIgnored var liveIdentityConflict: (@MainActor () -> VMIdentityConflict?)?
-
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
     /// completed.
     ///
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
-
-    /// Fired from ``restAfterPowerOff()`` — the guest powering off, however it got
-    /// there: a graceful shutdown from inside, Stop, or Force Stop.
-    ///
-    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler reverts an
-    /// Ephemeral Mode VM to its baseline here. A suspend does not reach it:
-    /// `save` tears the session down and rests at `.paused`.
-    @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
-
-    /// Fired on the edge where this VM becomes something a device can be
-    /// attached to — ``attachableSessionID`` going from `nil` to naming a
-    /// session.
-    ///
-    /// An edge rather than every arrival at a live phase, so it fires once per
-    /// session: a pause and resume both rest at attachable phases and must not
-    /// re-run whatever this triggers.
-    ///
-    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler hands the
-    /// guest the accessories paired with it and starts watching its address.
-    @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
     /// Applies a configuration mutation through ``onUpdateConfiguration``,
     /// answering how the write ended. An instance no library has wired changes
@@ -364,8 +306,9 @@ final class VMInstance {
     init(bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences) {
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
-        self.phase = phase
+        self.activity = VMActivity(phase: phase)
         self.preferences = preferences
+        activity.owner = self
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
         }
@@ -481,7 +424,7 @@ final class VMInstance {
     /// Whether the live session has a removable-media edit queued that the
     /// reconciler has not yet driven onto the XHCI controller.
     ///
-    /// Read through ``sessionContext``, so an observed wait on it wakes both
+    /// Read through ``VMActivity/sessionContext``, so an observed wait on it wakes both
     /// when the pass drains and when the session is torn down — the two ways
     /// the debt is settled.
     var hasRemovableMediaReconcileOwed: Bool {
@@ -512,7 +455,7 @@ final class VMInstance {
     /// `sessionID` names.
     ///
     /// Dropped and logged, rather than asserting, once that session is no
-    /// longer the live one — see ``liveSessionID``:
+    /// longer the live one — see ``VMActivity/liveSessionID``:
     /// `VMLibrary.runRemovableMediaReconciliation` awaits the framework
     /// attach call, and a power-off (or a power-off and restart) landing on
     /// main during that suspension resolves the continuation against a VM this
@@ -608,34 +551,80 @@ final class VMInstance {
         return sessionContext
     }
 
-    /// The live session's identity — the token every asynchronous hand-off and
-    /// delivered event carries, so one raised against a session this instance
-    /// has already released is dropped instead of landing on its successor or
-    /// on a stopped VM.
-    ///
-    /// Read off ``phase``, which is what makes the drop reliable: the phase and
-    /// the session move together, so no window exists where a released session
-    /// still answers as live.
-    var liveSessionID: UUID? { phase.sessionID }
+    // MARK: - Activity
 
-    /// Whether a `VZVirtualMachine` for this VM is live in memory — the single
-    /// liveness read every predicate here shares.
-    var hasLiveVirtualMachine: Bool { liveSessionID != nil }
+    // Forwarded to ``activity``, which documents each.
 
-    /// Whether a live `VZVirtualMachine` is attached and settled at a state VZ
-    /// can act on — the VMs a termination save-suspends, and the ones a device
-    /// can be attached to.
-    ///
-    /// A cold-paused VM is excluded: its state is already on disk, with nothing
-    /// live to act on.
-    var hasLiveSession: Bool { phase.hasLiveSession }
+    var phase: VMLifecyclePhase { activity.phase }
+    var status: VMStatus { activity.status }
+    var errorMessage: String? { activity.errorMessage }
+    var sessionContext: VMSessionContext? { activity.sessionContext }
+    var session: VMSession? { activity.session }
+    var liveSessionID: UUID? { activity.liveSessionID }
+    var hasLiveVirtualMachine: Bool { activity.hasLiveVirtualMachine }
+    var hasLiveSession: Bool { activity.hasLiveSession }
+    var attachableSessionID: UUID? { activity.attachableSessionID }
+    var isColdPaused: Bool { activity.isColdPaused }
+    var isLivePaused: Bool { activity.isLivePaused }
+    var holdsLiveIdentity: Bool { activity.holdsLiveIdentity }
+    var isAtRest: Bool { activity.isAtRest }
+    var isActive: Bool { activity.isActive }
+    var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
+    var isTransitioning: Bool { activity.isTransitioning }
+    var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
-    /// The session a removable-media attach or detach acts on, or `nil` when
-    /// the VM has none to act on.
-    ///
-    /// The token every step of a reconcile pass carries, so the pass and the
-    /// capability it was admitted by cannot answer for different sessions.
-    var attachableSessionID: UUID? { hasLiveSession ? liveSessionID : nil }
+    var onPoweredOff: (@MainActor () -> Void)? {
+        get { activity.onPoweredOff }
+        set { activity.onPoweredOff = newValue }
+    }
+
+    var onSessionBecameAttachable: (@MainActor () -> Void)? {
+        get { activity.onSessionBecameAttachable }
+        set { activity.onSessionBecameAttachable = newValue }
+    }
+
+    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
+        activity.restingPhase(withoutSlot: fallback)
+    }
+
+    func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
+        activity.deliverSessionEvent(event, from: sessionID)
+    }
+
+    func handleSessionEvent(_ event: VMSessionEvent) {
+        activity.handleSessionEvent(event)
+    }
+
+    func enter(_ phase: VMLifecyclePhase) {
+        activity.enter(phase)
+    }
+
+    @discardableResult
+    func settle(_ phase: VMLifecyclePhase, for sessionID: UUID) -> Bool {
+        activity.settle(phase, for: sessionID)
+    }
+
+    func beginBringUp(_ bringUp: VMBringUpPhase) throws(VMIdentityConflict) {
+        try activity.beginBringUp(bringUp)
+    }
+
+    func endGuestSetup() {
+        activity.endGuestSetup()
+    }
+
+    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
+        activity.adoptBuildResult(result)
+    }
+
+    func tearDownSession(restingAt phase: VMLifecyclePhase) {
+        activity.tearDownSession(restingAt: phase)
+    }
+
+    func restAfterPowerOff() {
+        activity.restAfterPowerOff()
+    }
+
+    // MARK: - Capabilities
 
     var canAttachRemovableMedia: Bool { attachableSessionID != nil }
 
@@ -648,9 +637,6 @@ final class VMInstance {
         canAttachRemovableMedia && configuration.guestOS == .macOS
     }
 
-    /// `true` when the VM is paused-to-disk but has no live `VZVirtualMachine` in memory.
-    var isColdPaused: Bool { phase.isColdPaused }
-
     /// `true` when the bundle holds a saved state and nothing is live — the VM
     /// a Resume restores and a Discard Saved State empties, whatever phase it
     /// rests at.
@@ -661,48 +647,6 @@ final class VMInstance {
     /// only into the configuration it was written under, so this is also what
     /// pins the VM's settings (``canEditSettings``).
     var holdsSuspendedSession: Bool { isAtRest && hasSaveFile }
-
-    /// Where this VM rests once nothing is live: suspended while its suspend
-    /// slot is on disk, `fallback` once it is not.
-    ///
-    /// The one derivation every teardown and every failure classification
-    /// reads, so "at rest holding a slot" and ``VMLifecyclePhase/suspended``
-    /// cannot come apart — whatever ended the live session, a saved session
-    /// that survived it is what the VM comes back on.
-    ///
-    /// ``VMLifecyclePhase/initialBoot`` is the one at-rest phase chosen without
-    /// it: a VM that has never finished its guest setup names that setup rather
-    /// than a session, which is the order ``VMLibrary/initialPhase(for:layout:)``
-    /// reads the bundle in too.
-    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
-        hasSaveFile ? .suspended : fallback
-    }
-
-    /// `true` when the VM is paused with its `VZVirtualMachine` still live in
-    /// memory — the in-memory counterpart of a suspension on disk.
-    var isLivePaused: Bool { phase.isLivePaused }
-
-    /// Whether this VM holds its identity against another's bring-up — see
-    /// ``VMLifecyclePhase/holdsLiveIdentity``.
-    var holdsLiveIdentity: Bool { phase.holdsLiveIdentity }
-
-    /// `true` when the VM is settled with nothing live and no operation in
-    /// flight — see ``VMLifecyclePhase/isAtRest``.
-    var isAtRest: Bool { phase.isAtRest }
-
-    /// `true` while the VM is in an active lifecycle phase — see
-    /// ``VMLifecyclePhase/isActive``.
-    var isActive: Bool { phase.isActive }
-
-    /// `true` when this VM should keep the app alive: in an active lifecycle
-    /// phase, or live-paused in memory.
-    var isKeepingAppAlive: Bool {
-        isActive || isLivePaused
-    }
-
-    /// `true` while the VM is mid-operation — see
-    /// ``VMLifecyclePhase/isTransitioning``.
-    var isTransitioning: Bool { phase.isTransitioning }
 
     /// Whether a bring-up can begin — the state term
     /// ``VirtualizationService/start(_:bootIntoRecovery:provisioning:)`` guards
@@ -735,9 +679,6 @@ final class VMInstance {
     /// Whether a rename committed now survives — see
     /// ``VMLifecyclePhase/renamePersists``.
     var renamePersists: Bool { phase.renamePersists }
-
-    /// Whether the VM has a display session a backing view should present.
-    var hasActiveDisplay: Bool { phase.hasActiveDisplay }
 
     /// How a capture started right now would be taken — the one place that
     /// choice is made — or `nil` when the VM is in no state to capture.
@@ -856,126 +797,7 @@ final class VMInstance {
         configuration.clipboardSharingEnabled && hasLiveSession
     }
 
-    // MARK: - Session Events
-
-    /// Builds the event sink a new session delivers into.
-    ///
-    /// Events hop to the main actor and apply only while the delivering
-    /// session is still the one this instance holds: delivery is asynchronous,
-    /// so a stop event from a torn-down session can arrive after a fresh
-    /// session is attached and must not reset it.
-    func makeSessionEvents() -> VMSessionEvents {
-        VMSessionEvents { [weak self] sessionID, event in
-            Task { @MainActor in
-                self?.deliverSessionEvent(event, from: sessionID)
-            }
-        }
-    }
-
-    /// Applies `event` if `sessionID` still names the live session; drops it
-    /// otherwise.
-    func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
-        guard liveSessionID == sessionID else { return }
-        handleSessionEvent(event)
-    }
-
-    func handleSessionEvent(_ event: VMSessionEvent) {
-        switch event {
-        case .guestDidStop:
-            restAfterPowerOff()
-            #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
-        case .didStopWithError(let error):
-            dropTruncatedSaveFile()
-            // A slot that survived carries a session the user can still come
-            // back on, so the VM is resumable rather than stuck and takes no
-            // message — the failure reaches the user as the event this raises.
-            tearDownSession(
-                restingAt: restingPhase(withoutSlot: .failed(message: error.localizedDescription)))
-            #log(
-                Self.logger, .error,
-                "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
-            )
-        case .networkAttachmentDisconnected(let error):
-            networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
-        case .usbPassthroughDeviceDidDisconnect(let deviceID):
-            // VZ has already detached the device; only Kernova's record of it
-            // is left to drop. An unplug is routine — a fast user switch
-            // disconnects every assigned accessory too — so it never alerts.
-            guard let context = sessionContext,
-                let gone = context.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
-            else { break }
-            context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
-            #log(
-                Self.logger, .notice,
-                "USB accessory \(gone.accessory.displayName, privacy: .public) disconnected from VM '\(self.name, privacy: .public)'"
-            )
-        }
-    }
-
-    // MARK: - Phase Transitions
-
-    /// Places the VM at `phase`.
-    ///
-    /// The write every transition that names no session goes through — a
-    /// disks-only capture, a revert, a discarded suspend slot — except leaving
-    /// rest to bring a guest up, which is ``beginBringUp(_:)``. A phase that
-    /// *does* name one is installed by ``settle(_:for:)`` or by
-    /// ``attachSession(from:)``, and released by ``tearDownSession(restingAt:)``.
-    func enter(_ phase: VMLifecyclePhase) {
-        setPhase(phase)
-    }
-
-    /// The one write of ``phase`` after construction, so the edge onto an
-    /// attachable session is noticed wherever the transition came from.
-    private func setPhase(_ new: VMLifecyclePhase) {
-        let wasAttachable = attachableSessionID != nil
-        phase = new
-        guard !wasAttachable, attachableSessionID != nil else { return }
-        onSessionBecameAttachable?()
-    }
-
-    /// Applies `phase` only while `sessionID` still names the live session,
-    /// reporting whether it landed.
-    ///
-    /// What every asynchronous operation concludes through, for the reason
-    /// ``deliverSessionEvent(_:from:)`` exists: an operation's awaits give a
-    /// `didStopWithError`, a force stop or a successor session time to land, and
-    /// a phase written over that would claim a `VZVirtualMachine` this instance
-    /// no longer holds — leaving a VM nothing can stop, force stop, or start.
-    @discardableResult
-    func settle(_ phase: VMLifecyclePhase, for sessionID: UUID) -> Bool {
-        guard liveSessionID == sessionID else { return false }
-        setPhase(phase)
-        return true
-    }
-
-    /// Leaves rest for `bringUp`, refusing when another live VM already claims
-    /// the machine identity or the MAC address this one would put in front of
-    /// VZ (``liveIdentityConflict``).
-    ///
-    /// The check and the phase entry are one synchronous step, so the phase is
-    /// what makes this VM live to every later check: of two twins, the second
-    /// to arrive is refused by the first's bring-up still in flight. A refusal
-    /// leaves the phase untouched.
-    func beginBringUp(_ bringUp: VMBringUpPhase) throws(VMIdentityConflict) {
-        if let conflict = liveIdentityConflict?() {
-            #log(
-                Self.logger, .notice,
-                "Refused to bring up '\(self.name, privacy: .public)': \(conflict.errorDescription ?? "", privacy: .public)"
-            )
-            throw conflict
-        }
-        setPhase(bringUp.lifecyclePhase)
-    }
-
-    /// Ends a guest setup that ran no VZ session, so no power-off takes the VM
-    /// out of ``VMLifecyclePhase/installing(sessionID:)`` — the Linux image
-    /// pipeline, whose caller chains a Start straight off it.
-    func endGuestSetup() {
-        enter(.stopped)
-    }
-
-    // MARK: - State Helpers
+    // MARK: - Session Lifecycle
 
     /// Opens the context one boot attempt's session state lives in, replacing
     /// any prior one, and takes the security scopes its configuration build
@@ -987,39 +809,18 @@ final class VMInstance {
     /// hold it is a leak, and a context with no scopes cannot build.
     @discardableResult
     func beginSessionContext(bootedIntoRecovery: Bool = false) -> VMSessionContext {
-        // A displaced context is released rather than dropped: the boot paths
-        // tear down before retrying, so reaching here with one open means a
-        // caller skipped that — and the dropped context's VZ session, pipes and
-        // security scopes would outlive the last reference to them.
-        sessionContext?.tearDown()
-        let context = VMSessionContext(
-            label: name,
-            bootedIntoRecovery: bootedIntoRecovery,
-            vsock: VsockFeatureCoordinator(
-                instance: self,
-                admissionGate: vsockAdmissionGate,
-                clipboardDataSink: clipboardDataSink,
-                dropDataSink: dropDataSink))
-        openRuntimeFileAccess(into: context)
-        sessionContext = context
-        return context
-    }
-
-    /// Takes the pipes and cold-attached removable media a configuration build
-    /// produced into the open session context.
-    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
-        guard let sessionContext else {
-            #log(
-                Self.logger, .fault,
-                "No session context to adopt a build result for '\(self.name, privacy: .public)'")
-            assertionFailure("adoptBuildResult without beginSessionContext for '\(name)'")
-            return
+        activity.beginSessionContext {
+            let context = VMSessionContext(
+                label: name,
+                bootedIntoRecovery: bootedIntoRecovery,
+                vsock: VsockFeatureCoordinator(
+                    instance: self,
+                    admissionGate: vsockAdmissionGate,
+                    clipboardDataSink: clipboardDataSink,
+                    dropDataSink: dropDataSink))
+            openRuntimeFileAccess(into: context)
+            return context
         }
-        sessionContext.serialInputPipe = result.serialInputPipe
-        sessionContext.serialOutputPipe = result.serialOutputPipe
-        sessionContext.clipboardInputPipe = result.clipboardInputPipe
-        sessionContext.clipboardOutputPipe = result.clipboardOutputPipe
-        sessionContext.liveRemovableMedia = result.coldRemovableMedia
     }
 
     /// Brings a built configuration all the way up: adopts its pipes and media,
@@ -1041,86 +842,17 @@ final class VMInstance {
         return session
     }
 
-    /// Tears the live VM session down and rests the VM at `phase`.
+    /// Attaches the session created from `result`
+    /// (``VMActivity/attachSession(from:)``) and builds the network-attachment
+    /// coordinator for network-enabled configurations.
     ///
-    /// The two are one call because a phase naming a session that is gone is
-    /// exactly the state this type exists to make unrepresentable — so
-    /// `restingAt` must name none. A retry that stays mid-operation passes
-    /// the sessionless form of the phase it is in
-    /// (``VMLifecyclePhase/starting(sessionID:)`` with `nil`, say).
-    func tearDownSession(restingAt phase: VMLifecyclePhase) {
-        if let strandedSessionID = phase.sessionID {
-            #log(
-                Self.logger, .fault,
-                "Teardown of '\(self.name, privacy: .public)' asked to rest at a phase naming session \(strandedSessionID, privacy: .public)"
-            )
-            assertionFailure("tearDownSession(restingAt:) given a phase naming a session")
-        }
-        sessionContext?.tearDown()
-        sessionContext = nil
-        setPhase(phase)
-        // A VM with no session has no display to place, and `.hidden`
-        // (headless) has no window whose close would say so.
-        displayMode = .inline
-    }
-
-    /// Releases the live session and rests the VM where one with nothing live
-    /// belongs, firing ``onPoweredOff``.
-    ///
-    /// Stopped for the guest that simply went down, and suspended when the
-    /// bundle still holds a slot — a session on disk survives whatever ended
-    /// the live one, and is still the user's to come back on.
-    func restAfterPowerOff() {
-        tearDownSession(restingAt: restingPhase(withoutSlot: .stopped))
-        // Reset so the next start lands on the display rather than inheriting
-        // a stuck settings mode from the previous session.
-        detailPaneMode = .display
-        onPoweredOff?()
-    }
-
-    /// Creates the VM on its own queue, stores the session, promotes the
-    /// in-flight phase to name it, and builds the network-attachment coordinator
-    /// for network-enabled configurations.
-    ///
-    /// The promotion is part of storing the session rather than the caller's
-    /// next step: liveness is read off the phase, so a gap between the two would
-    /// be a window in which a `VZVirtualMachine` exists and every predicate
-    /// answers that none does.
-    ///
-    /// `nil` when no session context is open, or when the phase admits no
-    /// session identity to promote — both programming errors, since every
-    /// bring-up path opens a context and stands in an admitting phase before
-    /// building the configuration this takes. Either way the just-created
-    /// `VZVirtualMachine` is released rather than handed back: a session this
-    /// instance does not hold is one nothing can stop, so a caller starting it
-    /// would leave the guest running past every liveness predicate, force stop
-    /// included.
+    /// `nil` exactly when ``VMActivity/attachSession(from:)`` is.
     func attachSession(from result: ConfigurationBuilder.BuildResult) async -> VMSession? {
-        // The configuration was assembled off-main and is handed over whole:
-        // nothing touches it after the VM is created from it.
-        nonisolated(unsafe) let vzConfig = result.configuration
-        let session = await VMSession.make(configuration: vzConfig, events: makeSessionEvents())
-        guard let sessionContext else {
-            #log(
-                Self.logger, .fault,
-                "No session context to attach a session to for '\(self.name, privacy: .public)'")
-            assertionFailure("attachSession without beginSessionContext for '\(name)'")
-            return nil
-        }
-        guard let promoted = phase.naming(session.id) else {
-            #log(
-                Self.logger, .fault,
-                "Session attached to '\(self.name, privacy: .public)' while at \(self.status.rawValue, privacy: .public), which names no session"
-            )
-            assertionFailure("attachSession from a phase that admits no session identity")
-            return nil
-        }
-        sessionContext.session = session
-        setPhase(promoted)
+        guard let attached = await activity.attachSession(from: result) else { return nil }
         await setupNetworkAttachmentCoordinator(
-            for: session, in: sessionContext, vmnetNetworks: result.vmnetNetworks,
+            for: attached.session, in: attached.context, vmnetNetworks: result.vmnetNetworks,
             entitlements: result.entitlements)
-        return session
+        return attached.session
     }
 
     /// Builds this session's attachment-recovery coordinator, replacing any
@@ -1151,6 +883,22 @@ final class VMInstance {
                 context?.networkAttachmentPending = pending
             })
     }
+
+    // MARK: - Activity Owner
+
+    func sessionDidEnd() {
+        // A VM with no session has no display to place, and `.hidden`
+        // (headless) has no window whose close would say so.
+        displayMode = .inline
+    }
+
+    func guestDidPowerOff() {
+        // Reset so the next start lands on the display rather than inheriting
+        // a stuck settings mode from the previous session.
+        detailPaneMode = .display
+    }
+
+    // MARK: - Saved State
 
     /// Ends the suspension the bundle holds: the saved state goes, and the VM
     /// rests stopped.

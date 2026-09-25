@@ -20,7 +20,7 @@ final class MacOSInstallService {
     ///
     /// The caller has already entered
     /// ``VMLifecyclePhase/installing(sessionID:)``
-    /// (``VMInstance/beginBringUp(_:)``), the phase the installer's session is
+    /// (``VMActivity/beginBringUp(_:)``), the phase the installer's session is
     /// promoted into.
     ///
     /// `progressHandler` receives installation progress in 0.0–1.0.
