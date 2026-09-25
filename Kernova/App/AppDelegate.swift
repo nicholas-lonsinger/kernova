@@ -159,17 +159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainMenu.install()
 
-        // Reclaim orphaned clipboard staging files from a previous run or crash —
-        // every label family under the shared parent (`host`, per-VM `host-<vm>`
-        // receive roots, `host-send-<vm>` outbound-archive roots). The staged file
-        // URL must outlive the clipboard window (paste-after-close), so staging
-        // never sweeps on close — only here, before any clipboard use.
-        ClipboardFileStaging.reclaimAll()
-
-        // Same reason, for the files a promise drag writes before it is offered:
-        // the guest pulls a queued drop only when its turn comes, so launch is
-        // the one moment nothing staged can still be owed to it.
-        DropPromiseStaging.reclaimAll()
+        // Staged file URLs outlive the window and the process that staged them
+        // (paste-after-close, a queued promise drop), so staging is reclaimed
+        // only here, and only from processes that have exited.
+        Task.detached(priority: .utility) {
+            ClipboardFileStaging.processRoot.reclaimAbandonedRoots()
+            DropPromiseStaging.processRoot.reclaimAbandonedRoots()
+        }
 
         lifecycle.start(provenance: readLaunchProvenance())
     }

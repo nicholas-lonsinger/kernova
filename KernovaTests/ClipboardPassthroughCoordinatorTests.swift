@@ -17,6 +17,8 @@ import Testing
 @Suite("ClipboardPassthroughCoordinator", .admissionGated)
 @MainActor
 struct ClipboardPassthroughCoordinatorTests {
+    private let stagingRoot = TestStagingRoot()
+
     /// In-memory `ClipboardServicing` for the coordinator: records outbound grabs
     /// and lets a test simulate a new inbound guest offer. `@Observable` so the
     /// coordinator's `inboundOfferSeq` observation fires.
@@ -125,17 +127,14 @@ struct ClipboardPassthroughCoordinatorTests {
         /// The coordinator's completed file resolves, the event a wait on the
         /// poll's off-actor resolve resolves on.
         let resolves: ForwardResolveLog
-        let stagingRoot: URL
     }
 
     private func makeHarness(preferences: AppPreferences? = nil) -> Harness {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
-        let stagingRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
-            stagingTempRoot: stagingRoot)
+            stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(
             name: "Passthrough VM", guestOS: .macOS,
             preferences: preferences ?? makeTestPreferences())
@@ -152,8 +151,7 @@ struct ClipboardPassthroughCoordinatorTests {
         coordinator.onForwardResolvedForTesting = { resolves.record($0) }
         return Harness(
             coordinator: coordinator, instance: instance, service: service,
-            pasteboard: pasteboard, publisher: publisher, reports: reports, resolves: resolves,
-            stagingRoot: stagingRoot)
+            pasteboard: pasteboard, publisher: publisher, reports: reports, resolves: resolves)
     }
 
     /// Places a plain-text item on `pasteboard`.
@@ -187,7 +185,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollForwardsHostChange() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         writeText("hello guest", to: h.pasteboard)
         h.coordinator.pollHostClipboard()
@@ -201,7 +198,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollSkipsUnchanged() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         writeText("once", to: h.pasteboard)
         h.coordinator.pollHostClipboard()
@@ -214,7 +210,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func copyDuringOutageIsForwardedAfterReconnect() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         // The channel went down (the guest closed it on reconnect) and the
         // service settled — no poll may record the change count while
@@ -239,7 +234,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func undeliveredForwardIsRetried() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         // The send failed on a connection that still reports itself up — a
         // verdict only the transport's own outcome carries.
@@ -267,7 +261,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func echoSuppressed() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         // Simulate a guest offer landing and publish it to the host pasteboard —
         // exactly what the inbound path (or a manual "Copy to Mac") does through
@@ -288,7 +281,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollForwardsZeroByteFile() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -308,7 +300,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollSurfacesIntakeSkipNote() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -334,7 +325,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollSurfacesWholeCopyRejection() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -356,7 +346,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollSurfacesPrePollLoss() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -381,7 +370,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollSurfacesPrePollWholeCopyLoss() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -403,7 +391,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func eachPartialCopyIsAnnouncedOnItsOwn() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -433,7 +420,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollStaysQuietForTextOnlyTransport() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
         h.service.supportsBinaryRepresentations = false
 
         let directory = try makeScratchDirectory()
@@ -459,7 +445,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func fileCopyLostMidResolveIsRetried() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -489,7 +474,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func pollDuringResolveForwardsOnce() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -514,7 +498,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func supersededResolveIsDropped() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -541,7 +524,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func resolveOutlivingItsSessionIsDropped() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -577,7 +559,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func undeliveredForwardDefersItsSkipNote() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let directory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -609,7 +590,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func transientMarkerSkipped() {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         let item = NSPasteboardItem()
         item.setString("secret-ish", forType: .string)
@@ -626,7 +606,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func inboundOfferPublishesToHost() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         // Event-driven: the gate fires when the inbound auto-publish completes, so
         // the wait resolves on the publish itself — never a poll deadline — even
@@ -650,7 +629,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func inboundOverCapOfferPublishesNothing() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         // What the Mac clipboard holds when the guest copies the over-cap files —
         // and still holds afterwards, since the publish returns before it clears.
@@ -715,7 +693,6 @@ struct ClipboardPassthroughCoordinatorTests {
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: h.stagingRoot)
         }
 
         // The user raises the ceiling — the action the refusal invites. Without a
@@ -743,7 +720,6 @@ struct ClipboardPassthroughCoordinatorTests {
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: h.stagingRoot)
         }
 
         // The user copies on the Mac between the refusal and the raise. That
@@ -769,7 +745,6 @@ struct ClipboardPassthroughCoordinatorTests {
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: h.stagingRoot)
         }
 
         // Lowering it can only refuse more, so replaying would rewrite the Mac
@@ -829,12 +804,9 @@ struct ClipboardPassthroughCoordinatorTests {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         defer { pasteboard.releaseGlobally() }
-        let stagingRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let publisher = HostClipboardPublisher(
             writePasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
-            stagingTempRoot: stagingRoot)
+            stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
         instance.beginSessionContext().clipboardService = service
@@ -875,7 +847,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func stopHaltsInboundPublish() async throws {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
 
         var publishedAfterStop = false
         h.coordinator.start()
@@ -914,7 +885,6 @@ struct ClipboardPassthroughCoordinatorTests {
     func stopCancelsTheInboundPublishInFlight() async throws {
         let (h, hold) = try await makeHeldPublishHarness()
         defer { h.pasteboard.releaseGlobally() }
-        defer { try? FileManager.default.removeItem(at: h.stagingRoot) }
         let baseline = h.pasteboard.changeCount
 
         let publish = try #require(h.coordinator.inboundPublishTaskForTesting)
@@ -940,7 +910,6 @@ struct ClipboardPassthroughCoordinatorTests {
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: h.stagingRoot)
         }
 
         let published = AsyncGate()
@@ -964,7 +933,6 @@ struct ClipboardPassthroughCoordinatorTests {
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
-            try? FileManager.default.removeItem(at: h.stagingRoot)
         }
         let first = try #require(h.coordinator.inboundPublishTaskForTesting)
 

@@ -183,7 +183,8 @@ final class VMInstance {
     ///
     /// One per VM so echo suppression sees both writers — the coordinator's poll
     /// skips whatever change count this publisher last produced.
-    @ObservationIgnored let hostClipboardPublisher = HostClipboardPublisher()
+    @ObservationIgnored let hostClipboardPublisher = HostClipboardPublisher(
+        stagingRoot: ClipboardFileStaging.processRoot)
 
     /// Where this VM's clipboard and drop producers publish, and the owner of the
     /// value below.

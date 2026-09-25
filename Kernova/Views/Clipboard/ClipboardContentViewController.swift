@@ -117,19 +117,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     init(
         instance: VMInstance, viewModel: VMLibraryViewModel,
-        writePasteboard: any ClipboardWritePasteboard = NSPasteboard.general,
         readPasteboard: NSPasteboard = .general,
-        providerRegistry: LazyClipboardProviderRegistry = .shared,
-        publisher: HostClipboardPublisher? = nil,
+        publisher: HostClipboardPublisher,
         editDebounceInterval: Duration = .milliseconds(200)
     ) {
         self.instance = instance
         self.viewModel = viewModel
         self.readPasteboard = readPasteboard
-        self.publisher =
-            publisher
-            ?? HostClipboardPublisher(
-                writePasteboard: writePasteboard, providerRegistry: providerRegistry)
+        self.publisher = publisher
         self.editDebounceInterval = editDebounceInterval
 
         let textView = ClipboardEditorTextView()

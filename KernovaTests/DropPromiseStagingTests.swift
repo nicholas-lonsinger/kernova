@@ -8,21 +8,12 @@ import Testing
 /// the guest's pull, which can come long after the drag is over.
 @Suite("DropPromiseStaging", .admissionGated)
 struct DropPromiseStagingTests {
-    /// A temp root of this test's own — the caller's to remove.
-    private func makeTempRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DropPromiseStagingTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
-    }
+    private let stagingRoot = TestStagingRoot()
 
     @Test("each drop gets a directory of its own, empty and ready to write into")
     func eachDropGetsItsOwnDirectory() throws {
-        let tempRoot = try makeTempRoot()
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-
-        let first = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
-        let second = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
+        let first = try #require(DropPromiseStaging(root: stagingRoot.root).makeDropDirectory())
+        let second = try #require(DropPromiseStaging(root: stagingRoot.root).makeDropDirectory())
 
         #expect(first != second)
         for directory in [first, second] {
@@ -39,11 +30,8 @@ struct DropPromiseStagingTests {
     /// queued drop from an abandoned one, so staging a new one reclaims nothing.
     @Test("staging a later drop leaves every earlier drop's files alone")
     func stagingLeavesEarlierDropsAlone() throws {
-        let tempRoot = try makeTempRoot()
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
-
         let staged = try (0..<6).map { index -> URL in
-            let directory = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
+            let directory = try #require(DropPromiseStaging(root: stagingRoot.root).makeDropDirectory())
             let file = directory.appendingPathComponent("promised-\(index).bin")
             try Data("promised".utf8).write(to: file)
             return file
@@ -54,23 +42,10 @@ struct DropPromiseStagingTests {
         }
     }
 
-    @Test("the launch reclaim takes the whole root, and staging rebuilds it")
-    func reclaimAllTakesTheWholeRoot() throws {
-        let tempRoot = try makeTempRoot()
-        defer { try? FileManager.default.removeItem(at: tempRoot) }
+    @Test("drop directories live under the process root")
+    func dropDirectoriesLiveUnderTheProcessRoot() throws {
+        let directory = try #require(DropPromiseStaging(root: stagingRoot.root).makeDropDirectory())
 
-        let directory = try #require(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory())
-        try Data("promised".utf8).write(to: directory.appendingPathComponent("a.bin"))
-
-        DropPromiseStaging.reclaimAll(tempRoot: tempRoot)
-        #expect(
-            !FileManager.default.fileExists(
-                atPath: DropPromiseStaging(tempRoot: tempRoot).root.path))
-
-        // Reclaiming a root nothing was staged under is the ordinary
-        // first-launch case, not a failure.
-        DropPromiseStaging.reclaimAll(tempRoot: tempRoot)
-
-        #expect(DropPromiseStaging(tempRoot: tempRoot).makeDropDirectory() != nil)
+        #expect(directory.deletingLastPathComponent().standardizedFileURL == stagingRoot.root.url.standardizedFileURL)
     }
 }

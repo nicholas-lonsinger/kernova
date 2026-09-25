@@ -96,23 +96,24 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
         )
 
-        // Reclaim clipboard staging roots left by earlier agent processes —
-        // staging roots are per-instance, so a live instance's sweep can never
-        // reach them; only this launch-time reclaim bounds their growth.
-        ClipboardFileStaging.reclaimAll()
+        // A live instance's sweep never reaches an exited agent's staging; only
+        // this launch-time reclaim bounds its growth.
+        let stagingRoot = ClipboardFileStaging.processRoot
+        stagingRoot.reclaimAbandonedRoots()
 
         let transferReporter = ClipboardTransferReporter()
         transferReporter.onReportChanged = { [weak self] report in
             self?.statusItemController?.transferReportChanged(report)
         }
         let clipboardAgent = VsockGuestClipboardAgent(
+            stagingRoot: stagingRoot,
             reporter: transferReporter,
             onClipboardNotice: { [weak self] in
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
             })
-        let dropAgent = VsockGuestDropAgent(reporter: transferReporter)
+        let dropAgent = VsockGuestDropAgent(stagingRoot: stagingRoot, reporter: transferReporter)
 
         // `onPolicy` gates the log, clipboard and drop capabilities;
         // `onStateChange` drives the status-item icon;

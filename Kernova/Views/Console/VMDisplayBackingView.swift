@@ -50,9 +50,8 @@ final class VMDisplayBackingView: NSView {
 
     /// Where a promise drag's files are written for the guest to pull from.
     ///
-    /// Injected so a test stages under a root of its own, for the reason
-    /// ``DropPromiseStaging/init(tempRoot:)`` gives.
-    var staging = DropPromiseStaging()
+    /// Injected so a test stages under a root of its own.
+    var staging = DropPromiseStaging(root: DropPromiseStaging.processRoot)
 
     /// Shows or hides the "not allowed" cursor over a drag this display refuses.
     ///
