@@ -471,10 +471,10 @@ final class AppResidencyController: WindowResidencyHosting {
         )
         requestSummonActivation()
         presentSummonedInterface(showing: target)
-        // Last, after the presentation is enqueued: the unhide notification can
-        // be delivered inside the call, and the reconcile it schedules must run
-        // behind the window show rather than reading a window list the show has
-        // not reached yet.
+        // Last, after the presentation is enqueued: the unhide notification
+        // arrives a main-queue turn after the call returns, and the reconcile it
+        // schedules must run behind the window show rather than reading a
+        // window list the show has not reached yet.
         unhideForSummon { NSApp.unhide(nil) }
     }
 
