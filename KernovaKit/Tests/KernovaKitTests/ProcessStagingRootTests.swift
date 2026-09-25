@@ -60,15 +60,19 @@ struct ProcessStagingRootTests {
         withExtendedLifetime(otherProcess) {}
     }
 
-    @Test("a live root removed from outside is never rebuilt without its lock")
-    func removedLiveRootIsNotRebuilt() throws {
+    @Test("a live root removed from outside is re-claimed under the same name, locked, and staged into")
+    func removedLiveRootIsReclaimed() throws {
         let file = try stageFile(in: staging.root)
         try FileManager.default.removeItem(at: staging.root.url)
 
-        #expect(throws: Errno.noSuchFileOrDirectory) {
-            try staging.root.createDirectory(at: file.deletingLastPathComponent())
-        }
-        #expect(!FileManager.default.fileExists(atPath: staging.root.url.path))
+        try staging.root.createDirectory(at: file.deletingLastPathComponent())
+
+        #expect(FileManager.default.fileExists(atPath: staging.root.url.path))
+        #expect(try ExclusiveFileLock.tryAcquire(at: staging.root.url) == nil)
+        let staged = try ClipboardFileStaging(label: "host-vm", root: staging.root)
+            .makeSink(generation: 1, filename: "after.bin").commit()
+        #expect(staged.path.hasPrefix(staging.root.url.path + "/"))
+        #expect(FileManager.default.fileExists(atPath: staged.path))
     }
 
     @Test("an entry no process holds is removed, whatever it is")

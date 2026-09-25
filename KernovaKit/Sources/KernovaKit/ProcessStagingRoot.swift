@@ -19,8 +19,8 @@ public final class ProcessStagingRoot: @unchecked Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ProcessStagingRoot")
 
-    /// This root's directory, a fresh name under the parent. Nothing exists
-    /// there until ``claim()``.
+    /// This root's directory, a fresh name under the parent, kept for the life
+    /// of this object. Nothing exists there until ``claim()``.
     public let url: URL
 
     private let parent: URL
@@ -33,16 +33,23 @@ public final class ProcessStagingRoot: @unchecked Sendable {
         url = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 
-    /// Creates ``url`` and locks it, the first time; later calls return at once.
+    /// Makes sure ``url`` is a directory this object holds the lock on: builds
+    /// and locks it the first time, and again under the same name whenever the
+    /// directory it locked is no longer the entry at ``url`` — the system's temp
+    /// cleaner removes old directories whatever locks they hold.
     ///
-    /// Call before creating anything under ``url``.
+    /// Call before creating anything under ``url``. A rebuilt root is empty.
     ///
-    /// - Throws: the error that stopped the root being built; nothing is left
-    ///   under the parent, and a later call tries again.
+    /// - Throws: the error that stopped the root being built, `Errno.fileExists`
+    ///   when something else occupies ``url``; nothing is left under the parent,
+    ///   and a later call tries again.
     public func claim() throws {
         lock.lock()
         defer { lock.unlock() }
-        guard directoryLock == nil else { return }
+        if let held = directoryLock {
+            if Self.isEntry(at: url, lockedBy: held) { return }
+            directoryLock = nil
+        }
 
         let manager = FileManager.default
         try manager.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -65,28 +72,32 @@ public final class ProcessStagingRoot: @unchecked Sendable {
     }
 
     /// Claims the root, then creates the directory at `target` under ``url``
-    /// and any missing directories between them — never ``url`` itself, so a
-    /// root removed from outside is not rebuilt without its lock.
+    /// and any missing directories between them. ``url`` itself is made only by
+    /// ``claim()``, so it never exists without its lock.
     ///
-    /// - Throws: `Errno.noSuchFileOrDirectory` once the root no longer exists,
-    ///   or the error that stopped a directory being made.
+    /// - Throws: the error that stopped the root or a directory being made.
     public func createDirectory(at target: URL) throws {
         try claim()
-        let rootComponents = url.standardizedFileURL.pathComponents
-        let targetComponents = target.standardizedFileURL.pathComponents
-        guard
-            targetComponents.count > rootComponents.count,
-            targetComponents.starts(with: rootComponents)
-        else {
-            preconditionFailure("\(target.path) is not under the staging root \(url.path)")
+        let rootPath = url.path
+        let targetPath = target.path
+        guard targetPath.hasPrefix(rootPath + "/") else {
+            preconditionFailure("\(targetPath) is not under the staging root \(rootPath)")
         }
         var current = url
-        for component in targetComponents.dropFirst(rootComponents.count) {
-            current.appendPathComponent(component, isDirectory: true)
+        for component in targetPath.dropFirst(rootPath.count + 1).split(separator: "/") {
+            current.appendPathComponent(String(component), isDirectory: true)
             if mkdir(current.path, S_IRWXU | S_IRWXG | S_IRWXO) != 0, errno != EEXIST {
                 throw Errno(rawValue: errno)
             }
         }
+    }
+
+    /// Whether the entry at `url` is the directory `held` has open.
+    private static func isEntry(at url: URL, lockedBy held: ExclusiveFileLock) -> Bool {
+        var entry = stat()
+        var locked = stat()
+        guard stat(url.path, &entry) == 0, fstat(held.descriptor, &locked) == 0 else { return false }
+        return entry.st_dev == locked.st_dev && entry.st_ino == locked.st_ino
     }
 
     /// Removes every visible entry under the parent whose lock no process
