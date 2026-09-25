@@ -318,10 +318,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// dedups by UUID against the library's rows — against an empty library it would
     /// copy the bundle a second time instead. Awaiting a finished load resumes
     /// on the next tick, so an open arriving later is unaffected.
-    ///
-    /// `importVMs(fromDroppedURLs:)` then reserves each destination in the batch
-    /// without suspending and runs the copies concurrently, so two overlapping
-    /// triggers still see each other's arrivals.
     private func importVMs(from urls: [URL]) {
         Task { @MainActor in
             await self.libraryLoad?.value

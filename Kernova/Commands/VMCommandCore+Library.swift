@@ -103,18 +103,6 @@ extension VMCommandCore {
         }
     }
 
-    /// Answers `arrival` for its initiating call: the settled VM when the caller
-    /// waits, the arrival's own row at once when it does not.
-    private func answer(_ arrival: VMArrival, waitingForOutcome waiting: Bool) async throws
-        -> VMSummary
-    {
-        guard waiting else {
-            followUnwaited(arrival)
-            return summary(arrival)
-        }
-        return summary(try await awaitOutcome(of: arrival))
-    }
-
     // MARK: - Create
 
     @discardableResult
@@ -188,13 +176,23 @@ extension VMCommandCore {
     func clone(
         _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
     ) async throws -> VMSummary {
-        try await answer(
-            beginClone(selector, machineIdentity: machineIdentity), waitingForOutcome: waitForOutcome)
+        guard waitForOutcome else { return try beginClone(selector, machineIdentity: machineIdentity) }
+        return summary(
+            try await awaitOutcome(of: registerClone(selector, machineIdentity: machineIdentity)))
+    }
+
+    @discardableResult
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary {
+        let arrival = try registerClone(selector, machineIdentity: machineIdentity)
+        followUnwaited(arrival)
+        return summary(arrival)
     }
 
     /// Registers a clone's arrival and starts its copy, with no suspension point
     /// between the checks and the registration.
-    private func beginClone(
+    private func registerClone(
         _ selector: VMSelector, machineIdentity: CloneMachineIdentity
     ) throws -> VMArrival {
         let instance = try resolve(selector)
@@ -403,15 +401,26 @@ extension VMCommandCore {
     /// the arrival already importing it when one is.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
-        switch try beginImport(from: sourceURL) {
+        guard waitForOutcome else { return try beginImport(from: sourceURL) }
+        switch try registerImport(from: sourceURL) {
+        case .existing(let instance):
+            return summary(instance)
+        case .joined(let arrival), .started(let arrival):
+            return summary(try await awaitOutcome(of: arrival))
+        }
+    }
+
+    @discardableResult
+    func beginImport(from sourceURL: URL) throws -> VMSummary {
+        switch try registerImport(from: sourceURL) {
         case .existing(let instance):
             return summary(instance)
         case .joined(let arrival):
             // Its own initiating call already routes an unwaited outcome.
-            guard waitForOutcome else { return summary(arrival) }
-            return summary(try await awaitOutcome(of: arrival))
+            return summary(arrival)
         case .started(let arrival):
-            return try await answer(arrival, waitingForOutcome: waitForOutcome)
+            followUnwaited(arrival)
+            return summary(arrival)
         }
     }
 
@@ -430,7 +439,7 @@ extension VMCommandCore {
     /// and two overlapping triggers' — run atomically on the main actor and see
     /// each other's arrivals, which one suspension point between them would
     /// break. The copies then run concurrently.
-    private func beginImport(from sourceURL: URL) throws -> ImportStart {
+    private func registerImport(from sourceURL: URL) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
             let config = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
@@ -484,22 +493,22 @@ extension VMCommandCore {
 
     // MARK: - Cancel Preparing
 
-    /// Stops a create, clone or import that is still writing its bundle.
+    /// Cancels a create, clone or import, which then becomes no VM.
     ///
-    /// Decided before the rename: an arrival still writing is stopped and its
-    /// staged tree discarded once the uninterruptible copy settles. One already
-    /// publishing is past stopping, so a confirmed cancel waits for it to become
-    /// its VM and moves that VM to the Trash, through the delete verb's own
-    /// gates. A VM is not something being prepared, so a cancel naming one is
-    /// refused.
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) async throws {
+    /// An arrival still writing is stopped and its staged tree discarded once
+    /// the uninterruptible copy settles. One already renaming into the VMs
+    /// directory moves its published bundle to the Trash before it settles, so
+    /// nothing following its outcome — a waiter, a create's auto-start — ever
+    /// receives the VM. A VM is not something being prepared, so a cancel
+    /// naming one is refused.
+    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
         let arrival: VMArrival
         switch try resolveEntry(selector) {
         case .vm(let instance): throw invalidState(instance)
         case .arriving(let found): arrival = found
         }
         guard confirmed else {
-            guard arrival.stage != .cancelling else { return }
+            guard !arrival.isCancelling else { return }
             throw CommandError.confirmationRequired(Self.cancelPreparingPrompt(arrival.kind))
         }
         switch arrival.requestCancel() {
@@ -508,18 +517,15 @@ extension VMCommandCore {
                 Self.logger, .notice,
                 "Cancelling \(arrival.kind.displayNoun, privacy: .public) for '\(arrival.name, privacy: .public)'"
             )
-        case .alreadyCancelling:
-            return
-        case .publishing:
-            // A publication that fails leaves no VM to remove, and its failure
-            // is routed to whoever the arrival's outcome belongs to.
-            guard let instance = try? await arrival.settled.value else { return }
+        case .withdrawn:
             #log(
                 Self.logger, .notice,
-                "Cancel confirmed after '\(arrival.name, privacy: .public)' published — moving it to the Trash"
+                "Cancel confirmed while '\(arrival.name, privacy: .public)' was publishing — its bundle moves to the Trash"
             )
-            try await delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+        case .alreadyCancelling:
+            return
+        case .adopted:
+            throw invalidState(try resolve(selector))
         }
     }
 

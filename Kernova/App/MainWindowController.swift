@@ -151,7 +151,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedID
                 self.toolbarManager.trackItemState()
                 // The window title's own inputs.
-                _ = self.viewModel.selectedInstance?.name
+                _ = self.viewModel.selectedEntry?.name
                 _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in
@@ -259,16 +259,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         toolbar.autosavesConfiguration = autosaved
     }
 
-    /// Titles the window after the selected VM, so the active VM stays
-    /// identifiable when the sidebar is collapsed.
+    /// Titles the window after the selected row, so it stays identifiable
+    /// when the sidebar is collapsed.
     private func updateWindowTitle() {
-        guard let instance = viewModel.selectedInstance else {
-            window?.title = "Kernova"
-            return
-        }
-        let name = EphemeralModeCopy.titleName(
-            instance.name, ephemeralSessionRunning: instance.hasLiveEphemeralSession)
-        window?.title = "Kernova — \(name)"
+        window?.title = Self.windowTitle(for: viewModel.selectedEntry)
+    }
+
+    static func windowTitle(for entry: LibraryEntry?) -> String {
+        guard let entry else { return "Kernova" }
+        let name =
+            entry.vm.map {
+                EphemeralModeCopy.titleName($0.name, ephemeralSessionRunning: $0.hasLiveEphemeralSession)
+            } ?? entry.name
+        return "Kernova — \(name)"
     }
 
     private func updateToolbarItems() {

@@ -76,7 +76,7 @@ struct VMLibraryAdoptionTests {
         #expect(library.instances.map(\.name) == ["Edited on Disk"])
     }
 
-    @Test("A reconcile that runs between the rename and the adoption yields exactly one VM")
+    @Test("A reconcile that runs between the rename and the adoption leaves the arrival to its pipeline")
     func aReconcileBetweenTheRenameAndAdoptYieldsOneVM() async throws {
         let library = makeLibrary()
         let config = configuration("Raced")
@@ -92,10 +92,10 @@ struct VMLibraryAdoptionTests {
             write: writing(config))
         let instance = try await arrival.settled.value
 
-        // The reconcile found the published bundle first and replaced the
-        // arrival in place; the publication's own adoption found it adopted.
+        // Only the arrival's own pipeline turns its row into a VM, since it
+        // alone knows whether a cancel withdrew the bundle.
         #expect(reconciledEntries.value.count == 1)
-        #expect(reconciledEntries.value.first?.vm === instance)
+        #expect(reconciledEntries.value.first?.arrival === arrival)
         #expect(library.entries.count == 1)
         #expect(library.instances.count == 1)
         #expect(library.instances.first === instance)
@@ -116,7 +116,7 @@ struct VMLibraryAdoptionTests {
 
         #expect(library.instances.count == 1)
         #expect(library.instances.first === instance)
-        #expect(VMLibrary.isSameBundle(instance.bundleURL, moved))
+        #expect(library.isSameBundle(instance.bundleURL, moved))
     }
 
     @Test("A write after the move lands in the bundle at its new URL")
@@ -134,6 +134,31 @@ struct VMLibraryAdoptionTests {
 
         #expect(storage.files.configuration(at: moved)?.name == "Renamed After Move")
         #expect(storage.files.configuration(at: original) == nil)
+    }
+
+    @Test("A case-only rename keeps its VM, re-bound to the new spelling, with no duplicate report")
+    func aCaseOnlyRenameKeepsItsVMReboundToTheNewSpelling() {
+        let reports = Reports()
+        let library = makeLibrary(reports: reports)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "ubuntu", phase: .stopped, guestOS: .linux, library: library, storage: storage,
+            preferences: preferences)
+        let lowercase = bundleURL("ubuntu")
+        storage.moveBundle(from: instance.bundleURL, to: lowercase)
+        library.reconcileWithDisk()
+        let respelled = lowercase.deletingLastPathComponent()
+            .appendingPathComponent("Ubuntu.\(VMBundleFormat.fileExtension)", isDirectory: true)
+
+        // The mock volume folds case, as the default APFS volume does: the old
+        // spelling still names the bundle after the rename.
+        storage.moveBundle(from: lowercase, to: respelled)
+        #expect(library.isSameBundle(lowercase, respelled))
+        library.reconcileWithDisk()
+
+        #expect(library.instances.count == 1)
+        #expect(library.instances.first === instance)
+        #expect(VMBundleIdentity.spelling(instance.bundleURL) == VMBundleIdentity.spelling(respelled))
+        #expect(reports.titles.isEmpty)
     }
 
     // MARK: - Duplicate Identifiers
@@ -157,7 +182,7 @@ struct VMLibraryAdoptionTests {
         #expect(library.instances.count == 1)
         // The winner is the first by bundle name, whatever order the listing
         // answered in.
-        #expect(library.instances.first.map { VMLibrary.isSameBundle($0.bundleURL, first) } == true)
+        #expect(library.instances.first.map { library.isSameBundle($0.bundleURL, first) } == true)
         #expect(reports.titles == ["Duplicate Virtual Machine"])
     }
 
@@ -207,21 +232,44 @@ struct VMLibraryAdoptionTests {
         #expect(library.entries.isEmpty)
     }
 
-    @Test("A cancel that finds the rename under way is too late to stop it")
-    func aCancelFindsPublishingTooLate() async throws {
+    @Test("A cancel during the rename withdraws the published bundle, and no reconcile adopts it first")
+    func aCancelDuringTheRenameWithdrawsThePublishedBundle() async throws {
         let library = makeLibrary()
         let config = configuration("Published")
+        let destination = try storage.bundleURL(for: config)
         let decision = Captured<VMArrival.CancelDecision?>(nil)
+        let reconciledEntries = Captured<[LibraryEntry]>([])
         let arrivalRef = Captured<VMArrival?>(nil)
-        storage.afterPublish = { decision.value = arrivalRef.value?.requestCancel() }
+        storage.afterPublish = {
+            decision.value = arrivalRef.value?.requestCancel()
+            library.reconcileWithDisk()
+            reconciledEntries.value = library.entries
+        }
 
+        let arrival = library.beginArrival(
+            kind: .creating, configuration: config, destination: destination,
+            write: writing(config))
+        arrivalRef.value = arrival
+        await #expect(throws: CancellationError.self) { try await arrival.settled.value }
+
+        #expect(decision.value == .withdrawn)
+        #expect(reconciledEntries.value.first?.arrival === arrival)
+        #expect(storage.deleteVMBundleCallCount == 1)
+        #expect(storage.bundleIdentity(at: destination) == nil)
+        #expect(library.entries.isEmpty)
+    }
+
+    @Test("A cancel after the adoption finds nothing left to cancel")
+    func aCancelAfterTheAdoptionFindsNothingToCancel() async throws {
+        let library = makeLibrary()
+        let config = configuration("Adopted")
         let arrival = library.beginArrival(
             kind: .creating, configuration: config,
             destination: try storage.bundleURL(for: config), write: writing(config))
-        arrivalRef.value = arrival
         let instance = try await arrival.settled.value
 
-        #expect(decision.value == .publishing)
+        #expect(arrival.requestCancel() == .adopted)
         #expect(library.instances.first === instance)
+        #expect(storage.deleteVMBundleCallCount == 0)
     }
 }

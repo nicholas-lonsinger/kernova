@@ -652,7 +652,7 @@ struct SidebarViewControllerTests {
     }
 
     @Test("An arrival's row shows its name and label, and its menu offers only its Cancel")
-    func arrivalRowShowsItsLabelAndOffersOnlyCancel() async {
+    func arrivalRowShowsItsLabelAndOffersOnlyCancel() async throws {
         let viewModel = makeViewModel()
         let gate = GatedArrivalWrite()
         let arrival = viewModel.library.beginGatedArrival(
@@ -669,6 +669,11 @@ struct SidebarViewControllerTests {
         // Nothing is at the destination until the write is published, so a
         // reveal would open Finder on a path that does not exist.
         #expect(titles(of: menu) == ["Cancel Clone"])
+
+        #expect(arrival.requestCancel() == .cancelled)
+        // The cell's observation applies on a later main-actor turn, with no
+        // observable of its own to await.
+        try await waitUntil { cell.toolTip == "Cancelling\u{2026}" }
 
         gate.release()
         await arrival.settle()
@@ -841,23 +846,31 @@ struct SidebarViewControllerTests {
         #expect(outline.item(atRow: 1) is VMInstance)
     }
 
-    @Test("An arrival's row becomes its VM's row when it settles")
+    @Test("An arrival's row becomes its VM's row when it settles, keeping its place and selection")
     func settlingArrivalReloadsIntoAVMRow() async throws {
         let viewModel = makeViewModel()
+        let before = VMInstanceFixture.make(name: "Before")
+        viewModel.library.admitForTesting(before)
         let gate = GatedArrivalWrite()
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
         let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        #expect((outline.item(atRow: 1) as? VMArrival) === arrival)
+        #expect((outline.item(atRow: 1) as? VMInstance) === before)
+        #expect((outline.item(atRow: 2) as? VMArrival) === arrival)
+        #expect(viewModel.selectedID == arrival.id)
+        // The outline view offers no observable to await its selection by.
+        try await waitUntil { outline.selectedRow == 2 }
 
         gate.release()
         let instance = try #require(await arrival.settle())
 
-        // The outline view offers no observable to await its reload by.
-        try await waitUntil { (outline.item(atRow: 1) as? VMInstance) === instance }
-        #expect(outline.numberOfRows == 2)
+        try await waitUntil { (outline.item(atRow: 2) as? VMInstance) === instance }
+        #expect(outline.numberOfRows == 3)
+        #expect(outline.row(forItem: instance) == 2)
+        #expect(outline.selectedRow == 2)
+        #expect(viewModel.selectedID == arrival.id)
     }
 
     // MARK: - Clone completion refresh (#575)

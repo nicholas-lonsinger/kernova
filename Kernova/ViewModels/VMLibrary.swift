@@ -259,14 +259,17 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         var url: URL { read.files.url }
     }
 
-    /// What ``adopt(_:)`` did with a bundle.
+    /// What ``adopt(_:publishing:)`` did with a bundle.
     enum Adoption {
         /// The bundle became a VM — a new row, or the arrival that wrote it.
         case adopted(VMInstance)
         /// The VM was already built from this bundle.
         case alreadyAdopted(VMInstance)
-        /// A VM whose bundle had moved was pointed at it.
+        /// A VM whose bundle had moved, or been renamed, was pointed at it.
         case rebound(VMInstance)
+        /// The bundle is the one `arrival` is publishing, which only that
+        /// arrival's own pipeline adopts.
+        case publishing(VMArrival)
         /// Another bundle already holds this identifier; this one was reported
         /// and left out. `existing` is `nil` when the holder is an arrival.
         case duplicate(of: VMInstance?, at: URL)
@@ -276,11 +279,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// identifier it carries — the one decision launch, reconcile and
     /// publication all take.
     ///
-    /// An arrival that wrote the bundle is replaced in place, keeping its
-    /// place and selection; a VM already built from it is left alone; a VM
-    /// whose own bundle has gone is pointed at this one; and a second bundle
-    /// holding a known identifier is reported once, not adopted.
-    func adopt(_ scanned: ScannedBundle) -> Adoption {
+    /// An arrival's row becomes a VM only when its own pipeline passes it as
+    /// `arrival`, replaced in place to keep its place and selection; that
+    /// pipeline is what decides whether a cancel taken during the rename
+    /// leaves any VM at all. A VM already built from the bundle is left alone;
+    /// a VM whose own bundle has gone, or is this one spelled another way, is
+    /// pointed at it; and a second bundle holding a known identifier is
+    /// reported once, not adopted.
+    func adopt(_ scanned: ScannedBundle, publishing arrival: VMArrival? = nil) -> Adoption {
         let url = scanned.url
         guard let index = entries.firstIndex(where: { $0.id == scanned.read.configuration.id })
         else {
@@ -289,16 +295,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             return .adopted(instance)
         }
         switch entries[index] {
-        case .arriving(let arrival):
-            guard Self.isSameBundle(arrival.destinationURL, url) else {
-                return reportDuplicate(at: url, holderName: arrival.name, existing: nil)
+        case .arriving(let holder):
+            guard isSameBundle(holder.destinationURL, url) else {
+                return reportDuplicate(at: url, holderName: holder.name, existing: nil)
             }
+            guard holder === arrival else { return .publishing(holder) }
             let instance = makeInstance(scanned)
             entries[index] = .vm(instance)
             return .adopted(instance)
         case .vm(let instance):
-            if Self.isSameBundle(instance.bundleURL, url) { return .alreadyAdopted(instance) }
-            if storageService.bundleExists(at: instance.bundleURL) {
+            if VMBundleIdentity.spelling(instance.bundleURL) == VMBundleIdentity.spelling(url) {
+                return .alreadyAdopted(instance)
+            }
+            if let holder = storageService.bundleIdentity(at: instance.bundleURL),
+                holder != storageService.bundleIdentity(at: url)
+            {
                 return reportDuplicate(at: url, holderName: instance.name, existing: instance)
             }
             #log(
@@ -311,17 +322,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
     }
 
-    /// Whether two URLs name the same bundle directory.
-    nonisolated static func isSameBundle(_ lhs: URL, _ rhs: URL) -> Bool {
-        bundleKey(lhs) == bundleKey(rhs)
-    }
-
-    /// A bundle URL's path, standardized and without a trailing separator, so
-    /// a listing's directory URL and a derived one compare equal.
-    nonisolated static func bundleKey(_ url: URL) -> String {
-        var path = url.standardizedFileURL.path(percentEncoded: false)
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        return path
+    /// Whether two URLs name one bundle on disk, however each is spelled; a URL
+    /// with no bundle at it names none.
+    func isSameBundle(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let identity = storageService.bundleIdentity(at: lhs) else { return false }
+        return identity == storageService.bundleIdentity(at: rhs)
     }
 
     /// Reports a bundle whose identifier another bundle already holds, once per

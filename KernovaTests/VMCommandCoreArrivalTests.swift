@@ -19,6 +19,7 @@ struct VMCommandCoreArrivalTests {
         let core: VMCommandCore
         let library: VMLibrary
         let reports: Reports
+        let virtualization: MockVirtualizationService
     }
 
     /// Every failure the core handed its unattended hook.
@@ -34,7 +35,8 @@ struct VMCommandCoreArrivalTests {
     }
 
     private func makeHarness() -> Harness {
-        let lifecycle = makeTestLifecycle()
+        let virtualization = MockVirtualizationService()
+        let lifecycle = makeTestLifecycle(virtualization: virtualization)
         let library = makeWiredLibrary(
             storage: storage, lifecycle: lifecycle, preferences: preferences)
         let core = VMCommandCore(
@@ -50,7 +52,8 @@ struct VMCommandCoreArrivalTests {
             reports.failures.append(failure)
             reports.changed.notify()
         }
-        return Harness(core: core, library: library, reports: reports)
+        return Harness(
+            core: core, library: library, reports: reports, virtualization: virtualization)
     }
 
     private func makeSource(in harness: Harness) -> VMInstance {
@@ -162,7 +165,7 @@ struct VMCommandCoreArrivalTests {
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
-        try await harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
         hold.signal()
 
         let outcome = await waiter.result
@@ -234,8 +237,65 @@ struct VMCommandCoreArrivalTests {
 
     // MARK: - F14: Cancel Around the Rename
 
-    @Test("A cancel that finds the rename under way deletes the VM, and a failed trash keeps it")
-    func aCancelAfterTheRenameIsADeleteAndAFailedTrashKeepsTheVM() async throws {
+    @Test("A cancel during the rename of a create that starts after creating trashes it and starts nothing")
+    func aCancelDuringPublishingOfAStartingCreateTrashesItAndStartsNothing() async throws {
+        let harness = makeHarness()
+        let hold = DispatchSemaphore(value: 0)
+        storage.publishHold = hold
+        let configuration = VMConfiguration(name: "Withdrawn", guestOS: .linux, bootMode: .efi)
+        let destination = try storage.bundleURL(for: configuration)
+
+        let row = try harness.core.create(
+            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+        let arrival = try #require(harness.library.arrivals.first)
+        try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
+        #expect(arrival.stage == .publishing)
+
+        try harness.core.cancelPreparing(.id(row.id), confirmed: true)
+        #expect(arrival.stage == .withdrawing)
+        #expect(arrival.displayLabel == "Cancelling\u{2026}")
+        hold.signal()
+
+        // The auto-start chains off a VM the outcome delivers, and the outcome
+        // is the cancel.
+        await #expect(throws: CancellationError.self) { try await arrival.settled.value }
+        #expect(storage.deleteVMBundleCallCount == 1)
+        #expect(storage.bundleIdentity(at: destination) == nil)
+        #expect(harness.library.entries.isEmpty)
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(harness.reports.failures.isEmpty)
+    }
+
+    @Test("A waiter on an arrival cancelled during its rename receives the cancel, not the VM")
+    func aWaiterOnAnArrivalCancelledDuringItsRenameReceivesTheCancel() async throws {
+        let harness = makeHarness()
+        let source = makeSource(in: harness)
+        let hold = DispatchSemaphore(value: 0)
+        storage.publishHold = hold
+
+        let waiter = Task {
+            try await harness.core.clone(.id(source.id), machineIdentity: .new, waitForOutcome: true)
+        }
+        try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
+        let arrival = try #require(harness.library.arrivals.first)
+        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        hold.signal()
+
+        let outcome = await waiter.result
+        guard case .failure(let error) = outcome,
+            case .operationFailed(_, _, let message, _)? = error as? CommandError
+        else {
+            Issue.record("expected the clone's cancel, got \(outcome)")
+            return
+        }
+        #expect(message == "The clone was cancelled.")
+        #expect(storage.deleteVMBundleCallCount == 1)
+        #expect(harness.library.instances.map(\.id) == [source.id])
+        #expect(harness.reports.failures.isEmpty)
+    }
+
+    @Test("A cancel during the rename whose trash fails keeps the VM and reports the failure once")
+    func aCancelDuringTheRenameWhoseTrashFailsKeepsTheVM() async throws {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let hold = DispatchSemaphore(value: 0)
@@ -246,17 +306,17 @@ struct VMCommandCoreArrivalTests {
             .id(source.id), machineIdentity: .new, waitForOutcome: false)
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
-        #expect(arrival.stage == .publishing)
 
-        let cancel = Task { try await harness.core.cancelPreparing(.id(row.id), confirmed: true) }
-        // The main actor runs its jobs in order, so the cancel reaches its wait
-        // for the publication before the publication is let go.
-        await Task.yield()
+        try harness.core.cancelPreparing(.id(row.id), confirmed: true)
         hold.signal()
 
-        await #expect(throws: CommandError.self) { try await cancel.value }
+        // The bundle the Trash turned down is still in the VMs directory, so
+        // it is the VM it now is, and nothing follows the arrival with it.
+        #expect(await arrival.settle() == nil)
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, row.id])
+        #expect(harness.library.arrivals.isEmpty)
+        try await harness.reports.changed.wait { harness.reports.failures.count == 1 }
     }
 
     @Test("A cancel that arrives after adoption is refused and deletes nothing")
@@ -268,7 +328,7 @@ struct VMCommandCoreArrivalTests {
         #expect(clone.status == VMStatus.stopped.rawValue)
 
         do {
-            try await harness.core.cancelPreparing(.id(clone.id), confirmed: true)
+            try harness.core.cancelPreparing(.id(clone.id), confirmed: true)
             Issue.record("expected the cancel to be refused")
         } catch let refusal as CommandError {
             guard case .invalidState = refusal else {

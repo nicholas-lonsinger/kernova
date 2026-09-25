@@ -116,9 +116,8 @@ struct VMStorageService: Sendable {
             "Published VM bundle \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
-    func bundleExists(at bundleURL: URL) -> Bool {
-        FileManager.default.fileExists(
-            atPath: VMBundleLayout(bundleURL: bundleURL).configURL.path(percentEncoded: false))
+    func bundleIdentity(at bundleURL: URL) -> VMBundleIdentity? {
+        VMBundleIdentity(bundleAt: bundleURL)
     }
 
     /// Removes a staged tree outright: its payload is incomplete or unpublished,

@@ -616,9 +616,10 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// The failure `arrival` settled with, or `nil` when it was cancelled —
-    /// a cancel the user took is no failure to report.
+    /// a cancel the user took is no failure to report, and the pipeline
+    /// throws every outcome of one as `CancellationError`.
     func arrivalFailure(_ error: any Error, of arrival: VMArrival) -> CommandError? {
-        guard arrival.stage != .cancelling else { return nil }
+        guard !(error is CancellationError) else { return nil }
         return error as? CommandError
             ?? .operationFailed(verb: arrival.kind.verb, message: error.localizedDescription)
     }

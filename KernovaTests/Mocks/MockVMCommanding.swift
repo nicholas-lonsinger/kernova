@@ -522,6 +522,20 @@ final class MockVMCommanding: VMCommanding {
     func clone(
         _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
     ) async throws -> VMSummary {
+        let copy = try registerClone(
+            selector, machineIdentity: machineIdentity, waitForOutcome: waitForOutcome)
+        return waitForOutcome ? try await outcome(of: copy) : copy
+    }
+
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary {
+        try registerClone(selector, machineIdentity: machineIdentity, waitForOutcome: false)
+    }
+
+    private func registerClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+    ) throws -> VMSummary {
         cloneCalls.append((selector, machineIdentity, waitForOutcome))
         if let cloneError { throw cloneError }
         let source = try resolve(selector)
@@ -531,7 +545,7 @@ final class MockVMCommanding: VMCommanding {
         // The core registers the copy's arrival before it first suspends, so a
         // caller that reads it back on the same turn finds it.
         library.append(copy)
-        return waitForOutcome ? try await outcome(of: copy) : copy
+        return copy
     }
 
     /// What a waited clone or import answers once its copy settles.
@@ -568,6 +582,15 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary {
+        let imported = try registerImport(from: url, waitForOutcome: waitForOutcome)
+        return waitForOutcome ? try await outcome(of: imported) : imported
+    }
+
+    func beginImport(from url: URL) throws -> VMSummary {
+        try registerImport(from: url, waitForOutcome: false)
+    }
+
+    private func registerImport(from url: URL, waitForOutcome: Bool) throws -> VMSummary {
         importURLs.append(url)
         importWaits.append(waitForOutcome)
         if let importError { throw importError }
@@ -579,10 +602,10 @@ final class MockVMCommanding: VMCommanding {
         // The core registers the import's arrival before it first suspends, so
         // a caller that reads it back on the same turn finds it.
         library.append(imported)
-        return waitForOutcome ? try await outcome(of: imported) : imported
+        return imported
     }
 
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) async throws {
+    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
         cancelPreparingCalls.append((selector, confirmed))
         if let cancelPreparingError { throw cancelPreparingError }
         if let cancelPreparingConsentPrompt, !confirmed {

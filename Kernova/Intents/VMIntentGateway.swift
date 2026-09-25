@@ -334,7 +334,7 @@ final class VMIntentGateway {
 
     func cancelPreparing(_ id: UUID, confirmed: Bool) async throws {
         try await perform(.cancelPreparing, on: id) {
-            try await self.commands.cancelPreparing(.id(id), confirmed: confirmed)
+            try self.commands.cancelPreparing(.id(id), confirmed: confirmed)
         }
     }
 

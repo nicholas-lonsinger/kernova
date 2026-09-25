@@ -17,7 +17,7 @@ struct StatusMenuVMRow: Equatable {
 }
 
 /// Owns the VM section of the status-item dropdown: one row per VM keeping the
-/// app alive, or a disabled placeholder when none is.
+/// app alive and per arrival, or a disabled placeholder when there are none.
 ///
 /// `menuNeedsUpdate` re-populates the section with ``rebuild(rows:)`` while the
 /// dropdown is rebuilt from scratch; state changes while it is on screen go

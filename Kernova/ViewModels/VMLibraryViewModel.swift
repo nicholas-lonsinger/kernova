@@ -1033,9 +1033,8 @@ final class VMLibraryViewModel {
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited.
     ///
-    /// Each import reserves its destination and registers its arrival in the
-    /// first synchronous segment of its own task (see
-    /// ``VMCommandCore/importVM(from:waitForOutcome:)``), so two overlapping
+    /// Every import reserves its destination and registers its arrival before
+    /// this returns (``VMCommanding/beginImport(from:)``), so two overlapping
     /// triggers never collide on a destination name and never wait behind each
     /// other's copies.
     ///
@@ -1047,11 +1046,7 @@ final class VMLibraryViewModel {
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
         for url in bundles {
-            Task {
-                await run(on: nil) {
-                    _ = try await self.commands.importVM(from: url, waitForOutcome: false)
-                }
-            }
+            runSync(on: nil) { _ = try commands.beginImport(from: url) }
         }
         return true
     }
@@ -1094,22 +1089,19 @@ final class VMLibraryViewModel {
         case .some(true): identity = .new
         case .some(false): identity = .keep
         }
-        Task {
-            do {
-                _ = try await commands.clone(
-                    .id(instance.id), machineIdentity: identity, waitForOutcome: false)
-            } catch let error as CommandError {
-                if case .invalidState = error {
-                    #log(
-                        Self.logger, .debug,
-                        "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
-                    )
-                } else {
-                    present(error, for: instance)
-                }
-            } catch {
-                surfaceError(error.localizedDescription)
+        do {
+            try commands.beginClone(.id(instance.id), machineIdentity: identity)
+        } catch let error as CommandError {
+            if case .invalidState = error {
+                #log(
+                    Self.logger, .debug,
+                    "Clone skipped for '\(instance.name, privacy: .public)': status '\(instance.status.displayName, privacy: .public)' does not allow editing"
+                )
+            } else {
+                present(error, for: instance)
             }
+        } catch {
+            surfaceError(error.localizedDescription)
         }
     }
 
@@ -1122,21 +1114,17 @@ final class VMLibraryViewModel {
 
     /// Cancels an in-flight create, clone or import from that confirmation's confirm.
     func cancelArrival(_ arrival: VMArrival) {
-        Task {
-            do {
-                try await commands.cancelPreparing(.id(arrival.id), confirmed: true)
-            } catch let error as CommandError {
-                // The arrival settled while the confirmation was up: a failed
-                // one left no row, an adopted one is a VM the cancel refuses,
-                // and one that published is moved to the Trash only while the
-                // delete verb still takes it.
-                #log(
-                    Self.logger, .notice,
-                    "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
-                )
-            } catch {
-                surfaceError(error.localizedDescription)
-            }
+        do {
+            try commands.cancelPreparing(.id(arrival.id), confirmed: true)
+        } catch let error as CommandError {
+            // The arrival settled while the confirmation was up: a failed one
+            // left no row, and an adopted one is a VM the cancel refuses.
+            #log(
+                Self.logger, .notice,
+                "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
+            )
+        } catch {
+            surfaceError(error.localizedDescription)
         }
     }
 

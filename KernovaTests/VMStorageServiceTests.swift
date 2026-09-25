@@ -160,6 +160,48 @@ struct VMStorageServiceTests {
         #expect(bundles.contains(bundleURL))
     }
 
+    // MARK: - Bundle Identity
+
+    @Test("A bundle's identity follows the directory across a rename, and a place with no bundle has none")
+    func bundleIdentityFollowsTheDirectory() throws {
+        let first = try makeBundle(VMConfiguration(name: "First", guestOS: .linux, bootMode: .efi))
+        let second = try makeBundle(VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi))
+        let moved = first.deletingLastPathComponent()
+            .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
+        defer {
+            for url in [first, second, moved] { try? FileManager.default.removeItem(at: url) }
+        }
+        let identity = try #require(service.bundleIdentity(at: first))
+        #expect(service.bundleIdentity(at: second) != identity)
+
+        try FileManager.default.moveItem(at: first, to: moved)
+
+        #expect(service.bundleIdentity(at: moved) == identity)
+        #expect(service.bundleIdentity(at: first) == nil)
+        try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: second).configURL)
+        #expect(service.bundleIdentity(at: second) == nil)
+    }
+
+    @Test(
+        "Two spellings a case-insensitive volume folds together name one bundle",
+        .enabled(if: VMStorageServiceTests.vmsDirectoryFoldsCase()))
+    func bundleIdentityIsTheVolumes() throws {
+        let url = try makeBundle(VMConfiguration(name: "Folded", guestOS: .linux, bootMode: .efi))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let respelled = url.deletingLastPathComponent()
+            .appendingPathComponent(url.lastPathComponent.lowercased(), isDirectory: true)
+        #expect(VMBundleIdentity.spelling(respelled) != VMBundleIdentity.spelling(url))
+
+        #expect(service.bundleIdentity(at: respelled) == service.bundleIdentity(at: url))
+    }
+
+    private static func vmsDirectoryFoldsCase() -> Bool {
+        guard let vmsDirectory = try? VMStorageService().vmsDirectory,
+            let values = try? vmsDirectory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        else { return false }
+        return values.volumeSupportsCaseSensitiveNames == false
+    }
+
     // MARK: - Bundle Extension
 
     @Test("Bundle URL has .kernova extension")

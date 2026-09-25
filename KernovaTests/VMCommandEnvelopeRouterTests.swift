@@ -780,7 +780,7 @@ struct VMCommandEnvelopeRouterTests {
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
 
-        try await harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
         hold.signal()
         let settled = try await waiting.value
 

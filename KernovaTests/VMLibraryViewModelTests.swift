@@ -75,25 +75,6 @@ struct VMLibraryViewModelTests {
         return (vm, suspending)
     }
 
-    /// Lets the verb tasks a gesture just started — an import drop, a clone —
-    /// run their first synchronous segment, where each registers its arrival,
-    /// then waits out every arrival in the library.
-    ///
-    /// The gesture enqueued its tasks on the main actor before this hop, and
-    /// the main actor runs its jobs in order, so the hop returns once every
-    /// one of them has registered.
-    private func settleGestureArrivals(_ viewModel: VMLibraryViewModel) async {
-        await letGestureTasksRegister()
-        await viewModel.awaitArrivalsForTesting()
-    }
-
-    /// The first half of ``settleGestureArrivals(_:)``: returns once the
-    /// gesture's tasks have registered their arrivals, with each arrival's
-    /// write started and not yet resumed.
-    private func letGestureTasksRegister() async {
-        await Task { @MainActor in }.value
-    }
-
     // MARK: - Initial State
 
     @Test("ViewModel starts with empty instances when storage is empty")
@@ -4537,7 +4518,7 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.instances.count == 1)
         let imported = viewModel.instances.first
@@ -4563,7 +4544,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         let imported = try #require(viewModel.instances.first)
         #expect(imported.hostState.startsAutomaticallyOnLaunch == false)
@@ -4590,7 +4571,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
         // rejected the rest with a "preparing operation in progress" error.
@@ -4613,7 +4594,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, second.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         // The second bundle's destination must not collide with the first's — reservation consults
         // in-flight arrivals in `entries`, not just on-disk state, so the not-yet-copied first
@@ -4637,7 +4618,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[source.url] = existing.configuration
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.instances.count == 1)
     }
@@ -4655,7 +4636,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(existing)
 
         _ = viewModel.importVMs(fromDroppedURLs: [bundleURL])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == existing.id)
@@ -4678,7 +4659,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
         #expect(viewModel.instances.count == 3)
@@ -4696,7 +4677,7 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.entries.isEmpty)
         #expect(presenter.showError == true)
@@ -4713,7 +4694,6 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await letGestureTasksRegister()
         let destination = try #require(viewModel.arrivals.first).destinationURL
         await viewModel.awaitArrivalsForTesting()
 
@@ -4735,7 +4715,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, failing.url, third.url])
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.instances.count == 2)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
@@ -4754,7 +4734,6 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await letGestureTasksRegister()
         let imported = try #require(viewModel.arrivals.first { $0.kind == .importing })
         await imported.settle()
 
@@ -4789,7 +4768,7 @@ struct VMLibraryViewModelTests {
         _ = viewModel.importVMs(fromDroppedURLs: firstBatch.map(\.url))
         _ = viewModel.importVMs(fromDroppedURLs: secondBatch.map(\.url))
 
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         // The second trigger reserves synchronously against the first trigger's already-registered
         // arrivals in `entries`, so every bundle imports with a distinct destination — no
@@ -4813,7 +4792,6 @@ struct VMLibraryViewModelTests {
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await letGestureTasksRegister()
 
         // A second, unrelated import shouldn't steal the sidebar's focus from the
         // arrival the user is already watching.
@@ -4837,7 +4815,6 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
 
         #expect(viewModel.entries.count == 2)
         let arrival = viewModel.arrivals.first
@@ -4857,7 +4834,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.arrivals.isEmpty)
         #expect(viewModel.instances.count == 2)
@@ -4879,7 +4856,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.register(instance, storage: storage)
 
         viewModel.cloneVM(instance)
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         #expect(clone.hostState == VMHostState())
@@ -4900,7 +4877,6 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
 
         // The arrival was registered
         #expect(viewModel.arrivals.count == 1)
@@ -4926,7 +4902,6 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
         let destination = try #require(viewModel.arrivals.first).destinationURL
         await viewModel.awaitArrivalsForTesting()
 
@@ -4949,7 +4924,6 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
 
         #expect(viewModel.entries.count == 1)
         #expect(storage.cloneVMBundleCallCount == 0)
@@ -4976,7 +4950,6 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
 
         let clone = try #require(viewModel.arrivals.first { $0.id != existing.id })
         await clone.settle()
@@ -4999,7 +4972,6 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await letGestureTasksRegister()
 
         #expect(viewModel.arrivals.first?.name == "VM Copy 2")
         await viewModel.awaitArrivalsForTesting()
@@ -5035,7 +5007,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
 
         let clone = viewModel.instances.first { $0.id != instance.id }
         #expect(clone != nil)
@@ -5090,7 +5062,7 @@ struct VMLibraryViewModelTests {
     private func clonedMachineID(
         of source: VMInstance, in viewModel: VMLibraryViewModel, guestOS: VMGuestOS
     ) async -> Data? {
-        await settleGestureArrivals(viewModel)
+        await viewModel.awaitArrivalsForTesting()
         let clone = viewModel.instances.first { $0.id != source.id }
         return guestOS == .macOS
             ? clone?.configuration.machineIdentifierData
@@ -5287,7 +5259,6 @@ struct VMLibraryViewModelTests {
         // more, so the stale confirm is refused and logged rather than trashing
         // the VM the user now has.
         viewModel.cancelArrival(arrival)
-        await letGestureTasksRegister()
 
         #expect(viewModel.instances.map(\.id) == [instance.id])
         #expect(storage.deleteVMBundleCallCount == 0)

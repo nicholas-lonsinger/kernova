@@ -51,7 +51,7 @@ enum LibraryEntry {
 
 /// A create, clone or import in flight: the bundle it is writing under the
 /// hidden staging directory, until publication renames it to
-/// ``destinationURL`` and ``VMLibrary/adopt(bundleAt:)`` turns it into a
+/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:)`` turns it into a
 /// ``VMInstance``.
 @MainActor
 @Observable
@@ -98,8 +98,14 @@ final class VMArrival {
         /// A cancel was taken; the write is settling, and nothing publishes.
         case cancelling
         /// The write finished and the rename into the VMs directory is under
-        /// way — past the point a cancel can stop.
+        /// way — past the point a cancel can stop the rename.
         case publishing
+        /// A cancel was taken during the rename: the published bundle goes to
+        /// the Trash instead of becoming a VM.
+        case withdrawing
+        /// The published bundle became this arrival's VM; nothing is left to
+        /// cancel.
+        case adopted
     }
 
     /// The identifier of the VM this arrival becomes.
@@ -118,8 +124,11 @@ final class VMArrival {
 
     var name: String { configuration.name }
 
+    /// Whether a cancel was taken, before the rename or during it.
+    var isCancelling: Bool { stage == .cancelling || stage == .withdrawing }
+
     /// What a surface shows for this row.
-    var displayLabel: String { stage == .cancelling ? "Cancelling\u{2026}" : kind.displayLabel }
+    var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : kind.displayLabel }
 
     @ObservationIgnored private let run: @MainActor (VMArrival) async throws -> VMInstance
 
@@ -149,31 +158,46 @@ final class VMArrival {
     enum CancelDecision: Equatable {
         /// The write was stopped short of publication.
         case cancelled
-        /// An earlier cancel already stopped it.
+        /// The rename was under way; the published bundle goes to the Trash
+        /// before the arrival settles, so nothing receives a VM.
+        case withdrawn
+        /// An earlier cancel already took effect.
         case alreadyCancelling
-        /// The rename is under way; the arrival is about to be a VM.
-        case publishing
+        /// The arrival already became its VM.
+        case adopted
     }
 
-    /// Stops the write short of publication, unless the rename has begun.
+    /// Cancels the arrival: its write is stopped short of publication, or,
+    /// once the rename has begun, its published bundle is withdrawn.
     func requestCancel() -> CancelDecision {
         switch stage {
         case .writing:
             stage = .cancelling
             settled.cancel()
             return .cancelled
-        case .cancelling:
-            return .alreadyCancelling
         case .publishing:
-            return .publishing
+            stage = .withdrawing
+            return .withdrawn
+        case .cancelling, .withdrawing:
+            return .alreadyCancelling
+        case .adopted:
+            return .adopted
         }
     }
 
-    /// Moves the arrival past the last point a cancel can stop it, answering
-    /// `false` when one already has.
+    /// Moves the arrival past the last point a cancel can stop its write,
+    /// answering `false` when one already has.
     func beginPublishing() -> Bool {
         guard stage == .writing else { return false }
         stage = .publishing
+        return true
+    }
+
+    /// Moves a published arrival to its VM, answering `false` when a cancel
+    /// taken during the rename withdraws it instead.
+    func finishPublishing() -> Bool {
+        guard stage == .publishing else { return false }
+        stage = .adopted
         return true
     }
 }

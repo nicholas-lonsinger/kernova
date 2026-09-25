@@ -211,7 +211,7 @@ struct VMCommandEnvelopeRouter {
         case .importVM(let path, let waitForOutcome):
             return .summary(try await commands.importVM(atPath: path, waitForOutcome: waitForOutcome))
         case .cancelPreparing(let selector, let confirmed):
-            try await commands.cancelPreparing(selector, confirmed: confirmed)
+            try commands.cancelPreparing(selector, confirmed: confirmed)
             return .ok
 
         case .editStorageDisk(let selector, let edit):

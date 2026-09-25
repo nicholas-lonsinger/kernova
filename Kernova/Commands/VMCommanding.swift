@@ -230,6 +230,15 @@ protocol VMCommanding: AnyObject {
         _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
     ) async throws -> VMSummary
 
+    /// The clone nobody waits on, which never suspends: the arrival is
+    /// registered and its row answered in the caller's own turn.
+    /// ``clone(_:machineIdentity:waitForOutcome:)`` without `waitForOutcome`
+    /// is this.
+    @discardableResult
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary
+
     func rename(_ selector: VMSelector, to newName: String) throws
 
     /// Deletes the VM's bundle and the external files named in `alsoRemoving`.
@@ -248,15 +257,22 @@ protocol VMCommanding: AnyObject {
     @discardableResult
     func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary
 
+    /// The import nobody waits on, which never suspends — so a batch's
+    /// destinations, and two overlapping triggers', are reserved against each
+    /// other's arrivals. ``importVM(from:waitForOutcome:)`` without
+    /// `waitForOutcome` is this.
+    @discardableResult
+    func beginImport(from url: URL) throws -> VMSummary
+
     /// The same import, named the way a caller holding no grant for the file
     /// names it: the implementation obtains one for `path` first.
     @discardableResult
     func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary
 
-    /// Stops a create, clone or import still writing its bundle and removes
-    /// what it wrote — or, once it is publishing, moves the VM it becomes to
+    /// Cancels a create, clone or import so it becomes no VM: what it wrote is
+    /// removed, or, once it is publishing, its published bundle is moved to
     /// the Trash. Refuses a selector naming a VM.
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) async throws
+    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
 
     // MARK: - Storage Disks
 

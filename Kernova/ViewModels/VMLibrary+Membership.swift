@@ -178,17 +178,6 @@ extension VMLibrary {
         #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
     }
 
-    // MARK: - Publication
-
-    /// Reads the bundle at `url` off the main actor and adopts it — the entry
-    /// publication takes, reading what disk holds after the rename rather than
-    /// what the staged tree held before it.
-    func adopt(bundleAt url: URL) async throws -> Adoption {
-        let reader = bundleReader
-        let scanned = try await Task.detached { try reader.bundle(at: url) }.value
-        return adopt(scanned)
-    }
-
     // MARK: - Directory Watcher
 
     private func startDirectoryWatcher() {
@@ -243,7 +232,7 @@ extension VMLibrary {
                     continue
                 }
                 if let known = entries.first(where: { $0.id == id })?.vm,
-                    Self.isSameBundle(known.bundleURL, bundleURL)
+                    VMBundleIdentity.spelling(known.bundleURL) == VMBundleIdentity.spelling(bundleURL)
                 {
                     confirmedIDs.insert(id)
                     continue
@@ -261,7 +250,7 @@ extension VMLibrary {
                         didChange = true
                     case .alreadyAdopted(let instance):
                         confirmedIDs.insert(instance.id)
-                    case .duplicate:
+                    case .publishing, .duplicate:
                         break
                     }
                 } catch {
@@ -277,9 +266,13 @@ extension VMLibrary {
 
             // Keyed on the listing rather than on what was read, so a bundle
             // whose configuration is momentarily unreadable keeps its VM.
-            let listed = Set(diskBundles.map(Self.bundleKey))
-            for instance in instances
-            where !listed.contains(Self.bundleKey(instance.bundleURL)) && isIdleAtRest(instance) {
+            let listed = Set(diskBundles.compactMap(storageService.bundleIdentity(at:)))
+            for instance in instances where isIdleAtRest(instance) {
+                if let identity = storageService.bundleIdentity(at: instance.bundleURL),
+                    listed.contains(identity)
+                {
+                    continue
+                }
                 // Cancel any in-flight setup task before evicting — otherwise it keeps
                 // mutating an orphan instance the library no longer knows about.
                 instance.setupTask?.cancel()
@@ -399,10 +392,16 @@ extension VMLibrary {
 
     /// Writes, validates, publishes and adopts `arrival`'s bundle.
     ///
-    /// A cancel is decided before the rename: ``VMArrival/beginPublishing()``
-    /// is the last point a cancel stops the arrival, and past it the arrival
-    /// becomes a VM. Up to it, every exit discards the staged tree outright —
-    /// it is app-internal, and its source still exists.
+    /// ``VMArrival/beginPublishing()`` is the last point a cancel stops the
+    /// write; up to it, every exit discards the staged tree outright — it is
+    /// app-internal, and its source still exists. The VM is built from what
+    /// disk holds after the rename, not what the staged tree held before it.
+    /// A cancel taken during the rename is decided in the same main-actor step
+    /// as the adoption: the published bundle goes to the Trash before the
+    /// arrival settles, so nothing that follows the arrival ever receives its
+    /// VM.
+    ///
+    /// Every outcome a cancel produced is thrown as `CancellationError`.
     private func publish(
         _ arrival: VMArrival, writtenBy write: (URL) async throws -> Void
     ) async throws -> VMInstance {
@@ -419,7 +418,7 @@ extension VMLibrary {
             guard arrival.beginPublishing() else { throw CancellationError() }
         } catch {
             await discardStagedTree(at: staged)
-            throw error
+            throw arrival.isCancelling ? CancellationError() : error
         }
         let destination = arrival.destinationURL
         do {
@@ -427,30 +426,73 @@ extension VMLibrary {
                 .value
         } catch {
             await discardStagedTree(at: staged)
-            throw error
+            throw arrival.isCancelling ? CancellationError() : error
         }
         #log(
             Self.logger, .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' published at \(destination.lastPathComponent, privacy: .public)"
         )
-        switch try await adopt(bundleAt: destination) {
+        let scanned: Result<ScannedBundle, any Error>
+        do {
+            scanned = .success(try await Task.detached { try reader.bundle(at: destination) }.value)
+        } catch {
+            scanned = .failure(error)
+        }
+        guard arrival.finishPublishing() else { try await withdraw(arrival, read: scanned) }
+        switch adopt(try scanned.get(), publishing: arrival) {
         case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
             macAddresses.logDuplicateMACAddressHolders()
             return instance
-        case .duplicate:
+        case .publishing, .duplicate:
             throw ArrivalError.identifierInUse(name: arrival.name)
         }
     }
 
-    /// Why a published arrival became no VM.
+    /// Moves the bundle an arrival published after its cancel to the Trash,
+    /// throwing the cancel.
+    ///
+    /// A bundle the Trash turns down stays where it was published, so it is
+    /// adopted as the VM it now is and the refusal is thrown in place of the
+    /// cancel.
+    private func withdraw(
+        _ arrival: VMArrival, read scanned: Result<ScannedBundle, any Error>
+    ) async throws -> Never {
+        let storage = storageService
+        let destination = arrival.destinationURL
+        do {
+            try await Task.detached { try storage.deleteVMBundle(at: destination) }.value
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Could not move the cancelled \(arrival.kind.displayNoun.lowercased(), privacy: .public) of '\(arrival.name, privacy: .public)' to the Trash: \(error.localizedDescription, privacy: .public)"
+            )
+            if case .success(let bundle) = scanned {
+                _ = adopt(bundle, publishing: arrival)
+            }
+            throw ArrivalError.withdrawalFailed(
+                name: arrival.name, reason: error.localizedDescription)
+        }
+        #log(
+            Self.logger, .notice,
+            "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' cancelled during its publication — moved to the Trash"
+        )
+        throw CancellationError()
+    }
+
+    /// Why a published arrival became no VM, or a cancelled one did.
     enum ArrivalError: LocalizedError {
         /// Another bundle took the arrival's identifier while it was written.
         case identifierInUse(name: String)
+        /// A cancel taken during the rename could not move the published
+        /// bundle to the Trash, so it stays in the library.
+        case withdrawalFailed(name: String, reason: String)
 
         var errorDescription: String? {
             switch self {
             case .identifierInUse(let name):
                 "Another virtual machine with the identifier of \u{201C}\(name)\u{201D} is already in the library."
+            case .withdrawalFailed(let name, let reason):
+                "\u{201C}\(name)\u{201D} was already in the library when the cancel took effect, and it couldn\u{2019}t be moved to the Trash: \(reason)"
             }
         }
     }
@@ -473,22 +515,25 @@ extension VMLibrary {
     ///
     /// Taken names are the union of on-disk `.kernova` bundles in `vmsDir` AND
     /// the destinations of every row in the library there: an arrival's copy
-    /// hasn't published yet, so a disk listing alone can't see it. Matched
-    /// case-insensitively to mirror the default case-insensitive APFS volume.
+    /// hasn't published yet, so a disk listing alone can't see it. The
+    /// destination does not exist yet, so it has no file identity: names are
+    /// matched as ``VMBundleIdentity/nameKey(_:)`` folds them.
     func reserveDestination(for sourceURL: URL, in vmsDir: URL) -> URL {
         let onDiskStems =
             (try? FileManager.default.contentsOfDirectory(
                 at: vmsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))?
             .filter { VMStorageService.isBundleURL($0) }
             .map { $0.deletingPathExtension().lastPathComponent } ?? []
-        let vmsDirKey = Self.bundleKey(vmsDir)
+        let vmsDirKey = VMBundleIdentity.nameKey(vmsDir)
         let inFlightStems = entries.compactMap { entry -> String? in
             let url =
                 switch entry {
                 case .vm(let instance): instance.bundleURL
                 case .arriving(let arrival): arrival.destinationURL
                 }
-            guard Self.bundleKey(url.deletingLastPathComponent()) == vmsDirKey else { return nil }
+            guard VMBundleIdentity.nameKey(url.deletingLastPathComponent()) == vmsDirKey else {
+                return nil
+            }
             return url.deletingPathExtension().lastPathComponent
         }
         let name = UniqueName.firstAvailable(
@@ -512,7 +557,7 @@ extension VMLibrary {
     /// The discard is synchronous — the process ends immediately after, so a
     /// detached removal would never run.
     func abandonArrivalsForTermination() {
-        for arrival in arrivals where arrival.stage != .publishing {
+        for arrival in arrivals where arrival.stage == .writing || arrival.stage == .cancelling {
             _ = arrival.requestCancel()
             #log(
                 Self.logger, .notice,

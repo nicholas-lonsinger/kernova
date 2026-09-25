@@ -242,8 +242,18 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         }
     }
 
-    func bundleExists(at bundleURL: URL) -> Bool {
-        files.data(atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL) != nil
+    /// A bundle the store holds is identified as the default case-insensitive
+    /// volume would identify it — every spelling it folds together names that
+    /// one bundle; any other is identified on disk, as a real copy is.
+    func bundleIdentity(at bundleURL: URL) -> VMBundleIdentity? {
+        let key = VMBundleIdentity.nameKey(bundleURL)
+        let held = files.bundleURLs.contains {
+            VMBundleIdentity.nameKey($0) == key
+                && files.data(atRelativePath: VMBundleLayout.configRelativePath, in: $0) != nil
+        }
+        return held
+            ? VMBundleIdentity(fileResourceIdentifier: Data(key.utf8))
+            : VMBundleIdentity(bundleAt: bundleURL)
     }
 
     func discardStagedBundle(at stagedURL: URL) throws {

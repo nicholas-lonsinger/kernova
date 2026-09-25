@@ -1684,15 +1684,15 @@ struct VMCommandCoreTests {
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
         let error = try #require(
-            await commandError {
-                try await harness.core.cancelPreparing(.id(arrival.id), confirmed: false)
+            commandError {
+                try harness.core.cancelPreparing(.id(arrival.id), confirmed: false)
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .cancelPreparing)
         #expect(prompt.confirmTitle == "Cancel Clone")
         #expect(arrival.stage == .writing)
 
-        try await harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
         #expect(arrival.stage == .cancelling)
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
 
@@ -1712,8 +1712,8 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Settled")
 
         let error = try #require(
-            await commandError {
-                try await harness.core.cancelPreparing(.id(instance.id), confirmed: false)
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: false)
             })
         #expect(error.isInvalidState)
         #expect(harness.library.instances.count == 1)
@@ -1728,8 +1728,8 @@ struct VMCommandCoreTests {
         // nothing left being prepared to cancel.
 
         let error = try #require(
-            await commandError {
-                try await harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
             })
 
         #expect(error.isInvalidState)
@@ -1748,8 +1748,8 @@ struct VMCommandCoreTests {
         instance.enter(.running(sessionID: UUID()))
 
         let error = try #require(
-            await commandError {
-                try await harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
             })
 
         #expect(error.isInvalidState)
@@ -3144,7 +3144,7 @@ struct VMCommandCoreTests {
 
         // Taken before the write has had a turn, so the cancel is what the
         // write finds when it finishes.
-        try await harness.core.cancelPreparing(.id(summary.id), confirmed: true)
+        try harness.core.cancelPreparing(.id(summary.id), confirmed: true)
         #expect(await arrival.settle() == nil)
 
         #expect(harness.library.entries.isEmpty)
