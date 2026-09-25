@@ -86,16 +86,39 @@ final class AppResidencyController: WindowResidencyHosting {
     /// outcome it applied.
     private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
 
-    /// Set across ``unhideForSummon(_:)``'s unhide call, and checked by
-    /// ``noteDidUnhide()``. AppKit delivers `applicationDidUnhide` a main-queue
-    /// turn after that call returns, when this is `false` again.
-    private var isUnhidingForSummon = false
+    /// The process-wide calls that take the app out of hiding and ask for it
+    /// to be frontmost.
+    private let foreground: ForegroundControl
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
 
-    init(viewModel: VMLibraryViewModel, windows: AppWindowRegistry) {
+    init(
+        viewModel: VMLibraryViewModel, windows: AppWindowRegistry,
+        foreground: ForegroundControl = .live
+    ) {
         self.viewModel = viewModel
         self.windows = windows
+        self.foreground = foreground
+    }
+
+    /// The `NSApplication` calls that take the app out of hiding and ask for it
+    /// to be frontmost, which a test replaces to drive a summon without hiding
+    /// or activating the test host.
+    struct ForegroundControl: Sendable {
+        /// Whether the app is hidden.
+        var isHidden: @MainActor @Sendable () -> Bool
+        /// Leaves the hidden state without asking for activation.
+        var unhideWithoutActivation: @MainActor @Sendable () -> Void
+        /// Asks for activation; a no-op while the app is already active.
+        var activate: @MainActor @Sendable () -> Void
+
+        static let live = ForegroundControl(
+            isHidden: { NSApp.isHidden },
+            unhideWithoutActivation: { NSApp.unhideWithoutActivation() },
+            activate: {
+                guard !NSApp.isActive else { return }
+                NSApp.activate()
+            })
     }
 
     // MARK: - Automation front doors
@@ -264,11 +287,9 @@ final class AppResidencyController: WindowResidencyHosting {
         {
         case .present:
             // Presentation only, not `summonUserInterface`: whoever launched the
-            // process (Launch Services, a login-item start, Finder) already
-            // requested activation, so a launch leg requests none of its own —
-            // `requestSummonActivation`'s `!NSApp.isActive` guard doesn't cover
-            // this moment, since the app isn't active yet this early in launch.
-            // Arming the auto-start pass rides along with it.
+            // process (Launch Services, a login-item start, Finder) decides
+            // whether it comes forward, and a hidden launch stays hidden. Arming
+            // the auto-start pass rides along with it.
             presentSummonedInterface()
         case .headless:
             setActivationPolicy(.accessory)
@@ -406,8 +427,8 @@ final class AppResidencyController: WindowResidencyHosting {
         }
     }
 
-    /// What a reopen (Dock click, `open`, our own Launch Services self-open)
-    /// does to the GUI, as decided by ``reopenPresentation(hasOnScreenUserWindow:)``.
+    /// What a reopen (a Dock click, `open`) does to the GUI, as decided by
+    /// ``reopenPresentation(hasOnScreenUserWindow:)``.
     enum ReopenPresentation: Equatable {
         /// Present the library.
         case library
@@ -415,24 +436,17 @@ final class AppResidencyController: WindowResidencyHosting {
         case nothing
     }
 
-    /// Decides the reopen leg's presentation, so a reopen our own
-    /// ``requestSummonActivation()`` self-open triggers can't drag a surface a
-    /// per-VM summon didn't ask for back on screen — matching
+    /// Decides the reopen leg's presentation: a window already on screen owns
+    /// it, so a reopen never drags the library forward over a per-VM display or
+    /// clipboard window the status item opened alone — matching
     /// ``summonStatusItemTarget(for:)``'s "opens only the chosen surface" rule.
-    ///
-    /// The self-open's own reopen always sees its target surface as already
-    /// on screen: `summonUserInterface` enqueues the presentation `Task` on
-    /// the main actor before the Launch Services request leaves the process,
-    /// and the reopen Apple Event is only handled on a later main-runloop
-    /// turn.
     nonisolated static func reopenPresentation(hasOnScreenUserWindow: Bool) -> ReopenPresentation {
         hasOnScreenUserWindow ? .nothing : .library
     }
 
     /// The resident app's reopen leg: present the library only when nothing is
     /// already on screen. Never requests activation — a reopen already carries
-    /// one, and a second would make ``requestSummonActivation()``'s self-open
-    /// loop.
+    /// one.
     ///
     /// `hasVisibleWindows` is ignored: AppKit's own count answers a different
     /// question than ``reopenPresentation(hasOnScreenUserWindow:)`` — it counts
@@ -446,109 +460,54 @@ final class AppResidencyController: WindowResidencyHosting {
         }
     }
 
-    /// Brings the resident app's GUI forward: morph to `.regular`, request
-    /// activation, and show the summoned surface.
+    /// Brings the resident app's GUI forward for an in-app click — the status
+    /// item, its clipboard notice, the Dock menu: morph to `.regular`, show the
+    /// summoned surface, then ask for activation.
     ///
-    /// The sole path that requests activation for a summon — a launch or
-    /// reopen leg presents through ``presentSummonedInterface(showing:)``
-    /// directly instead, since it already has one. Idempotent.
+    /// The sole path that asks for activation itself — a launch or reopen leg
+    /// presents through ``presentSummonedInterface()`` instead, since whoever
+    /// delivered it already asked. Idempotent.
     func summonUserInterface() {
         summonUserInterface(showing: .library)
     }
 
     private func summonUserInterface(showing target: SummonTarget) {
-        // Morph to a regular app so the Dock icon + menu bar appear. The
-        // activation request is sent synchronously here — not deferred into the
-        // presentation `Task` below — because the summon owns exactly one
-        // activation request per gesture; issuing it anywhere else would risk a
-        // second one racing the reopen it can trigger.
-        setActivationPolicy(.regular)
         let event = NSApp.currentEvent
         let eventAge = event.map { ProcessInfo.processInfo.systemUptime - $0.timestamp }
         #log(
             Self.logger, .debug,
             "Summon: isActive=\(NSApp.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
         )
-        requestSummonActivation()
-        presentSummonedInterface(showing: target)
-        // Last, after the presentation is enqueued: the unhide notification
-        // arrives a main-queue turn after the call returns, and the reconcile it
-        // schedules must run behind the window show rather than reading a
-        // window list the show has not reached yet.
-        unhideForSummon { NSApp.unhide(nil) }
+        presentSummonedInterface(showing: target, arrival: .summoned)
     }
 
-    /// Leaves the hidden state through `unhide`, so a surface this summon puts
-    /// on screen is actually on it.
-    ///
-    /// A launch that asked for the app hidden — `kernova`'s `hides`, an App
-    /// Intents launch — stays hidden for the life of the process, and a hidden
-    /// app displays no window however it is ordered, `orderFrontRegardless`
-    /// included. Only a summon does this: a `.present` launch builds its library
-    /// behind the hide, where the Dock icon is what brings it forward.
-    private func unhideForSummon(_ unhide: () -> Void) {
-        guard NSApp.isHidden else { return }
-        #log(Self.logger, .notice, "Summoned while hidden — unhiding")
-        // Scoped across the call only: `isHidden` is still `true` when
-        // `unhide(nil)` or `unhideWithoutActivation()` returns, and
-        // `applicationDidUnhide` arrives a main-queue turn later, after the
-        // flag is cleared (observed 2026-09-24), so the unhide leg's reconcile
-        // still runs.
-        isUnhidingForSummon = true
-        unhide()
-        isUnhidingForSummon = false
+    /// Who asks for activation when a surface goes on screen.
+    private enum Arrival {
+        /// A launch, a reopen, a document open or an App Intent: whoever
+        /// delivered it already asked, so the app asks nothing.
+        case delivered
+        /// An in-app click: the app leaves the hidden state, orders the surface
+        /// front, and asks for activation itself.
+        case summoned
     }
 
-    /// Requests activation for a status-item or Dock-menu summon via Launch
-    /// Services; no other path asks Launch Services to activate the app.
-    ///
-    /// Those selections arrive as a FrontBoard scene action with no `NSEvent`
-    /// behind it, and cooperative activation stamps a request with the sending
-    /// process's last user-event time: a request with no event behind it (or
-    /// one sent late, after the stamp has gone stale) is rejected outright
-    /// (`CPS: Rejecting expired request`, observed 2026-08-26 in the
-    /// WindowServer log). Launch Services carries the request on the app's
-    /// behalf, but it matches by bundle identifier and brings forward whichever
-    /// running copy it picks, which need not be this one.
-    private func requestSummonActivation() {
-        guard !NSApp.isActive else { return }
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        configuration.createsNewApplicationInstance = false
-        configuration.addsToRecentItems = false
-        // Captured for the completion closure, which is `@Sendable`.
-        let logger = Self.logger
-        NSWorkspace.shared.openApplication(
-            at: Bundle.main.bundleURL, configuration: configuration
-        ) { _, error in
-            guard let error else { return }
-            #log(
-                logger, .error,
-                "Launch Services summon activation failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Puts the summoned library on screen, without requesting activation.
+    /// Puts the summoned library on screen without requesting activation, for
+    /// a request whose deliverer already asked for it — a launch, a reopen, a
+    /// document open, a link, an App Intent.
     func presentSummonedInterface() {
-        presentSummonedInterface(showing: .library)
+        presentSummonedInterface(showing: .library, arrival: .delivered)
     }
 
-    /// Puts the summoned surface on screen, without requesting activation.
-    ///
-    /// Neither a launch nor a reopen requests activation here: whoever brought
-    /// the process up — Launch Services on a launch (a Finder double-click, a
-    /// login-item start, `open`), or the same set plus our own Launch Services
-    /// self-open on a reopen — already asked for it. A launch or reopen leg
-    /// that called `summonUserInterface` instead would issue a second,
-    /// redundant activation request — and on the reopen leg, our own self-open
-    /// would loop.
-    private func presentSummonedInterface(showing target: SummonTarget) {
+    /// Puts `target` on screen, and for a summon asks for activation once it is
+    /// ordered front.
+    private func presentSummonedInterface(showing target: SummonTarget, arrival: Arrival) {
         // Idempotent — re-asserted here since a reopen can arrive with the
         // policy already `.regular`.
         setActivationPolicy(.regular)
         // Defer the show to the next runloop tick so the menu bar has refreshed
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
+            if arrival == .summoned { self.leaveHiddenState() }
             let summoned: NSWindow?
             switch target {
             case .library:
@@ -561,10 +520,14 @@ final class AppResidencyController: WindowResidencyHosting {
                 self.windows.showClipboard(for: instance)
                 summoned = self.windows.clipboardWindow(for: instance.instanceID)
             }
-            // The activation request above may still be refused; the window has
-            // to arrive either way. `orderFrontRegardless` is the only ordering
-            // call that doesn't depend on the app being active.
+            // Activation may be refused; the window has to arrive either way.
+            // `orderFrontRegardless` is the only ordering call that doesn't
+            // depend on the app being active.
             summoned?.orderFrontRegardless()
+            // After the order-front: WindowServer denies an activation request
+            // from an app presenting no window (`CPS: … presents 0 windows …
+            // Denying the request`, #1377's macOS 27 probe).
+            if arrival == .summoned { self.foreground.activate() }
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
@@ -578,17 +541,38 @@ final class AppResidencyController: WindowResidencyHosting {
         host?.armAutoStartPass()
     }
 
+    /// Leaves the hidden state without asking for activation, so the surface
+    /// the caller puts up next is actually on screen.
+    ///
+    /// A launch that asked for the app hidden — `kernova`'s `hides`, an App
+    /// Intents launch — stays hidden for the life of the process, and a hidden
+    /// app displays no window however it is ordered, `orderFrontRegardless`
+    /// included. A `.present` launch builds its library behind the hide, where
+    /// the Dock icon is what brings it forward, so only a summon and an
+    /// outside request call this.
+    ///
+    /// The caller puts its surface up in the same main-actor job: the unhide
+    /// reconcile ``noteDidUnhide()`` schedules runs as a later job and reads
+    /// the window list, where a surface not yet shown would read as a window
+    /// closed during the hide.
+    private func leaveHiddenState() {
+        guard foreground.isHidden() else { return }
+        #log(Self.logger, .notice, "Surfacing while hidden — unhiding")
+        foreground.unhideWithoutActivation()
+    }
+
     /// Readies the app to put up a surface something outside the process asked
     /// for, without activating it.
     ///
     /// Anything the app does to activate itself is refused with no user event
-    /// behind it, `NSApp.unhide(_:)`'s own activation request included, so this
-    /// unhides without one. Whoever holds the request activates the app: the
-    /// `kernova` tool by pid, a link's opener through its Launch Services
-    /// request, a script that says `activate`.
+    /// behind it, so this asks for none. Whoever holds the request activates
+    /// the app: the `kernova` tool by pid, a link's opener through its Launch
+    /// Services request, a script that says `activate`. Reached through
+    /// ``ActivationRequester/requestActivation()``, right before the verb puts
+    /// its surface up.
     private func prepareForExternalSurface() {
         setActivationPolicy(.regular)
-        unhideForSummon { NSApp.unhideWithoutActivation() }
+        leaveHiddenState()
     }
 
     /// What the resident app is presenting.
@@ -789,10 +773,9 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed, and an unhide is the one moment where a person has just
     /// asked for the app.
     ///
-    /// It runs for an unhide ``unhideForSummon(_:)`` performed too: that
-    /// notification arrives after the flag guarding against it is cleared.
+    /// An unhide the app performs itself runs this too, and finds the surface
+    /// it unhid for already on screen (``leaveHiddenState()``).
     func noteDidUnhide() {
-        guard !isUnhidingForSummon else { return }
         pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
     }
 
