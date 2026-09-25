@@ -177,6 +177,16 @@ struct VMLifecyclePhaseTests {
         }
     }
 
+    @Test("A live identity is held by every phase but the resting ones, file operations included")
+    func holdsLiveIdentity() {
+        let resting: [VMLifecyclePhase] = [
+            .suspended, .stopped, .failed(message: "Boot failed."), .initialBoot,
+        ]
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(phase.holdsLiveIdentity == !resting.contains(phase), "\(phase)")
+        }
+    }
+
     @Test("The two paused meanings are distinct and mutually exclusive")
     func pausedMeaningsAreDistinct() {
         #expect(VMLifecyclePhase.suspended.isColdPaused)

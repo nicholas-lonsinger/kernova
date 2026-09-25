@@ -203,6 +203,24 @@ enum VMLifecyclePhase: Sendable, Equatable {
         return false
     }
 
+    /// Whether the VM counts as holding its machine identity and MAC address
+    /// against another VM's bring-up and a live network-mode switch.
+    ///
+    /// Every phase with a `VZVirtualMachine` in memory or a bring-up that will
+    /// create one, and also ``capturingAtRest`` and ``revertingToSnapshot``,
+    /// which hold no VM. ``suspended`` and the other at-rest phases hold
+    /// nothing: a saved state claims no identity until it is restored.
+    /// Exhaustive rather than `default`, so a new phase has to choose a side.
+    var holdsLiveIdentity: Bool {
+        switch self {
+        case .running, .livePaused, .starting, .installing, .saving, .capturingLive,
+            .capturingAtRest, .restoringSavedState, .revertingToSnapshot:
+            true
+        case .suspended, .stopped, .failed, .initialBoot:
+            false
+        }
+    }
+
     // MARK: - Command Predicates
 
     /// Whether the VM is settled with no `VZVirtualMachine` in memory and no

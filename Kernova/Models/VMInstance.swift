@@ -707,6 +707,10 @@ final class VMInstance {
     /// memory — the in-memory counterpart of a suspension on disk.
     var isLivePaused: Bool { phase.isLivePaused }
 
+    /// Whether this VM holds its identity against another's bring-up — see
+    /// ``VMLifecyclePhase/holdsLiveIdentity``.
+    var holdsLiveIdentity: Bool { phase.holdsLiveIdentity }
+
     /// `true` when the VM is settled with nothing live and no operation in
     /// flight — see ``VMLifecyclePhase/isAtRest``.
     var isAtRest: Bool { phase.isAtRest }

@@ -3,12 +3,8 @@ import KernovaKit
 import KernovaLogging
 
 /// Which identity another live VM already claims — the refusal every bring-up
-/// passes (``VMInstance/beginBringUp(_:)``).
-///
-/// Live means VZ holds the identity, or a bring-up that will hand it to VZ is
-/// under way: any active phase, or paused with the virtual machine still in
-/// memory. A cold-paused VM has released it, and blocking its twin on a saved
-/// state that claims nothing would be wrong.
+/// passes (``VMInstance/beginBringUp(_:)``). Live is
+/// ``VMInstance/holdsLiveIdentity``.
 @MainActor
 final class VMLiveIdentities {
     nonisolated private static let logger = KernovaLogger(
@@ -58,7 +54,7 @@ final class VMLiveIdentities {
     private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
         instances.first { other in
             other !== instance
-                && (other.isActive || other.isLivePaused)
+                && other.holdsLiveIdentity
                 && Self.sharesMachineIdentifier(instance, other)
         }
     }
