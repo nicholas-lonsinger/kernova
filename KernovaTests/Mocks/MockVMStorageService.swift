@@ -252,7 +252,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
                 && files.data(atRelativePath: VMBundleLayout.configRelativePath, in: $0) != nil
         }
         return held
-            ? VMBundleIdentity(fileResourceIdentifier: Data(key.utf8))
+            ? VMBundleIdentity(fileResourceIdentifier: key as NSString)
             : VMBundleIdentity(bundleAt: bundleURL)
     }
 

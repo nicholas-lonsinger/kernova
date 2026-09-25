@@ -7,11 +7,14 @@ import Foundation
 /// default case-insensitive APFS volume — are one bundle. A destination that
 /// does not exist yet has no file identity, so it is matched by
 /// ``nameKey(_:)`` instead, folded the way that volume folds names.
-struct VMBundleIdentity: Hashable, Sendable {
-    /// The directory's `URLResourceKey.fileResourceIdentifierKey` value.
-    let fileResourceIdentifier: Data
+struct VMBundleIdentity: Hashable {
+    typealias Identifier = any NSCopying & NSSecureCoding & NSObjectProtocol
 
-    init(fileResourceIdentifier: Data) {
+    /// The directory's `URLResourceKey.fileResourceIdentifierKey` value — an
+    /// opaque object, compared only with `isEqual(_:)`.
+    let fileResourceIdentifier: Identifier
+
+    init(fileResourceIdentifier: Identifier) {
         self.fileResourceIdentifier = fileResourceIdentifier
     }
 
@@ -26,8 +29,16 @@ struct VMBundleIdentity: Hashable, Sendable {
         // a cached identifier would outlive a rename.
         let identifier = try? URL(filePath: url.path(percentEncoded: false), directoryHint: .isDirectory)
             .resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
-        guard let data = identifier as? Data else { return nil }
-        self.fileResourceIdentifier = data
+        guard let identifier else { return nil }
+        self.fileResourceIdentifier = identifier
+    }
+
+    static func == (lhs: VMBundleIdentity, rhs: VMBundleIdentity) -> Bool {
+        lhs.fileResourceIdentifier.isEqual(rhs.fileResourceIdentifier)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(fileResourceIdentifier.hash)
     }
 
     /// A URL's path as the default case- and normalization-insensitive APFS
