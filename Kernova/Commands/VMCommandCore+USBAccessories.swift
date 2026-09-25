@@ -105,7 +105,11 @@ extension VMCommandCore {
             // rule created only by the prompt would leave a user who plugs a
             // drive in with nothing running, and attaches it from the menu,
             // re-placing it every time.
-            rememberAccessoryEdit(on: instance) {
+            rememberAccessoryEdit(
+                on: instance,
+                failure:
+                    "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
+            ) {
                 try onUserAttachedAccessory?(instance, attached.accessory)
             }
             #log(
@@ -136,7 +140,11 @@ extension VMCommandCore {
             // back by hand is how a user ends a pairing without opening
             // settings, and it is the only way the returning device stays with
             // the Mac.
-            rememberAccessoryEdit(on: instance) {
+            rememberAccessoryEdit(
+                on: instance,
+                failure:
+                    "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there, so \u{201C}\(instance.name)\u{201D} still takes it back automatically the next time it is connected."
+            ) {
                 try onUserReleasedAccessory?(instance, held.accessory)
             }
             #log(
@@ -149,20 +157,19 @@ extension VMCommandCore {
     }
 
     /// Records what an attach or detach means for the accessories `instance`
-    /// takes back, reporting a pairing write that fails.
+    /// takes back, reporting `failure` when the pairing write fails.
     ///
     /// Reported rather than thrown: the device change the verb made stands,
     /// and only its remembering did not land.
-    private func rememberAccessoryEdit(on instance: VMInstance, _ record: () throws -> Void) {
+    private func rememberAccessoryEdit(
+        on instance: VMInstance, failure: String, _ record: () throws -> Void
+    ) {
         do {
             try record()
         } catch {
             report(
                 .operationFailed(
-                    verb: .editUSBAccessory,
-                    message:
-                        "\u{201C}\(instance.name)\u{201D} has the change, but whether it takes the accessory back automatically could not be written. \(error.localizedDescription)"
-                ),
+                    verb: .editUSBAccessory, message: "\(failure) \(error.localizedDescription)"),
                 on: instance)
         }
     }

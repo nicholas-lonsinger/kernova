@@ -269,19 +269,19 @@ final class USBAccessoryCoordinator {
         )
     }
 
-    /// Forgets the pairing a detach the user asked for ends, and arms the token
-    /// that keeps the detach's own echo from undoing it.
+    /// Arms the token that keeps a detach the user asked for from being undone
+    /// by its own echo, and forgets the pairing the detach ends.
     ///
-    /// Both halves or neither: the detach re-enumerates the device and macOS
-    /// hands it straight back, so a forgotten pairing without the token would
-    /// prompt on every detach, and a token without the forgetting would attach
-    /// the device again before the user could pick it up. The token is armed
-    /// only once the forgetting landed, so a write that fails arms nothing and
-    /// throws.
+    /// The detach re-enumerates the device and macOS hands it straight back,
+    /// so without the token a forgotten pairing would prompt on every detach,
+    /// and a kept one would attach the device again before the user could pick
+    /// it up. The token records that the user detached, which holds whether or
+    /// not the forgetting lands, so it is armed first; a forgetting that fails
+    /// throws, and the pairing stays for the device's next arrival.
     func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) throws {
         guard let identity = accessory.identity else { return }
-        try pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
         releasedByUser.insert(identity)
+        try pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"

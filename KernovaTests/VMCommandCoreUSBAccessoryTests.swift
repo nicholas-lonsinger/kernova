@@ -530,6 +530,39 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(instance.usbPairings.isEmpty)
     }
 
+    @Test(
+        "A detach whose forget cannot be written still arms the echo token, so the device is not re-attached, and is reported"
+    )
+    func detachWhoseForgetFailsStillSuppressesTheEcho() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let deviceID = try await attach(accessory, to: instance, in: harness)
+        let key = try #require(accessory.identity?.key)
+        harness.storage.files.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.usbPairingsRelativePath)
+
+        try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
+
+        #expect(reported.count == 1)
+        #expect(reported.first?.message.contains("still takes it back") == true)
+        #expect(instance.usbPairings.pairing(forKey: key) != nil)
+        // The detach's echo: macOS hands the same stick back under a new
+        // registry ID, and the token keeps it with the Mac.
+        service.accessories.removeAll()
+        service.assignComposing(registryID: 8, serial: "0373", receptacle: "hub/Port-A@1")
+        // The token is spent, so a later replug meets the pairing that stayed.
+        service.accessories.removeAll()
+        service.assignComposing(registryID: 9, serial: "0373", receptacle: "hub/Port-A@1")
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+        #expect(service.attachedRegistryIDs.contains(9))
+        #expect(!service.attachedRegistryIDs.contains(8))
+    }
+
     @Test("A detach the lifecycle performs on its own leaves the rule alone")
     func alifecycleEjectKeepsThePairing() async throws {
         let harness = makeHarness()

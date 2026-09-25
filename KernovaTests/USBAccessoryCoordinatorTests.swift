@@ -523,31 +523,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
-    @Test("A detach whose forget cannot be written arms no echo token")
-    func aUserDetachWhoseForgetFailsArmsNoToken() async throws {
-        let service = MockUSBAccessoryService()
-        let instance = makeInstance(sessionID: UUID())
-        let writer = StubUSBAccessoryPairingWriter()
-        let coordinator = try makeCoordinator(
-            makeLifecycle(service), roster: StubVMInstanceRoster([instance]), pairings: writer)
-        defer { withExtendedLifetime(coordinator) {} }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        let pairing = try pair(accessory, with: instance)
-        writer.writeError = CocoaError(.fileWriteNoPermission)
-
-        #expect(throws: CocoaError.self) {
-            try coordinator.userReleased(accessory, from: instance)
-        }
-        #expect(instance.usbPairings.pairing(forKey: pairing.key) != nil)
-
-        // Neither half landed: the rule still stands and nothing suppresses
-        // it, so the device that comes back goes where the rule says.
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [2])
-    }
-
     @Test("The suppression is spent once, so a later replug is offered again")
     func theReleaseTokenIsSpentOnce() throws {
         let service = MockUSBAccessoryService()
