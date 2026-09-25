@@ -70,12 +70,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if isTestHost {
             crashOnObjCExceptions()
         }
+        // Ahead of `NSApplication.shared`, so a second process of a running
+        // copy exits before it connects to the window server.
+        let copyClaim = isTestHost ? nil : claimThisCopy()
         let app = NSApplication.shared
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
         let delegate: any NSApplicationDelegate =
-            isTestHost ? TestHostDelegate() : AppDelegate(copyClaim: claimThisCopy())
+            if let copyClaim { AppDelegate(copyClaim: copyClaim) } else { TestHostDelegate() }
         app.delegate = delegate
         app.run()
     }

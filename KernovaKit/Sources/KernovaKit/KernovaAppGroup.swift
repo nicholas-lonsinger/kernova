@@ -60,12 +60,12 @@ public enum KernovaAppGroup {
     }
 
     /// The command socket of the copy of Kernova at `appBundle`, as the
-    /// filesystem path the socket calls take.
+    /// filesystem path a client connects to.
     ///
-    /// Every copy answers on its own socket, named for its bundle's
-    /// ``CanonicalPath``: the app passes its own bundle and the tool the bundle
-    /// it is inside, so the two ends name one socket however each spelled the
-    /// path, and no two copies share one.
+    /// The tool passes the bundle it is inside. Every copy answers on its own
+    /// socket, named for its bundle's ``CanonicalPath``, so this names the
+    /// socket that copy's ``AppCopyClaim`` binds however the path was spelled,
+    /// and no two copies share one. The app binds only through its claim.
     public static func socketPath(forAppBundle appBundle: URL) throws(CopyPathFailure) -> String {
         guard let container = containerURL() else { throw .noContainer }
         return try CopyFiles(forAppBundle: appBundle, in: container).socketPath
