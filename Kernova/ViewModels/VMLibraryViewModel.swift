@@ -62,10 +62,7 @@ final class VMLibraryViewModel {
     // computed accessors, which read the library's own stored properties.
     // Nothing here is a VM verb; each is documented on ``VMLibrary``.
 
-    var instances: [VMInstance] {
-        get { library.instances }
-        set { library.instances = newValue }
-    }
+    var instances: [VMInstance] { library.instances }
 
     var selectedID: UUID? {
         get { library.selectedID }

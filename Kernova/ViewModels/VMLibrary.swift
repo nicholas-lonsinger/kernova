@@ -89,7 +89,15 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     // MARK: - State
 
-    var instances: [VMInstance] = []
+    private(set) var instances: [VMInstance] = []
+
+    #if DEBUG
+    /// Adds `instance` to the library as it stands, unwired and unread — a
+    /// test's stand-in for a VM a load would have adopted.
+    func admitForTesting(_ instance: VMInstance) {
+        instances.append(instance)
+    }
+    #endif
 
     /// Whether the library's first read from disk has finished.
     ///

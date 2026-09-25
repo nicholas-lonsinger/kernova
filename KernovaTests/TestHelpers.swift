@@ -107,7 +107,7 @@ extension VMLibrary {
             files.forward(to: storage.files)
         }
         wireHooks(for: instance)
-        instances.append(instance)
+        admitForTesting(instance)
     }
 
     /// Applies `mutate` to `instance`'s host state as setup a test relies on,
