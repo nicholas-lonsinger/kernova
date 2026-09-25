@@ -25,6 +25,9 @@ struct VMCommandCoreTests {
         let vmnet: MockVmnetNetworkProvider
         let arpTable: ScriptedARPTable
         let authority: MockSandboxSourceAuthority
+        /// The library's password store, read by identifier — the one way to
+        /// ask about an arrival that never became a VM.
+        let passwords: InMemoryGuestAccountPasswordStore
     }
 
     private func makeHarness(
@@ -38,6 +41,7 @@ struct VMCommandCoreTests {
         let fileSystem = MockFileSystem()
         let vmnet = MockVmnetNetworkProvider()
         let arpTable = ScriptedARPTable()
+        let passwords = InMemoryGuestAccountPasswordStore()
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
             installService: install,
@@ -49,7 +53,8 @@ struct VMCommandCoreTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnet,
-            arpTable: arpTable)
+            arpTable: arpTable,
+            guestAccountPasswords: passwords)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -65,7 +70,7 @@ struct VMCommandCoreTests {
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
             virtualization: virtualization, snapshots: snapshots, fileSystem: fileSystem,
-            vmnet: vmnet, arpTable: arpTable, authority: authority)
+            vmnet: vmnet, arpTable: arpTable, authority: authority, passwords: passwords)
     }
 
     private struct SuspendingHarness {
@@ -407,22 +412,20 @@ struct VMCommandCoreTests {
         #expect(surfaced == 0)
     }
 
-    @Test("open refuses a phantom whose bundle is still being copied")
-    func openRefusesAPreparingVM() throws {
+    @Test("open refuses an arrival whose bundle is still being copied")
+    func openRefusesAnArrival() async throws {
         let harness = makeHarness()
-        // An imported bundle carrying a save file rests its phantom `.paused`,
-        // which reads as having a display while the copy is still writing.
-        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var surfaced = 0
         harness.core.surfaceDisplay = { _ in surfaced += 1 }
 
-        let error = try #require(commandError { try harness.core.open(.id(instance.id)) })
+        let error = try #require(commandError { try harness.core.open(.id(arrival.id)) })
 
         #expect(error.isBusy)
         #expect(surfaced == 0)
-        #expect(!harness.core.allowedVerbs(for: instance).contains(.open))
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("reveal surfaces the display of a VM that has one")
@@ -432,7 +435,7 @@ struct VMCommandCoreTests {
         var surfaced: [UUID] = []
         var revealed: [UUID] = []
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
-        harness.core.revealInLibrary = { revealed.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0) }
 
         try harness.core.reveal(.id(instance.id))
 
@@ -447,7 +450,7 @@ struct VMCommandCoreTests {
         var surfaced: [UUID] = []
         var revealed: [UUID] = []
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
-        harness.core.revealInLibrary = { revealed.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0) }
 
         try harness.core.reveal(.id(instance.id))
 
@@ -455,23 +458,22 @@ struct VMCommandCoreTests {
         #expect(surfaced.isEmpty)
     }
 
-    @Test("reveal of a phantom still being copied lands on its library row")
-    func revealOfAPreparingVMLandsInTheLibrary() throws {
+    @Test("reveal of an arrival still being copied lands on its library row")
+    func revealOfAnArrivalLandsInTheLibrary() async throws {
         let harness = makeHarness()
-        // The phantom of an import carrying a save file rests `.paused`, which
-        // reads as having a display the copy has not finished writing.
-        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var surfaced: [UUID] = []
         var revealed: [UUID] = []
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
-        harness.core.revealInLibrary = { revealed.append($0.id) }
+        harness.core.revealInLibrary = { revealed.append($0) }
 
-        try harness.core.reveal(.id(instance.id))
+        try harness.core.reveal(.id(arrival.id))
 
-        #expect(revealed == [instance.id])
+        #expect(revealed == [arrival.id])
         #expect(surfaced.isEmpty)
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
     /// What a surfacing verb did, in order, under an installed requester.
@@ -487,7 +489,10 @@ struct VMCommandCoreTests {
         let stopped = makeInstance(in: harness, name: "Stopped")
         let trace = SurfaceSteps()
         harness.core.surfaceDisplay = { trace.steps.append("display \($0.name)") }
-        harness.core.revealInLibrary = { trace.steps.append("library \($0.name)") }
+        harness.core.revealInLibrary = { id in
+            let name = harness.library.entries.first { $0.id == id }?.name ?? "?"
+            trace.steps.append("library \(name)")
+        }
         let requester = ActivationRequester { trace.steps.append("activate") }
 
         try ActivationRequester.$current.withValue(requester) {
@@ -768,20 +773,6 @@ struct VMCommandCoreTests {
         #expect(verbs.contains(.clone))
     }
 
-    @Test("A preparing VM reports its reads and the cancel that stops the copy")
-    func allowedVerbsWhilePreparing() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-
-        #expect(
-            harness.core.allowedVerbs(for: instance) == [
-                .info, .ipAddress, .snapshots, .reveal, .cancelPreparing,
-            ])
-    }
-
     /// Virtualization takes a termination only from a Running or Paused
     /// machine, so a restore still loading is refused before the destructive
     /// consent is ever asked for — not after taking it and doing nothing.
@@ -959,50 +950,54 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.pauseCallCount == 0)
     }
 
-    @Test("A verb refuses a VM whose clone or import is still copying")
-    func refusesAPreparingVM() async throws {
+    @Test("A verb refuses an arrival whose clone or import is still copying")
+    func refusesAnArrival() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        instance.preparingState = VMInstance.PreparingState(
-            operation: .importing, task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(.importing, named: "Copying", gate: gate)
 
         let error = try #require(
-            await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
+            await commandError { try await harness.core.start(.id(arrival.id), recovery: false) })
         guard case .busy(let vm, let operation) = error else {
             Issue.record("expected a busy refusal, got \(error)")
             return
         }
-        #expect(vm.id == instance.id)
+        #expect(vm.id == arrival.id)
+        #expect(vm.status == "preparing")
         #expect(operation == "import")
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
-    @Test("A state gate reached while preparing reports busy, not a self-contradictory invalid state")
-    func invalidStateReportsBusyWhilePreparing() async throws {
+    @Test("A state-gated verb aimed at an arrival reports busy with its copy, not an invalid state")
+    func stateGatedVerbReportsBusyForAnArrival() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
-        let error = try #require(await commandError { try await harness.core.pause(.id(instance.id)) })
+        let error = try #require(await commandError { try await harness.core.pause(.id(arrival.id)) })
         guard case .busy(let vm, let operation) = error else {
             Issue.record("expected a busy refusal, got \(error)")
             return
         }
-        #expect(vm.id == instance.id)
+        #expect(vm.id == arrival.id)
         #expect(operation == "clone")
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
-    @Test("resume refuses a VM whose clone or import is still copying")
-    func resumeRefusesAPreparingVM() async throws {
+    @Test("resume refuses an arrival whose clone or import is still copying")
+    func resumeRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying", phase: .suspended)
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(.importing, named: "Copying", gate: gate)
 
-        let error = try #require(await commandError { try await harness.core.resume(.id(instance.id)) })
+        let error = try #require(await commandError { try await harness.core.resume(.id(arrival.id)) })
         #expect(error.isBusy)
         #expect(harness.virtualization.resumeCallCount == 0)
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("start refused mid-install names cancelGuestSetup as the way out")
@@ -1684,63 +1679,78 @@ struct VMCommandCoreTests {
     @Test("A cancel with no consent refuses, and confirming marks the row cancelling")
     func cancelPreparingAsksForConsent() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying")
-        let copy = Task<Void, Never> { try? await Task.sleep(for: .seconds(60)) }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: copy)
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
         let error = try #require(
-            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: false) })
+            commandError {
+                try harness.core.cancelPreparing(.id(arrival.id), confirmed: false)
+            })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .cancelPreparing)
         #expect(prompt.confirmTitle == "Cancel Clone")
-        #expect(instance.preparingState?.isCancelling == false)
+        #expect(arrival.stage == .writing)
 
-        try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
-        #expect(instance.preparingState?.isCancelling == true)
-        copy.cancel()
-        instance.preparingState = nil
+        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        #expect(arrival.stage == .cancelling)
+        #expect(arrival.displayLabel == "Cancelling\u{2026}")
+
+        // The row stays until the uninterruptible write settles, then leaves
+        // with what it wrote.
+        #expect(harness.library.entries.contains { $0.id == arrival.id })
+        gate.release()
+        #expect(await arrival.settle() == nil)
+        #expect(!harness.library.entries.contains { $0.id == arrival.id })
+        #expect(harness.storage.discardedStagedURLs == harness.storage.stagedBundleURLs)
+        #expect(harness.storage.publishBundleCallCount == 0)
     }
 
     @Test("A cancel aimed at a VM that is not copying has no confirmation to ask for")
-    func cancelPreparingRefusesAnOrdinaryVM() throws {
+    func cancelPreparingRefusesAnOrdinaryVM() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Settled")
 
         let error = try #require(
-            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: false) })
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: false)
+            })
         #expect(error.isInvalidState)
         #expect(harness.library.instances.count == 1)
     }
 
-    @Test("A cancel confirmed after the copy settled still removes the row and the bundle")
-    func cancelPreparingAfterTheCopySettledCleansUp() async throws {
+    @Test("A confirmed cancel naming a VM at rest refuses rather than trashing it")
+    func confirmedCancelOfAVMAtRestRefuses() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Copied")
         // The confirmation sheet is window-modal but nothing pauses the copy, so
-        // it can finish while the sheet is up — leaving a completed VM behind
-        // that the user has just asked not to have.
-        instance.preparingState = nil
+        // it can finish while the sheet is up — and once it is a VM there is
+        // nothing left being prepared to cancel.
 
-        try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+        let error = try #require(
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+            })
 
-        #expect(harness.library.instances.isEmpty)
-        try await harness.fileSystem.recorded.wait {
-            harness.fileSystem.trashedURLs == [instance.bundleURL]
-        }
+        #expect(error.isInvalidState)
+        #expect(harness.library.instances.count == 1)
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
     @Test("A cancel confirmed after the settled clone was started refuses rather than trashing it")
-    func cancelPreparingAfterTheCopySettledRefusesALiveVM() throws {
+    func cancelPreparingAfterTheCopySettledRefusesALiveVM() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Copied")
         // The sheet leaves the menu key equivalents live, so the finished clone
         // can be running by the time the stale confirm lands — and its bundle
         // holds the disks that guest is booted off.
-        instance.preparingState = nil
         instance.enter(.running(sessionID: UUID()))
 
         let error = try #require(
-            commandError { try harness.core.cancelPreparing(.id(instance.id), confirmed: true) })
+            commandError {
+                try harness.core.cancelPreparing(.id(instance.id), confirmed: true)
+            })
 
         #expect(error.isInvalidState)
         #expect(harness.library.instances.count == 1)
@@ -1981,48 +1991,67 @@ struct VMCommandCoreTests {
         #expect(!harness.core.allowedVerbs(for: instance).contains(.rename))
     }
 
-    @Test("rename refuses only a VM whose clone or import is still copying")
-    func renameRefusesAPreparingVM() throws {
+    @Test("rename refuses an arrival whose clone or import is still copying")
+    func renameRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
         #expect(
-            commandError { try harness.core.rename(.id(instance.id), to: "After") }?.isBusy == true)
-        #expect(instance.name == "Copying")
-        instance.preparingState = nil
+            commandError { try harness.core.rename(.id(arrival.id), to: "After") }?.isBusy == true)
+        #expect(arrival.name == "Copying")
+        #expect(harness.storage.saveConfigurationCallCount == 0)
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("clone registers a copying row and refuses a VM that is not at rest")
-    func cloneRegistersAPhantom() async throws {
+    func cloneRegistersAnArrival() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
 
-        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: true)
 
         #expect(harness.library.instances.count == 2)
         #expect(harness.library.instances.contains { $0.id == summary.id })
-        let phantom = harness.library.instances.first { $0.id == summary.id }
-        #expect(phantom?.preparingState?.operation == .cloning(sourceID: instance.id))
-        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
-        }
+        #expect(harness.library.arrivals.isEmpty)
 
         instance.enter(.running(sessionID: UUID()))
         #expect(
-            commandError { _ = try harness.core.clone(.id(instance.id), machineIdentity: .new) }?
-                .isInvalidState == true)
+            await commandError {
+                _ = try await harness.core.clone(
+                    .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            }?.isInvalidState == true)
+        #expect(harness.library.arrivals.isEmpty)
+    }
+
+    @Test("A clone's arrival names its source until the copy settles")
+    func cloneArrivalNamesItsSource() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
+
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+
+        let arrival = try #require(harness.library.arrivals.first)
+        #expect(arrival.id == summary.id)
+        #expect(arrival.kind == .cloning(sourceID: instance.id))
+        hold.signal()
+        await arrival.settle()
+        #expect(harness.library.instances.count == 2)
     }
 
     @Test("A delete of a VM whose clone is still copying is refused as busy")
     func deleteRefusesASourceBeingCloned() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        let phantom = makeInstance(in: harness, name: "Source Copy")
-        let task = Task {}
-        defer { task.cancel() }
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: instance.id), task: task)
+        let gate = GatedArrivalWrite()
+        let clone = harness.library.beginGatedArrival(
+            .cloning(sourceID: instance.id), named: "Source Copy", gate: gate)
 
         let deleteError = try #require(
             await commandError {
@@ -2036,6 +2065,9 @@ struct VMCommandCoreTests {
         #expect(vm.id == instance.id)
         #expect(operation == "being cloned")
         #expect(harness.library.instances.contains { $0.id == instance.id })
+        _ = clone.requestCancel()
+        gate.release()
+        await clone.settle()
     }
 
     @Test("delete trashes the bundle and drops the row")
@@ -2177,7 +2209,7 @@ struct VMCommandCoreTests {
         harness.authority.substitute = picked
 
         let summary = try await harness.core.importVM(
-            atPath: "/Users/somebody/Desktop/Asked.kernova")
+            atPath: "/Users/somebody/Desktop/Asked.kernova", waitForOutcome: true)
 
         #expect(harness.authority.requests.map(\.source) == [.vmBundle])
         #expect(
@@ -2186,9 +2218,6 @@ struct VMCommandCoreTests {
         // Nothing answers for the asked-about path, so an import that read it
         // instead of the picked bundle would have failed rather than named one.
         #expect(summary.name == "Picked")
-        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
-        }
         #expect(harness.library.instances.map(\.name) == ["Picked"])
     }
 
@@ -2204,14 +2233,11 @@ struct VMCommandCoreTests {
             $0 = USBAccessoryPairingSet(pairings: [pairing])
         }
 
-        _ = try harness.core.importVM(from: source)
-        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
-        }
+        _ = try await harness.core.importVM(from: source, waitForOutcome: true)
 
         let imported = try #require(harness.library.instances.first)
         defer { try? FileManager.default.removeItem(at: imported.bundleURL) }
-        #expect(!imported.isPreparing)
+        #expect(harness.library.arrivals.isEmpty)
         #expect(imported.usbPairings.pairings.map(\.key) == [pairing.key])
     }
 
@@ -2223,7 +2249,8 @@ struct VMCommandCoreTests {
             message: "Kernova was not given permission to read \u{201C}Asked.kernova\u{201D}.")
 
         await #expect(throws: CommandError.self) {
-            _ = try await harness.core.importVM(atPath: "/Users/somebody/Desktop/Asked.kernova")
+            _ = try await harness.core.importVM(
+                atPath: "/Users/somebody/Desktop/Asked.kernova", waitForOutcome: false)
         }
 
         #expect(harness.library.instances.isEmpty)
@@ -2332,65 +2359,72 @@ struct VMCommandCoreTests {
     func cloneReportsPreparingWireStatus() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
 
-        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         #expect(summary.status == "preparing")
         #expect(harness.core.list().first { $0.id == summary.id }?.status == "preparing")
         #expect(try harness.core.info(.id(summary.id)).status == "preparing")
 
-        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
-        }
+        hold.signal()
+        await harness.library.arrivals.first { $0.id == summary.id }?.settle()
+        #expect(harness.core.list().first { $0.id == summary.id }?.status == "stopped")
     }
 
-    @Test("A preparing phantom's addition reports the preparing wire status")
+    @Test("An arrival's addition reports the preparing wire status")
     func addedEventReportsPreparingStatus() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         var events = VMLibraryEventReader(harness.core.events())
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
 
-        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         var added: VMLibraryEvent?
         while let event = await events.next() {
-            if case .added(let phantomSummary) = event, phantomSummary.id == summary.id {
+            if case .added(let arrivalSummary) = event, arrivalSummary.id == summary.id {
                 added = event
                 break
             }
         }
-        guard case .added(let phantomSummary)? = added else {
+        guard case .added(let arrivalSummary)? = added else {
             Issue.record("expected an addition")
             return
         }
-        #expect(phantomSummary.status == "preparing")
+        #expect(arrivalSummary.status == "preparing")
 
-        for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
-            await task.value
-        }
+        hold.signal()
+        await harness.library.arrivals.first { $0.id == summary.id }?.settle()
     }
 
-    @Test("A preparing row settling reports the wire-status transition")
-    func preparingSettleReportsStatusChanged() async throws {
+    @Test("An arrival settling reports the wire-status transition")
+    func arrivalSettleReportsStatusChanged() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Cloning")
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Cloning", gate: gate)
 
         var events = VMLibraryEventReader(harness.core.events())
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
 
         let event = try #require(await events.next())
         guard case .statusChanged(let id, let name, let from, let to) = event else {
             Issue.record("expected a status change, got \(event)")
             return
         }
-        #expect(id == instance.id)
+        #expect(id == arrival.id)
         #expect(name == "Cloning")
         #expect(from == "preparing")
         #expect(to == "stopped")
     }
 
-    @Test("A clone whose copy fails reports the failure directly, then the phantom's removal")
+    @Test("A clone whose copy fails reports the failure directly, then the arrival's removal")
     func cloneFailureReportsFailureThenRemoval() async throws {
         let harness = makeHarness()
         let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
@@ -2398,9 +2432,8 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Source")
         var events = VMLibraryEventReader(harness.core.events())
 
-        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -2413,7 +2446,7 @@ struct VMCommandCoreTests {
             Issue.record("expected a failure event")
             return
         }
-        #expect(id == phantom.id)
+        #expect(id == summary.id)
         #expect(message == cloneError.localizedDescription)
 
         let removed = try #require(await events.next())
@@ -2421,7 +2454,7 @@ struct VMCommandCoreTests {
             Issue.record("expected a removal, got \(removed)")
             return
         }
-        #expect(removedID == phantom.id)
+        #expect(removedID == summary.id)
     }
 
     @Test("A clone left with no disk fails rather than publishing a re-synthesized Disk.asif")
@@ -2434,9 +2467,8 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Source") { $0.storageDisks = [missing] }
         var events = VMLibraryEventReader(harness.core.events())
 
-        let summary = try harness.core.clone(.id(instance.id), machineIdentity: .new)
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let summary = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -2449,14 +2481,14 @@ struct VMCommandCoreTests {
             Issue.record("expected a failure event")
             return
         }
-        #expect(id == phantom.id)
+        #expect(id == summary.id)
         let removed = try #require(await events.next())
         guard case .removed(let removedID, _) = removed else {
             Issue.record("expected a removal, got \(removed)")
             return
         }
-        #expect(removedID == phantom.id)
-        #expect(!harness.library.instances.contains { $0.id == phantom.id })
+        #expect(removedID == summary.id)
+        #expect(!harness.library.entries.contains { $0.id == summary.id })
         #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == false)
     }
 
@@ -2464,8 +2496,8 @@ struct VMCommandCoreTests {
     func cloneCopiesDiskAsifOnlyWhenReferenced() async throws {
         let harness = makeHarness()
         let withMain = makeInstance(in: harness, name: "With Main") { $0.storageDisks = nil }
-        let summary = try harness.core.clone(.id(withMain.id), machineIdentity: .new)
-        await harness.library.instances.first { $0.id == summary.id }?.preparingState?.task.value
+        _ = try await harness.core.clone(
+            .id(withMain.id), machineIdentity: .new, waitForOutcome: true)
         #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == true)
 
         let withoutMain = makeInstance(in: harness, name: "Without Main") {
@@ -2473,8 +2505,8 @@ struct VMCommandCoreTests {
                 StorageDisk(path: "/tmp/external.img", label: "External", isInternal: false)
             ]
         }
-        let external = try harness.core.clone(.id(withoutMain.id), machineIdentity: .new)
-        await harness.library.instances.first { $0.id == external.id }?.preparingState?.task.value
+        _ = try await harness.core.clone(
+            .id(withoutMain.id), machineIdentity: .new, waitForOutcome: true)
         #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == false)
     }
 
@@ -2495,11 +2527,14 @@ struct VMCommandCoreTests {
         #expect(from == "Before")
         #expect(to == "After")
 
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let error = try #require(
-            commandError { try harness.core.rename(.id(instance.id), to: "Later") })
+            commandError { try harness.core.rename(.id(arrival.id), to: "Later") })
         #expect(error.isBusy)
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - Where failures go
@@ -3083,13 +3118,14 @@ struct VMCommandCoreTests {
         let summary = try harness.core.create(
             configuration: configuration, startAfterCreate: true,
             guestAccountPassword: "analytical-engine")
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        #expect(harness.passwords.password(for: summary.id) != nil)
+        await arrival.settle()
 
         // The row never became a VM, so the answer held for it goes with it —
-        // eviction is where that happens, whichever way the row leaves.
-        #expect(harness.library.instances.isEmpty)
-        #expect(harness.library.heldGuestAccountPassword(for: phantom) == nil)
+        // the arrival's removal is where that happens.
+        #expect(harness.library.entries.isEmpty)
+        #expect(harness.passwords.password(for: summary.id) == nil)
     }
 
     @available(macOS 27.0, *)
@@ -3103,16 +3139,16 @@ struct VMCommandCoreTests {
         let summary = try harness.core.create(
             configuration: configuration, startAfterCreate: false,
             guestAccountPassword: "analytical-engine")
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
-        #expect(harness.library.heldGuestAccountPassword(for: phantom) != nil)
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        #expect(harness.passwords.password(for: summary.id) != nil)
 
-        // The cancel landing after the copy settled: the row is removed and the
-        // finished bundle trashed, which is the same eviction.
-        try harness.core.cancelPreparing(.id(phantom.id), confirmed: true)
+        // Taken before the write has had a turn, so the cancel is what the
+        // write finds when it finishes.
+        try harness.core.cancelPreparing(.id(summary.id), confirmed: true)
+        #expect(await arrival.settle() == nil)
 
-        #expect(harness.library.instances.isEmpty)
-        #expect(harness.library.heldGuestAccountPassword(for: phantom) == nil)
+        #expect(harness.library.entries.isEmpty)
+        #expect(harness.passwords.password(for: summary.id) == nil)
     }
 
     @available(macOS 27.0, *)
@@ -3246,9 +3282,9 @@ struct VMCommandCoreTests {
         let summary = try harness.core.create(
             configuration: configuration, startAfterCreate: true,
             guestAccountPassword: "analytical-engine")
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
-        try await waitForChange { phantom.isActive }
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        let created = try #require(await arrival.settle())
+        try await waitForChange { created.isActive }
 
         // The boot the create chained carried the wizard's password, so the user
         // is never asked again for what they just typed.
@@ -3267,14 +3303,14 @@ struct VMCommandCoreTests {
         let summary = try harness.core.create(
             configuration: configuration, startAfterCreate: false,
             guestAccountPassword: "analytical-engine")
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        let created = try #require(await arrival.settle())
 
         #expect(harness.virtualization.startCallCount == 0)
-        #expect(phantom.configuration.pendingGuestAccount == makeAccountIntent())
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(phantom))
+        #expect(created.configuration.pendingGuestAccount == makeAccountIntent())
+        #expect(!harness.core.capabilities.owesGuestAccountAnswer(created))
 
-        try await harness.core.start(phantom)
+        try await harness.core.start(created)
 
         #expect(harness.virtualization.lastStartProvisioning?.password == "analytical-engine")
     }
@@ -3325,16 +3361,20 @@ struct VMCommandCoreTests {
         diskImages.createDiskImageError = NSError(domain: "test", code: 1)
         let harness = makeHarness(diskImages: diskImages)
         var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let reportedGate = AsyncGate()
+        harness.core.onFailure = { failure, _ in
+            reported.append(failure)
+            reportedGate.notify()
+        }
 
-        // The write fails after the phantom row is registered, so the sheet
-        // that asked is long gone and the hook is all the failure has.
-        let summary = try harness.core.create(
+        // The write fails after the arrival is registered, so the sheet that
+        // asked is long gone and the hook is all the failure has.
+        _ = try harness.core.create(
             configuration: VMConfiguration(name: "Disk Fail VM", guestOS: .linux, bootMode: .efi),
             startAfterCreate: false, guestAccountPassword: nil)
-        await harness.library.instances.first { $0.id == summary.id }?.preparingState?.task.value
+        try await reportedGate.wait { !reported.isEmpty }
 
-        #expect(harness.library.instances.isEmpty)
+        #expect(harness.library.entries.isEmpty)
         guard case .operationFailed(let verb, _, _, _) = reported.first else {
             Issue.record("Expected an operationFailed, got \(String(describing: reported.first))")
             return

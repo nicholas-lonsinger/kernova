@@ -236,13 +236,4 @@ struct VMBundleRead: Sendable {
         self.usbPairings = usbPairings
         self.pairingsUnreadable = pairingsUnreadable
     }
-
-    /// The same read, of the bundle a rename has just moved to `url` — the
-    /// bytes a publication moves are exactly the ones read.
-    func relocated(to url: URL) -> VMBundleRead {
-        VMBundleRead(
-            files: VMBundleFiles(url: url, access: files.access), configuration: configuration,
-            hostState: hostState, snapshotManifest: snapshotManifest, usbPairings: usbPairings,
-            pairingsUnreadable: pairingsUnreadable)
-    }
 }

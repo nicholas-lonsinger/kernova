@@ -24,9 +24,10 @@ import KernovaKit
 /// implementation detail — if it is ever revisited, only the implementation
 /// moves.
 ///
-/// A verb that completes synchronously is spelled synchronously. Reserving an
-/// import destination is the case that matters: a batch's reservations have to
-/// see each other's phantom rows, which one suspension point between them would
+/// A verb that completes synchronously is spelled synchronously. A create,
+/// clone or import registers its arrival before its first suspension point,
+/// whether or not it then waits: a batch's destination reservations have to
+/// see each other's arrivals, which one suspension point between them would
 /// break.
 @MainActor
 protocol VMCommanding: AnyObject {
@@ -172,8 +173,8 @@ protocol VMCommanding: AnyObject {
 
     /// Selects the VM's bundle in the Finder.
     ///
-    /// A bundle a create, clone or import is still writing lives under a hidden
-    /// staging path until the write is published, so a preparing VM refuses.
+    /// A create, clone or import still writing its bundle is no VM yet, so it
+    /// refuses.
     func showInFinder(_ selector: VMSelector) throws
 
     // MARK: - Snapshots
@@ -218,9 +219,25 @@ protocol VMCommanding: AnyObject {
         guestAccountPassword: String?
     ) throws -> VMSummary
 
-    /// Copies the VM's bundle into a new one, answering the row the copy fills.
+    /// Copies the VM's bundle into a new one.
+    ///
+    /// `waitForOutcome` answers the VM the copy became, throwing the copy's
+    /// failure to this call alone; without it the arrival's row is answered at
+    /// once, and a failure reaches ``VMCommandCore/onFailure``. Either way the
+    /// arrival is registered before this call first suspends.
     @discardableResult
-    func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary
+    func clone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+    ) async throws -> VMSummary
+
+    /// The clone nobody waits on, which never suspends: the arrival is
+    /// registered and its row answered in the caller's own turn.
+    /// ``clone(_:machineIdentity:waitForOutcome:)`` without `waitForOutcome`
+    /// is this.
+    @discardableResult
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary
 
     func rename(_ selector: VMSelector, to newName: String) throws
 
@@ -232,28 +249,30 @@ protocol VMCommanding: AnyObject {
         _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
     ) async throws
 
-    /// Copies a `.kernova` bundle into the library, answering the row the copy
-    /// fills — or the existing row when the bundle is already in the library.
+    /// Copies a `.kernova` bundle into the library — answering the existing
+    /// row when the bundle is already in the library, and joining the import
+    /// already copying it when there is one.
+    ///
+    /// `waitForOutcome` is ``clone(_:machineIdentity:waitForOutcome:)``'s.
     @discardableResult
-    func importVM(from url: URL) throws -> VMSummary
+    func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary
+
+    /// The import nobody waits on, which never suspends — so a batch's
+    /// destinations, and two overlapping triggers', are reserved against each
+    /// other's arrivals. ``importVM(from:waitForOutcome:)`` without
+    /// `waitForOutcome` is this.
+    @discardableResult
+    func beginImport(from url: URL) throws -> VMSummary
 
     /// The same import, named the way a caller holding no grant for the file
     /// names it: the implementation obtains one for `path` first.
     @discardableResult
-    func importVM(atPath path: String) async throws -> VMSummary
+    func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary
 
-    /// Cancels an in-flight create, clone or import and removes its row.
+    /// Cancels a create, clone or import so it becomes no VM: what it wrote is
+    /// removed, or, once it is publishing, its published bundle is moved to
+    /// the Trash. Refuses a selector naming a VM.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
-
-    /// Waits for a create, clone or import that is still writing its bundle to
-    /// settle, answering the settled row.
-    ///
-    /// Answers at once for a VM that is not preparing. Throws the copy's own
-    /// failure when it failed — the same ``CommandError`` the unattended
-    /// ``VMCommandCore/onFailure`` hook receives — and an
-    /// ``CommandError/operationFailed(verb:title:message:recovery:)`` when it
-    /// was cancelled.
-    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary
 
     // MARK: - Storage Disks
 

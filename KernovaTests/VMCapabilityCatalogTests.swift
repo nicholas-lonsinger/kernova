@@ -269,70 +269,47 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isStopActionAvailable(on: stopped))
     }
 
-    // MARK: - Preparing
-
-    @Test("A bundle still being copied offers only its reads, its reveal and its cancel")
-    func preparingLeavesOnlyTheReadsAndItsCancel() {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()),
-            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-
-        let available = Set(
-            VMCapability.allCases.filter { harness.catalog.isAvailable($0, on: instance) })
-
-        // Show in Finder is absent: the row's bundle URL holds nothing until the
-        // write is published, so Finder would open on an empty directory.
-        #expect(available == [.info, .ipAddress, .snapshots, .reveal, .cancelPreparing])
-        // A snapshot exists and the phase is settled, so only `isPreparing`
-        // keeps Revert to Snapshot from applying to a bundle still copying.
-        #expect(!harness.catalog.isApplicable(.revertToSnapshot, to: instance))
-        // The settings read at moments other than boot apply in every state, so
-        // `survivesPreparing` is the whole of what keeps a configuration write
-        // off a bundle still being copied — and it is the level a verb guard
-        // reads, which is why no verb needs a preparing check of its own.
-        #expect(harness.catalog.isApplicable(.editLiveConfiguration, to: instance))
-        #expect(!harness.catalog.accepts(.editLiveConfiguration, on: instance))
-        #expect(!harness.catalog.accepts(.editConfiguration, on: instance))
-        #expect(!harness.catalog.accepts(.switchNetworkMode, on: instance))
-    }
+    // MARK: - Clone in flight
 
     @Test("Clone stays available while a different VM is being copied")
-    func cloneIgnoresAnotherVMsCopy() {
+    func cloneIgnoresAnotherVMsCopy() async {
         let harness = makeHarness()
         let settled = makeInstance(in: harness, name: "Settled")
-        let copying = makeInstance(in: harness, name: "Copying")
-        let task = Task {}
-        defer { task.cancel() }
-        copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
+        let gate = GatedArrivalWrite()
+        let copying = harness.library.beginGatedArrival(named: "Copying", gate: gate)
 
         // Bundle destinations are reserved atomically and overlapping copies are
         // a supported case, so one VM's copy says nothing about another's.
-        #expect(harness.library.hasPreparing)
+        #expect(harness.library.arrivals.map(\.id) == [copying.id])
         #expect(harness.catalog.isAvailable(.clone, on: settled))
-        #expect(!harness.catalog.isAvailable(.clone, on: copying))
+
+        gate.release()
+        await copying.settle()
     }
 
     @Test("A VM whose clone is still copying locks start, storage disks, delete and revert, and nothing else")
-    func cloneInFlightLocksSourceButNothingElse() {
+    func cloneInFlightLocksSourceButNothingElse() async {
         let harness = makeHarness()
         let source = makeInstance(
             in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let other = makeInstance(in: harness, name: "Other")
-        let phantom = makeInstance(in: harness, name: "Source Copy")
-        let task = Task {}
-        defer { task.cancel() }
 
         let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot, .start]
         let unaffected: Set<VMCapability> = [
             .clone, .rename, .editRemovableMedia, .editSharedDirectories,
         ]
 
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: source.id), task: task)
+        // A clone of a different VM says nothing about this one.
+        let otherGate = GatedArrivalWrite()
+        let otherClone = harness.library.beginGatedArrival(
+            .cloning(sourceID: other.id), named: "Other copy", gate: otherGate)
+        for capability in locked {
+            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
+        }
+
+        let gate = GatedArrivalWrite()
+        let clone = harness.library.beginGatedArrival(
+            .cloning(sourceID: source.id), named: "Source copy", gate: gate)
         for capability in locked {
             #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
@@ -340,25 +317,22 @@ struct VMCapabilityCatalogTests {
             #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
 
-        // A clone of a different VM says nothing about this one.
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: other.id), task: task)
-        for capability in locked {
-            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-
         // A cancelled clone still holds the lock until its uninterruptible copy settles.
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: source.id), task: task, isCancelling: true)
+        #expect(clone.requestCancel() == .cancelled)
         for capability in locked {
             #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
 
-        // The copy finished (or failed) and the phantom row is gone.
-        phantom.preparingState = nil
+        // The copy finished and the arrival's row is gone.
+        gate.release()
+        await clone.settle()
+        #expect(!harness.library.entries.contains { $0.id == clone.id })
         for capability in locked {
             #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
+
+        otherGate.release()
+        await otherClone.settle()
     }
 
     // MARK: - Settling
@@ -424,21 +398,21 @@ struct VMCapabilityCatalogTests {
     }
 
     @Test("The bring-up exceptions widen the state term only, not the transient blockers")
-    func bringUpExceptionsStillHonorTheCloneLock() {
+    func bringUpExceptionsStillHonorTheCloneLock() async {
         // A start locks the source of a clone still copying files out of its
         // bundle, and joining one does not exempt it: the exception replaces
         // what the VM's own state admits, and nothing else.
         let harness = makeHarness()
         let source = makeInstance(in: harness, name: "Source", phase: .starting(sessionID: nil))
-        let phantom = makeInstance(in: harness, name: "Source copy")
-        let task = Task {}
-        defer { task.cancel() }
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: source.id), task: task)
+        let gate = GatedArrivalWrite()
+        let clone = harness.library.beginGatedArrival(
+            .cloning(sourceID: source.id), named: "Source copy", gate: gate)
 
         #expect(!harness.catalog.accepts(.start, on: source))
 
-        phantom.preparingState = nil
+        _ = clone.requestCancel()
+        gate.release()
+        await clone.settle()
         #expect(harness.catalog.accepts(.start, on: source))
     }
 
@@ -472,17 +446,6 @@ struct VMCapabilityCatalogTests {
     func renameRefusedDuringARevert() {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .revertingToSnapshot)
-
-        #expect(!harness.catalog.accepts(.rename, on: instance))
-    }
-
-    @Test("A bundle still being copied takes no rename either")
-    func renameRefusedWhilePreparing() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
 
         #expect(!harness.catalog.accepts(.rename, on: instance))
     }
@@ -675,23 +638,6 @@ struct VMCapabilityCatalogTests {
         }
     }
 
-    /// The phantom row of an import still copying rests `.paused` and reads as
-    /// having a display, which is the one VM whose display window is not the
-    /// right thing to open.
-    @Test("A VM whose bundle is still being written reveals in the library")
-    func revealSurfaceOfAPreparingVMIsTheLibrary() {
-        let harness = makeHarness()
-        let phantom = makeInstance(
-            in: harness, phase: .suspended, hostState: VMHostState(displayPreference: .popOut))
-        let task = Task {}
-        defer { task.cancel() }
-
-        #expect(harness.catalog.revealSurface(for: phantom) == .displayWindow)
-
-        phantom.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-        #expect(harness.catalog.revealSurface(for: phantom) == .library)
-    }
-
     // MARK: - Bring-up
 
     @Test(
@@ -765,18 +711,6 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.bringUpVerb(for: instance) != nil)
     }
 
-    @Test("A bundle still being copied has no bring-up to offer")
-    func bringUpVerbRefusesPreparing() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-
-        #expect(harness.catalog.bringUpVerb(for: instance) == nil)
-        #expect(harness.catalog.standingBringUp(for: instance) == nil)
-    }
-
     // MARK: - The guest account
 
     @available(macOS 27.0, *)
@@ -795,7 +729,7 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
         harness.library.holdGuestAccountPassword(
-            GuestAccountPassword("analytical-engine"), for: instance)
+            GuestAccountPassword("analytical-engine"), for: instance.id)
         #expect(
             harness.catalog.guestAccountState(of: instance)
                 == .answered(intent, GuestAccountPassword("analytical-engine")))
@@ -837,7 +771,7 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.standingBringUp(for: instance) == nil)
 
         harness.library.holdGuestAccountPassword(
-            GuestAccountPassword("analytical-engine"), for: instance)
+            GuestAccountPassword("analytical-engine"), for: instance.id)
 
         // The intent is still there — the boot has yet to spend it — but there is
         // no question left to raise, which is the whole of what the pass avoids.
@@ -856,7 +790,7 @@ struct VMCapabilityCatalogTests {
                 enablesRemoteLogin: false)
         }
         harness.library.holdGuestAccountPassword(
-            GuestAccountPassword("analytical-engine"), for: instance)
+            GuestAccountPassword("analytical-engine"), for: instance.id)
 
         #expect(harness.library.retractGuestAccount(for: instance).landed)
 

@@ -43,7 +43,6 @@ enum VMCapability: CaseIterable, Hashable {
     case clone
     case rename
     case delete
-    case cancelPreparing
     case showInFinder
     case togglePopOut
     case toggleFullscreen
@@ -85,37 +84,11 @@ enum VMCapability: CaseIterable, Hashable {
         case .clone: .clone
         case .rename: .rename
         case .delete: .delete
-        case .cancelPreparing: .cancelPreparing
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
         case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleSettingsPane:
             nil
-        }
-    }
-
-    /// Whether this capability survives a create, clone or import still writing
-    /// the VM's bundle: the in-memory reads, and the cancel that stops the write.
-    ///
-    /// A preparing row's bundle is built under a hidden staging path and
-    /// published by rename when the write finishes, so nothing that reads
-    /// ``VMInstance/bundleURL`` on disk — `showInFinder` — belongs here.
-    ///
-    /// Exhaustive rather than `default`, so a new capability has to choose a
-    /// side.
-    var survivesPreparing: Bool {
-        switch self {
-        case .info, .ipAddress, .snapshots, .reveal, .cancelPreparing:
-            true
-        case .start, .startInRecovery, .cancelGuestSetup, .stop, .restart, .forceStop,
-            .discardSavedState, .pause, .resume, .suspend, .open, .takeSnapshot, .revertToSnapshot,
-            .deleteSnapshot, .renameSnapshot, .setSnapshotNotes, .editStorageDisks,
-            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
-            .editConfiguration,
-            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .showInFinder,
-            .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
-            false
         }
     }
 
@@ -137,7 +110,7 @@ enum VMCapability: CaseIterable, Hashable {
             .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
             .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
             .editConfiguration,
-            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete, .cancelPreparing,
+            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
             false
@@ -164,7 +137,7 @@ enum VMCapability: CaseIterable, Hashable {
             .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
             .editConfiguration,
-            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .cancelPreparing,
+            .editLiveConfiguration, .switchNetworkMode, .clone, .rename,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
             .toggleSettingsPane:
             false
@@ -267,8 +240,6 @@ struct VMCapabilityCatalog {
             instance.canRename
         case .delete:
             instance.canDelete
-        case .cancelPreparing:
-            instance.isPreparing
         case .togglePopOut, .toggleFullscreen:
             instance.canUseExternalDisplay
         case .showClipboard:
@@ -282,22 +253,20 @@ struct VMCapabilityCatalog {
     /// transient in the way.
     ///
     /// The level every `isEnabled` and every menu- or toolbar-validation reads.
-    /// Three things are layered over applicability: one uniform rule for a
-    /// bundle a create, clone or import is still writing
-    /// (``VMCapability/survivesPreparing``), the settle check for the commands
-    /// an unsettled operation would reject (``VMCapability/waitsForSettle``),
-    /// and the lock a clone still copying this VM's files out of its bundle
-    /// places on the source (``VMCapability/locksWhileCloned``).
+    /// Two things are layered over applicability: the settle check for the
+    /// commands an unsettled operation would reject
+    /// (``VMCapability/waitsForSettle``), and the lock a clone still copying
+    /// this VM's files out of its bundle places on the source
+    /// (``VMCapability/locksWhileCloned``).
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         isApplicable(capability, to: instance)
             && transientBlockersClear(capability, on: instance)
     }
 
-    /// The three transient layers ``isAvailable(_:on:)`` and ``accepts(_:on:)``
-    /// share: a bundle a create, clone or import is still writing
-    /// (``VMCapability/survivesPreparing``), the clone still copying this VM's
-    /// files out of its bundle (``VMCapability/locksWhileCloned``), and the
-    /// settle check for the commands an unsettled operation would reject
+    /// The two transient layers ``isAvailable(_:on:)`` and ``accepts(_:on:)``
+    /// share: the clone still copying this VM's files out of its bundle
+    /// (``VMCapability/locksWhileCloned``), and the settle check for the
+    /// commands an unsettled operation would reject
     /// (``VMCapability/waitsForSettle``).
     ///
     /// Only the applicability term separates the two levels, so a capability
@@ -306,7 +275,6 @@ struct VMCapabilityCatalog {
     private func transientBlockersClear(
         _ capability: VMCapability, on instance: VMInstance
     ) -> Bool {
-        guard capability.survivesPreparing || !instance.isPreparing else { return false }
         guard !(capability.locksWhileCloned && library.hasCloneInFlight(from: instance)) else {
             return false
         }
@@ -353,10 +321,9 @@ struct VMCapabilityCatalog {
     /// status item's per-VM command both read.
     ///
     /// Two terms. The ``VMCapability/open`` gate decides whether a display is
-    /// the right thing to surface at all, so the one VM whose display is not —
-    /// the phantom of an import still copying, resting `.paused` — lands on its
-    /// library row. The display preference decides where that display lives: an
-    /// inline one *is* part of the library window, so the library is what comes
+    /// the right thing to surface at all, so a VM with none lands on its library
+    /// row. The display preference decides where that display lives: an inline
+    /// one *is* part of the library window, so the library is what comes
     /// forward for it.
     func revealSurface(for instance: VMInstance) -> RevealSurface {
         guard accepts(.open, on: instance),
@@ -432,13 +399,20 @@ struct VMCapabilityCatalog {
     /// ``GuestAccountState/owed(_:)`` rather than proceeding
     /// (``CommandError/guestAccountPasswordRequired(_:)``).
     func guestAccountState(of instance: VMInstance) -> GuestAccountState {
-        guard MacOSGuestProvisioning.hostSupportsProvisioning,
-            let account = instance.configuration.pendingGuestAccount
-        else { return .none }
+        guard let account = Self.deliverableGuestAccount(of: instance.configuration) else {
+            return .none
+        }
         guard let password = library.heldGuestAccountPassword(for: instance) else {
             return .owed(account)
         }
         return .answered(account, password)
+    }
+
+    /// The account a VM configured as `configuration` names for its guest, or
+    /// `nil` when it names none or this host's Virtualization can deliver none.
+    static func deliverableGuestAccount(of configuration: VMConfiguration) -> GuestAccountIntent? {
+        guard MacOSGuestProvisioning.hostSupportsProvisioning else { return nil }
+        return configuration.pendingGuestAccount
     }
 
     /// Whether `instance` has the account question outstanding — what a surface
@@ -514,7 +488,7 @@ struct VMCapabilityCatalog {
             .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
             .forgetUSBPairing,
             .editConfiguration, .editLiveConfiguration, .switchNetworkMode, .clone, .delete,
-            .cancelPreparing, .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleGuestAgentDisk, .toggleSettingsPane:
             return isApplicable(capability, to: instance)
         }

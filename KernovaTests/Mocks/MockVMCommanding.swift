@@ -78,15 +78,18 @@ final class MockVMCommanding: VMCommanding {
     var configurationKeyDescriptors: [ConfigurationKeyDescriptor] = []
     /// What `configuration(_:keys:)` answers with.
     var configurationEntries: [ConfigurationEntry] = []
-    /// The settled row `awaitPreparing` answers with; the library's own row when
-    /// unset.
-    var awaitPreparingResult: VMSummary?
-    /// Parks `awaitPreparing` until its task is cancelled — the verb still in
-    /// flight when whoever asked for it goes away.
-    var awaitPreparingPark: CancellationPark?
-    /// Fires as `awaitPreparing` is entered, so a test can act against a verb
-    /// that is provably running.
-    let awaitPreparingEntered = AsyncGate()
+    /// The settled row a waited clone or import answers with; the row it
+    /// registered when unset.
+    var outcomeResult: VMSummary?
+    /// Thrown by a waited clone or import in place of its settled row — the
+    /// copy's own failure.
+    var outcomeError: (any Error)?
+    /// Parks a waited clone or import until its task is cancelled — the verb
+    /// still in flight when whoever asked for it goes away.
+    var outcomePark: CancellationPark?
+    /// Fires as a waited clone or import begins waiting, so a test can act
+    /// against a verb that is provably running.
+    let outcomeEntered = AsyncGate()
     /// What `snapshotOnDiskBytes(of:)` answers with.
     var snapshotBytes: [UUID: UInt64] = [:]
     /// What `sharedDirectories(of:)` answers per VM.
@@ -148,13 +151,15 @@ final class MockVMCommanding: VMCommanding {
     private(set) var createCalls:
         [(configuration: VMConfiguration, startAfterCreate: Bool, guestAccountPassword: String?)] =
             []
-    private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity)] = []
+    private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool)] =
+        []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
     private(set) var deleteCalls:
         [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool)] = []
     private(set) var importURLs: [URL] = []
+    /// Each import's `waitForOutcome`, in the order of ``importURLs``.
+    private(set) var importWaits: [Bool] = []
     private(set) var cancelPreparingCalls: [(selector: VMSelector, confirmed: Bool)] = []
-    private(set) var awaitPreparingSelectors: [VMSelector] = []
     private(set) var attachStorageDiskCalls: [(selector: VMSelector, files: [PickedFile])] = []
     private(set) var createStorageDiskCalls: [(selector: VMSelector, sizeInGB: Int)] = []
     private(set) var removeStorageDiskCalls: [(selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool)] = []
@@ -233,7 +238,6 @@ final class MockVMCommanding: VMCommanding {
     var deleteError: (any Error)?
     var importError: (any Error)?
     var cancelPreparingError: (any Error)?
-    var awaitPreparingError: (any Error)?
     var storageDiskEditError: (any Error)?
     var removableMediaEditError: (any Error)?
     var sharedDirectoryEditError: (any Error)?
@@ -515,17 +519,41 @@ final class MockVMCommanding: VMCommanding {
         return created
     }
 
-    func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
-        cloneCalls.append((selector, machineIdentity))
+    func clone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+    ) async throws -> VMSummary {
+        let copy = try registerClone(
+            selector, machineIdentity: machineIdentity, waitForOutcome: waitForOutcome)
+        return waitForOutcome ? try await outcome(of: copy) : copy
+    }
+
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary {
+        try registerClone(selector, machineIdentity: machineIdentity, waitForOutcome: false)
+    }
+
+    private func registerClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+    ) throws -> VMSummary {
+        cloneCalls.append((selector, machineIdentity, waitForOutcome))
         if let cloneError { throw cloneError }
         let source = try resolve(selector)
         let copy =
             cloneResult
             ?? VMSummary(id: UUID(), name: "\(source.name) copy", status: source.status, ipAddress: .unavailable)
-        // The core registers the copy's phantom row before answering, so a
+        // The core registers the copy's arrival before it first suspends, so a
         // caller that reads it back on the same turn finds it.
         library.append(copy)
         return copy
+    }
+
+    /// What a waited clone or import answers once its copy settles.
+    private func outcome(of registered: VMSummary) async throws -> VMSummary {
+        outcomeEntered.notify()
+        if let outcomePark { await outcomePark.park() }
+        if let outcomeError { throw outcomeError }
+        return outcomeResult ?? registered
     }
 
     func rename(_ selector: VMSelector, to newName: String) throws {
@@ -543,22 +571,36 @@ final class MockVMCommanding: VMCommanding {
         }
     }
 
-    func importVM(atPath path: String) async throws -> VMSummary {
+    func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary {
         let named = URL(fileURLWithPath: path)
-        guard let sourceAuthority else { return try importVM(from: named) }
-        return try importVM(from: try await sourceAuthority.readableURL(for: named, as: .vmBundle))
+        guard let sourceAuthority else {
+            return try await importVM(from: named, waitForOutcome: waitForOutcome)
+        }
+        return try await importVM(
+            from: try await sourceAuthority.readableURL(for: named, as: .vmBundle),
+            waitForOutcome: waitForOutcome)
     }
 
-    func importVM(from url: URL) throws -> VMSummary {
+    func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary {
+        let imported = try registerImport(from: url, waitForOutcome: waitForOutcome)
+        return waitForOutcome ? try await outcome(of: imported) : imported
+    }
+
+    func beginImport(from url: URL) throws -> VMSummary {
+        try registerImport(from: url, waitForOutcome: false)
+    }
+
+    private func registerImport(from url: URL, waitForOutcome: Bool) throws -> VMSummary {
         importURLs.append(url)
+        importWaits.append(waitForOutcome)
         if let importError { throw importError }
         let imported =
             importResult
             ?? VMSummary(
                 id: UUID(), name: url.deletingPathExtension().lastPathComponent,
                 status: VMStatus.preparingWireName, ipAddress: .unavailable)
-        // The core registers the imported row's phantom before answering, so a
-        // caller that reads it back on the same turn finds it.
+        // The core registers the import's arrival before it first suspends, so
+        // a caller that reads it back on the same turn finds it.
         library.append(imported)
         return imported
     }
@@ -569,15 +611,6 @@ final class MockVMCommanding: VMCommanding {
         if let cancelPreparingConsentPrompt, !confirmed {
             throw CommandError.confirmationRequired(cancelPreparingConsentPrompt)
         }
-    }
-
-    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary {
-        awaitPreparingSelectors.append(selector)
-        awaitPreparingEntered.notify()
-        if let awaitPreparingError { throw awaitPreparingError }
-        if let awaitPreparingPark { await awaitPreparingPark.park() }
-        let row = try resolve(selector)
-        return awaitPreparingResult ?? row
     }
 
     // MARK: - Attachments

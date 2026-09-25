@@ -2,11 +2,13 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// The set of VMs the app knows about, and the bookkeeping that keeps it in
-/// step with the bundles on disk: membership and sidebar ordering, the library
-/// read, the directory-watched reconcile, `prepareBundle`/`registerPhantom`/
-/// `evict`, the policy every write of a VM's settings and pairings passes on
-/// its way to that VM's ``VMBundle``, and the revert registry.
+/// The set of VMs the app knows about, the arrivals becoming ones, and the
+/// bookkeeping that keeps them in step with the bundles on disk: membership
+/// and sidebar ordering, the one ``adopt(_:)`` every bundle enters the library
+/// through, the policy every write of a VM's settings and pairings passes on
+/// its way to that VM's ``VMBundle``, and the revert registry. The library
+/// read, the directory-watched reconcile and the arrival pipeline live in
+/// `VMLibrary+Membership.swift`.
 ///
 /// It also sequences the collaborators it owns — ``macAddresses``,
 /// ``removableMedia`` and ``guestAddresses`` — because only the library knows
@@ -22,21 +24,20 @@ import KernovaLogging
 @MainActor
 @Observable
 final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
-    nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
+    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
 
-    private let storageService: any VMStorageProviding
-    private let snapshotStore: any VMSnapshotStoring
-    private let lifecycle: VMLifecycleCoordinator
+    let storageService: any VMStorageProviding
+    let snapshotStore: any VMSnapshotStoring
+    let lifecycle: VMLifecycleCoordinator
 
     /// Where each VM's answer for the account it owes its guest is held — the
-    /// half of that account no bundle carries.
+    /// half of that account no bundle carries. Keyed by identifier, so a
+    /// create's answer is held for its arrival and stays with the VM it becomes.
     private let guestAccountPasswords: any GuestAccountPasswordStoring
 
-    private let fileSystem: any FileSystemOperating
-
-    private let preferences: AppPreferences
+    let preferences: AppPreferences
 
     // MARK: - Collaborators
 
@@ -54,14 +55,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// The address each running VM's guest is seen using on its network.
     @ObservationIgnored let guestAddresses: GuestAddressObserver
 
-    /// Where each preparing write's tree currently sits, keyed by instance id —
-    /// the staged path until publication renames it to the VM's own bundle URL.
-    ///
-    /// Not on ``VMInstance``: it changes twice per write, and an observed
-    /// property would re-render every row's observers for a path no surface
-    /// shows. ``cancelAndCleanupPreparing()`` is the only reader.
-    @ObservationIgnored private var writeLocations: [UUID: URL] = [:]
-
     // MARK: - Adapter Hooks
 
     /// Receives every failure the library needs a user to see.
@@ -77,6 +70,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
 
+    /// Fires when an arrival settles as no VM, in the same main-actor step as
+    /// — and just before — its row leaves the library, so anything the hook
+    /// emits precedes every observer of the removal.
+    @ObservationIgnored var onArrivalFailed: ((VMArrival, any Error) -> Void)?
+
     /// Fires when a VM reaches a state a device can be attached to, for the
     /// accessories paired with it.
     @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> Void)?
@@ -89,15 +87,34 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
 
     // MARK: - State
 
-    var instances: [VMInstance] = []
+    /// Every row of the library in sidebar order, each identifier at most
+    /// once: the VMs, and the arrivals becoming ones.
+    ///
+    /// Written only in this file, where ``adopt(_:)`` is the one path a `.vm`
+    /// entry enters by.
+    private(set) var entries: [LibraryEntry] = []
+
+    /// The VMs, in sidebar order.
+    var instances: [VMInstance] { entries.compactMap(\.vm) }
+
+    /// The creates, clones and imports still writing their bundles.
+    var arrivals: [VMArrival] { entries.compactMap(\.arrival) }
+
+    #if DEBUG
+    /// Adds `instance` to the library as it stands, unwired and unread — a
+    /// test's stand-in for a VM a load would have adopted.
+    func admitForTesting(_ instance: VMInstance) {
+        entries.append(.vm(instance))
+    }
+    #endif
 
     /// Whether the library's first read from disk has finished.
     ///
     /// `false` until then, so UI can tell "no VMs" from "not read yet" — an empty
-    /// `instances` means nothing before the first `loadVMs()` applies. Stays
+    /// `entries` means nothing before the first `loadVMs()` applies. Stays
     /// `true` across later reloads, and is set even when the read fails: the
     /// answer is then known to be empty.
-    private(set) var hasLoadedLibrary = false
+    var hasLoadedLibrary = false
 
     var selectedID: UUID? {
         didSet {
@@ -106,22 +123,23 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
     }
 
-    /// `true` when any instance is mid-create, mid-clone, or mid-import.
-    // `reconcileWithDisk` skips while this is true, and `cancelPreparingConfirmed`
-    // keeps a cancelling row in `instances` so it stays true: any gap in the gate
-    // lets reconcile resurrect a bundle whose uninterruptible copy is still
-    // settling. A wedged `FileManager.copyItem` therefore holds it until relaunch.
-    var hasPreparing: Bool { instances.contains(where: \.isPreparing) }
+    /// The selected row, whichever kind it is.
+    var selectedEntry: LibraryEntry? {
+        entries.first { $0.id == selectedID }
+    }
 
-    /// Whether any VM is doing work that terminating would destroy rather than
-    /// suspend — a bundle still being created, cloned or imported, a VM
+    /// The selected row when it is a VM.
+    var selectedInstance: VMInstance? { selectedEntry?.vm }
+
+    /// Whether anything is doing work that terminating would destroy rather
+    /// than suspend — a bundle still being created, cloned or imported, a VM
     /// mid-save/restore/start/install, or a revert writing a snapshot's files
     /// back over the bundle.
     ///
     /// Excludes settled `.running` and `.paused` VMs, which termination
     /// save-suspends.
     var hasUninterruptibleWork: Bool {
-        instances.contains { $0.isPreparing || $0.isTransitioning }
+        !arrivals.isEmpty || instances.contains(where: \.isTransitioning)
             || hasRevertInFlight
     }
 
@@ -141,8 +159,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// resume — for the whole VZ await, so ``VMStatus`` alone renders nothing
     /// while one is settling.
     func isBusy(_ instance: VMInstance) -> Bool {
-        instance.isPreparing || instance.isTransitioning
-            || lifecycle.hasUnsettledOperation(for: instance.id)
+        instance.isTransitioning || lifecycle.hasUnsettledOperation(for: instance.id)
+    }
+
+    /// Whether `instance` is at rest with nothing in flight against it — the
+    /// VMs a reconcile may evict once their bundle is gone.
+    func isIdleAtRest(_ instance: VMInstance) -> Bool {
+        instance.isAtRest
+            && !lifecycle.hasActiveOperation(for: instance.id)
+            && !lifecycle.hasUnsettledOperation(for: instance.id)
+            && !hasRevertInFlight(for: instance.id)
     }
 
     /// Whether this build can pass a host USB accessory through to a guest at
@@ -150,34 +176,31 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// ``USBAccessorySupport/makeService(entitlements:)``.
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
 
-    /// `true` from the moment a clone of `instance` has its phantom row
-    /// registered until the copy publishes or fails — a cancelled row keeps
-    /// its `preparingState` until the uninterruptible copy settles, so the
-    /// lock outlives the cancel by exactly the copy.
+    /// `true` from the moment a clone of `instance` registers its arrival until
+    /// that arrival leaves the library — a cancelled clone stays until its
+    /// uninterruptible copy settles, so the lock outlives the cancel by exactly
+    /// the copy.
     func hasCloneInFlight(from instance: VMInstance) -> Bool {
-        instances.contains {
-            if case .cloning(let sourceID)? = $0.preparingState?.operation {
-                return sourceID == instance.id
-            }
-            return false
+        arrivals.contains {
+            if case .cloning(let sourceID) = $0.kind { sourceID == instance.id } else { false }
         }
     }
 
-    private var customOrder: [UUID] = []
+    var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.
     ///
     /// Prevents repeated error dialogs for persistently corrupted bundles across
     /// successive `reconcileWithDisk()` calls.
-    private var reportedFailedBundles: Set<String> = []
+    var reportedFailedBundles: Set<String> = []
+
+    /// Bundle names already reported as holding an identifier the library
+    /// knows at another bundle, for the same reason.
+    var reportedDuplicateBundles: Set<String> = []
 
     // MARK: - Directory Watcher
 
-    private var directoryWatcher: VMDirectoryWatcher?
-
-    var selectedInstance: VMInstance? {
-        instances.first { $0.id == selectedID }
-    }
+    var directoryWatcher: VMDirectoryWatcher?
 
     // MARK: - Initialization
 
@@ -185,7 +208,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         storageService: any VMStorageProviding,
         snapshotStore: any VMSnapshotStoring,
         lifecycle: VMLifecycleCoordinator,
-        fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
@@ -197,7 +219,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         self.snapshotStore = snapshotStore
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
-        self.fileSystem = fileSystem
         self.preferences = preferences
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
         let guestAddresses = GuestAddressObserver(
@@ -225,119 +246,105 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         guestAddresses.roster = self
     }
 
-    /// Fills the library from disk, then starts watching the VMs directory for
-    /// changes made outside the app.
-    ///
-    /// Called once, from `applicationWillFinishLaunching`. Not part of `init`:
-    /// everything the initializer does runs before `NSApplication.run()`, so a
-    /// library read there sits between process start and the first window. The
-    /// watcher starts only after the read applies — its callback re-reads every
-    /// bundle on the main actor, which must not race the initial load.
-    ///
-    /// Launch is also where an interrupted run's staged bundles are reclaimed.
-    /// Nothing waits on those removals: a staged name is minted per write, so one
-    /// still in flight can never name a path this run is about to use.
-    func startLibrary() async {
-        storageService.reclaimStagedBundles()
-        await loadVMs()
-        startDirectoryWatcher()
-    }
-
-    // MARK: - Initial Phase
-
-    /// Phase to assign to a VM when it's first loaded from disk or imported.
-    ///
-    /// A surviving install context — either guest's — is the canonical signal
-    /// that the VM has never completed its initial boot, so it outranks
-    /// `.suspended`/`.stopped`.
-    nonisolated static func initialPhase(for config: VMConfiguration, layout: VMBundleLayout)
-        -> VMLifecyclePhase
-    {
-        if config.pendingGuestSetup != nil {
-            return .initialBoot
-        }
-        return layout.hasSaveFile ? .suspended : .stopped
-    }
-
-    // MARK: - Load
+    // MARK: - Adoption
 
     /// One VM bundle as read from disk, before it becomes a `VMInstance`.
     ///
     /// `VMInstance` is `@MainActor`, so the read and the model construction have
     /// to be separable: this is what crosses back from the reading task.
-    private struct ScannedBundle: Sendable {
+    struct ScannedBundle: Sendable {
         let read: VMBundleRead
         let phase: VMLifecyclePhase
+
+        var url: URL { read.files.url }
     }
 
-    /// What a bundle is read through, gathered so the reads can run off the
-    /// main actor.
+    /// What ``adopt(_:publishing:)`` did with a bundle.
+    enum Adoption {
+        /// The bundle became a VM — a new row, or the arrival that wrote it.
+        case adopted(VMInstance)
+        /// The VM was already built from this bundle.
+        case alreadyAdopted(VMInstance)
+        /// A VM whose bundle had moved, or been renamed, was pointed at it.
+        case rebound(VMInstance)
+        /// The bundle is the one `arrival` is publishing, which only that
+        /// arrival's own pipeline adopts.
+        case publishing(VMArrival)
+        /// Another bundle already holds this identifier; this one was reported
+        /// and left out. `existing` is `nil` when the holder is an arrival.
+        case duplicate(of: VMInstance?, at: URL)
+    }
+
+    /// Turns a bundle read from disk into library membership, keyed by the
+    /// identifier it carries — the one decision launch, reconcile and
+    /// publication all take.
     ///
-    /// A bundle enters the library whole or not at all — at the load, at a
-    /// reconcile that finds one, and at a preparing row's publication: one
-    /// whose configuration, host state or snapshot manifest cannot be read
-    /// stays out, so no write can replace a file whose contents were never
-    /// known. Pairings are the exception ``VMBundleFiles/read()`` states.
-    private struct BundleReader: Sendable {
-        let storage: any VMStorageProviding
-        let snapshots: any VMSnapshotStoring
-
-        func files(at bundleURL: URL) -> VMBundleFiles {
-            VMBundleFiles(url: bundleURL, access: storage.bundleFiles)
+    /// An arrival's row becomes a VM only when its own pipeline passes it as
+    /// `arrival`, replaced in place to keep its place and selection; that
+    /// pipeline is what decides whether a cancel taken during the rename
+    /// leaves any VM at all. A VM already built from the bundle is left alone;
+    /// a VM whose own bundle has gone, or is this one spelled another way, is
+    /// pointed at it; and a second bundle holding a known identifier is
+    /// reported once, not adopted.
+    func adopt(_ scanned: ScannedBundle, publishing arrival: VMArrival? = nil) -> Adoption {
+        let url = scanned.url
+        guard let index = entries.firstIndex(where: { $0.id == scanned.read.configuration.id })
+        else {
+            let instance = makeInstance(scanned)
+            entries.append(.vm(instance))
+            return .adopted(instance)
         }
-
-        /// Reads the bundle and the phase it rests in.
-        func bundle(at bundleURL: URL) throws -> ScannedBundle {
-            let read = try read(at: bundleURL)
-            return ScannedBundle(
-                read: read,
-                phase: VMLibrary.initialPhase(
-                    for: read.configuration, layout: VMBundleLayout(bundleURL: bundleURL)))
-        }
-
-        /// Reads the bundle's state files, reclaiming the staging directory an
-        /// interrupted revert left there.
-        ///
-        /// Blocks on the filesystem, so it runs where the other bundle reads
-        /// do. No bundle handed here can have a revert running — it has no
-        /// instance yet, or only a phantom's, which `canRevertToSnapshot`
-        /// refuses — so a staging directory found belongs to no running revert.
-        func read(at bundleURL: URL) throws -> VMBundleRead {
-            let read = try files(at: bundleURL).read()
-            snapshots.sweepRestoreStaging(bundleURL: bundleURL)
-            return read
-        }
-    }
-
-    private var bundleReader: BundleReader {
-        BundleReader(storage: storageService, snapshots: snapshotStore)
-    }
-
-    /// The whole library as read from disk in one pass.
-    private struct LibraryScan: Sendable {
-        var bundles: [ScannedBundle] = []
-        /// Bundle names that could not be read.
-        var failedBundleNames: [String] = []
-    }
-
-    /// Reads every bundle under the VMs directory.
-    ///
-    /// Nonisolated so the disk work can run off the main actor; it touches no
-    /// library state and reports failures through the returned scan.
-    private nonisolated static func scanLibrary(using reader: BundleReader) throws -> LibraryScan {
-        var scan = LibraryScan()
-        for bundleURL in try reader.storage.listVMBundles() {
-            do {
-                scan.bundles.append(try reader.bundle(at: bundleURL))
-            } catch {
-                #log(
-                    logger, .error,
-                    "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-                scan.failedBundleNames.append(bundleURL.deletingPathExtension().lastPathComponent)
+        switch entries[index] {
+        case .arriving(let holder):
+            guard isSameBundle(holder.destinationURL, url) else {
+                return reportDuplicate(at: url, holderName: holder.name, existing: nil)
             }
+            guard holder === arrival else { return .publishing(holder) }
+            let instance = makeInstance(scanned)
+            entries[index] = .vm(instance)
+            return .adopted(instance)
+        case .vm(let instance):
+            if VMBundleIdentity.spelling(instance.bundleURL) == VMBundleIdentity.spelling(url) {
+                return .alreadyAdopted(instance)
+            }
+            if let holder = storageService.bundleIdentity(at: instance.bundleURL),
+                holder != storageService.bundleIdentity(at: url)
+            {
+                return reportDuplicate(at: url, holderName: instance.name, existing: instance)
+            }
+            #log(
+                Self.logger, .notice,
+                "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
+            )
+            instance.rebind(to: VMBundle(scanned.read))
+            reportUnreadablePairings(of: scanned.read)
+            return .rebound(instance)
         }
-        return scan
+    }
+
+    /// Whether two URLs name one bundle on disk, however each is spelled; a URL
+    /// with no bundle at it names none.
+    func isSameBundle(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let identity = storageService.bundleIdentity(at: lhs) else { return false }
+        return identity == storageService.bundleIdentity(at: rhs)
+    }
+
+    /// Reports a bundle whose identifier another bundle already holds, once per
+    /// bundle name.
+    private func reportDuplicate(
+        at url: URL, holderName: String, existing: VMInstance?
+    ) -> Adoption {
+        let bundleName = url.deletingPathExtension().lastPathComponent
+        if reportedDuplicateBundles.insert(bundleName).inserted {
+            #log(
+                Self.logger, .error,
+                "\(url.lastPathComponent, privacy: .public) carries the identifier of '\(holderName, privacy: .public)', which the library already holds — left out"
+            )
+            surfaceError(
+                "\u{201C}\(bundleName)\u{201D} has the same identifier as \u{201C}\(holderName)\u{201D}, which is already in the library, so Kernova didn\u{2019}t add it.",
+                title: "Duplicate Virtual Machine")
+        }
+        return .duplicate(of: existing, at: url)
     }
 
     /// Builds the instance for a bundle read from disk, wired to this library.
@@ -362,74 +369,80 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             title: "USB Accessories Not Read")
     }
 
-    /// Replaces the library with what is on disk.
+    // MARK: - Arrival Rows
+
+    /// Adds `arrival`'s row and selects it.
     ///
-    /// The read runs off the main actor — a library of any size is bound by
-    /// per-bundle file reads, and blocking the main actor for them stalls
-    /// whatever window is already on screen.
-    func loadVMs() async {
-        reportedFailedBundles.removeAll()
-        let reader = bundleReader
-        // The read is asynchronous, so the library can be mutated while it runs.
-        // Anything appearing in `instances` after this line is newer than
-        // whatever the read returns, and the result must not delete it.
-        let knownBeforeRead = Set(instances.map(\.id))
-        // Whatever the read returns, it is over: a listing that failed answers
-        // "no VMs" too, and UI must not go on waiting for a load that finished.
-        defer { hasLoadedLibrary = true }
-        do {
-            let scan = try await Task.detached(priority: .userInitiated) {
-                try Self.scanLibrary(using: reader)
-            }.value
-            apply(scan, keepingInstancesAddedSince: knownBeforeRead)
-        } catch {
-            #log(Self.logger, .error, "Failed to load VM library: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
+    /// Selection moves only when no other arrival holds it, so a second arrival
+    /// registering mid-operation can't steal the sidebar's focus from the one the
+    /// user is already watching.
+    func register(_ arrival: VMArrival) {
+        entries.append(.arriving(arrival))
+        sortEntries()
+        persistOrder()
+        if selectedEntry?.arrival == nil {
+            selectedID = arrival.id
         }
     }
 
-    /// Turns a scan into the live library: instances, order, and selection.
+    /// Removes `arrival`'s row — matched by the object, since adoption may
+    /// already have replaced it with the VM of the same identifier, which then
+    /// stays.
     ///
-    /// Instances registered since the read began outlive it, and outrank the
-    /// read's view of the same VM. A preparing phantom is the case that matters:
-    /// its copy is uninterruptible, so dropping the row would leave the copy
-    /// running against a bundle the library has forgotten — with no row to
-    /// cancel from, and `hasPreparing` back to `false`, which is exactly the gap
-    /// `reconcileWithDisk` refuses to open.
-    private func apply(_ scan: LibraryScan, keepingInstancesAddedSince knownBeforeRead: Set<UUID>) {
-        let addedDuringRead = instances.filter { !knownBeforeRead.contains($0.id) }
-        let addedDuringReadIDs = Set(addedDuringRead.map(\.id))
-        instances =
-            scan.bundles
-            .filter { !addedDuringReadIDs.contains($0.read.configuration.id) }
-            .map(makeInstance) + addedDuringRead
-        macAddresses.logDuplicateMACAddressHolders()
-
-        if !scan.failedBundleNames.isEmpty {
-            reportedFailedBundles.formUnion(scan.failedBundleNames)
-            presentError(LoadError.bundleLoadFailed(names: scan.failedBundleNames))
+    /// Only an arrival that became no VM leaves here, so the account answer
+    /// held for it goes with it.
+    func removeArrival(_ arrival: VMArrival) {
+        guard let index = entries.firstIndex(where: { $0.arrival === arrival }) else { return }
+        entries.remove(at: index)
+        persistOrder()
+        if selectedID == arrival.id {
+            selectedID = entries.first?.id
         }
+        guestAccountPasswords.remove(for: arrival.id)
+    }
 
-        if let savedOrder = preferences.vmOrder {
-            customOrder = savedOrder
-            #log(Self.logger, .debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
-        } else {
-            #log(Self.logger, .debug, "No custom VM order found — using default createdAt sort")
+    /// Drops `instance` from the library, moving the selection off it.
+    func evict(_ instance: VMInstance) {
+        entries.removeAll { $0.vm === instance }
+        if selectedID == instance.id {
+            selectedID = entries.first?.id
         }
-        sortInstances()
-        customOrder = instances.map(\.id)
+        // Nothing left can ask for the account, so nothing may still hold the
+        // answer — whichever way the VM left, and whether or not its bundle
+        // survived the departure.
+        guestAccountPasswords.remove(for: instance.id)
+    }
 
-        if selectedID == nil || !instances.contains(where: { $0.id == selectedID }) {
-            if let savedID = preferences.lastSelectedVMID,
-                instances.contains(where: { $0.id == savedID })
-            {
-                selectedID = savedID
-                #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
-            } else {
-                selectedID = instances.first?.id
+    // MARK: - Reorder
+
+    /// Moves rows in the sidebar list and persists the new order.
+    func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
+        entries.move(fromOffsets: source, toOffset: destination)
+        persistOrder()
+        #log(Self.logger, .notice, "Reordered VMs in sidebar")
+    }
+
+    /// Sorts rows by custom order, falling back to `createdAt` for unordered ones.
+    func sortEntries() {
+        let orderMap = Dictionary(zip(customOrder, customOrder.indices), uniquingKeysWith: { first, _ in first })
+        entries.sort { lhs, rhs in
+            switch (orderMap[lhs.id], orderMap[rhs.id]) {
+            case let (.some(l), .some(r)):
+                return l < r
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                return lhs.configuration.createdAt < rhs.configuration.createdAt
             }
         }
-        #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
+    }
+
+    /// Snapshots the current row order into customOrder and persists it via `AppPreferences.vmOrder`.
+    func persistOrder() {
+        customOrder = entries.map(\.id)
+        preferences.vmOrder = customOrder
     }
 
     // MARK: - Revert Registry
@@ -481,242 +494,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         while let registration = revertTasks.values.first { await registration.task.value }
     }
 
-    // MARK: - Preparing Rows (shared by Create, Clone & Import)
-
-    /// Adds a freshly-built phantom `VMInstance` to the library and selects it.
-    ///
-    /// Selection moves only when nothing else is preparing, so a second phantom
-    /// registering mid-operation can't steal the sidebar's focus from the one the
-    /// user is already watching.
-    ///
-    /// Nothing is read for it: its bundle does not exist yet, and
-    /// ``prepareBundle(_:operation:copyWork:onSuccess:onFailure:)`` reads what
-    /// the write produced.
-    private func registerPhantom(_ phantom: VMInstance) {
-        wireHooks(for: phantom)
-        instances.append(phantom)
-        sortInstances()
-        persistOrder()
-        if selectedInstance?.isPreparing != true {
-            selectedID = phantom.id
-        }
-    }
-
-    /// Registers `phantom`, runs `copyWork` off a spawned `Task`, and wires the cleanup create,
-    /// clone and import all need around a preparing row's bundle write.
-    ///
-    /// `copyWork` receives the staged bundle URL and must write *only* there. The
-    /// staged tree is hidden from every enumeration that finds VMs, so the row
-    /// becomes a bundle on disk at one instant — the publication rename below —
-    /// and an abnormal exit at any point before it leaves nothing to adopt.
-    /// Publication is where the row takes on its bundle whole: the
-    /// ``VMBundleRead`` of the staged tree, taken before the rename and moved
-    /// with it, so no path follows a copy with a read of its own.
-    ///
-    /// `copyWork` is uninterruptible (a blocking `FileManager` call), so a user cancel cancels this
-    /// outer `Task` while the copy keeps writing. This task is the single owner of the settle: on
-    /// cancel it removes the "Cancelling…" row and trashes the bundle once the copy is done.
-    ///
-    /// `onSuccess` runs with the row already out of its preparing state, so a
-    /// verb it chains — the start a create auto-starts with — is not refused by
-    /// the preparing gate the row was still holding.
-    func prepareBundle(
-        _ phantom: VMInstance,
-        operation: VMInstance.PreparingOperation,
-        copyWork: @escaping (URL) async throws -> Void,
-        onSuccess: @escaping () -> Void,
-        onFailure: @escaping (Error) -> Void
-    ) {
-        registerPhantom(phantom)
-        let fileSystem = fileSystem
-        let storage = storageService
-        let reader = bundleReader
-        let finalURL = phantom.bundleURL
-        let task = Task { [weak self] in
-            defer {
-                phantom.preparingState = nil
-                self?.writeLocations[phantom.id] = nil
-            }
-            // Every cleanup arm addresses `written` rather than `phantom.bundleURL`:
-            // trashing the staged path after publication would leak the real
-            // bundle, and trashing `finalURL` before it can hit an unrelated
-            // bundle holding that name. The library gets the same value through
-            // ``writeLocations`` — this task keeps its own copy because the
-            // deallocated arms below still have to clean up.
-            var written: URL?
-            do {
-                let staged = try storage.makeStagedBundleURL()
-                written = staged
-                self?.writeLocations[phantom.id] = staged
-                try await copyWork(staged)
-                // Read before publication, so a written tree holding a file the
-                // library cannot read — an import's, say — never becomes a
-                // bundle.
-                let read = try await Task.detached { try reader.read(at: staged) }.value
-                guard let self else {
-                    if Task.isCancelled {
-                        Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
-                    } else {
-                        do {
-                            try storage.publishBundle(from: staged, to: finalURL)
-                            #log(
-                                Self.logger, .warning,
-                                "\(operation.displayNoun, privacy: .public) completed but the library was deallocated — VM '\(phantom.name, privacy: .public)' exists on disk but was not added to library"
-                            )
-                        } catch {
-                            Self.trashPartialBundle(at: staged, fileSystem: fileSystem)
-                            #log(
-                                Self.logger, .error,
-                                "\(operation.displayNoun, privacy: .public) completed but the library was deallocated and the bundle could not be published — trashed the staged bundle for '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                            )
-                        }
-                    }
-                    return
-                }
-                if Task.isCancelled {
-                    // Cancelled mid-copy: `VMCommandCore.cancelPreparing` left the "Cancelling…" row
-                    // in place, so remove it and trash the settled bundle now that the copy is done.
-                    // Nothing was published, so the staged tree is the whole of it.
-                    self.cleanupPhantomInstance(phantom, bundleAt: staged)
-                    return
-                }
-                try await Task.detached { try storage.publishBundle(from: staged, to: finalURL) }.value
-                written = finalURL
-                self.writeLocations[phantom.id] = finalURL
-                phantom.takeBundle(VMBundle(read.relocated(to: finalURL)))
-                self.reportUnreadablePairings(of: read)
-                self.macAddresses.logDuplicateMACAddressHolders()
-                if Task.isCancelled {
-                    self.cleanupPhantomInstance(phantom, bundleAt: finalURL)
-                    return
-                }
-                phantom.preparingState = nil
-                onSuccess()
-            } catch {
-                guard let self else {
-                    if let written {
-                        Self.trashPartialBundle(at: written, fileSystem: fileSystem)
-                    }
-                    #log(
-                        Self.logger, .error,
-                        "\(operation.displayNoun, privacy: .public) failed and the library was deallocated — trashed partial bundle '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    return
-                }
-                if let written {
-                    self.cleanupPhantomInstance(phantom, bundleAt: written)
-                } else {
-                    self.dropPhantomRow(phantom)
-                }
-                if !Task.isCancelled {
-                    #log(
-                        Self.logger, .error,
-                        "\(operation.displayNoun, privacy: .public) failed for VM '\(phantom.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-                    )
-                    onFailure(error)
-                }
-            }
-        }
-        phantom.preparingState = VMInstance.PreparingState(operation: operation, task: task)
-    }
-
-    /// A collision-free destination bundle URL under `vmsDir` for a bundle named like `sourceURL`.
-    ///
-    /// Taken names are the union of on-disk `.kernova` bundles in `vmsDir` AND the reserved names
-    /// of already-registered phantoms there: a prior bundle's copy hasn't run yet, so a disk
-    /// listing alone can't see it. Matched case-insensitively to mirror the default
-    /// case-insensitive APFS volume.
-    func reserveDestination(for sourceURL: URL, in vmsDir: URL) -> URL {
-        let onDiskStems =
-            (try? FileManager.default.contentsOfDirectory(
-                at: vmsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))?
-            .filter { VMStorageService.isBundleURL($0) }
-            .map { $0.deletingPathExtension().lastPathComponent } ?? []
-        let vmsDirPath = vmsDir.standardizedFileURL.path(percentEncoded: false)
-        let inFlightStems = instances.compactMap { phantom -> String? in
-            let url = phantom.bundleURL
-            guard url.deletingLastPathComponent().standardizedFileURL.path(percentEncoded: false) == vmsDirPath
-            else { return nil }
-            return url.deletingPathExtension().lastPathComponent
-        }
-        let name = UniqueName.firstAvailable(
-            prefix: sourceURL.deletingPathExtension().lastPathComponent,
-            existing: onDiskStems + inFlightStems,
-            caseInsensitive: true)
-        return vmsDir.appendingPathComponent(
-            "\(name).\(VMBundleFormat.fileExtension)", isDirectory: true)
-    }
-
-    /// Removes a phantom instance from the library, clears its preparing state, and trashes its partial bundle.
-    ///
-    /// Callable only once the write has settled at ``VMInstance/bundleURL``:
-    /// before publication the tree is at the staged path, which the overload
-    /// taking an explicit URL is for.
-    func cleanupPhantomInstance(_ phantom: VMInstance) {
-        cleanupPhantomInstance(phantom, bundleAt: phantom.bundleURL)
-    }
-
-    /// Removes a phantom instance from the library and trashes the tree it wrote,
-    /// wherever that write has reached.
-    func cleanupPhantomInstance(_ phantom: VMInstance, bundleAt url: URL) {
-        dropPhantomRow(phantom)
-        Self.trashPartialBundle(at: url, fileSystem: fileSystem)
-    }
-
-    /// Drops a phantom's row and its preparing state, leaving disk alone.
-    private func dropPhantomRow(_ phantom: VMInstance) {
-        evict(phantom)
-        persistOrder()
-        phantom.preparingState = nil
-        writeLocations[phantom.id] = nil
-    }
-
-    /// Cancels every preparing write and removes the row and whatever tree it has
-    /// written so far, for a quit that cannot wait for the copies to settle.
-    ///
-    /// The library is the only owner that knows where each write currently is —
-    /// the staged path until publication, the VM's own bundle after — so the
-    /// termination sweep asks here rather than guessing at a URL. Best effort:
-    /// `FileManager.copyItem` isn't interruptible, so a copy already in flight
-    /// keeps writing into the staged tree until it finishes or fails, and the
-    /// next launch's reclaim discards whatever it left.
-    ///
-    /// The trash is synchronous, unlike ``trashPartialBundle(at:fileSystem:)`` —
-    /// the process ends immediately after, so a detached task would never run.
-    func cancelAndCleanupPreparing() {
-        for phantom in instances where phantom.isPreparing {
-            guard let state = phantom.preparingState else { continue }
-            #log(
-                Self.logger, .notice,
-                "Terminating: cancelling \(state.operation.displayNoun, privacy: .public) for '\(phantom.name, privacy: .public)'"
-            )
-            state.task.cancel()
-            if let written = writeLocations[phantom.id] {
-                do {
-                    try fileSystem.trashItem(at: written)
-                } catch {
-                    #log(
-                        Self.logger, .warning,
-                        "Failed to clean up the partial bundle for '\(phantom.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-            dropPhantomRow(phantom)
-        }
-    }
-
-    /// Drops `instance` from the library, moving the selection off it.
-    func evict(_ instance: VMInstance) {
-        instances.removeAll { $0.id == instance.id }
-        if selectedID == instance.id {
-            selectedID = instances.first?.id
-        }
-        // Nothing left can ask for the account, so nothing may still hold the
-        // answer — whichever way the VM left, and whether or not its bundle
-        // survived the departure.
-        guestAccountPasswords.remove(for: instance.id)
-    }
-
     // MARK: - Guest Account
 
     /// The password held for the account `instance` owes its guest, or `nil`
@@ -725,10 +502,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         guestAccountPasswords.password(for: instance.id)
     }
 
-    /// Holds `password` as the answer for the account `instance` owes its
-    /// guest, replacing whatever was held.
-    func holdGuestAccountPassword(_ password: GuestAccountPassword, for instance: VMInstance) {
-        guestAccountPasswords.set(password, for: instance.id)
+    /// Holds `password` as the answer for the account the VM identified by
+    /// `id` owes its guest — or will, once the arrival writing it is adopted —
+    /// replacing whatever was held.
+    func holdGuestAccountPassword(_ password: GuestAccountPassword, for id: UUID) {
+        guestAccountPasswords.set(password, for: id)
     }
 
     /// Ends the account `instance` owes its guest: the persisted intent and the
@@ -755,38 +533,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         return outcome
     }
 
-    // MARK: - Reorder
-
-    /// Moves VMs in the sidebar list and persists the new order.
-    func moveVM(fromOffsets source: IndexSet, toOffset destination: Int) {
-        instances.move(fromOffsets: source, toOffset: destination)
-        persistOrder()
-        #log(Self.logger, .notice, "Reordered VMs in sidebar")
-    }
-
-    /// Sorts instances by custom order, falling back to `createdAt` for unordered VMs.
-    private func sortInstances() {
-        let orderMap = Dictionary(zip(customOrder, customOrder.indices), uniquingKeysWith: { first, _ in first })
-        instances.sort { lhs, rhs in
-            switch (orderMap[lhs.id], orderMap[rhs.id]) {
-            case let (.some(l), .some(r)):
-                return l < r
-            case (.some, .none):
-                return true
-            case (.none, .some):
-                return false
-            case (.none, .none):
-                return lhs.configuration.createdAt < rhs.configuration.createdAt
-            }
-        }
-    }
-
-    /// Snapshots the current instance order into customOrder and persists it via `AppPreferences.vmOrder`.
-    func persistOrder() {
-        customOrder = instances.map(\.id)
-        preferences.vmOrder = customOrder
-    }
-
     // MARK: - Settings Writes
 
     /// Connects `instance`'s hooks to this library.
@@ -796,7 +542,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     func wireHooks(for instance: VMInstance) {
         // Every closure is stored *on* `instance`, so it must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
-        // it's removed from `instances`.
+        // it's removed from `entries`.
         instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
             guard let self, let instance else { return .refused(.noLibrary) }
             return self.updateConfiguration(of: instance, mutate: mutate)
@@ -881,9 +627,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         /// The write reached no library: the instance was never wired to one,
         /// or the library that wired it is gone.
         case noLibrary
-        /// The VM's bundle is still being created, cloned or imported, so
-        /// there is no file to write yet.
-        case noBundle
 
         var errorDescription: String? {
             switch self {
@@ -891,7 +634,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             case .sessionNotAttachable:
                 "The virtual machine can\u{2019}t take a removable-media change in its current state."
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
-            case .noBundle: "The virtual machine\u{2019}s files are still being written."
             }
         }
     }
@@ -943,7 +685,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     private func commitConfiguration<Failure: Error>(
         of instance: VMInstance, mutate: (inout VMConfiguration) throws(Failure) -> Void
     ) throws(Failure) -> ConfigurationCommit {
-        guard let bundle = instance.bundle else { return .stopped(.refused(.noBundle)) }
+        let bundle = instance.bundle
         let old = bundle.configuration
         var wrote = false
         var mutateFailure: Failure?
@@ -1036,9 +778,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         of instance: VMInstance, landed: [SettingsWriteFailure.File],
         mutate: (inout VMHostState) -> Void
     ) -> SettingsWrite {
-        guard let bundle = instance.bundle else { return .refused(.noBundle) }
         do {
-            try bundle.commitHostState(mutate)
+            try instance.bundle.commitHostState(mutate)
         } catch {
             #log(
                 Self.logger, .error,
@@ -1060,7 +801,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// presented and leaves the configuration as the bundle holds it; the live
     /// list stays in ``VMInstance/liveRemovableMedia``.
     func settleRemovableMedia(of instance: VMInstance, toLive media: [RemovableMediaItem]?) {
-        guard let bundle = instance.bundle else { return }
+        let bundle = instance.bundle
         let old = bundle.configuration.removableMedia
         do {
             try bundle.commitConfiguration(key: ConfigurationWriteKey()) { $0.removableMedia = media }
@@ -1089,8 +830,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// under the MAC address it was taken with, which ``VMMACAddressRegistry``
     /// keeps for this VM while the snapshot is listed.
     func commitRevertedConfiguration(_ plan: VMSnapshotRestorePlan, on instance: VMInstance) throws {
-        guard let bundle = instance.bundle else { throw SettingsRefusal.noBundle }
-        try bundle.commitConfiguration(key: ConfigurationWriteKey()) {
+        try instance.bundle.commitConfiguration(key: ConfigurationWriteKey()) {
             $0 = $0.adoptingSnapshotState(plan.configuration)
         }
     }
@@ -1106,9 +846,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         of instance: VMInstance,
         mutate: (inout USBAccessoryPairingSet) -> Void
     ) throws {
-        guard let bundle = instance.bundle else { throw SettingsRefusal.noBundle }
         do {
-            try bundle.commitUSBPairings(mutate)
+            try instance.bundle.commitUSBPairings(mutate)
         } catch {
             #log(
                 Self.logger, .error,
@@ -1137,183 +876,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         removableMedia.apply(for: instance, old: old, new: new)
     }
 
-    // MARK: - Directory Watcher
-
-    private func startDirectoryWatcher() {
-        let vmsDir: URL
-        do {
-            vmsDir = try storageService.vmsDirectory
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Could not resolve VMs directory for file system watcher: \(error.localizedDescription, privacy: .public)"
-            )
-            return
-        }
-
-        let watcher = VMDirectoryWatcher { [weak self] in
-            self?.reconcileWithDisk()
-        }
-        watcher.start(directory: vmsDir)
-        directoryWatcher = watcher
-    }
-
-    /// Diffs on-disk VM bundles against in-memory instances and adds/removes as needed.
-    func reconcileWithDisk() {
-        guard !hasPreparing else {
-            #log(Self.logger, .debug, "reconcileWithDisk: skipped — preparing operation in progress")
-            return
-        }
-        #log(Self.logger, .debug, "reconcileWithDisk: starting")
-        do {
-            let diskBundles = try storageService.listVMBundles()
-
-            var diskConfigs: [(VMConfiguration, URL)] = []
-            var failedBundles: [String] = []
-            for bundleURL in diskBundles {
-                let bundleName = bundleURL.deletingPathExtension().lastPathComponent
-                do {
-                    let config = try bundleReader.files(at: bundleURL).readConfiguration()
-                    diskConfigs.append((config, bundleURL))
-                } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedBundles.append(bundleName)
-                }
-            }
-            let diskIDs = Set(diskConfigs.map(\.0.id))
-            let memoryIDs = Set(instances.map(\.id))
-
-            var didChange = false
-            let reader = bundleReader
-            for (config, bundleURL) in diskConfigs where !memoryIDs.contains(config.id) {
-                do {
-                    instances.append(makeInstance(try reader.bundle(at: bundleURL)))
-                    #log(
-                        Self.logger, .info,
-                        "Discovered VM '\(config.name, privacy: .public)' on disk — added to library")
-                    didChange = true
-                } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedBundles.append(bundleURL.deletingPathExtension().lastPathComponent)
-                }
-            }
-            reportedFailedBundles.subtract(
-                Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
-                    .subtracting(failedBundles))
-
-            // Only remove resting-state VMs — never touch running/paused/preparing ones.
-            let instancesToRemove = instances.filter { instance in
-                !diskIDs.contains(instance.id)
-                    && !instance.isPreparing
-                    && (instance.status == .stopped
-                        || instance.status == .error
-                        || instance.status == .initialBoot)
-            }
-            for instance in instancesToRemove {
-                // Cancel any in-flight setup task before evicting — otherwise it keeps
-                // mutating an orphan instance the library no longer knows about.
-                instance.setupTask?.cancel()
-                evict(instance)
-                #log(
-                    Self.logger, .info,
-                    "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
-                didChange = true
-            }
-
-            if didChange {
-                sortInstances()
-                persistOrder()
-                macAddresses.logDuplicateMACAddressHolders()
-            }
-
-            let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
-            let suppressedCount = failedBundles.count - newFailures.count
-            if suppressedCount > 0 {
-                #log(
-                    Self.logger, .debug,
-                    "reconcileWithDisk: suppressed \(suppressedCount, privacy: .public) already-reported bundle failure(s)"
-                )
-            }
-            if !newFailures.isEmpty {
-                reportedFailedBundles.formUnion(newFailures)
-                presentError(LoadError.bundleLoadFailed(names: newFailures))
-            }
-
-            // Prune names of bundles no longer on disk so a new bundle with the same name
-            // is not silently suppressed.
-            let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
-            reportedFailedBundles.formIntersection(currentDiskNames)
-
-            normalizeEmptiedSuspensions(inBundles: diskIDs)
-
-            #log(
-                Self.logger, .debug,
-                "reconcileWithDisk: complete — \(self.instances.count, privacy: .public) VM(s) in library")
-        } catch {
-            #log(
-                Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
-            presentError(error)
-        }
-    }
-
-    /// Rests any VM naming a suspend slot its bundle no longer holds.
-    ///
-    /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
-    /// out of band — in the Finder, by another tool — leaves a phase describing
-    /// something that is not there: the row still reads Suspended while every
-    /// predicate that asks the bundle already offers Start and an editable
-    /// configuration.
-    ///
-    /// Re-derived whenever the library reconciles, and no sooner: the watcher
-    /// behind that pass observes the VMs directory, where a bundle is added,
-    /// removed or renamed, so a file deleted *inside* a bundle wakes nothing.
-    /// The phase catches up at the next reconciliation for any reason, and at
-    /// the next launch.
-    ///
-    /// `bundlesOnDisk` bounds it to the VMs this pass actually read: a bundle
-    /// the scan could not see says nothing about the slot inside it, and the
-    /// eviction above leaves such a VM suspended.
-    private func normalizeEmptiedSuspensions(inBundles bundlesOnDisk: Set<UUID>) {
-        for instance in instances
-        where bundlesOnDisk.contains(instance.id) && instance.isColdPaused
-            && !instance.hasSaveFile
-        {
-            #log(
-                Self.logger, .notice,
-                "Resting '\(instance.name, privacy: .public)' stopped: its suspend slot is no longer in the bundle"
-            )
-            instance.enter(.stopped)
-        }
-    }
-
     // MARK: - Error Handling
 
-    /// Moves a partial VM bundle to the Trash in the background, logging on failure.
-    ///
-    /// Static (with the file-system seam passed in) because it must stay callable after
-    /// `guard let self else` — the cleanup must not depend on the library.
-    static func trashPartialBundle(at url: URL, fileSystem: any FileSystemOperating) {
-        let log = logger
-        Task.detached {
-            do {
-                try fileSystem.trashItem(at: url)
-            } catch {
-                #log(
-                    log, .error,
-                    "Failed to clean up partial bundle at \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        }
-    }
-
     /// Error type for VM loading failures.
-    private enum LoadError: LocalizedError {
+    enum LoadError: LocalizedError {
         case bundleLoadFailed(names: [String])
 
         var errorDescription: String? {
@@ -1326,12 +892,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         }
     }
 
-    private func presentError(_ error: Error) {
+    func presentError(_ error: Error) {
         surfaceError(error.localizedDescription)
     }
 
     /// Hands an error message to ``onFailure``.
-    private func surfaceError(_ message: String, title: String = "Error") {
+    func surfaceError(_ message: String, title: String = "Error") {
         onFailure?(title, message)
     }
 }

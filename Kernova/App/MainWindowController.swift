@@ -151,7 +151,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 _ = self.viewModel.selectedID
                 self.toolbarManager.trackItemState()
                 // The window title's own inputs.
-                _ = self.viewModel.selectedInstance?.name
+                _ = self.viewModel.selectedEntry?.name
                 _ = self.viewModel.selectedInstance?.hasLiveEphemeralSession
             },
             apply: { [weak self] in
@@ -259,16 +259,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         toolbar.autosavesConfiguration = autosaved
     }
 
-    /// Titles the window after the selected VM, so the active VM stays
-    /// identifiable when the sidebar is collapsed.
+    /// Titles the window after the selected row, so it stays identifiable
+    /// when the sidebar is collapsed.
     private func updateWindowTitle() {
-        guard let instance = viewModel.selectedInstance else {
-            window?.title = "Kernova"
-            return
-        }
-        let name = EphemeralModeCopy.titleName(
-            instance.name, ephemeralSessionRunning: instance.hasLiveEphemeralSession)
-        window?.title = "Kernova — \(name)"
+        window?.title = Self.windowTitle(for: viewModel.selectedEntry)
+    }
+
+    static func windowTitle(for entry: LibraryEntry?) -> String {
+        guard let entry else { return "Kernova" }
+        let name =
+            entry.vm.map {
+                EphemeralModeCopy.titleName($0.name, ephemeralSessionRunning: $0.hasLiveEphemeralSession)
+            } ?? entry.name
+        return "Kernova — \(name)"
     }
 
     private func updateToolbarItems() {
@@ -428,14 +431,13 @@ extension MainWindowController: NSToolbarItemValidation {
         case Self.toolbarNewVM:
             return true
         case Self.toolbarShowInFinder:
-            // Available even while preparing — the bundle already exists on disk.
             return instance.map { capabilities.isAvailable(.showInFinder, on: $0) } ?? false
         case Self.toolbarClone:
             return instance.map { capabilities.isAvailable(.clone, on: $0) } ?? false
         case Self.toolbarMoveToTrash:
             return instance.map { capabilities.isAvailable(.delete, on: $0) } ?? false
         default:
-            guard let instance, !instance.isPreparing else { return false }
+            guard instance != nil else { return false }
 
             if toolbarManager.sharedItemIdentifiers.contains(item.itemIdentifier) {
                 // Group subitems are enabled/disabled directly in updateToolbarItems()

@@ -59,16 +59,22 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
+        /// The one request this command line stands for — the wait for the copy
+        /// included, unless `--no-wait`.
+        func request() throws -> VMCommandRequest.Verb {
+            .clone(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                machineIdentity: identity?.machineIdentity ?? .followPreference,
+                waitForOutcome: !noWait)
+        }
+
         /// Clones the VM and writes the row the copy produced.
         func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
+            let request = try request()
             let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
             defer { client.close() }
-            let answer = try client.send(
-                .clone(selector, machineIdentity: identity?.machineIdentity ?? .followPreference)
-            ).payload()
-            guard case .summary(let created) = answer else { throw answer.unexpectedAnswer }
-            let row = noWait ? created : try PreparingCopy.settle(created, on: client)
+            let answer = try client.send(request).payload()
+            guard case .summary(let row) = answer else { throw answer.unexpectedAnswer }
             try PreparingCopy.write(row, options: options)
         }
     }
@@ -224,8 +230,8 @@ extension KernovaCommand {
     }
 }
 
-/// The half a clone and an import share: a row answered while the copy behind
-/// it is still being written, and the wait that turns it into the settled one.
+/// The half a clone and an import share: writing the row a copy answered, and
+/// the import's deadline.
 enum PreparingCopy {
     /// Writes `row` the way `list` writes one row.
     static func write(_ row: VMSummary, options: GlobalOptions) throws {
@@ -235,12 +241,13 @@ enum PreparingCopy {
                 : TableRenderer.render([row], quiet: options.quiet))
     }
 
-    /// The row an import settles into, bounded end to end by `timeout`.
+    /// The row an import answers — the settled one when `waiting` — bounded end
+    /// to end by `timeout`.
     ///
-    /// One deadline covers both round trips, because the first is where the
-    /// wait can be unbounded: a path the sandbox does not admit puts a
-    /// permission panel on the Mac's screen, and a script has nobody there to
-    /// answer it.
+    /// One deadline covers the permission answer and the copy together, because
+    /// the first is where the wait can be unbounded: a path the sandbox does not
+    /// admit puts a permission panel on the Mac's screen, and a script has
+    /// nobody there to answer it.
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/timedOut`` when `timeout`
     ///   runs out first. A copy the app has already started finishes there —
@@ -251,11 +258,10 @@ enum PreparingCopy {
     ) throws -> VMSummary {
         let deadline = timeout.map { ImportDeadline(seconds: $0, path: wirePath) }
         let answer = try bounded(by: deadline, on: client) {
-            try client.send(.importVM(path: wirePath)).payload()
+            try client.send(.importVM(path: wirePath, waitForOutcome: waiting)).payload()
         }
-        guard case .summary(let created) = answer else { throw answer.unexpectedAnswer }
-        guard waiting else { return created }
-        return try bounded(by: deadline, on: client) { try settle(created, on: client) }
+        guard case .summary(let row) = answer else { throw answer.unexpectedAnswer }
+        return row
     }
 
     /// When an import's `--timeout` runs out, and what it says when it does.
@@ -288,20 +294,5 @@ enum PreparingCopy {
         } catch let failure as CLIFailure where failure.code == .timedOut {
             throw deadline.expiry
         }
-    }
-
-    /// The row `created`'s copy settled into.
-    ///
-    /// Keyed on the identifier the app just answered with rather than on
-    /// whatever the user typed: the source of a clone answers to that text too,
-    /// and it is not the row being waited for.
-    ///
-    /// - Throws: ``CLIFailure`` carrying the copy's own failure — the wait
-    ///   raises what the copy would have reported to the app, so a script sees
-    ///   the same refusal a person would.
-    static func settle(_ created: VMSummary, on client: VMCommandClient) throws -> VMSummary {
-        let answer = try client.send(.awaitPreparing(.id(created.id))).payload()
-        guard case .summary(let settled) = answer else { throw answer.unexpectedAnswer }
-        return settled
     }
 }

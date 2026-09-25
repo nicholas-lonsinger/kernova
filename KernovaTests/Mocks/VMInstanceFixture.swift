@@ -59,22 +59,6 @@ enum VMInstanceFixture {
         return VMInstance(bundle: VMBundle(try files.read()), phase: phase, preferences: preferences)
     }
 
-    /// A row whose create, clone or import has not published its bundle yet.
-    static func makeArriving(
-        name: String = "Test VM",
-        guestOS: VMGuestOS = .linux,
-        phase: VMLifecyclePhase = .stopped,
-        preferences: AppPreferences = makeTestPreferences(),
-        mutate: (inout VMConfiguration) -> Void = { _ in }
-    ) -> VMInstance {
-        var config = VMConfiguration(
-            name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        mutate(&config)
-        return VMInstance(
-            arriving: config, bundleURL: bundleURL(for: config.id), phase: phase,
-            preferences: preferences)
-    }
-
     /// What the bundle at `url` holds, read the way the library reads it.
     static func read(_ url: URL, from files: any VMBundleFileAccessing) -> VMBundleRead {
         do {

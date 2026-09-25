@@ -190,7 +190,6 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.name
                 _ = instance.configuration.guestOS
                 _ = instance.status
-                _ = instance.isPreparing
                 // Keeps the two reads above as well: `isBusy` short-circuits, so
                 // it registers the lifecycle term only while the others are
                 // false, and the tooltip and icon color need `status` anyway.

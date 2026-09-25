@@ -380,7 +380,7 @@ struct VirtualizationServiceTests {
             .write(to: snapshotLayout.configURL)
 
         // The VM as it stands now: more memory, and the second disk removed.
-        try instance.bundle?.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
+        try instance.bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         return RevertFixture(
             instance: instance, snapshot: snapshot, store: VMSnapshotStore(),
             capturedConfiguration: capturedConfiguration,
@@ -735,7 +735,7 @@ struct VirtualizationServiceTests {
             fixture.instance,
             snapshot: VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm),
             store: fixture.store)
-        try fixture.instance.bundle?.commitSnapshotManifest { $0.insert(checkpoint) }
+        try fixture.instance.bundle.commitSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 
         try await revert(fixture, to: checkpoint)

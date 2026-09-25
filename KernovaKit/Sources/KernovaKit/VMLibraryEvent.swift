@@ -10,8 +10,8 @@ import Foundation
 /// A case exists when its subject has a definite moment and an owner that
 /// knows it: the model diff below for anything the model keeps, the failing
 /// site itself for a message no surviving field can hold — a create, clone or
-/// import that fails evicts its phantom row in the same turn that would have
-/// reported it, so the diff can only ever see it vanish. A guest's reserved
+/// import that fails removes its row in the same turn that would have reported
+/// it, so the diff can only ever see it vanish. A guest's reserved
 /// address has neither: it lives in the vmnet layer, which publishes nothing
 /// and names no failing site of its own, so it is absent here rather than
 /// present as a case that only fires when something else happens to change.

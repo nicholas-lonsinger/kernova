@@ -4,7 +4,7 @@ import KernovaLogging
 import Virtualization
 
 /// The library verbs — create, clone, rename, delete, import, and the cancel
-/// that undoes any of them still writing a bundle.
+/// that stops any of them still writing a bundle.
 extension VMCommandCore {
     // MARK: - Bounded Copies
 
@@ -63,6 +63,46 @@ extension VMCommandCore {
         }
     }
 
+    // MARK: - Arrival Outcomes
+
+    /// The outcome of `arrival` for the caller that waits on it: the VM its
+    /// bundle became, or the failure thrown here — and reported nowhere else,
+    /// unless the waiter has gone by the time it settles. The event stream
+    /// already carries the failure (``arrivalFailed(_:with:)``).
+    ///
+    /// Awaiting ``VMArrival/settled`` does not return early when the waiting
+    /// task is cancelled, so whether the waiter is still there is read after
+    /// the outcome is known. A cancel the user took throws and reports nothing.
+    func awaitOutcome(of arrival: VMArrival) async throws -> VMInstance {
+        do {
+            return try await arrival.settled.value
+        } catch {
+            guard let failure = arrivalFailure(error, of: arrival) else {
+                throw CommandError.operationFailed(
+                    verb: arrival.kind.verb,
+                    message: "The \(arrival.kind.displayNoun.lowercased()) was cancelled.")
+            }
+            if Task.isCancelled { report(failure, on: nil) }
+            throw failure
+        }
+    }
+
+    /// Routes the outcome of an arrival nobody waits on: a failure is
+    /// reported, and a VM is handed to `onSettled`.
+    func followUnwaited(
+        _ arrival: VMArrival, onSettled: (@MainActor (VMInstance) async -> Void)? = nil
+    ) {
+        Task { [weak self] in
+            do {
+                let instance = try await arrival.settled.value
+                await onSettled?(instance)
+            } catch {
+                guard let self, let failure = self.arrivalFailure(error, of: arrival) else { return }
+                self.report(failure, on: nil)
+            }
+        }
+    }
+
     // MARK: - Create
 
     @discardableResult
@@ -81,27 +121,22 @@ extension VMCommandCore {
             throw CommandError.operationFailed(verb: .create, message: error.localizedDescription)
         }
 
-        let phantom = VMInstance(
-            arriving: configuration, bundleURL: bundleURL,
-            phase: VMLibrary.initialPhase(
-                for: configuration, layout: VMBundleLayout(bundleURL: bundleURL)),
-            preferences: preferences)
-
         // Before the write, so a password macOS turns down refuses a create that
         // has put nothing on disk. Held whether or not anything is started: the
         // account is owed until a boot spends it, and a Start taken later in the
         // session asks nothing.
         if let guestAccountPassword {
-            try holdGuestAccountPassword(guestAccountPassword, for: phantom)
+            try holdGuestAccountPassword(
+                guestAccountPassword, for: configuration.id, configuredAs: configuration)
         }
 
         let storage = storageService
         let diskImages = diskImageService
         let diskSizeInGB = configuration.diskSizeInGB
         let name = configuration.name
-        library.prepareBundle(
-            phantom, operation: .creating,
-            copyWork: { staged in
+        let arrival = library.beginArrival(
+            kind: .creating, configuration: configuration, destination: bundleURL,
+            write: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
                 // multi-gigabyte `copyItem` calls clone and import make: this
                 // write is a `createDirectory` and one small atomic
@@ -114,37 +149,52 @@ extension VMCommandCore {
                 }.value
                 try await diskImages.createDiskImage(
                     at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
-            },
-            onSuccess: { [weak self] in
-                #log(
-                    Self.logger, .notice,
-                    "Created VM '\(name, privacy: .public)' (status: \(phantom.status.displayName, privacy: .public))"
-                )
-                guard startAfterCreate, let self else { return }
-                #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
-                Task { [weak self] in
-                    guard let self else { return }
-                    do {
-                        try await self.start(phantom)
-                    } catch let failure as CommandError {
-                        self.report(failure, on: phantom)
-                    } catch {
-                        self.report(
-                            .operationFailed(verb: .start, message: error.localizedDescription),
-                            on: phantom)
-                    }
-                }
-            },
-            onFailure: { [weak self] error in
-                self?.reportPreparingFailure(error, verb: .create, phantom: phantom)
             })
-        return summary(phantom)
+        followUnwaited(arrival) { [weak self] instance in
+            #log(
+                Self.logger, .notice,
+                "Created VM '\(name, privacy: .public)' (status: \(instance.status.displayName, privacy: .public))"
+            )
+            guard startAfterCreate, let self else { return }
+            #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
+            do {
+                try await self.start(instance)
+            } catch let failure as CommandError {
+                self.report(failure, on: instance)
+            } catch {
+                self.report(
+                    .operationFailed(verb: .start, message: error.localizedDescription),
+                    on: instance)
+            }
+        }
+        return summary(arrival)
     }
 
     // MARK: - Clone
 
     @discardableResult
-    func clone(_ selector: VMSelector, machineIdentity: CloneMachineIdentity) throws -> VMSummary {
+    func clone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+    ) async throws -> VMSummary {
+        guard waitForOutcome else { return try beginClone(selector, machineIdentity: machineIdentity) }
+        return summary(
+            try await awaitOutcome(of: registerClone(selector, machineIdentity: machineIdentity)))
+    }
+
+    @discardableResult
+    func beginClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMSummary {
+        let arrival = try registerClone(selector, machineIdentity: machineIdentity)
+        followUnwaited(arrival)
+        return summary(arrival)
+    }
+
+    /// Registers a clone's arrival and starts its copy, with no suspension point
+    /// between the checks and the registration.
+    private func registerClone(
+        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+    ) throws -> VMArrival {
         let instance = try resolve(selector)
         try require(.clone, on: instance)
 
@@ -155,7 +205,9 @@ extension VMCommandCore {
         case .keep: generateNewID = false
         }
 
-        let existingNames = library.instances.map(\.configuration.name)
+        // Arrivals included, so two clones taken in quick succession never pick
+        // the same name.
+        let existingNames = library.entries.map(\.name)
         var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
         clonedConfig.macAddress = GuestMACAddress.random()
@@ -234,23 +286,20 @@ extension VMCommandCore {
             throw CommandError.operationFailed(verb: .clone, message: error.localizedDescription)
         }
 
-        let phantom = VMInstance(
-            arriving: clonedConfig, bundleURL: bundleURL, phase: .stopped,
-            preferences: preferences)
-
         let sourceBundleURL = instance.bundleURL
         let sourceName = instance.name
         let config = clonedConfig
         let storage = storageService
         let diskMapping = internalDiskMapping
         let bundleFilesToCopy = filesToCopy
-        library.prepareBundle(
-            phantom, operation: .cloning(sourceID: instance.id),
+        return library.beginArrival(
+            kind: .cloning(sourceID: instance.id), configuration: clonedConfig,
+            destination: bundleURL,
             // Everything the clone writes lands in `staged`, the disk remap
             // included: the remap is what makes the cloned configuration name the
             // files beside it, so it has to precede publication rather than land
             // on a bundle the library can already read.
-            copyWork: { staged in
+            write: { staged in
                 let log = Self.logger
                 let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
                     try storage.cloneVMBundle(
@@ -328,17 +377,7 @@ extension VMCommandCore {
                 var remappedConfig = config
                 remappedConfig.setStorageDisks(remapped)
                 try stagedFiles.writeInitial(remappedConfig)
-            },
-            onSuccess: {
-                #log(
-                    Self.logger, .notice,
-                    "Cloned VM '\(sourceName, privacy: .public)' as '\(config.name, privacy: .public)'"
-                )
-            },
-            onFailure: { [weak self] error in
-                self?.reportPreparingFailure(error, verb: .clone, phantom: phantom)
             })
-        return summary(phantom)
     }
 
     // MARK: - Import
@@ -347,26 +386,60 @@ extension VMCommandCore {
     /// grant this sandboxed process needs to read it first.
     ///
     /// The awaited grant is the whole of what separates this from
-    /// ``importVM(from:)``: the reservation it wraps still runs with no
-    /// suspension point inside it, so overlapping imports cannot claim the same
-    /// destination.
+    /// ``importVM(from:waitForOutcome:)``: the reservation it wraps still runs
+    /// with no suspension point inside it, so overlapping imports cannot claim
+    /// the same destination.
     @discardableResult
-    func importVM(atPath path: String) async throws -> VMSummary {
+    func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary {
         let source = try await requireSourceAuthority(.importVM)
             .readableURL(for: URL(fileURLWithPath: path), as: .vmBundle)
-        return try importVM(from: source)
+        return try await importVM(from: source, waitForOutcome: waitForOutcome)
     }
 
-    /// Reserves a collision-free destination for one `.kernova` bundle, registers its phantom row
-    /// synchronously, and spawns the file copy — answering the existing row when the source is
-    /// already in the library by UUID.
-    ///
-    /// Synchronous all the way to the copy `Task`: a batch's reservations — and two overlapping
-    /// triggers' — run atomically on the MainActor and see each other's phantoms in
-    /// `instances`, which one suspension point between them would break. The copies then run
-    /// concurrently.
+    /// Copies one `.kernova` bundle into the library — answering the existing
+    /// VM when the source is already in the library by identifier, and joining
+    /// the arrival already importing it when one is.
     @discardableResult
-    func importVM(from sourceURL: URL) throws -> VMSummary {
+    func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
+        guard waitForOutcome else { return try beginImport(from: sourceURL) }
+        switch try registerImport(from: sourceURL) {
+        case .existing(let instance):
+            return summary(instance)
+        case .joined(let arrival), .started(let arrival):
+            return summary(try await awaitOutcome(of: arrival))
+        }
+    }
+
+    @discardableResult
+    func beginImport(from sourceURL: URL) throws -> VMSummary {
+        switch try registerImport(from: sourceURL) {
+        case .existing(let instance):
+            return summary(instance)
+        case .joined(let arrival):
+            // Its own initiating call already routes an unwaited outcome.
+            return summary(arrival)
+        case .started(let arrival):
+            followUnwaited(arrival)
+            return summary(arrival)
+        }
+    }
+
+    /// Where an import's source already stands in the library, or the arrival
+    /// it started.
+    private enum ImportStart {
+        case existing(VMInstance)
+        case joined(VMArrival)
+        case started(VMArrival)
+    }
+
+    /// Reserves a collision-free destination for one `.kernova` bundle,
+    /// registers its arrival, and starts the copy.
+    ///
+    /// Synchronous all the way to the registration: a batch's reservations —
+    /// and two overlapping triggers' — run atomically on the main actor and see
+    /// each other's arrivals, which one suspension point between them would
+    /// break. The copies then run concurrently.
+    private func registerImport(from sourceURL: URL) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
             let config = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
@@ -374,50 +447,41 @@ extension VMCommandCore {
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
-            if let existing = library.instances.first(where: { $0.id == config.id }) {
+            switch library.entries.first(where: { $0.id == config.id }) {
+            case .vm(let existing):
                 library.selectedID = existing.id
                 #log(
                     Self.logger, .info,
                     "VM '\(config.name, privacy: .public)' already in library — selected existing instance"
                 )
-                return summary(existing)
+                return .existing(existing)
+            case .arriving(let arrival):
+                library.selectedID = arrival.id
+                return .joined(arrival)
+            case nil:
+                break
             }
 
-            // The save file has to come from the source bundle — the destination doesn't exist yet.
-            let sourceLayout = VMBundleLayout(bundleURL: sourceURL)
-            let initialPhase = VMLibrary.initialPhase(for: config, layout: sourceLayout)
-
-            let destinationURL = library.reserveDestination(for: sourceURL, in: vmsDir)
-            let phantom = VMInstance(
-                arriving: config, bundleURL: destinationURL, phase: initialPhase,
-                preferences: preferences)
-
             let storage = storageService
-            library.prepareBundle(
-                phantom, operation: .importing,
-                copyWork: { staged in
-                    try await Self.runBoundedCopy {
-                        try FileManager.default.copyItem(at: sourceURL, to: staged)
-                        // Auto-start is the one setting that runs a guest with
-                        // no user action, so it is local intent rather than
-                        // something a bundle carries in: a VM arriving
-                        // pre-marked would boot on the next launch without
-                        // ever being asked for. The local user marks it.
-                        try VMBundleFiles(url: staged, access: storage.bundleFiles).update(.hostState) {
-                            $0.startsAutomaticallyOnLaunch = false
+            return .started(
+                library.beginArrival(
+                    kind: .importing, configuration: config,
+                    destination: library.reserveDestination(for: sourceURL, in: vmsDir),
+                    write: { staged in
+                        try await Self.runBoundedCopy {
+                            try FileManager.default.copyItem(at: sourceURL, to: staged)
+                            // Auto-start is the one setting that runs a guest with
+                            // no user action, so it is local intent rather than
+                            // something a bundle carries in: a VM arriving
+                            // pre-marked would boot on the next launch without
+                            // ever being asked for. The local user marks it.
+                            try VMBundleFiles(url: staged, access: storage.bundleFiles).update(
+                                .hostState
+                            ) {
+                                $0.startsAutomaticallyOnLaunch = false
+                            }
                         }
-                    }
-                },
-                onSuccess: {
-                    #log(
-                        Self.logger, .notice,
-                        "Imported VM '\(config.name, privacy: .public)' from \(sourceURL.lastPathComponent, privacy: .public)"
-                    )
-                },
-                onFailure: { [weak self] error in
-                    self?.reportPreparingFailure(error, verb: .importVM, phantom: phantom)
-                })
-            return summary(phantom)
+                    }))
         } catch {
             #log(
                 Self.logger, .error,
@@ -429,103 +493,51 @@ extension VMCommandCore {
 
     // MARK: - Cancel Preparing
 
-    /// Stops a clone or import that is still copying, and removes what it has
-    /// written.
+    /// Cancels a create, clone or import, which then becomes no VM.
     ///
-    /// The copy can settle while the confirmation is up, so a confirmed cancel
-    /// covers both: an in-flight copy is marked "Cancelling…" for the copy task
-    /// to clean up, and a settled one is cleaned up here — the row removed and
-    /// the finished bundle trashed. Only an unconsented cancel needs a copy in
-    /// flight, because that is what there is a confirmation to describe.
-    ///
-    /// The settled cleanup is gated exactly as ``delete(_:permanently:alsoRemoving:confirmed:)``
-    /// is, and for the same reason: the sheet leaves the menu key equivalents
-    /// live, so the finished clone can have been started before the confirm
-    /// landed, and trashing its bundle would pull the disks out from under a
-    /// guest that is running or about to be.
+    /// An arrival still writing is stopped and its staged tree discarded once
+    /// the uninterruptible copy settles. One already renaming into the VMs
+    /// directory moves its published bundle to the Trash before it settles, so
+    /// nothing following its outcome — a waiter, a create's auto-start — ever
+    /// receives the VM. A VM is not something being prepared, so a cancel
+    /// naming one is refused.
     func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
-        let instance = try resolve(selector)
-        guard confirmed else {
-            try require(.cancelPreparing, on: instance)
-            guard let state = instance.preparingState else { throw invalidState(instance) }
-            throw CommandError.confirmationRequired(
-                Self.cancelPreparingPrompt(state.operation, on: instance))
+        let arrival: VMArrival
+        switch try resolveEntry(selector) {
+        case .vm(let instance): throw invalidState(instance)
+        case .arriving(let found): arrival = found
         }
-        guard var state = instance.preparingState else {
-            try require(.delete, on: instance)
-            guard !lifecycle.hasActiveOperation(for: instance.id) else {
-                throw CommandError.busy(
-                    vm: summary(instance), operation: instance.status.displayName.lowercased())
-            }
+        guard confirmed else {
+            guard !arrival.isCancelling else { return }
+            throw CommandError.confirmationRequired(Self.cancelPreparingPrompt(arrival.kind))
+        }
+        switch arrival.requestCancel() {
+        case .cancelled:
             #log(
                 Self.logger, .notice,
-                "Cancel confirmed after the copy settled for '\(instance.name, privacy: .public)' — removing the row and trashing the bundle"
+                "Cancelling \(arrival.kind.displayNoun, privacy: .public) for '\(arrival.name, privacy: .public)'"
             )
-            library.cleanupPhantomInstance(instance)
+        case .withdrawn:
+            #log(
+                Self.logger, .notice,
+                "Cancel confirmed while '\(arrival.name, privacy: .public)' was publishing — its bundle moves to the Trash"
+            )
+        case .alreadyCancelling:
             return
+        case .adopted:
+            throw invalidState(try resolve(selector))
         }
-        guard !state.isCancelling else { return }  // already cancelling
-
-        // Mark the row "Cancelling…" but keep it in `instances`: the copy is uninterruptible, so
-        // removing it now would race the still-writing copy and briefly drop `hasPreparing`,
-        // letting reconcile resurrect the bundle. The copy task cleans up once it settles.
-        state.task.cancel()
-        state.isCancelling = true
-        instance.preparingState = state
-
-        #log(
-            Self.logger, .notice,
-            "Cancelling \(state.operation.displayNoun, privacy: .public) for '\(instance.name, privacy: .public)'"
-        )
     }
 
     /// The refusal a create, clone or import cancel raises.
-    static func cancelPreparingPrompt(
-        _ operation: VMInstance.PreparingOperation, on _: VMInstance
-    ) -> ConfirmationPrompt {
+    static func cancelPreparingPrompt(_ kind: VMArrival.Kind) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .cancelPreparing,
-            title: operation.cancelAlertTitle,
+            title: kind.cancelAlertTitle,
             message:
                 "The operation will be stopped and any partially copied files will be removed.",
-            confirmTitle: operation.cancelLabel,
+            confirmTitle: kind.cancelLabel,
             dismissTitle: "Continue")
-    }
-
-    // MARK: - Await Preparing
-
-    /// Waits for the copy still writing this VM's bundle to settle, answering
-    /// the settled row.
-    ///
-    /// The copy task is the single owner of the settle, so awaiting it is
-    /// enough: by the time it returns the row has been published, dropped by a
-    /// failure, or dropped by a cancel — and which of the three it was is read
-    /// off the library and ``VMCommandCore/settledFailures`` rather than
-    /// tracked here.
-    ///
-    /// A failed copy drops its row before its failure is recorded, so a wait
-    /// that arrives after one resolves nothing: an identifier no VM answers to
-    /// is that copy's failure whenever one is recorded for it, and the refusal
-    /// it looks like only otherwise.
-    func awaitPreparing(_ selector: VMSelector) async throws -> VMSummary {
-        let instance: VMInstance
-        do {
-            instance = try resolve(selector)
-        } catch let refusal as CommandError {
-            guard case .notFound(.id(let id)) = refusal,
-                let failure = settledFailures.removeValue(forKey: id)
-            else { throw refusal }
-            throw failure
-        }
-        guard let state = instance.preparingState else { return summary(instance) }
-        await state.task.value
-        if let failure = settledFailures.removeValue(forKey: instance.instanceID) { throw failure }
-        guard library.instances.contains(where: { $0 === instance }) else {
-            throw CommandError.operationFailed(
-                verb: .awaitPreparing,
-                message: "The \(state.operation.displayNoun.lowercased()) was cancelled.")
-        }
-        return summary(instance)
     }
 
     // MARK: - Delete

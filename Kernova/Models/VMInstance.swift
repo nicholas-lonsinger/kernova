@@ -33,33 +33,16 @@ final class VMInstance {
 
     let instanceID: UUID
 
-    /// What this instance's state is read from: the bundle on disk, or — for a
-    /// row whose create, clone or import has not published a bundle yet — the
-    /// configuration that write was asked for.
-    private enum Backing {
-        case arriving(VMConfiguration)
-        case bundle(VMBundle)
-    }
+    /// The bundle this VM's state files are committed through.
+    ///
+    /// Replaced only by ``rebind(to:)``, when the bundle has moved.
+    private(set) var bundle: VMBundle
 
-    private var backing: Backing
-
-    /// The bundle this VM's state files are committed through, `nil` while its
-    /// row is still arriving.
-    var bundle: VMBundle? {
-        if case .bundle(let bundle) = backing { bundle } else { nil }
-    }
-
-    /// The configuration committed to the bundle — or, while arriving, the one
-    /// being written.
-    var configuration: VMConfiguration {
-        switch backing {
-        case .arriving(let configuration): configuration
-        case .bundle(let bundle): bundle.configuration
-        }
-    }
+    /// The configuration committed to the bundle.
+    var configuration: VMConfiguration { bundle.configuration }
 
     /// Kernova's own state for this VM, as committed to `host-state.json`.
-    var hostState: VMHostState { bundle?.hostState ?? VMHostState() }
+    var hostState: VMHostState { bundle.hostState }
 
     /// ``configuration`` and ``hostState`` as one value.
     var settings: VMSettings { VMSettings(configuration: configuration, hostState: hostState) }
@@ -98,7 +81,7 @@ final class VMInstance {
     /// `VZVirtualMachine` and its device objects.
     var session: VMSession? { sessionContext?.session }
 
-    let bundleURL: URL
+    var bundleURL: URL { bundle.url }
 
     /// Progress of the guest setup running for this VM — a macOS install,
     /// or a Linux installer image being fetched and verified.
@@ -109,61 +92,13 @@ final class VMInstance {
     /// gate for offering `.cancelGuestSetup`.
     var setupTask: Task<Void, Never>?
 
-    // MARK: - Preparing State (Create/Clone/Import)
-
-    enum PreparingOperation: Sendable, Equatable {
-        case creating
-        case cloning(sourceID: UUID)
-        case importing
-
-        var displayLabel: String {
-            switch self {
-            case .creating: "Creating\u{2026}"
-            case .cloning: "Cloning\u{2026}"
-            case .importing: "Importing\u{2026}"
-            }
-        }
-
-        /// The user-facing noun for this operation ("Creation" / "Clone" / "Import").
-        var displayNoun: String {
-            switch self {
-            case .creating: "Creation"
-            case .cloning: "Clone"
-            case .importing: "Import"
-            }
-        }
-
-        var cancelLabel: String { "Cancel \(displayNoun)" }
-
-        var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
-    }
-
-    /// Tracks an in-flight create, clone, or import operation.
-    struct PreparingState {
-        let operation: PreparingOperation
-        var task: Task<Void, Never>
-
-        /// `true` once the user has cancelled but the uninterruptible copy is still settling.
-        ///
-        /// The row stays visible until the copy task finishes and removes it, so the
-        /// destination stays reconcile-protected and is trashed exactly once.
-        var isCancelling = false
-
-        var displayLabel: String { isCancelling ? "Cancelling\u{2026}" : operation.displayLabel }
-    }
-
-    /// Non-nil when this instance is a phantom row awaiting a create, clone, or import to finish.
-    var preparingState: PreparingState?
-
-    var isPreparing: Bool { preparingState != nil }
-
     /// The named restore points this VM's bundle holds, as committed to
     /// `Snapshots/manifest.json`.
-    var snapshotManifest: VMSnapshotManifest { bundle?.snapshotManifest ?? VMSnapshotManifest() }
+    var snapshotManifest: VMSnapshotManifest { bundle.snapshotManifest }
 
     /// The host USB accessories this VM takes back on its own, as committed to
     /// `usb-accessories.json`.
-    var usbPairings: USBAccessoryPairingSet { bundle?.usbPairings ?? USBAccessoryPairingSet() }
+    var usbPairings: USBAccessoryPairingSet { bundle.usbPairings }
 
     /// Where this VM's display currently lives.
     ///
@@ -410,7 +345,7 @@ final class VMInstance {
 
     // MARK: - Bundle Layout
 
-    let bundleLayout: VMBundleLayout
+    var bundleLayout: VMBundleLayout { VMBundleLayout(bundleURL: bundleURL) }
 
     // MARK: - Preferences
 
@@ -426,33 +361,9 @@ final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk.
-    convenience init(bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences) {
-        self.init(
-            backing: .bundle(bundle), id: bundle.configuration.id, bundleURL: bundle.url,
-            phase: phase, preferences: preferences)
-    }
-
-    /// The row for a create, clone or import whose bundle is still being
-    /// written: `configuration` is what the write was asked for, and
-    /// ``takeBundle(_:)`` hands it the bundle once it is published at
-    /// `bundleURL`.
-    convenience init(
-        arriving configuration: VMConfiguration, bundleURL: URL, phase: VMLifecyclePhase,
-        preferences: AppPreferences
-    ) {
-        self.init(
-            backing: .arriving(configuration), id: configuration.id, bundleURL: bundleURL,
-            phase: phase, preferences: preferences)
-    }
-
-    private init(
-        backing: Backing, id: UUID, bundleURL: URL, phase: VMLifecyclePhase,
-        preferences: AppPreferences
-    ) {
-        self.instanceID = id
-        self.backing = backing
-        self.bundleURL = bundleURL
-        self.bundleLayout = VMBundleLayout(bundleURL: bundleURL)
+    init(bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences) {
+        self.instanceID = bundle.configuration.id
+        self.bundle = bundle
         self.phase = phase
         self.preferences = preferences
         clipboardTransfers.onReportChanged = { [weak self] report in
@@ -460,13 +371,13 @@ final class VMInstance {
         }
     }
 
-    /// Takes on the bundle an arriving row's write just published.
-    func takeBundle(_ bundle: VMBundle) {
-        guard case .arriving = backing, bundle.url == bundleURL, bundle.configuration.id == id else {
-            assertionFailure("takeBundle on '\(name)' with a bundle that is not the one it awaits")
+    /// Points this VM at `bundle`, read from where its bundle now lives.
+    func rebind(to bundle: VMBundle) {
+        guard bundle.configuration.id == instanceID else {
+            assertionFailure("rebind of '\(name)' to a bundle of another VM")
             return
         }
-        backing = .bundle(bundle)
+        self.bundle = bundle
     }
 
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
@@ -783,10 +694,10 @@ final class VMInstance {
     /// ``VMLifecyclePhase/isActive``.
     var isActive: Bool { phase.isActive }
 
-    /// `true` when this VM should keep the app alive: preparing, in an active
-    /// lifecycle phase, or live-paused in memory.
+    /// `true` when this VM should keep the app alive: in an active lifecycle
+    /// phase, or live-paused in memory.
     var isKeepingAppAlive: Bool {
-        isPreparing || isActive || isLivePaused
+        isActive || isLivePaused
     }
 
     /// `true` while the VM is mid-operation — see
@@ -819,7 +730,7 @@ final class VMInstance {
     /// written under, so an edit taken while the slot is on disk strands it.
     var canEditSettings: Bool { isAtRest && !hasSaveFile }
 
-    var canRename: Bool { !isPreparing && phase.canRename }
+    var canRename: Bool { phase.canRename }
 
     /// Whether a rename committed now survives — see
     /// ``VMLifecyclePhase/renamePersists``.
@@ -859,17 +770,10 @@ final class VMInstance {
     /// A live VM qualifies: the revert discards the running session, which is
     /// what the confirmation asks the user to accept.
     var canRevertToSnapshot: Bool {
-        !isPreparing && !phase.isTransitioning && !snapshotManifest.isEmpty
+        !phase.isTransitioning && !snapshotManifest.isEmpty
     }
 
     // MARK: - Wire Projection
-
-    /// This VM's status as it crosses the wire —
-    /// ``VMStatus/preparingWireName`` while a create, clone or import is still
-    /// writing its bundle, its real ``VMStatus`` otherwise.
-    var wireStatus: String {
-        isPreparing ? VMStatus.preparingWireName : status.rawValue
-    }
 
     /// This VM as any refusal or listing names it.
     ///
@@ -877,7 +781,7 @@ final class VMInstance {
     /// resolves one, and both callers already hold it — so a summary is built
     /// one way whichever of them is naming the VM.
     func summary(ipAddress: GuestIPAddress) -> VMSummary {
-        VMSummary(id: instanceID, name: name, status: wireStatus, ipAddress: ipAddress)
+        VMSummary(id: instanceID, name: name, status: status.rawValue, ipAddress: ipAddress)
     }
 
     // MARK: - Ephemeral Mode
@@ -923,14 +827,12 @@ final class VMInstance {
     /// ``VMLifecyclePhase/canForceStop``.
     var canForceStop: Bool { phase.canForceStop }
 
-    /// `true` when the VM can be deleted — nothing live in memory, no
-    /// transitional phase, and no import or clone writing into the bundle.
+    /// `true` when the VM can be deleted — nothing live in memory and no
+    /// transitional phase.
     ///
     /// A saved state is no bar: it is a file inside the bundle and goes with
     /// it, so no discard step is needed first.
-    var canDelete: Bool {
-        !isPreparing && isAtRest
-    }
+    var canDelete: Bool { isAtRest }
 
     /// `true` when the VM can be cold-booted into macOS Recovery.
     ///

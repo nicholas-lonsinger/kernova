@@ -63,7 +63,7 @@ struct StatusMenuVMSectionTests {
         let starting = makeInstance(name: "CI VM", phase: .starting(sessionID: nil))
         let stopped = makeInstance(name: "Idle VM", phase: .stopped)
 
-        let rows = StatusMenuVMSection.rows(for: [running, starting, stopped])
+        let rows = StatusMenuVMSection.rows(for: [running, starting, stopped].map(LibraryEntry.vm))
 
         #expect(
             rows == [
@@ -79,7 +79,7 @@ struct StatusMenuVMSectionTests {
         reportRefusal(
             .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy, on: running)
 
-        let rows = StatusMenuVMSection.rows(for: [running, quiet])
+        let rows = StatusMenuVMSection.rows(for: [.vm(running), .vm(quiet)])
 
         #expect(rows.map(\.noticeText) == ["Clipboard: too large to copy to your Mac", nil])
     }
@@ -99,7 +99,7 @@ struct StatusMenuVMSectionTests {
                     bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
                     elapsedSeconds: 1), since: Date()))
 
-        #expect(StatusMenuVMSection.rows(for: [running]).map(\.noticeText) == [nil])
+        #expect(StatusMenuVMSection.rows(for: [.vm(running)]).map(\.noticeText) == [nil])
     }
 
     @Test("A stopped VM's refusal never reaches the dropdown — it has no row to sit under")
@@ -107,21 +107,24 @@ struct StatusMenuVMSectionTests {
         let stopped = makeInstance(name: "Idle VM", phase: .stopped)
         reportRefusal(.timedOut, gesture: .paste, on: stopped)
 
-        let rows = StatusMenuVMSection.rows(for: [stopped])
+        let rows = StatusMenuVMSection.rows(for: [.vm(stopped)])
 
         #expect(rows.isEmpty)
     }
 
-    @Test("A preparing phantom's row shows its operation, not raw status")
+    @Test("An arrival's row shows its operation, not a status")
     func rowModelPreparing() {
-        let phantom = makeInstance(name: "Clone", phase: .stopped)
-        phantom.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
+        let configuration = VMConfiguration(name: "Clone", guestOS: .linux, bootMode: .efi)
+        let arrival = VMArrival(
+            id: configuration.id, kind: .cloning(sourceID: UUID()), configuration: configuration,
+            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id)
+        ) { _ in throw CancellationError() }
 
-        let rows = StatusMenuVMSection.rows(for: [phantom])
+        let rows = StatusMenuVMSection.rows(for: [.arriving(arrival)])
 
         #expect(
             rows == [
-                StatusMenuVMRow(instanceID: phantom.instanceID, title: "Clone — Cloning\u{2026}")
+                StatusMenuVMRow(instanceID: arrival.id, title: "Clone — Cloning\u{2026}")
             ])
     }
 

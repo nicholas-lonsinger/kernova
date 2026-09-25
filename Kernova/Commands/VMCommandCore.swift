@@ -55,13 +55,14 @@ final class VMCommandCore: VMCommanding {
     /// ``surfaceDisplay`` carries.
     var readyDisplay: ((VMInstance) -> Void)?
 
-    /// Puts a VM with no display to surface in front of the user: its row in
-    /// the library, with the library itself brought forward.
+    /// Puts a library row with no display to surface in front of the user —
+    /// a VM's or an arrival's, by identifier — with the library itself brought
+    /// forward.
     ///
     /// A hook rather than a call, for the reason ``surfaceDisplay`` states —
     /// and a second hook rather than a flag on that one, because the two land
     /// on different surfaces and only the adapter knows either.
-    var revealInLibrary: ((VMInstance) -> Void)?
+    var revealInLibrary: ((UUID) -> Void)?
 
     /// Selects a VM's bundle in the Finder, bringing the Finder forward.
     ///
@@ -72,7 +73,7 @@ final class VMCommandCore: VMCommanding {
     /// Receives every failure raised with no command call waiting on it — an
     /// Ephemeral baseline revert a power-off started, an external file that
     /// could not be trashed after its VM was deleted, the boot chained off a
-    /// finished install.
+    /// finished install, a create, clone or import nobody waits on.
     ///
     /// Typed rather than flattened to a title and a message, so a failure that
     /// reaches a user this way offers the same recovery it would have offered a
@@ -138,17 +139,20 @@ final class VMCommandCore: VMCommanding {
     /// somebody is reading a stream.
     private var eventLoop: ObservationLoop?
 
-    /// What each VM looked like at the last emission, diffed against the
+    /// What each row looked like at the last emission, diffed against the
     /// library to decide what changed.
     private var lastObserved: [UUID: ObservedState] = [:]
 
-    /// The per-VM values ``events()`` reports changes to.
+    /// The per-row values ``events()`` reports changes to.
     private struct ObservedState: Equatable {
         let name: String
-        let status: VMStatus
-        let isPreparing: Bool
+        /// `nil` for an arrival, which has no ``VMStatus`` yet.
+        let status: VMStatus?
         let agentStatus: AgentStatus
         let errorMessage: String?
+
+        /// The status as it crosses the wire.
+        var wireStatus: String { status?.rawValue ?? VMStatus.preparingWireName }
     }
 
     // MARK: - Initialization
@@ -185,6 +189,9 @@ final class VMCommandCore: VMCommanding {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.detachGuestAgentDisk(from: instance)
         }
+        library.onArrivalFailed = { [weak self] arrival, error in
+            self?.arrivalFailed(arrival, with: error)
+        }
         broadcaster.onSubscriberCountChanged = { [weak self] count in
             self?.reconcileEventLoop(subscriberCount: count)
         }
@@ -192,11 +199,11 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Resolution
 
-    /// The one VM `selector` names.
+    /// The one library row `selector` names, a VM's or an arrival's.
     ///
     /// Display names are not unique, so more than one match is a refusal
     /// carrying every candidate rather than a guess at which was meant.
-    func resolve(_ selector: VMSelector) throws -> VMInstance {
+    func resolveEntry(_ selector: VMSelector) throws -> LibraryEntry {
         let matches = candidates(for: selector)
         guard let only = matches.first else { throw CommandError.notFound(selector) }
         guard matches.count == 1 else {
@@ -205,36 +212,54 @@ final class VMCommandCore: VMCommanding {
         return only
     }
 
-    private func candidates(for selector: VMSelector) -> [VMInstance] {
-        switch selector {
-        case .id(let id):
-            return library.instances.filter { $0.instanceID == id }
-        case .name(let name):
-            return library.instances.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-        case .idOrName(let text):
-            if let id = UUID(uuidString: text) {
-                let byID = library.instances.filter { $0.instanceID == id }
-                if !byID.isEmpty { return byID }
-            }
-            return library.instances.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
+    /// The one VM `selector` names; an arrival it names is refused as busy
+    /// with its create, clone or import.
+    func resolve(_ selector: VMSelector) throws -> VMInstance {
+        switch try resolveEntry(selector) {
+        case .vm(let instance): instance
+        case .arriving(let arrival): throw busy(arrival)
         }
     }
 
-    /// `instance`'s status as it crosses the wire —
-    /// ``VMStatus/preparingWireName`` while a create, clone or import is still
-    /// writing its bundle, its real `VMStatus` otherwise.
-    func wireStatus(_ instance: VMInstance) -> String {
-        instance.wireStatus
+    private func candidates(for selector: VMSelector) -> [LibraryEntry] {
+        let entries = library.entries
+        switch selector {
+        case .id(let id):
+            return entries.filter { $0.id == id }
+        case .name(let name):
+            return entries.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        case .idOrName(let text):
+            if let id = UUID(uuidString: text) {
+                let byID = entries.filter { $0.id == id }
+                if !byID.isEmpty { return byID }
+            }
+            return entries.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
+        }
     }
 
-    /// ``ObservedState``'s wire status, by the same rule as ``wireStatus(_:)``.
-    private func wireStatus(for state: ObservedState) -> String {
-        state.isPreparing ? VMStatus.preparingWireName : state.status.rawValue
+    /// The refusal every VM verb addressed to an arrival raises.
+    func busy(_ arrival: VMArrival) -> CommandError {
+        .busy(vm: summary(arrival), operation: arrival.kind.displayNoun.lowercased())
     }
 
     func summary(_ instance: VMInstance) -> VMSummary {
         instance.summary(
             ipAddress: library.guestAddresses.address(for: instance))
+    }
+
+    /// An arrival as a listing names it: ``VMStatus/preparingWireName``, and
+    /// the address its configuration answers with nothing live.
+    func summary(_ arrival: VMArrival) -> VMSummary {
+        VMSummary(
+            id: arrival.id, name: arrival.name, status: VMStatus.preparingWireName,
+            ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration))
+    }
+
+    func summary(_ entry: LibraryEntry) -> VMSummary {
+        switch entry {
+        case .vm(let instance): summary(instance)
+        case .arriving(let arrival): summary(arrival)
+        }
     }
 
     // MARK: - State Gates
@@ -256,9 +281,7 @@ final class VMCommandCore: VMCommanding {
         return verbs
     }
 
-    /// Refuses `capability` when `instance` will not take it, naming the copy in
-    /// flight when that is what is blocking rather than a status the summary
-    /// already reports as `"preparing"`.
+    /// Refuses `capability` when `instance` will not take it.
     func require(_ capability: VMCapability, on instance: VMInstance) throws {
         try require(anyOf: [capability], on: instance)
     }
@@ -280,31 +303,18 @@ final class VMCommandCore: VMCommanding {
     /// other than ``require(anyOf:on:)`` still owes the user the refusal that
     /// verb would have raised.
     func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
-        if instance.preparingState == nil, options.contains(where: \.locksWhileCloned),
-            library.hasCloneInFlight(from: instance)
-        {
+        if options.contains(where: \.locksWhileCloned), library.hasCloneInFlight(from: instance) {
             return .busy(vm: summary(instance), operation: "being cloned")
         }
-        if instance.preparingState == nil, options.contains(where: \.waitsForSettle),
-            library.isBusy(instance)
-        {
+        if options.contains(where: \.waitsForSettle), library.isBusy(instance) {
             return .busy(vm: summary(instance), operation: instance.status.displayName.lowercased())
         }
         return invalidState(instance)
     }
 
     /// The refusal for a verb the VM's current state does not admit.
-    ///
-    /// A preparing row's real ``VMStatus`` never explains what is blocking
-    /// it — the copy does — so this reports the same ``busy`` refusal
-    /// ``refuseIfPreparing(_:)`` throws rather than naming a status the
-    /// summary already reports as `"preparing"`, which every caller of this
-    /// shared helper inherits without gating individually.
     func invalidState(_ instance: VMInstance) -> CommandError {
-        if let state = instance.preparingState {
-            return preparingBusyError(instance, state: state)
-        }
-        return .invalidState(
+        .invalidState(
             vm: summary(instance), current: instance.status,
             allowed: allowedVerbs(for: instance))
     }
@@ -317,16 +327,6 @@ final class VMCommandCore: VMCommanding {
     /// finish does.
     func itemNotFound(_ instance: VMInstance, item: String) -> CommandError {
         .itemNotFound(vm: summary(instance), item: item)
-    }
-
-    /// Refuses while a create, clone or import is still writing the VM's bundle.
-    ///
-    /// For the verbs that take no capability gate of their own; everything gated
-    /// through ``require(_:on:)`` already inherits this, because no capability
-    /// that writes the bundle survives preparing.
-    func refuseIfPreparing(_ instance: VMInstance) throws {
-        guard let state = instance.preparingState else { return }
-        throw preparingBusyError(instance, state: state)
     }
 
     /// The authority for a path a client named, or the refusal a process that
@@ -385,19 +385,11 @@ final class VMCommandCore: VMCommanding {
         switch refusal {
         case .macAddressInUse(let conflict):
             .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-        case .sessionNotAttachable, .noBundle:
+        case .sessionNotAttachable:
             invalidState(instance)
         case .noLibrary:
             .notFound(.id(instance.id))
         }
-    }
-
-    /// The refusal a verb gets while `instance` is still copying, shared by
-    /// ``refuseIfPreparing(_:)`` and ``invalidState(_:)``.
-    private func preparingBusyError(
-        _ instance: VMInstance, state: VMInstance.PreparingState
-    ) -> CommandError {
-        .busy(vm: summary(instance), operation: state.operation.displayNoun.lowercased())
     }
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
@@ -421,16 +413,22 @@ final class VMCommandCore: VMCommanding {
     // MARK: - Reads
 
     func list() -> [VMSummary] {
-        library.instances.map(summary)
+        library.entries.map(summary)
     }
 
     func info(_ selector: VMSelector) throws -> VMInfo {
-        let instance = try resolve(selector)
+        switch try resolveEntry(selector) {
+        case .vm(let instance): info(instance)
+        case .arriving(let arrival): info(arrival)
+        }
+    }
+
+    private func info(_ instance: VMInstance) -> VMInfo {
         let config = instance.configuration
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
-            status: wireStatus(instance),
+            status: instance.status.rawValue,
             guestOS: config.guestOS.rawValue,
             cpuCount: config.cpuCount,
             memoryBytes: config.memorySizeInBytes,
@@ -443,6 +441,29 @@ final class VMCommandCore: VMCommanding {
             isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
             bundlePath: instance.bundleURL.path(percentEncoded: false)
+        )
+    }
+
+    /// An arrival described from what its write was asked for: no session, no
+    /// saved state, no snapshots, and the bundle path it publishes at.
+    private func info(_ arrival: VMArrival) -> VMInfo {
+        let config = arrival.configuration
+        return VMInfo(
+            id: arrival.id,
+            name: arrival.name,
+            status: VMStatus.preparingWireName,
+            guestOS: config.guestOS.rawValue,
+            cpuCount: config.cpuCount,
+            memoryBytes: config.memorySizeInBytes,
+            diskSizeInGB: config.diskSizeInGB,
+            networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
+            macAddress: config.macAddress,
+            ipAddress: GuestAddressObserver.address(withNoLiveGuest: config),
+            agentStatus: AgentStatus.waiting.wireName,
+            hasSavedState: false,
+            isEphemeral: false,
+            snapshotCount: 0,
+            bundlePath: arrival.destinationURL.path(percentEncoded: false)
         )
     }
 
@@ -493,10 +514,10 @@ final class VMCommandCore: VMCommanding {
     /// Reads every value a ``VMLibraryEvent`` reports, so a change to any of
     /// them wakes the loop.
     private func trackEventInputs() {
-        for instance in library.instances {
+        for entry in library.entries {
+            guard case .vm(let instance) = entry else { continue }
             _ = instance.configuration.name
             _ = instance.status
-            _ = instance.isPreparing
             _ = instance.errorMessage
             _ = instance.agentStatus
         }
@@ -504,13 +525,18 @@ final class VMCommandCore: VMCommanding {
 
     private func currentObservedStates() -> [UUID: ObservedState] {
         var states: [UUID: ObservedState] = [:]
-        for instance in library.instances {
-            states[instance.instanceID] = ObservedState(
-                name: instance.name,
-                status: instance.status,
-                isPreparing: instance.isPreparing,
-                agentStatus: instance.agentStatus,
-                errorMessage: instance.errorMessage)
+        for entry in library.entries {
+            switch entry {
+            case .vm(let instance):
+                states[instance.instanceID] = ObservedState(
+                    name: instance.name,
+                    status: instance.status,
+                    agentStatus: instance.agentStatus,
+                    errorMessage: instance.errorMessage)
+            case .arriving(let arrival):
+                states[arrival.id] = ObservedState(
+                    name: arrival.name, status: nil, agentStatus: .waiting, errorMessage: nil)
+            }
         }
         return states
     }
@@ -521,26 +547,22 @@ final class VMCommandCore: VMCommanding {
     /// transition, and every reconcile with disk lands in the same model, so
     /// one reader of that model reports them all and no path can forget to.
     /// The cost is coalescing — a VM that passed through `.starting` between
-    /// two passes reports only where it ended up.
+    /// two passes reports only where it ended up. An arrival's adoption reads
+    /// as a status change from ``VMStatus/preparingWireName``.
     private func emitLibraryChanges() {
         let current = currentObservedStates()
         var batch: [VMLibraryEvent] = []
-        for instance in library.instances {
-            let id = instance.instanceID
+        for entry in library.entries {
+            let id = entry.id
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
-                batch.append(
-                    .added(
-                        VMSummary(
-                            id: id, name: now.name, status: wireStatus(for: now),
-                            ipAddress: library.guestAddresses.address(for: instance))))
+                batch.append(.added(summary(entry)))
                 continue
             }
-            if before.status != now.status || before.isPreparing != now.isPreparing {
+            if before.status != now.status {
                 batch.append(
                     .statusChanged(
-                        id: id, name: now.name, from: wireStatus(for: before),
-                        to: wireStatus(for: now)))
+                        id: id, name: now.name, from: before.wireStatus, to: now.wireStatus))
                 if now.status == .error {
                     batch.append(
                         .failure(
@@ -566,17 +588,6 @@ final class VMCommandCore: VMCommanding {
     }
 
     // MARK: - Failure Surfacing
-
-    /// Why each settled create, clone or import copy failed, keyed by the
-    /// preparing row it was writing.
-    ///
-    /// The row is evicted before the failure is reported, so it cannot carry
-    /// this: a wait that arrives after the copy failed resolves nothing, and
-    /// ``awaitPreparing(_:)`` reads what happened from here instead of
-    /// answering ``CommandError/notFound(_:)``. The wait that reads an entry
-    /// removes it; one nobody ever waits on stays until the app quits — one
-    /// `CommandError` per failed copy.
-    var settledFailures: [UUID: CommandError] = [:]
 
     /// Hands a failure that no command call is waiting on to ``onFailure``.
     func report(_ failure: CommandError, on instance: VMInstance?) {
@@ -604,24 +615,20 @@ final class VMCommandCore: VMCommanding {
         report(failure, on: instance)
     }
 
-    /// Reports a create, clone or import that failed after registering its
-    /// preparing row.
-    ///
-    /// `phantom` is evicted by the time this runs, so the diffing observation
-    /// in ``emitLibraryChanges()`` can only ever see it vanish — this message
-    /// reaches no observable field and no diff can ever produce it, which is
-    /// why it is emitted directly rather than left to the loop.
-    func reportPreparingFailure(_ error: Error, verb: VMVerb, phantom: VMInstance) {
-        let failure = CommandError.operationFailed(
-            verb: verb, message: error.localizedDescription)
-        // The same failure `awaitPreparing` throws, so a caller waiting on the
-        // copy and one that was not are told the same thing.
-        settledFailures[phantom.instanceID] = failure
-        broadcaster.emit([
-            .failure(
-                id: phantom.instanceID, name: phantom.name,
-                message: error.localizedDescription)
-        ])
-        report(failure, on: nil)
+    /// The failure `arrival` settled with, or `nil` when it was cancelled —
+    /// a cancel the user took is no failure to report, and the pipeline
+    /// throws every outcome of one as `CancellationError`.
+    func arrivalFailure(_ error: any Error, of arrival: VMArrival) -> CommandError? {
+        guard !(error is CancellationError) else { return nil }
+        return error as? CommandError
+            ?? .operationFailed(verb: arrival.kind.verb, message: error.localizedDescription)
+    }
+
+    /// Puts an arrival's failure on the event stream, waited or not, while its
+    /// row is still in the library: the diff in ``emitLibraryChanges()`` only
+    /// ever sees the row vanish, and reports that after this.
+    private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
+        guard let failure = arrivalFailure(error, of: arrival) else { return }
+        broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
     }
 }

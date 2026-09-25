@@ -67,7 +67,7 @@ struct VMBundleTests {
             preferences: makeTestPreferences())
         let library = makeWiredLibrary()
         library.wireHooks(for: instance)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         return (library, instance)
     }
 
@@ -86,7 +86,7 @@ struct VMBundleTests {
     private func commitOwnChange(to file: StateFile, of instance: VMInstance, in library: VMLibrary)
         -> Bool
     {
-        guard let bundle = instance.bundle else { return false }
+        let bundle = instance.bundle
         switch file {
         case .configuration:
             return library.updateConfiguration(of: instance) { $0.name = "Mine" }.landed
@@ -145,7 +145,7 @@ struct VMBundleTests {
         try withBundle { url in
             let access = ReplaceFailingBundleFileAccess(failing: [file.relativePath])
             let (library, instance) = try makeVM(at: url, access: access)
-            let bundle = try #require(instance.bundle)
+            let bundle = instance.bundle
 
             #expect(!commitOwnChange(to: file, of: instance, in: library))
 
@@ -161,7 +161,7 @@ struct VMBundleTests {
     func aFieldChangedOnDiskSurvivesAnotherWrite(_ file: StateFile) throws {
         try withBundle { url in
             let (library, instance) = try makeVM(at: url, access: CoordinatedBundleFileAccess())
-            let bundle = try #require(instance.bundle)
+            let bundle = instance.bundle
             try changeOnDisk(file, at: url)
 
             #expect(commitOwnChange(to: file, of: instance, in: library))

@@ -93,15 +93,11 @@ struct SidebarViewControllerTests {
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
-    @Test("statusDisplayNSColor is orange for cold-paused and preparing")
-    func statusColorColdPausedAndPreparing() {
+    @Test("statusDisplayNSColor is orange for cold-paused")
+    func statusColorColdPaused() {
         let coldPaused = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
         #expect(coldPaused.isColdPaused)
         #expect(coldPaused.statusDisplayNSColor == .systemOrange)
-
-        let preparing = VMInstanceFixture.make(phase: .stopped)
-        preparing.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
-        #expect(preparing.statusDisplayNSColor == .systemOrange)
     }
 
     // MARK: - Agent indicator gating
@@ -256,7 +252,7 @@ struct SidebarViewControllerTests {
     @Test("Appearing reloads rows so state changed while off screen isn't stale")
     func appearingReloadsAfterOffScreenChange() {
         let viewModel = makeViewModel()
-        viewModel.instances.append(VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())))
+        viewModel.library.admitForTesting(VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())))
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
@@ -383,7 +379,7 @@ struct SidebarViewControllerTests {
     func contextMenuStopped() {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -404,7 +400,7 @@ struct SidebarViewControllerTests {
     func contextMenuRunning() {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -420,22 +416,24 @@ struct SidebarViewControllerTests {
     }
 
     @Test("Context menu keeps Clone enabled while a different VM is being copied")
-    func contextMenuCloneIgnoresAnotherVMsCopy() {
+    func contextMenuCloneIgnoresAnotherVMsCopy() async {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(name: "Settled", phase: .stopped)
-        let copying = VMInstanceFixture.make(name: "Copying", phase: .stopped)
-        let task = Task {}
-        defer { task.cancel() }
-        copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        viewModel.instances.append(contentsOf: [instance, copying])
+        viewModel.library.admitForTesting(instance)
+        let gate = GatedArrivalWrite()
+        let copying = viewModel.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
         // Overlapping clones and imports are a supported case — the copy in
         // flight belongs to another VM and says nothing about this one.
-        #expect(viewModel.library.hasPreparing)
+        #expect(viewModel.arrivals.map(\.id) == [copying.id])
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
+
+        gate.release()
+        await copying.settle()
     }
 
     @Test("Context menu for a cold-paused VM offers Discard Saved State, not Stop/Suspend")
@@ -446,7 +444,7 @@ struct SidebarViewControllerTests {
         // reads the file, not the status.
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -470,7 +468,7 @@ struct SidebarViewControllerTests {
         let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
         defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
-        viewModel.instances.append(contentsOf: [running, suspended])
+        viewModel.library.admitForTesting([running, suspended])
         let controller = SidebarViewController(viewModel: viewModel)
         let runningMenu = controller.buildContextMenu(for: running)
 
@@ -492,7 +490,7 @@ struct SidebarViewControllerTests {
         let suspended = VMInstanceFixture.make(name: "Suspended", phase: .suspended)
         defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
-        viewModel.instances.append(suspended)
+        viewModel.library.admitForTesting(suspended)
         let controller = SidebarViewController(viewModel: viewModel)
         let discard = try #require(
             menuItem("Discard Saved State…", in: controller.buildContextMenu(for: suspended)))
@@ -517,7 +515,7 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -534,7 +532,7 @@ struct SidebarViewControllerTests {
     func contextMenuLivePausedDisablesDelete() {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: UUID()))
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -549,7 +547,7 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -572,7 +570,7 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = true
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -593,7 +591,7 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: phase)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menuTitles = titles(of: controller.buildContextMenu(for: instance))
@@ -606,7 +604,7 @@ struct SidebarViewControllerTests {
     func contextMenuNoForceStopDuringAColdCapture() {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .capturingAtRest)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menuTitles = titles(of: controller.buildContextMenu(for: instance))
@@ -619,7 +617,7 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -642,7 +640,7 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = true
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(phase: .stopped)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -653,23 +651,32 @@ struct SidebarViewControllerTests {
         #expect(deleteImmediately?.isAlternate == false)
     }
 
-    @Test("Context menu for a preparing VM offers only its Cancel")
-    func contextMenuPreparing() {
+    @Test("An arrival's row shows its name and label, and its menu offers only its Cancel")
+    func arrivalRowShowsItsLabelAndOffersOnlyCancel() async throws {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make()
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
-        viewModel.instances.append(instance)
+        let gate = GatedArrivalWrite()
+        let arrival = viewModel.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
-        let menu = controller.buildContextMenu(for: instance)
-        let menuTitles = titles(of: menu)
+        let cell = SidebarArrivalRowCellView()
+        cell.configure(arrival: arrival)
+        #expect(cell.textField?.stringValue == "Copying")
+        #expect(cell.toolTip == "Cloning\u{2026}")
 
-        #expect(menuTitles.contains("Cancel Clone"))
-        // The row's bundle URL holds nothing until the write is published, so a
+        let menu = controller.buildContextMenu(for: arrival)
+
+        // Nothing is at the destination until the write is published, so a
         // reveal would open Finder on a path that does not exist.
-        #expect(!menuTitles.contains("Show in Finder"))
-        #expect(!menuTitles.contains("Start"))
-        #expect(!menuTitles.contains("Rename"))
+        #expect(titles(of: menu) == ["Cancel Clone"])
+
+        #expect(arrival.requestCancel() == .cancelled)
+        // The cell's observation applies on a later main-actor turn, with no
+        // observable of its own to await.
+        try await waitUntil { cell.toolTip == "Cancelling\u{2026}" }
+
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - Content-fit width
@@ -798,13 +805,13 @@ struct SidebarViewControllerTests {
     @Test("widthToFitLongestRow grows with the longest VM name")
     func fitWidthTracksLongestName() {
         let shortModel = makeViewModel()
-        shortModel.instances.append(VMInstanceFixture.make(name: "VM"))
+        shortModel.library.admitForTesting(VMInstanceFixture.make(name: "VM"))
         let shortController = SidebarViewController(viewModel: shortModel)
         shortController.loadViewIfNeeded()
         shortController.view.layoutSubtreeIfNeeded()
 
         let longModel = makeViewModel()
-        longModel.instances.append(VMInstanceFixture.make(name: "An extremely long virtual machine name"))
+        longModel.library.admitForTesting(VMInstanceFixture.make(name: "An extremely long virtual machine name"))
         let longController = SidebarViewController(viewModel: longModel)
         longController.loadViewIfNeeded()
         longController.view.layoutSubtreeIfNeeded()
@@ -823,8 +830,8 @@ struct SidebarViewControllerTests {
     @Test("Outline view loads the group with its VM rows expanded")
     func outlineViewLoadsRows() {
         let viewModel = makeViewModel()
-        viewModel.instances.append(VMInstanceFixture.make(name: "Alpha"))
-        viewModel.instances.append(VMInstanceFixture.make(name: "Beta"))
+        viewModel.library.admitForTesting(VMInstanceFixture.make(name: "Alpha"))
+        viewModel.library.admitForTesting(VMInstanceFixture.make(name: "Beta"))
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
@@ -839,9 +846,36 @@ struct SidebarViewControllerTests {
         #expect(outline.item(atRow: 1) is VMInstance)
     }
 
+    @Test("An arrival's row becomes its VM's row when it settles, keeping its place and selection")
+    func settlingArrivalReloadsIntoAVMRow() async throws {
+        let viewModel = makeViewModel()
+        let before = VMInstanceFixture.make(name: "Before")
+        viewModel.library.admitForTesting(before)
+        let gate = GatedArrivalWrite()
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        #expect((outline.item(atRow: 1) as? VMInstance) === before)
+        #expect((outline.item(atRow: 2) as? VMArrival) === arrival)
+        #expect(viewModel.selectedID == arrival.id)
+        // The outline view offers no observable to await its selection by.
+        try await waitUntil { outline.selectedRow == 2 }
+
+        gate.release()
+        let instance = try #require(await arrival.settle())
+
+        try await waitUntil { (outline.item(atRow: 2) as? VMInstance) === instance }
+        #expect(outline.numberOfRows == 3)
+        #expect(outline.row(forItem: instance) == 2)
+        #expect(outline.selectedRow == 2)
+        #expect(viewModel.selectedID == arrival.id)
+    }
+
     // MARK: - Clone completion refresh (#575)
 
-    @Test("A cloned VM's preparing row settling routes through the sidebar's reload cycle")
+    @Test("A cloned VM's arrival row settling routes through the sidebar's reload cycle")
     func clonedRowSettlingTriggersReload() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storageService: storage)
@@ -852,31 +886,23 @@ struct SidebarViewControllerTests {
         // doesn't mistake the never-persisted source for a bundle that vanished
         // and reconcile it away, confounding the reload count below.
         storage.bundles[source.bundleURL] = source.configuration
-        viewModel.instances.append(source)
+        viewModel.library.admitForTesting(source)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
 
         let reloadsBeforeClone = controller.reloadInstancesCallCountForTesting
         viewModel.cloneVM(source)
-        guard let phantom = viewModel.instances.first(where: { $0.id != source.id }) else {
-            Issue.record("Expected a cloned phantom instance")
-            return
-        }
+        // The clone registers its arrival and is adopted in place under the
+        // same identifier, so its settle is the second VM in the library.
+        try await waitForChange { viewModel.instances.count == 2 }
+        #expect(viewModel.arrivals.isEmpty)
 
-        // Await the production Task the row's preparing state is held on,
-        // rather than polling the flag it flips. (The mock's copy settles fast
-        // enough that polling for an intermediate "still preparing" reload
-        // count would race it — the two reloads below can both have landed by
-        // the first poll tick.)
-        await phantom.preparingState?.task.value
-        #expect(!phantom.isPreparing)
-
-        // Exactly two reloads are expected end to end: one for the phantom's
-        // initial registration (an id-list change) and one for its
-        // `isPreparing` settle — the fix under test (#575). The settle's
-        // reload has no dedicated Observable signal at the controller layer to
-        // hang a `waitForChange` off of (it fires through an internal
+        // Exactly two reloads are expected end to end: one for the arrival's
+        // registration and one for its adoption, which replaces the entry
+        // under the same id — the fix under test (#575). The adoption's reload
+        // has no dedicated Observable signal at the controller layer to hang a
+        // `waitForChange` off of (it fires through an internal
         // `ObservationLoop` cascade), so poll the counter.
         //
         // Genuine no-signal predicate — the reload count is driven by an
@@ -889,7 +915,7 @@ struct SidebarViewControllerTests {
         }
 
         // The reload count above is the regression guard; the row's actual
-        // rendered badge is left to manual verification, per this file's
+        // rendered cell is left to manual verification, per this file's
         // top-level doc comment — `NSOutlineView` never realizes a row's cell
         // view in this off-screen test harness (confirmed: `view(atColumn:
         // row:makeIfNecessary: false)` is always nil here), so an assertion on

@@ -257,7 +257,6 @@ final class VMToolbarManager: NSObject {
         // Read unconditionally: a predicate above can short-circuit before
         // reaching one of these, and each one also feeds a label.
         _ = instance.status
-        _ = instance.isPreparing
         _ = instance.hasLiveVirtualMachine
         _ = instance.displayMode
         _ = instance.detailPaneMode

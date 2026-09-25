@@ -33,7 +33,7 @@ struct SettingsTabViewControllerTests {
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         for index in 1...vmCount {
-            viewModel.instances.append(
+            viewModel.library.admitForTesting(
                 VMInstanceFixture.make(name: "VM \(index)", guestOS: .macOS))
         }
         return viewModel

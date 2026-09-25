@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import KernovaTestSupport
+import Synchronization
 @testable import Kernova
 
 /// Serialized because ``VMStorageService/reclaimStagedBundles()`` sweeps the whole
@@ -159,6 +160,48 @@ struct VMStorageServiceTests {
         #expect(bundles.contains(bundleURL))
     }
 
+    // MARK: - Bundle Identity
+
+    @Test("A bundle's identity follows the directory across a rename, and a place with no bundle has none")
+    func bundleIdentityFollowsTheDirectory() throws {
+        let first = try makeBundle(VMConfiguration(name: "First", guestOS: .linux, bootMode: .efi))
+        let second = try makeBundle(VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi))
+        let moved = first.deletingLastPathComponent()
+            .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
+        defer {
+            for url in [first, second, moved] { try? FileManager.default.removeItem(at: url) }
+        }
+        let identity = try #require(service.bundleIdentity(at: first))
+        #expect(service.bundleIdentity(at: second) != identity)
+
+        try FileManager.default.moveItem(at: first, to: moved)
+
+        #expect(service.bundleIdentity(at: moved) == identity)
+        #expect(service.bundleIdentity(at: first) == nil)
+        try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: second).configURL)
+        #expect(service.bundleIdentity(at: second) == nil)
+    }
+
+    @Test(
+        "Two spellings a case-insensitive volume folds together name one bundle",
+        .enabled(if: VMStorageServiceTests.vmsDirectoryFoldsCase()))
+    func bundleIdentityIsTheVolumes() throws {
+        let url = try makeBundle(VMConfiguration(name: "Folded", guestOS: .linux, bootMode: .efi))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let respelled = url.deletingLastPathComponent()
+            .appendingPathComponent(url.lastPathComponent.lowercased(), isDirectory: true)
+        #expect(VMBundleIdentity.spelling(respelled) != VMBundleIdentity.spelling(url))
+
+        #expect(service.bundleIdentity(at: respelled) == service.bundleIdentity(at: url))
+    }
+
+    private static func vmsDirectoryFoldsCase() -> Bool {
+        guard let vmsDirectory = try? VMStorageService().vmsDirectory,
+            let values = try? vmsDirectory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+        else { return false }
+        return values.volumeSupportsCaseSensitiveNames == false
+    }
+
     // MARK: - Bundle Extension
 
     @Test("Bundle URL has .kernova extension")
@@ -228,24 +271,77 @@ struct VMStorageServiceTests {
         #expect(try files(finalURL).readConfiguration().id == config.id)
     }
 
-    @Test("Publishing onto an occupied destination throws and leaves the staged bundle intact")
-    func publishOntoOccupiedDestinationThrows() throws {
-        let config = VMConfiguration(name: "Collision", guestOS: .linux, bootMode: .efi)
-
-        let finalURL = try makeBundle(config)
+    @Test(
+        "Of two publishes to one name the loser gets exists, and the winner's bundle is intact",
+        arguments: [false, true])
+    func ofTwoPublishesToOneNameTheLoserGetsExists(destinationIsEmpty: Bool) throws {
+        let winner = VMConfiguration(name: "Winner", guestOS: .linux, bootMode: .efi)
+        let finalURL = try service.bundleURL(for: winner)
+        if destinationIsEmpty {
+            // An empty directory is still an occupied name: `rename(2)` alone
+            // would replace it.
+            try FileManager.default.createDirectory(at: finalURL, withIntermediateDirectories: true)
+        } else {
+            try createBundle(winner, at: finalURL)
+        }
+        let loser = VMConfiguration(name: "Loser", guestOS: .linux, bootMode: .efi)
         let staged = try service.makeStagedBundleURL()
-        try createBundle(config, at: staged)
+        try createBundle(loser, at: staged)
         defer {
             try? FileManager.default.removeItem(at: staged)
             try? FileManager.default.removeItem(at: finalURL)
         }
 
-        #expect(throws: VMStorageError.self) {
+        let refusal = #expect(throws: VMStorageError.self) {
             try service.publishBundle(from: staged, to: finalURL)
         }
+        guard case .bundleAlreadyExists(let url)? = refusal else {
+            Issue.record("expected an exists refusal, got \(String(describing: refusal))")
+            return
+        }
+        #expect(url == finalURL)
 
         #expect(FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
-        #expect(FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
+        if !destinationIsEmpty {
+            #expect(try files(finalURL).readConfiguration().id == winner.id)
+        }
+    }
+
+    @Test("Of many concurrent publishes to one name, exactly one wins and every other gets exists")
+    func concurrentPublishesToOneNameYieldOneWinner() throws {
+        let contenders = (0..<8).map {
+            VMConfiguration(name: "Contender \($0)", guestOS: .linux, bootMode: .efi)
+        }
+        let finalURL = try service.bundleURL(for: contenders[0])
+        let staged = try contenders.map { config in
+            let url = try service.makeStagedBundleURL()
+            try createBundle(config, at: url)
+            return url
+        }
+        defer {
+            for url in staged { try? FileManager.default.removeItem(at: url) }
+            try? FileManager.default.removeItem(at: finalURL)
+        }
+
+        let outcomes = Mutex<[Int: Result<Void, any Error>]>([:])
+        let service = service
+        DispatchQueue.concurrentPerform(iterations: staged.count) { index in
+            let outcome = Result { try service.publishBundle(from: staged[index], to: finalURL) }
+            outcomes.withLock { $0[index] = outcome }
+        }
+
+        let results = outcomes.withLock { $0 }
+        let winners = results.filter { if case .success = $0.value { true } else { false } }
+        #expect(winners.count == 1)
+        for (_, outcome) in results {
+            guard case .failure(let error) = outcome else { continue }
+            guard case VMStorageError.bundleAlreadyExists? = error as? VMStorageError else {
+                Issue.record("a losing publish failed with \(error), not an exists refusal")
+                continue
+            }
+        }
+        let winner = try #require(winners.keys.first)
+        #expect(try files(finalURL).readConfiguration().id == contenders[winner].id)
     }
 
     @Test("Reclaiming discards staged bundles and leaves published ones alone")

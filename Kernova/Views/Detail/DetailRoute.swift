@@ -3,8 +3,6 @@ import Foundation
 /// Which content the detail pane shows for a given VM, derived purely from the
 /// VM's lifecycle phase and related flags.
 enum DetailRoute: Equatable {
-    /// A create/clone/import is in progress; show a spinner with `label`.
-    case preparing(label: String)
     /// Show the settings form. `isReadOnly` is `true` when viewing a running
     /// VM's configuration.
     case settings(isReadOnly: Bool)
@@ -26,18 +24,11 @@ enum DetailRoute: Equatable {
     case display
 
     /// Resolves the route the detail pane should display.
-    ///
-    /// A preparing operation wins over every phase; `preparingLabel` is
-    /// `preparingState?.operation.displayLabel`, or `nil` when none is running.
     static func resolve(
-        preparingLabel: String?,
         phase: VMLifecyclePhase,
         hasSetupState: Bool,
         detailPaneMode: DetailPaneMode
     ) -> DetailRoute {
-        if let preparingLabel {
-            return .preparing(label: preparingLabel)
-        }
         let label = phase.status.displayName
         switch phase {
         case .stopped:

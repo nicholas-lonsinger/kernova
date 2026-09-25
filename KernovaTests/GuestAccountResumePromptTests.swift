@@ -303,7 +303,7 @@ struct GuestAccountResumePromptTests {
     func aRecoveryForADepartedVMStartsNothing() async {
         let (viewModel, storage, virtualization) = makeViewModel()
         let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
-        viewModel.instances.removeAll()
+        viewModel.library.evict(instance)
 
         await viewModel.removeStartFailedAttachmentAndStart(
             StartFailedAttachment(

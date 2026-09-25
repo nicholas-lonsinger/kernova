@@ -80,17 +80,18 @@ func makeWiredLibrary(
     fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-    arpTable: ScriptedARPTable = ScriptedARPTable()
+    arpTable: ScriptedARPTable = ScriptedARPTable(),
+    guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
         snapshotStore: snapshotStore ?? MockVMSnapshotStore(files: storage.files),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
-        fileSystem: fileSystem,
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        entitlements: .entitled)
+        entitlements: .entitled,
+        guestAccountPasswords: guestAccountPasswords)
     for instance in instances {
         library.register(instance, storage: storage)
     }
@@ -98,16 +99,23 @@ func makeWiredLibrary(
 }
 
 extension VMLibrary {
+    /// Adds each of `instances`, in order, unwired and unread.
+    func admitForTesting(_ instances: [VMInstance]) {
+        for instance in instances {
+            admitForTesting(instance)
+        }
+    }
+
     /// Wires `instance` and adds it to the library, with its bundle's files in
     /// `storage` as a load would have found them: a fixture built over a store
     /// of its own hands that store's files to `storage` and writes through it
     /// from then on.
     func register(_ instance: VMInstance, storage: MockVMStorageService) {
-        if let files = instance.bundle?.fileAccessForTesting as? InMemoryVMBundleFiles {
+        if let files = instance.bundle.fileAccessForTesting as? InMemoryVMBundleFiles {
             files.forward(to: storage.files)
         }
         wireHooks(for: instance)
-        instances.append(instance)
+        admitForTesting(instance)
     }
 
     /// Applies `mutate` to `instance`'s host state as setup a test relies on,
@@ -160,7 +168,7 @@ extension VMInstance {
     /// The in-memory store this fixture VM's bundle files live in — the store
     /// a library it was registered with owns, once registered.
     var fixtureBundleFiles: InMemoryVMBundleFiles {
-        guard let files = bundle?.fileAccessForTesting as? InMemoryVMBundleFiles else {
+        guard let files = bundle.fileAccessForTesting as? InMemoryVMBundleFiles else {
             preconditionFailure("'\(name)' is not a fixture VM over in-memory bundle files")
         }
         return files
@@ -176,7 +184,6 @@ extension VMInstance {
     /// A commit that changes nothing reads the file and publishes what it
     /// holds, which is how a seeded file reaches memory.
     private func refreshBundle(_ commit: (VMBundle) throws -> Void) {
-        guard let bundle else { preconditionFailure("'\(name)' has no bundle") }
         do {
             try commit(bundle)
         } catch {

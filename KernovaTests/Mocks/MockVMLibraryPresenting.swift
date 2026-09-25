@@ -29,7 +29,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var forceStopInstances: [VMInstance] = []
     private(set) var recoveryBootInstances: [VMInstance] = []
     private(set) var stopPausedInstances: [VMInstance] = []
-    private(set) var cancelPreparingInstances: [VMInstance] = []
+    private(set) var cancelPreparingArrivals: [VMArrival] = []
     private(set) var installerMountedNames: [String] = []
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
     /// Parallel to `installerMountedNames`: how each request said the disk
@@ -73,7 +73,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
     func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
-    func presentCancelPreparing(for instance: VMInstance) { cancelPreparingInstances.append(instance) }
+    func presentCancelPreparing(for arrival: VMArrival) { cancelPreparingArrivals.append(arrival) }
     func presentInstallerMounted(
         vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
     ) {
@@ -108,8 +108,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var instanceToRecoveryBoot: VMInstance? { recoveryBootInstances.last }
     var showStopPausedConfirmation: Bool { !stopPausedInstances.isEmpty }
     var instanceToStopPaused: VMInstance? { stopPausedInstances.last }
-    var showCancelPreparingConfirmation: Bool { !cancelPreparingInstances.isEmpty }
-    var preparingInstanceToCancel: VMInstance? { cancelPreparingInstances.last }
+    var showCancelPreparingConfirmation: Bool { !cancelPreparingArrivals.isEmpty }
+    var arrivalToCancel: VMArrival? { cancelPreparingArrivals.last }
     var showInstallerMountedAlert: Bool { !installerMountedNames.isEmpty }
     var installerMountedVMName: String? { installerMountedNames.last }
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }

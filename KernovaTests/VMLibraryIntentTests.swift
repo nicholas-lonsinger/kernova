@@ -55,6 +55,8 @@ struct VMLibraryIntentTests {
 
         #expect(commands.cloneCalls.map(\.selector) == [.id(vm)])
         #expect(commands.cloneCalls.map(\.machineIdentity) == [.keep])
+        // The clone intent answers the arrival rather than waiting for it.
+        #expect(commands.cloneCalls.map(\.waitForOutcome) == [false])
         #expect(commands.renameCalls.map(\.selector) == [.id(vm)])
         #expect(commands.renameCalls.map(\.newName) == ["Renamed"])
         #expect(commands.deleteCalls.map(\.selector) == [.id(vm)])
@@ -112,7 +114,7 @@ struct VMLibraryIntentTests {
         commands.importResult = VMSummary(
             id: imported, name: "Imported", status: VMStatus.preparingWireName,
             ipAddress: .unavailable)
-        commands.awaitPreparingResult = VMSummary(
+        commands.outcomeResult = VMSummary(
             id: imported, name: "Imported", status: "stopped", ipAddress: .unavailable)
         commands.infoByID[imported] = VMIntentFixtures.info(
             id: imported, name: "Imported", status: "stopped")
@@ -120,35 +122,22 @@ struct VMLibraryIntentTests {
         let entity = try await makeGateway(commands).importVM(from: source)
 
         #expect(commands.importURLs == [source])
-        #expect(commands.awaitPreparingSelectors == [.id(imported)])
+        #expect(commands.importWaits == [true])
         #expect(entity.id == imported)
         #expect(entity.name == "Imported")
         #expect(entity.status == "stopped")
     }
 
-    @Test("A copy that failed leaves the import as the failure the wait reported")
+    @Test("A copy that failed leaves the import as the copy's own failure")
     func importSurfacesTheCopysFailure() async throws {
         let commands = MockVMCommanding()
         let failure = CommandError.operationFailed(
-            verb: .awaitPreparing, message: "The import was cancelled.")
-        commands.awaitPreparingError = failure
+            verb: .importVM, message: "The import was cancelled.")
+        commands.outcomeError = failure
 
         await #expect(throws: failure) {
             _ = try await makeGateway(commands).importVM(from: source)
         }
-    }
-
-    @Test("An import the core refuses waits on no copy")
-    func refusedImportNeverWaits() async throws {
-        let commands = MockVMCommanding()
-        let failure = CommandError.operationFailed(
-            verb: .importVM, message: "The bundle could not be read.")
-        commands.importError = failure
-
-        await #expect(throws: failure) {
-            _ = try await makeGateway(commands).importVM(from: source)
-        }
-        #expect(commands.awaitPreparingSelectors.isEmpty)
     }
 
     @Test("A picked bundle resolves to the file it names")

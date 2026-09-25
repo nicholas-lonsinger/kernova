@@ -32,7 +32,8 @@ struct VMToolbarManagerTests {
         instance: VMInstance? = nil,
         library: VMLibrary? = nil,
         gatesDisplayOnCapability: Bool = true,
-        includeSettingsToggle: Bool = true
+        includeSettingsToggle: Bool = true,
+        selection: (() -> VMInstance?)? = nil
     ) -> VMToolbarManager {
         VMToolbarManager(
             configuration: .init(
@@ -46,7 +47,7 @@ struct VMToolbarManagerTests {
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
             capabilities: VMCapabilityCatalog(library: library ?? makeLibrary().library),
-            instanceProvider: { instance }
+            instanceProvider: selection ?? { instance }
         )
     }
 
@@ -136,7 +137,7 @@ struct VMToolbarManagerTests {
         suspending.shouldSuspendOnResume = true
         let (library, lifecycle) = makeLibrary(virtualization: suspending)
         let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         let manager = makeManager(instance: instance, library: library)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
@@ -264,6 +265,28 @@ struct VMToolbarManagerTests {
         #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
     }
 
+    @Test("Every item is disabled while an arrival is the selected row")
+    func selectedArrivalDisablesEveryItem() async throws {
+        let library = makeLibrary().library
+        let gate = GatedArrivalWrite()
+        let arrival = library.beginGatedArrival(named: "Arriving", gate: gate)
+        #expect(library.selectedID == arrival.id)
+        let manager = makeManager(library: library, selection: { library.selectedInstance })
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        #expect(!toolbar.items.isEmpty)
+        for item in toolbar.items {
+            let controls = (item as? NSToolbarItemGroup)?.subitems ?? [item]
+            #expect(
+                controls.allSatisfy { !$0.isEnabled }, "\(item.itemIdentifier.rawValue) is enabled")
+        }
+
+        gate.release()
+        await arrival.settle()
+    }
+
     // MARK: - Clipboard item
 
     /// Stands a running readout on `instance`, as a producer's operation would,
@@ -389,50 +412,6 @@ struct VMToolbarManagerTests {
         #expect(clipboardButton(in: toolbar)?.isEnabled == false)
         #expect(clipboardButton(in: toolbar)?.transferFraction == nil)
         withExtendedLifetime(operation) {}
-    }
-
-    // MARK: - Preparing State
-
-    @Test("Every VM item is disabled while a clone or import writes into the bundle")
-    func preparingDisablesEveryItem() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
-        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
-        #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
-    }
-
-    @Test("A preparing VM's lifecycle labels name what its own state admits")
-    func preparingKeepsTheLabelsItsStateAdmits() throws {
-        let instance = makeInstance(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        // Labels follow applicability and enablement follows availability: a
-        // suspended row names the Resume and the discard its state admits while
-        // the copy that is still writing disables all three.
-        let lifecycle =
-            toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" }
-            as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].label == "Resume")
-        #expect(lifecycle?.subitems[2].label == "Discard Saved State")
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
     }
 
     // MARK: - Lifecycle Labels

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
@@ -82,6 +83,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var publishBundleCallCount = 0
     var reclaimStagedBundlesCallCount = 0
 
+    /// Every staged tree discarded, in order, whether or not the discard
+    /// threw.
+    var discardedStagedURLs: [URL] = []
+
     /// Every staged path handed out, in order — the only way a test can name one,
     /// since each is minted fresh rather than derived from a configuration.
     var stagedBundleURLs: [URL] = []
@@ -94,6 +99,25 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var createVMBundleError: (any Error)?
     var cloneVMBundleError: (any Error)?
     var publishBundleError: (any Error)?
+    var discardStagedBundleError: (any Error)?
+
+    /// Runs on the main actor once a publish's rename has landed and before
+    /// the publishing arrival resumes — the window between the rename and the
+    /// arrival's adoption. The publish runs detached while the main actor
+    /// waits on it, so the hop cannot deadlock.
+    var afterPublish: (@MainActor () -> Void)?
+
+    /// Holds a publish on its own thread, after its rename has landed, until
+    /// signalled — the arrival stays past the point a cancel stops it while the
+    /// main actor is free. ``publishLanded`` fires as the hold begins.
+    var publishHold: DispatchSemaphore?
+    let publishLanded = AsyncGate()
+
+    /// Holds a clone's copy on its own thread, before it writes anything,
+    /// until signalled; ``cloneEntered`` fires as the hold begins. An error set
+    /// while held is the one the copy throws.
+    var cloneHold: DispatchSemaphore?
+    let cloneEntered = AsyncGate()
     /// Thrown by every later replace of `config.json`.
     var saveConfigurationError: (any Error)? {
         get { files.replaceError(for: VMBundleLayout.configRelativePath) }
@@ -181,6 +205,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     {
         cloneVMBundleCallCount += 1
         lastCloneFilesToCopy = filesToCopy
+        if let cloneHold {
+            cloneEntered.notify()
+            cloneHold.wait()
+        }
         if let error = cloneVMBundleError { throw error }
         // Mirrors the real service actually creating the bundle directory on disk:
         // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
@@ -205,6 +233,40 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             try fm.moveItem(at: stagedURL, to: bundleURL)
         }
         files.moveBundle(from: stagedURL, to: bundleURL)
+        if let publishHold {
+            publishLanded.notify()
+            publishHold.wait()
+        }
+        if let afterPublish {
+            DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }
+        }
+    }
+
+    /// A bundle the store holds is identified as the default case-insensitive
+    /// volume would identify it — every spelling it folds together names that
+    /// one bundle; any other is identified on disk, as a real copy is.
+    func bundleIdentity(at bundleURL: URL) -> VMBundleIdentity? {
+        let key = VMBundleIdentity.nameKey(bundleURL)
+        let held = files.bundleURLs.contains {
+            VMBundleIdentity.nameKey($0) == key
+                && files.data(atRelativePath: VMBundleLayout.configRelativePath, in: $0) != nil
+        }
+        return held
+            ? VMBundleIdentity(fileResourceIdentifier: key as NSString)
+            : VMBundleIdentity(bundleAt: bundleURL)
+    }
+
+    func discardStagedBundle(at stagedURL: URL) throws {
+        discardedStagedURLs.append(stagedURL)
+        if let error = discardStagedBundleError { throw error }
+        try? FileManager.default.removeItem(at: stagedURL)
+        files.removeBundle(at: stagedURL)
+    }
+
+    /// Moves a bundle within the store, as the Finder moving it inside the VMs
+    /// directory would.
+    func moveBundle(from source: URL, to destination: URL) {
+        files.moveBundle(from: source, to: destination)
     }
 
     @discardableResult

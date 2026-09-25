@@ -67,7 +67,7 @@ struct ClipboardPasteLimitPolicyPushTests {
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled)
 
         let instance = makeInstance(preferences: preferences)
-        viewModel.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         let guest = try attachControlService(to: instance)
         defer {
             instance.stopVsockServices()

@@ -27,7 +27,7 @@ struct VMOverviewResolverTests {
             viewModel
             ?? makeSettingsViewModel(
                 preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
-        if inLibrary { model.library.instances.append(instance) }
+        if inLibrary { model.library.admitForTesting(instance) }
         return VMOverviewResolver(
             instance: instance,
             viewModel: model,
@@ -189,7 +189,7 @@ struct VMOverviewResolverTests {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        viewModel.instances = [instance, twin]
+        viewModel.library.admitForTesting([instance, twin])
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
 
         resolver.refresh()

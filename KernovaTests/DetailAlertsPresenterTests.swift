@@ -65,7 +65,7 @@ struct DetailAlertsPresenterTests {
         hostState: VMHostState = VMHostState()
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(name: name, hostState: hostState)
-        viewModel.library.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         return instance
     }
 
@@ -81,7 +81,7 @@ struct DetailAlertsPresenterTests {
                     path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
             ]
         }
-        viewModel.library.instances.append(instance)
+        viewModel.library.admitForTesting(instance)
         return instance
     }
 
