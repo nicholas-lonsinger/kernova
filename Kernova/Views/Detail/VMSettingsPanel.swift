@@ -174,16 +174,31 @@ extension VMSettingsPanel {
     }
 }
 
-extension NSTextField {
-    /// Paints `value` from the model unless the user is typing in the field.
-    ///
-    /// Every panel refresh paints its fields through this: any refresh — an
-    /// observation pass, a status change a CLI start makes — would otherwise
-    /// replace the keystrokes typed so far, and the edit reaches the model only
-    /// through its end-edit, which ends in ``showEndedEdit(_:)``.
-    func showUnlessEditing(_ value: String) {
-        guard currentEditor() == nil else { return }
-        stringValue = value
+/// A settings field showing one model value, which tells text the user typed
+/// from the value the model last painted.
+///
+/// A refresh repaints the field unless the user has changed its text, so typed
+/// text survives any refresh — an observation pass, a status change a CLI start
+/// makes — and a field nobody touched stays current. Its end-edit writes only a
+/// change (``holdsUserEdit``): focus leaving a field fires one whether or not
+/// anything was typed, and writing what the field holds would put back a value
+/// another writer has since replaced.
+final class ModelValueField: NSTextField {
+    /// The value the model last painted, which text still equal to it is not an
+    /// edit of.
+    private var paintedValue: String?
+
+    /// Whether the text shown is not the value the model last painted — an
+    /// edit for the field's end-edit to write.
+    var holdsUserEdit: Bool { shownText != paintedValue }
+
+    /// The text the user sees: the field editor's while one is attached.
+    private var shownText: String { currentEditor()?.string ?? stringValue }
+
+    /// Paints `value` from the model unless the user has changed the text.
+    func show(_ value: String) {
+        guard currentEditor() == nil || !holdsUserEdit else { return }
+        paint(value)
     }
 
     /// Shows `value` in a field whose edit just ended, written or refused.
@@ -194,7 +209,16 @@ extension NSTextField {
     /// discarded first.
     func showEndedEdit(_ value: String) {
         abortEditing()
-        stringValue = value
+        paint(value)
+    }
+
+    private func paint(_ value: String) {
+        paintedValue = value
+        if let editor = currentEditor() {
+            editor.string = value
+        } else {
+            stringValue = value
+        }
     }
 }
 

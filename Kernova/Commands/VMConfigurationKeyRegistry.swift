@@ -280,7 +280,7 @@ enum VMConfigurationKeyRegistry {
         write: { value, config, _ in
             let width = try ConfigurationValue.integer(
                 value, key: "display.width",
-                in: DisplayBootSizing.minimumWidth...config.displayBaseSizeLimit)
+                in: config.displayBaseSizeRange.width)
             config.setDisplayBaseSize(width: width, height: config.displayBaseSize.height)
         },
         refusalOnResult: sizedToWindowRefusal("display.width"))
@@ -293,7 +293,7 @@ enum VMConfigurationKeyRegistry {
         write: { value, config, _ in
             let height = try ConfigurationValue.integer(
                 value, key: "display.height",
-                in: DisplayBootSizing.minimumHeight...config.displayBaseSizeLimit)
+                in: config.displayBaseSizeRange.height)
             config.setDisplayBaseSize(width: config.displayBaseSize.width, height: height)
         },
         refusalOnResult: sizedToWindowRefusal("display.height"))

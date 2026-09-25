@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaKit
 import KernovaTestSupport
 import Testing
 import Virtualization
@@ -737,6 +738,63 @@ struct VMSettingsSystemPanelTests {
         #expect(field.integerValue == typed.modelValue(of: instance.configuration))
     }
 
+    @Test(
+        "A focused field nobody typed in follows a model change and writes nothing when focus leaves",
+        arguments: TypedField.allCases)
+    func aFocusedUntypedFieldFollowsTheModel(_ focused: TypedField) async throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField(focused.rawValue, in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        #expect(field.currentEditor() != nil)
+        let changed = String(focused.changedValue(from: instance.configuration))
+
+        // Not the pane's own write: the field hears of it only through the
+        // model, as it does a CLI `set`.
+        let outcome = viewModel.setConfiguration(
+            [ConfigurationEntry(key: focused.key, value: changed)], on: instance)
+        #expect(outcome == .applied)
+        try await waitForChange { field.currentEditor()?.string == changed }
+        let after = instance.configuration
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration == after)
+        #expect(presenter.errors.isEmpty)
+        #expect(field.stringValue == changed)
+    }
+
+    @Test("A count committed with Return is not written back over a later CLI set")
+    func aCommittedCountLeavesALaterSetStanding() async throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("CPU cores", in: vc.view))
+        let original = instance.configuration.cpuCount
+        let typed = TypedField.cpus.changedValue(from: instance.configuration)
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.string = String(typed)
+
+        // Return commits the edit and leaves the field focused, its text
+        // reselected in a field editor.
+        editor.insertNewline(nil)
+        #expect(instance.configuration.cpuCount == typed)
+        if field.currentEditor() == nil { #expect(window.makeFirstResponder(field)) }
+
+        let outcome = viewModel.setConfiguration(
+            [ConfigurationEntry(key: "cpus", value: String(original))], on: instance)
+        #expect(outcome == .applied)
+        try await waitForChange { field.currentEditor()?.string == String(original) }
+        // Clicking the sidebar ends the edit.
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.cpuCount == original)
+        #expect(presenter.errors.isEmpty)
+    }
+
     // MARK: - Resolution caption
 
     private func resolutionCaption(in vc: VMSettingsViewController) -> String? {
@@ -777,6 +835,18 @@ struct VMSettingsSystemPanelTests {
             resolutionCaption(in: vc)
                 == "Boots at 1600 × 1800 pixels (looks like 800 × 900), until the next start "
                 + "resizes it to the window.")
+    }
+
+    @Test("In match mode the caption promises HiDPI only on a Retina display")
+    func matchModeCaptionQualifiesThePendingHiDPI() throws {
+        let (vc, _) = makeDisplayController(
+            sizesToWindow: true, width: 1600, height: 1800, ppi: 144)
+
+        try toggleHiDPI(true, in: vc)
+        #expect(
+            resolutionCaption(in: vc)
+                == "Boots at 1600 × 1800 pixels, until the next start resizes it to the window, "
+                + "with HiDPI on a Retina display.")
     }
 
     @Test("The resolution caption follows a HiDPI write made through the verb")

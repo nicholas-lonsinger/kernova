@@ -251,6 +251,50 @@ struct VMCommandCoreConfigurationTests {
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
     }
 
+    @Test("The smallest size a Retina window fit stores reads back as a set that changes nothing")
+    func theSmallestRetinaFitRoundTrips() throws {
+        let harness = makeHarness()
+        let smallest = DisplayBootSizing.resolution(fittingPoints: .zero, backingScaleFactor: 2)
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displayResolution = smallest
+            $0.displaySizesToWindow = true
+            $0.displayHiDPI = true
+        }
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let read = try harness.core.configuration(.name("Alpha"), keys: nil)
+        #expect(read.contains(ConfigurationEntry(key: "display.width", value: String(smallest.width / 2))))
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A Retina base size down to half the pixel floor is taken, not refused")
+    func aRetinaBaseTakesHalfThePixelFloor() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = true
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1920, height: 1200, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        }
+        let floor = DisplayBootSizing.Resolution(
+            width: DisplayBootSizing.minimumWidth, height: DisplayBootSizing.minimumHeight,
+            ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "display.width", value: String(floor.width / 2)),
+                ConfigurationEntry(key: "display.height", value: String(floor.height / 2)),
+            ],
+            confirmed: false)
+
+        #expect(instance.configuration.displayResolution == floor)
+    }
+
     @Test("One bad value in a batch writes nothing at all")
     func aBatchIsAtomic() throws {
         let harness = makeHarness()
@@ -776,14 +820,17 @@ struct VMCommandCoreConfigurationTests {
         }
         let before = instance.configuration
 
+        // A HiDPI base is doubled before it reaches VZ, so it stops at half the
+        // pixel floor and half the pixel ceiling.
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "display.width", value: "640")],
+                assignments: [
+                    ConfigurationEntry(
+                        key: "display.width", value: String(DisplayBootSizing.minimumWidth / 2 - 1))
+                ],
                 confirmed: false)
         }
-        // A HiDPI base is doubled before it reaches VZ, so it stops at half the
-        // pixel ceiling rather than at the ceiling itself.
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),

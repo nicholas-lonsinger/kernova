@@ -28,7 +28,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The MAC address row, hidden while the VM has no network device or has
     /// yet to be given an address.
     private var macAddressRow: GroupedFormCollapsibleRow?
-    private var macAddressField = NSTextField()
+    private var macAddressField = ModelValueField()
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: NSButton?
@@ -164,7 +164,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The MAC address row: an editable, VZ-validated field and a Generate
     /// button. `refreshMACAddressRow()` owns its content and visibility.
     private func makeMACAddressRow() -> GroupedFormCollapsibleRow {
-        macAddressField = NSTextField()
+        macAddressField = ModelValueField()
         macAddressField.alignment = .right
         macAddressField.delegate = self
         macAddressField.toolTip =
@@ -198,7 +198,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             view.window?.makeFirstResponder(nil)
         }
         macAddressRow?.isHidden = hidden
-        macAddressField.showUnlessEditing(instance.configuration.macAddress ?? "")
+        macAddressField.show(instance.configuration.macAddress ?? "")
     }
 
     /// While the pane is read-only, whether the Mode picker stays live as the
@@ -407,7 +407,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// both snap the field back. The tooltip names the accepted spelling; the
     /// refusal carries its own alert.
     private func applyMACAddressFieldEdit() {
-        if let normalized = GuestMACAddress.normalized(macAddressField.stringValue) {
+        if macAddressField.holdsUserEdit,
+            let normalized = GuestMACAddress.normalized(macAddressField.stringValue)
+        {
             write(VMConfigurationKeyRegistry.networkMAC.assigning(normalized))
         }
         macAddressField.showEndedEdit(instance.configuration.macAddress ?? "")

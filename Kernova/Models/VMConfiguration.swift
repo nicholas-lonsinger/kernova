@@ -641,11 +641,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         DisplayBootSizing.resolution(base: width, height: height, hiDPI: displayResolutionIsHiDPI)
     }
 
-    /// The largest "looks like" size this VM takes: a HiDPI base is doubled
-    /// before it reaches VZ, so it stops at half the pixel ceiling.
-    var displayBaseSizeLimit: Int {
-        displayResolutionIsHiDPI
-            ? DisplayBootSizing.maximumDimension / 2 : DisplayBootSizing.maximumDimension
+    /// The "looks like" sizes this VM takes at its stored density — every
+    /// size ``displayBaseSize`` can read back, so a read is always a valid write.
+    var displayBaseSizeRange: (width: ClosedRange<Int>, height: ClosedRange<Int>) {
+        DisplayBootSizing.baseRange(hiDPI: displayResolutionIsHiDPI)
     }
 
     // MARK: - Clipboard

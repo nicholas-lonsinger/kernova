@@ -682,6 +682,27 @@ struct VMSettingsNetworkPanelTests {
         #expect(instance.configuration.macAddress == mac)
     }
 
+    @Test("A focused MAC field nobody typed in follows a CLI set and writes nothing when focus leaves")
+    func aFocusedUntypedMACFollowsTheModel() async throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f", presenter: presenter)
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        #expect(field.currentEditor() != nil)
+
+        let outcome = viewModel.setConfiguration(
+            [ConfigurationEntry(key: "network.mac", value: "aa:bb:cc:dd:ee:01")], on: instance)
+        #expect(outcome == .applied)
+        try await waitForChange { field.currentEditor()?.string == "aa:bb:cc:dd:ee:01" }
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
+        #expect(!presenter.showError)
+    }
+
     @Test("Generate mints a fresh locally administered address and shows it")
     func generateMintsALocallyAdministeredAddress() throws {
         let (vc, instance) = makeNetworkController()

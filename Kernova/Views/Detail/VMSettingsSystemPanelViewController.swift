@@ -73,16 +73,16 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     // Resources
-    private var cpuField = NSTextField()
+    private var cpuField = ModelValueField()
     private var cpuStepper = NSStepper()
-    private var memoryField = NSTextField()
+    private var memoryField = ModelValueField()
     private var memoryStepper = NSStepper()
 
     // Display
     private var displayMatchWindowSwitch = NSSwitch()
     private var displayResolutionPopUp = NSPopUpButton()
-    private var displayWidthField = NSTextField()
-    private var displayHeightField = NSTextField()
+    private var displayWidthField = ModelValueField()
+    private var displayHeightField = ModelValueField()
     private var displayHiDPISwitch = NSSwitch()
     private var displayAutoResizeSwitch = NSSwitch()
     /// Caption naming the resolution the guest will boot at.
@@ -123,9 +123,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
     private func buildResourcesSection() -> NSView {
         let os = instance.configuration.guestOS
-        cpuField = NSTextField()
+        cpuField = ModelValueField()
         cpuStepper = NSStepper()
-        memoryField = NSTextField()
+        memoryField = ModelValueField()
         memoryStepper = NSStepper()
         configureGroupedFormNumeric(
             field: cpuField, stepper: cpuStepper, min: os.minCPUCount, max: os.maxCPUCount,
@@ -268,8 +268,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         return popUp
     }
 
-    private func makeDisplaySizeField() -> NSTextField {
-        let field = NSTextField()
+    private func makeDisplaySizeField() -> ModelValueField {
+        let field = ModelValueField()
         field.alignment = .right
         field.delegate = self
         field.widthAnchor.constraint(equalToConstant: 64).isActive = true
@@ -428,11 +428,11 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         cpuStepper.minValue = Double(os.minCPUCount)
         cpuStepper.maxValue = Double(os.maxCPUCount)
         cpuStepper.integerValue = instance.configuration.cpuCount
-        cpuField.showUnlessEditing(String(instance.configuration.cpuCount))
+        cpuField.show(String(instance.configuration.cpuCount))
         memoryStepper.minValue = Double(os.minMemoryInGB)
         memoryStepper.maxValue = Double(os.maxMemoryInGB)
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
-        memoryField.showUnlessEditing(String(instance.configuration.memorySizeInGB))
+        memoryField.show(String(instance.configuration.memorySizeInGB))
     }
 
     /// The density the user asked for, which a match-window boot applies to the
@@ -462,8 +462,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // differ until the next boot materializes the trio.
         displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
         displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
-        displayWidthField.showUnlessEditing(String(base.width))
-        displayHeightField.showUnlessEditing(String(base.height))
+        displayWidthField.show(String(base.width))
+        displayHeightField.show(String(base.height))
 
         let stored = DisplayResolutionPreset(width: base.width, height: base.height)
         let presetItem =
@@ -503,8 +503,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         guard displayHiDPIIntent != displayResolutionIsHiDPI else {
             return "\(text), until the next start resizes it to the window."
         }
-        let density = displayHiDPIIntent ? "with HiDPI" : "without HiDPI"
-        return "\(text), until the next start resizes it to the window \(density)."
+        // HiDPI takes a Retina screen: a start on a 1× one stores standard
+        // density whatever the intent (`applyMatchWindowBootResolution`).
+        let density = displayHiDPIIntent ? ", with HiDPI on a Retina display" : " without HiDPI"
+        return "\(text), until the next start resizes it to the window\(density)."
     }
 
     private func refreshAudio() {
@@ -594,13 +596,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     #endif
 
     @objc private func cpuStepperChanged() {
-        cpuField.integerValue = cpuStepper.integerValue
         write(Keys.cpus.assigning(String(cpuStepper.integerValue)))
+        cpuField.show(String(instance.configuration.cpuCount))
     }
 
     @objc private func memoryStepperChanged() {
-        memoryField.integerValue = memoryStepper.integerValue
         write(Keys.memory.assigning(String(memoryStepper.integerValue)))
+        memoryField.show(String(instance.configuration.memorySizeInGB))
     }
 
     // MARK: Display
@@ -621,11 +623,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             return
         }
         displayResolutionIsCustom = false
-        // Route through the field-edit path so preset and typed sizes share one
-        // fit-and-write.
-        displayWidthField.integerValue = preset.width
-        displayHeightField.integerValue = preset.height
-        applyDisplaySizeFieldEdit()
+        applyDisplayBaseSize(width: preset.width, height: preset.height)
     }
 
     @objc private func displayHiDPIToggled() {
@@ -639,18 +637,33 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         write(Keys.displayAutoResize.assigning(displayAutoResizeSwitch.state == .on))
     }
 
-    /// Fits the typed base size to what the VM takes and writes it.
-    ///
-    /// The fields are only editable in manual mode, where intent and stored
-    /// density agree, so the fit is the one the `display.width` and
-    /// `display.height` keys store — a typed size out of range is fitted here
-    /// rather than refused there.
+    /// Writes the typed base size, if either field holds an edit.
     private func applyDisplaySizeFieldEdit() {
-        let fitted = instance.configuration.fittedDisplayBaseSize(
+        guard displayWidthField.holdsUserEdit || displayHeightField.holdsUserEdit else {
+            showStoredDisplaySize()
+            return
+        }
+        applyDisplayBaseSize(
             width: displayWidthField.integerValue, height: displayHeightField.integerValue)
+    }
+
+    /// Fits a chosen base size to what the VM takes and writes it — the one
+    /// fit-and-write a preset and a typed size share.
+    ///
+    /// The size is only choosable in manual mode, where intent and stored
+    /// density agree, so the fit is the one the `display.width` and
+    /// `display.height` keys store — a size out of range is fitted here rather
+    /// than refused there.
+    private func applyDisplayBaseSize(width: Int, height: Int) {
+        let fitted = instance.configuration.fittedDisplayBaseSize(width: width, height: height)
         write(
             Keys.displayWidth.assigning(String(fitted.width)),
             Keys.displayHeight.assigning(String(fitted.height)))
+        showStoredDisplaySize()
+    }
+
+    /// Ends any edit in the size fields and shows the size the VM holds.
+    private func showStoredDisplaySize() {
         let stored = displayBaseSize
         displayWidthField.showEndedEdit(String(stored.width))
         displayHeightField.showEndedEdit(String(stored.height))
@@ -710,21 +723,25 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         systemSettings.openMicrophonePrivacy()
     }
 
-    /// Clamps the typed count to the guest's range and writes it, then shows
+    /// Clamps a typed count to the guest's range and writes it, then shows
     /// what the VM holds.
     private func applyCPUFieldEdit() {
-        let os = instance.configuration.guestOS
-        let clamped = Swift.min(Swift.max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
-        write(Keys.cpus.assigning(String(clamped)))
+        if cpuField.holdsUserEdit {
+            let os = instance.configuration.guestOS
+            let clamped = Swift.min(Swift.max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
+            write(Keys.cpus.assigning(String(clamped)))
+        }
         cpuField.showEndedEdit(String(instance.configuration.cpuCount))
         cpuStepper.integerValue = instance.configuration.cpuCount
     }
 
     /// ``applyCPUFieldEdit()`` for the memory field.
     private func applyMemoryFieldEdit() {
-        let os = instance.configuration.guestOS
-        let clamped = Swift.min(Swift.max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
-        write(Keys.memory.assigning(String(clamped)))
+        if memoryField.holdsUserEdit {
+            let os = instance.configuration.guestOS
+            let clamped = Swift.min(Swift.max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
+            write(Keys.memory.assigning(String(clamped)))
+        }
         memoryField.showEndedEdit(String(instance.configuration.memorySizeInGB))
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
     }
