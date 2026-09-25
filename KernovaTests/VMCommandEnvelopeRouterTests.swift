@@ -704,7 +704,66 @@ struct VMCommandEnvelopeRouterTests {
         #expect(message.contains("was not given permission"))
     }
 
-    // MARK: - Preparing Copies
+    // MARK: - Arrivals
+
+    @Test("A waited clone answers the row it settled into")
+    func waitedCloneAnswersTheSettledRow() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+
+        let response = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
+
+        guard case .summary(let summary) = response.result else {
+            Issue.record("expected a summary, got \(response.result)")
+            return
+        }
+        #expect(summary.status == VMStatus.stopped.rawValue)
+        #expect(harness.library.arrivals.isEmpty)
+        #expect(Set(harness.library.instances.map(\.id)) == [instance.id, summary.id])
+    }
+
+    @Test("A waited clone whose copy fails answers that failure, and nothing is reported")
+    func waitedCloneThrowsTheCopysFailure() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        harness.storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+
+        let response = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
+
+        guard case .operationFailed(let verb, _, _, _)? = response.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(verb == .clone)
+        #expect(reported.isEmpty)
+        #expect(harness.library.entries.map(\.id) == [instance.id])
+    }
+
+    @Test("An unwaited clone answers its preparing row at once")
+    func unwaitedCloneAnswersThePreparingRow() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Source")
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
+        defer { hold.signal() }
+
+        let response = try await harness.transport.send(
+            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
+
+        guard case .summary(let summary) = response.result else {
+            Issue.record("expected a summary, got \(response.result)")
+            return
+        }
+        #expect(summary.status == VMStatus.preparingWireName)
+        let arrival = try #require(harness.library.arrivals.first)
+        #expect(arrival.id == summary.id)
+        hold.signal()
+        await arrival.settle()
+    }
 
     @Test("A waited clone the user cancels answers that it was cancelled")
     func waitedCloneCancelledAnswersCancelled() async throws {

@@ -32,7 +32,8 @@ struct VMToolbarManagerTests {
         instance: VMInstance? = nil,
         library: VMLibrary? = nil,
         gatesDisplayOnCapability: Bool = true,
-        includeSettingsToggle: Bool = true
+        includeSettingsToggle: Bool = true,
+        selection: (() -> VMInstance?)? = nil
     ) -> VMToolbarManager {
         VMToolbarManager(
             configuration: .init(
@@ -46,7 +47,7 @@ struct VMToolbarManagerTests {
                 gatesDisplayOnCapability: gatesDisplayOnCapability
             ),
             capabilities: VMCapabilityCatalog(library: library ?? makeLibrary().library),
-            instanceProvider: { instance }
+            instanceProvider: selection ?? { instance }
         )
     }
 
@@ -262,6 +263,28 @@ struct VMToolbarManagerTests {
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
         #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
         #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
+    }
+
+    @Test("Every item is disabled while an arrival is the selected row")
+    func selectedArrivalDisablesEveryItem() async throws {
+        let library = makeLibrary().library
+        let gate = GatedArrivalWrite()
+        let arrival = library.beginGatedArrival(named: "Arriving", gate: gate)
+        #expect(library.selectedID == arrival.id)
+        let manager = makeManager(library: library, selection: { library.selectedInstance })
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        manager.updateToolbarItems(in: toolbar)
+
+        #expect(!toolbar.items.isEmpty)
+        for item in toolbar.items {
+            let controls = (item as? NSToolbarItemGroup)?.subitems ?? [item]
+            #expect(
+                controls.allSatisfy { !$0.isEnabled }, "\(item.itemIdentifier.rawValue) is enabled")
+        }
+
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - Clipboard item

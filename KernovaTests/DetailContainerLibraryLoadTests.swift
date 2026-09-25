@@ -55,6 +55,14 @@ struct DetailContainerLibraryLoadTests {
         return search(controller.view)
     }
 
+    private func labels(in controller: DetailContainerViewController) -> [String] {
+        func collect(_ view: NSView) -> [String] {
+            ((view as? NSTextField).map { [$0.stringValue] } ?? [])
+                + view.subviews.flatMap(collect)
+        }
+        return collect(controller.view)
+    }
+
     private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Library VM", guestOS: .linux, bootMode: .efi)
@@ -109,5 +117,28 @@ struct DetailContainerLibraryLoadTests {
         #expect(viewModel.selectedID == config.id)
         #expect(viewModel.instances.map(\.name) == ["Library VM"])
         #expect(hasEmptyState(controller) == false)
+    }
+
+    @Test("A selected arrival shows the placeholder carrying its label, which follows its stage")
+    func selectedArrivalShowsThePlaceholder() async {
+        let viewModel = makeViewModel()
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+        await viewModel.loadVMs()
+        let gate = GatedArrivalWrite()
+
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        await drainMainActor()
+
+        #expect(viewModel.selectedEntry?.arrival === arrival)
+        #expect(hasEmptyState(controller) == false)
+        #expect(labels(in: controller).contains("Importing\u{2026}"))
+
+        #expect(arrival.requestCancel() == .cancelled)
+        await drainMainActor()
+        #expect(labels(in: controller).contains("Cancelling\u{2026}"))
+
+        gate.release()
+        await arrival.settle()
     }
 }

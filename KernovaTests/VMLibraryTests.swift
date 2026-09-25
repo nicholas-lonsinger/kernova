@@ -570,6 +570,54 @@ struct VMLibraryTests {
         #expect(library.instances.first?.name == "Running VM")
     }
 
+    // MARK: - Eviction (F16)
+
+    @Test("A cold-suspended VM whose bundle is removed is evicted")
+    func aColdSuspendedVMWhoseBundleIsRemovedIsEvicted() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Suspended", phase: .suspended, guestOS: .linux, library: library,
+            storage: storage, preferences: makeTestPreferences())
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.isEmpty)
+    }
+
+    @Test("A live-paused VM whose bundle is removed is kept")
+    func aLivePausedVMWhoseBundleIsRemovedIsKept() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Paused", phase: .livePaused(sessionID: UUID()), guestOS: .linux,
+            library: library, storage: storage, preferences: makeTestPreferences())
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.first === instance)
+    }
+
+    @Test("A VM at rest with an operation in flight is kept when its bundle is removed")
+    func aVMWithAnOperationInFlightIsKept() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Reverting", phase: .stopped, guestOS: .linux, library: library,
+            storage: storage, preferences: makeTestPreferences())
+        let request = UUID()
+        library.revertTasks[request] = VMLibrary.RevertRegistration(
+            instanceID: instance.id, task: Task {})
+        defer { library.revertTasks[request] = nil }
+
+        storage.files.removeBundle(at: instance.bundleURL)
+        library.reconcileWithDisk()
+
+        #expect(library.instances.first === instance)
+    }
+
     /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
     /// out of band leaves the phase describing something that is not there —
     /// every predicate that asks the bundle has already moved on.

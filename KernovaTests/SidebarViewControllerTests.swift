@@ -651,13 +651,18 @@ struct SidebarViewControllerTests {
         #expect(deleteImmediately?.isAlternate == false)
     }
 
-    @Test("Context menu for an arrival offers only its Cancel")
-    func contextMenuArrival() async {
+    @Test("An arrival's row shows its name and label, and its menu offers only its Cancel")
+    func arrivalRowShowsItsLabelAndOffersOnlyCancel() async {
         let viewModel = makeViewModel()
         let gate = GatedArrivalWrite()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
+
+        let cell = SidebarArrivalRowCellView()
+        cell.configure(arrival: arrival)
+        #expect(cell.textField?.stringValue == "Copying")
+        #expect(cell.toolTip == "Cloning\u{2026}")
 
         let menu = controller.buildContextMenu(for: arrival)
 
@@ -834,6 +839,25 @@ struct SidebarViewControllerTests {
         #expect(outline.numberOfRows == 3)
         #expect(outline.item(atRow: 0) is SidebarSection)
         #expect(outline.item(atRow: 1) is VMInstance)
+    }
+
+    @Test("An arrival's row becomes its VM's row when it settles")
+    func settlingArrivalReloadsIntoAVMRow() async throws {
+        let viewModel = makeViewModel()
+        let gate = GatedArrivalWrite()
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        #expect((outline.item(atRow: 1) as? VMArrival) === arrival)
+
+        gate.release()
+        let instance = try #require(await arrival.settle())
+
+        // The outline view offers no observable to await its reload by.
+        try await waitUntil { (outline.item(atRow: 1) as? VMInstance) === instance }
+        #expect(outline.numberOfRows == 2)
     }
 
     // MARK: - Clone completion refresh (#575)
