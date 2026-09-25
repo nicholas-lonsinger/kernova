@@ -59,6 +59,24 @@ struct ExclusiveFileLockTests {
         #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
     }
 
+    @Test("a creating acquire makes an absent file owner-only, and refuses a second until released")
+    func creatingAcquireCreatesAndLocks() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("created.lock")
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(creatingFileAt: url))
+            #expect(try ExclusiveFileLock.tryAcquire(creatingFileAt: url) == nil)
+            #expect(try ExclusiveFileLock.tryAcquire(at: url) == nil)
+            #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
+            withExtendedLifetime(held) {}
+        }
+        var info = stat()
+        #expect(stat(url.path, &info) == 0)
+        #expect(info.st_mode & 0o777 == S_IRUSR | S_IWUSR)
+        #expect(try ExclusiveFileLock.tryAcquire(creatingFileAt: url) != nil)
+    }
+
     @Test("nothing at the path throws rather than reporting a held lock")
     func missingPathThrows() {
         #expect(throws: Errno.noSuchFileOrDirectory) {

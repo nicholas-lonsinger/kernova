@@ -109,11 +109,11 @@ final class AppResidencyController: WindowResidencyHosting {
     /// finds no VM to address.
     ///
     /// The App Intents gateway is retained by the dependency manager and lives
-    /// as long as the process. The command socket binds in the app-group
-    /// container, admitting peers this build's own team signed; a build
-    /// resolving neither a container nor a team publishes no socket and the CLI
-    /// finds nothing to connect to.
-    func registerAutomationFrontDoors() {
+    /// as long as the process. The command socket takes `copyClaim` and binds
+    /// where it says, admitting peers this build's own team signed; a build with
+    /// no claim or no team publishes no socket and the CLI finds nothing to
+    /// connect to.
+    func registerAutomationFrontDoors(copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>) {
         let readiness = LibraryReadiness(
             awaitReady: { [weak self] in
                 guard let self else { return }
@@ -134,9 +134,7 @@ final class AppResidencyController: WindowResidencyHosting {
         let socket = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: viewModel.commands),
             authorizer: SameTeamPeerAuthorizer(),
-            socketPath: Result { () throws(KernovaAppGroup.SocketPathFailure) in
-                try KernovaAppGroup.socketPath(forAppBundle: Bundle.main.bundleURL)
-            },
+            copyClaim: copyClaim,
             awaitReady: { await readiness.ready() },
             onSurfaceRequested: { [weak self] in self?.activateForExternalRequest() })
         socket.start()

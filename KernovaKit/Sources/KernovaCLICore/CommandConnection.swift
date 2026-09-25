@@ -69,7 +69,7 @@ enum CommandConnection {
 
     /// Where the socket of the app at `app` lives.
     private static func socketPath(of app: URL) throws -> String {
-        do throws(KernovaAppGroup.SocketPathFailure) {
+        do throws(KernovaAppGroup.CopyPathFailure) {
             return try KernovaAppGroup.socketPath(forAppBundle: app)
         } catch {
             switch error {

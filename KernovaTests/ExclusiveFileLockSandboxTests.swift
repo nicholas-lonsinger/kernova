@@ -23,4 +23,19 @@ struct ExclusiveFileLockSandboxTests {
         }
         #expect(try ExclusiveFileLock.tryAcquire(at: directory) != nil)
     }
+
+    /// The shape `AppCopyClaim` takes on its lock file.
+    @Test("a creating acquire makes and locks an absent file, refusing a second until released")
+    func creatingAcquireRefusesSecondUntilReleased() throws {
+        try FileManager.default.createDirectory(at: staging.parent, withIntermediateDirectories: true)
+        let file = staging.parent.appendingPathComponent("created.lock", isDirectory: false)
+
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(creatingFileAt: file))
+            let second = try ExclusiveFileLock.tryAcquire(creatingFileAt: file)
+            #expect(second == nil)
+            withExtendedLifetime(held) {}
+        }
+        #expect(try ExclusiveFileLock.tryAcquire(creatingFileAt: file) != nil)
+    }
 }

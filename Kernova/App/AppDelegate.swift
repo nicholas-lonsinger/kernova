@@ -31,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Latched once ``armAutoStartPass()`` has armed the pass, so no later call
     /// runs it a second time.
     private var hasArmedAutoStartPass = false
+    /// This process's claim on its copy of Kernova, held for the life of the
+    /// process and handed to the command socket when the automation front
+    /// doors open.
+    private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppDelegate")
 
@@ -71,12 +75,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
         let delegate: any NSApplicationDelegate =
-            isTestHost ? TestHostDelegate() : AppDelegate()
+            isTestHost ? TestHostDelegate() : AppDelegate(copyClaim: claimThisCopy())
         app.delegate = delegate
         app.run()
     }
 
-    override init() {
+    /// Claims this copy of Kernova for this process, and exits when another
+    /// process of the copy already holds the claim: that process is the copy,
+    /// and this one is a second launch of it.
+    private static func claimThisCopy() -> Result<AppCopyClaim, AppCopyClaim.Unavailable> {
+        switch AppCopyClaim.acquire(forAppBundle: Bundle.main.bundleURL) {
+        case .claimed(let claim):
+            return .success(claim)
+        case .unavailable(let reason):
+            return .failure(reason)
+        case .alreadyHeld:
+            #log(
+                logger, .notice,
+                "Another process of this copy of Kernova is already running; this launch exits")
+            exit(0)
+        }
+    }
+
+    init(copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>) {
+        self.copyClaim = copyClaim
         let entitlements = EntitlementService(reader: ProcessEntitlementReader())
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
         let viewModel = VMLibraryViewModel(
@@ -145,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Before `lifecycle.start(provenance:)`, so an intent delivered during
         // launch resolves against a published gateway, and the command socket
         // is bound before a client that just launched the app dials it.
-        lifecycle.registerAutomationFrontDoors()
+        lifecycle.registerAutomationFrontDoors(copyClaim: copyClaim)
     }
 
     /// Takes Launch Services' request for the app's default surface without
@@ -595,8 +617,8 @@ extension AppDelegate: DisplayBootGeometryProviding {
 /// XCTest owns the process — it starts the tests once the app finishes
 /// launching and ends the process when they finish — and every window, view
 /// model and service a test needs, the test builds itself. So a test run claims
-/// nothing the copy of Kernova the developer is running holds: no library read,
-/// no staging reclaim, no USB accessory, command socket, status item or
+/// nothing the copy of Kernova the developer is running holds: no copy claim,
+/// library read, staging reclaim, USB accessory, command socket, status item or
 /// Spotlight entry.
 @MainActor
 private final class TestHostDelegate: NSObject, NSApplicationDelegate {

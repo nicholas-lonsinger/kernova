@@ -17,8 +17,8 @@ struct AppGroupSocketPathTests {
             + "8MT4P4GZL2.app.kernova",
         isDirectory: true)
 
-    private func socketPath(_ bundle: URL) throws(KernovaAppGroup.SocketPathFailure) -> String {
-        try KernovaAppGroup.socketPath(forAppBundle: bundle, in: Self.container)
+    private func socketPath(_ bundle: URL) throws(KernovaAppGroup.CopyPathFailure) -> String {
+        try KernovaAppGroup.CopyFiles(forAppBundle: bundle, in: Self.container).socketPath
     }
 
     /// A `Kernova.app` directory in `scratch`.
@@ -80,7 +80,7 @@ struct AppGroupSocketPathTests {
         defer { try? FileManager.default.removeItem(at: scratch) }
         let gone = scratch.appendingPathComponent("Kernova.app", isDirectory: true)
 
-        #expect(throws: KernovaAppGroup.SocketPathFailure.unresolvableBundle(.noSuchFileOrDirectory)) {
+        #expect(throws: KernovaAppGroup.CopyPathFailure.unresolvableBundle(.noSuchFileOrDirectory)) {
             try socketPath(gone)
         }
     }
@@ -93,6 +93,22 @@ struct AppGroupSocketPathTests {
 
         #expect(URL(fileURLWithPath: path).deletingLastPathComponent().path == Self.container.path)
         #expect(throws: Never.self) { try UnixSocketAddress.make(path: path) }
+    }
+
+    @Test("A copy's lock file and its socket carry one digest name in the group container")
+    func lockAndSocketShareOneDigest() throws {
+        let scratch = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let files = try KernovaAppGroup.CopyFiles(
+            forAppBundle: makeBundle(in: scratch), in: Self.container)
+        let socket = URL(fileURLWithPath: files.socketPath)
+
+        #expect(socket.pathExtension == "sock")
+        #expect(files.lockURL.pathExtension == "lock")
+        #expect(
+            files.lockURL.deletingPathExtension().lastPathComponent
+                == socket.deletingPathExtension().lastPathComponent)
+        #expect(files.lockURL.deletingLastPathComponent().path == Self.container.path)
     }
 
     /// The app names its socket from `Bundle.main.bundleURL`, the tool from the

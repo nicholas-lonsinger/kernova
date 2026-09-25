@@ -1,11 +1,11 @@
 import Darwin
 import Foundation
-import KernovaKit
 import KernovaTestSupport
 import System
 import Testing
 
 @testable import Kernova
+@testable import KernovaKit
 
 /// The command socket driven end to end over a real `AF_UNIX` socket: a client
 /// connects, frames a request, and reads the framed answer back.
@@ -65,18 +65,33 @@ struct VMCommandSocketListenerTests {
         }
     }
 
-    /// A short path: `sockaddr_un.sun_path` holds 104 bytes and the container's
-    /// own path already spends most of them in production.
-    private func temporarySocketPath() -> String {
-        let short = UUID().uuidString.prefix(8).lowercased()
-        return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-c-\(short).sock")
+    /// A group container with a short path, removed with the suite instance:
+    /// `sockaddr_un.sun_path` holds 104 bytes and the real container's own path
+    /// already spends most of them in production.
+    private final class ScratchContainer: Sendable {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent(
+                "knv-\(UUID().uuidString.prefix(6).lowercased())", isDirectory: true)
+
+        deinit { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private let container = ScratchContainer()
+
+    /// The claim on a fresh copy of the app, its socket in ``container``.
+    private func makeClaim() throws -> AppCopyClaim {
+        let bundle = container.url.appendingPathComponent("\(UUID().uuidString).app")
+        try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+        let acquisition = AppCopyClaim.acquire(forAppBundle: bundle, in: container.url)
+        let claim: AppCopyClaim? = if case .claimed(let claim) = acquisition { claim } else { nil }
+        return try #require(claim, "a fresh copy was not claimed: \(acquisition)")
     }
 
     private func makeHarness(
         authorization: PeerAuthorization = .authorized,
         library: [VMSummary] = [],
         libraryHasLanded: Bool = true
-    ) -> Harness {
+    ) throws -> Harness {
         let commands = MockVMCommanding()
         commands.library = library
         let authorizer = MockPeerAuthorizer(authorization)
@@ -84,11 +99,12 @@ struct VMCommandSocketListenerTests {
         let surfaced = AsyncGate()
         let surfaceCount = Counter()
         let readiness = LibraryReadiness(landed: libraryHasLanded)
-        let path = temporarySocketPath()
+        let claim = try makeClaim()
+        let path = claim.socketPath
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: commands),
             authorizer: authorizer,
-            socketPath: .success(path),
+            copyClaim: .success(claim),
             awaitReady: { await readiness.wait() },
             onSurfaceRequested: {
                 surfaceCount.increment()
@@ -106,7 +122,7 @@ struct VMCommandSocketListenerTests {
     @Test("A read verb round-trips over the socket")
     func unaryReadRoundTrips() async throws {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
-        let harness = makeHarness(library: [alpha])
+        let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -122,7 +138,7 @@ struct VMCommandSocketListenerTests {
 
     @Test("A connection is held for its I/O lifetime, and dropped at EOF")
     func connectionCountRisesAndFalls() async throws {
-        let harness = makeHarness()
+        let harness = try makeHarness()
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -145,7 +161,7 @@ struct VMCommandSocketListenerTests {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         // The cold-launch shape: the socket is bound, the library is not read
         // yet, and the VMs appear only once it is.
-        let harness = makeHarness(library: [], libraryHasLanded: false)
+        let harness = try makeHarness(library: [], libraryHasLanded: false)
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -169,7 +185,7 @@ struct VMCommandSocketListenerTests {
     @Test("A verb that surfaces asks the app forward first; one that does not, does not")
     func surfacingVerbsAskTheAppForward() async throws {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
-        let harness = makeHarness(library: [alpha])
+        let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -200,7 +216,7 @@ struct VMCommandSocketListenerTests {
     func closingAConnectionCancelsItsRequest() async throws {
         let alpha = VMSummary(
             id: UUID(), name: "Alpha", status: "preparing", ipAddress: .unavailable)
-        let harness = makeHarness(library: [alpha])
+        let harness = try makeHarness(library: [alpha])
         let park = CancellationPark()
         harness.commands.awaitPreparingPark = park
         harness.listener.start()
@@ -244,7 +260,7 @@ struct VMCommandSocketListenerTests {
         ]
     )
     func refusedPeerIsToldWhichRefusal(_ c: (refusal: PeerRefusal, sentence: String)) async throws {
-        let harness = makeHarness(authorization: .refused(c.refusal))
+        let harness = try makeHarness(authorization: .refused(c.refusal))
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -265,7 +281,7 @@ struct VMCommandSocketListenerTests {
     @Test("A peer speaking another protocol version is refused before any verb runs")
     func foreignProtocolVersionIsRefused() async throws {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
-        let harness = makeHarness(library: [alpha])
+        let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -288,7 +304,7 @@ struct VMCommandSocketListenerTests {
 
     @Test("Bytes that are not a request are refused, and end the connection")
     func undecodableBytesAreRefused() async throws {
-        let harness = makeHarness()
+        let harness = try makeHarness()
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -310,7 +326,7 @@ struct VMCommandSocketListenerTests {
     @Test("A subscription answers with the library, then with each change")
     func subscriptionDeliversSnapshotThenEvents() async throws {
         let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
-        let harness = makeHarness(library: [alpha])
+        let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
 
@@ -330,16 +346,17 @@ struct VMCommandSocketListenerTests {
     // MARK: - Degraded builds
 
     @Test(
-        "A build with no group container, or a bundle it cannot look up, publishes no socket",
+        "A build that could make no claim on its copy publishes no socket",
         arguments: [
-            KernovaAppGroup.SocketPathFailure.noContainer,
-            .unresolvableBundle(.noSuchFileOrDirectory),
+            AppCopyClaim.Unavailable.unnamed(.noContainer),
+            .unnamed(.unresolvableBundle(.noSuchFileOrDirectory)),
+            .unlockable(.permissionDenied),
         ])
-    func unnamedSocketBindsNothing(failure: KernovaAppGroup.SocketPathFailure) {
+    func unclaimedCopyBindsNothing(reason: AppCopyClaim.Unavailable) {
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: MockPeerAuthorizer(),
-            socketPath: .failure(failure),
+            copyClaim: .failure(reason),
             awaitReady: {},
             onSurfaceRequested: {})
         listener.start()
@@ -348,12 +365,13 @@ struct VMCommandSocketListenerTests {
     }
 
     @Test("A build whose signature names no team publishes no socket")
-    func noAuthorizerBindsNothing() {
-        let path = temporarySocketPath()
+    func noAuthorizerBindsNothing() throws {
+        let claim = try makeClaim()
+        let path = claim.socketPath
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: MockVMCommanding()),
             authorizer: nil,
-            socketPath: .success(path),
+            copyClaim: .success(claim),
             awaitReady: {},
             onSurfaceRequested: {})
         listener.start()
