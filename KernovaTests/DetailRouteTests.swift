@@ -11,30 +11,11 @@ struct DetailRouteTests {
     /// can create a `VZVirtualMachine` for.
     private static let session = UUID()
 
-    // MARK: - Preparing wins over everything
-
-    @Test("A preparing label routes to .preparing regardless of phase")
-    func preparingWins() {
-        for phase in [
-            VMLifecyclePhase.stopped, .running(sessionID: Self.session),
-            .installing(sessionID: Self.session), .initialBoot, .failed(message: "Boot failed."),
-        ] {
-            let route = DetailRoute.resolve(
-                preparingLabel: "Cloning…",
-                phase: phase,
-                hasSetupState: true,
-                detailPaneMode: .display
-            )
-            #expect(route == .preparing(label: "Cloning…"))
-        }
-    }
-
     // MARK: - Editable settings
 
     @Test("Stopped routes to editable settings")
     func stoppedIsEditableSettings() {
         let route = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .stopped,
             hasSetupState: false,
             detailPaneMode: .display
@@ -45,7 +26,6 @@ struct DetailRouteTests {
     @Test("A failure routes to the error banner carrying its own message")
     func failureRoutesToErrorBanner() {
         let route = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .failed(message: "Boot failed."),
             hasSetupState: false,
             detailPaneMode: .display
@@ -58,7 +38,6 @@ struct DetailRouteTests {
     @Test("Initial boot routes to .initialBoot")
     func initialBootRoute() {
         let route = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .initialBoot,
             hasSetupState: false,
             detailPaneMode: .display
@@ -71,7 +50,6 @@ struct DetailRouteTests {
     @Test("Installing with a setup state routes to .setup")
     func installingWithStateRoutesToSetup() {
         let route = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .installing(sessionID: Self.session),
             hasSetupState: true,
             detailPaneMode: .display
@@ -82,7 +60,6 @@ struct DetailRouteTests {
     @Test("Installing without a setup state routes to a transition")
     func installingWithoutStateRoutesToTransition() {
         let route = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .installing(sessionID: Self.session),
             hasSetupState: false,
             detailPaneMode: .display
@@ -101,7 +78,6 @@ struct DetailRouteTests {
             .restoringSavedState(sessionID: Self.session),
         ] {
             let display = DetailRoute.resolve(
-                preparingLabel: nil,
                 phase: phase,
                 hasSetupState: false,
                 detailPaneMode: .display
@@ -109,7 +85,6 @@ struct DetailRouteTests {
             #expect(display == .display, "\(phase)")
 
             let settings = DetailRoute.resolve(
-                preparingLabel: nil,
                 phase: phase,
                 hasSetupState: false,
                 detailPaneMode: .settings
@@ -124,7 +99,6 @@ struct DetailRouteTests {
     func startingRoutesToTransition() {
         for paneMode in [DetailPaneMode.display, .settings] {
             let route = DetailRoute.resolve(
-                preparingLabel: nil,
                 phase: .starting(sessionID: Self.session),
                 hasSetupState: false,
                 detailPaneMode: paneMode
@@ -144,7 +118,6 @@ struct DetailRouteTests {
         ] {
             for paneMode in [DetailPaneMode.display, .settings] {
                 let route = DetailRoute.resolve(
-                    preparingLabel: nil,
                     phase: phase,
                     hasSetupState: false,
                     detailPaneMode: paneMode
@@ -159,7 +132,6 @@ struct DetailRouteTests {
     @Test("A suspended VM keeps the display pane — it is settled, not transitioning")
     func suspendedKeepsTheDisplayPane() {
         let display = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .suspended,
             hasSetupState: false,
             detailPaneMode: .display
@@ -167,7 +139,6 @@ struct DetailRouteTests {
         #expect(display == .display)
 
         let settings = DetailRoute.resolve(
-            preparingLabel: nil,
             phase: .suspended,
             hasSetupState: false,
             detailPaneMode: .settings

@@ -93,15 +93,11 @@ struct SidebarViewControllerTests {
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
-    @Test("statusDisplayNSColor is orange for cold-paused and preparing")
-    func statusColorColdPausedAndPreparing() {
+    @Test("statusDisplayNSColor is orange for cold-paused")
+    func statusColorColdPaused() {
         let coldPaused = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
         #expect(coldPaused.isColdPaused)
         #expect(coldPaused.statusDisplayNSColor == .systemOrange)
-
-        let preparing = VMInstanceFixture.make(phase: .stopped)
-        preparing.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
-        #expect(preparing.statusDisplayNSColor == .systemOrange)
     }
 
     // MARK: - Agent indicator gating
@@ -420,22 +416,24 @@ struct SidebarViewControllerTests {
     }
 
     @Test("Context menu keeps Clone enabled while a different VM is being copied")
-    func contextMenuCloneIgnoresAnotherVMsCopy() {
+    func contextMenuCloneIgnoresAnotherVMsCopy() async {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(name: "Settled", phase: .stopped)
-        let copying = VMInstanceFixture.make(name: "Copying", phase: .stopped)
-        let task = Task {}
-        defer { task.cancel() }
-        copying.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        viewModel.library.admitForTesting([instance, copying])
+        viewModel.library.admitForTesting(instance)
+        let gate = GatedArrivalWrite()
+        let copying = viewModel.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
         // Overlapping clones and imports are a supported case — the copy in
         // flight belongs to another VM and says nothing about this one.
-        #expect(viewModel.library.hasPreparing)
+        #expect(viewModel.arrivals.map(\.id) == [copying.id])
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
+
+        gate.release()
+        await copying.settle()
     }
 
     @Test("Context menu for a cold-paused VM offers Discard Saved State, not Stop/Suspend")
@@ -653,23 +651,22 @@ struct SidebarViewControllerTests {
         #expect(deleteImmediately?.isAlternate == false)
     }
 
-    @Test("Context menu for a preparing VM offers only its Cancel")
-    func contextMenuPreparing() {
+    @Test("Context menu for an arrival offers only its Cancel")
+    func contextMenuArrival() async {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make()
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: Task {})
-        viewModel.library.admitForTesting(instance)
+        let gate = GatedArrivalWrite()
+        let arrival = viewModel.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
-        let menu = controller.buildContextMenu(for: instance)
-        let menuTitles = titles(of: menu)
+        let menu = controller.buildContextMenu(for: arrival)
 
-        #expect(menuTitles.contains("Cancel Clone"))
-        // The row's bundle URL holds nothing until the write is published, so a
+        // Nothing is at the destination until the write is published, so a
         // reveal would open Finder on a path that does not exist.
-        #expect(!menuTitles.contains("Show in Finder"))
-        #expect(!menuTitles.contains("Start"))
-        #expect(!menuTitles.contains("Rename"))
+        #expect(titles(of: menu) == ["Cancel Clone"])
+
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - Content-fit width
@@ -841,7 +838,7 @@ struct SidebarViewControllerTests {
 
     // MARK: - Clone completion refresh (#575)
 
-    @Test("A cloned VM's preparing row settling routes through the sidebar's reload cycle")
+    @Test("A cloned VM's arrival row settling routes through the sidebar's reload cycle")
     func clonedRowSettlingTriggersReload() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storageService: storage)
@@ -859,24 +856,16 @@ struct SidebarViewControllerTests {
 
         let reloadsBeforeClone = controller.reloadInstancesCallCountForTesting
         viewModel.cloneVM(source)
-        guard let phantom = viewModel.instances.first(where: { $0.id != source.id }) else {
-            Issue.record("Expected a cloned phantom instance")
-            return
-        }
+        // The clone registers its arrival and is adopted in place under the
+        // same identifier, so its settle is the second VM in the library.
+        try await waitForChange { viewModel.instances.count == 2 }
+        #expect(viewModel.arrivals.isEmpty)
 
-        // Await the production Task the row's preparing state is held on,
-        // rather than polling the flag it flips. (The mock's copy settles fast
-        // enough that polling for an intermediate "still preparing" reload
-        // count would race it — the two reloads below can both have landed by
-        // the first poll tick.)
-        await phantom.preparingState?.task.value
-        #expect(!phantom.isPreparing)
-
-        // Exactly two reloads are expected end to end: one for the phantom's
-        // initial registration (an id-list change) and one for its
-        // `isPreparing` settle — the fix under test (#575). The settle's
-        // reload has no dedicated Observable signal at the controller layer to
-        // hang a `waitForChange` off of (it fires through an internal
+        // Exactly two reloads are expected end to end: one for the arrival's
+        // registration and one for its adoption, which replaces the entry
+        // under the same id — the fix under test (#575). The adoption's reload
+        // has no dedicated Observable signal at the controller layer to hang a
+        // `waitForChange` off of (it fires through an internal
         // `ObservationLoop` cascade), so poll the counter.
         //
         // Genuine no-signal predicate — the reload count is driven by an
@@ -889,7 +878,7 @@ struct SidebarViewControllerTests {
         }
 
         // The reload count above is the regression guard; the row's actual
-        // rendered badge is left to manual verification, per this file's
+        // rendered cell is left to manual verification, per this file's
         // top-level doc comment — `NSOutlineView` never realizes a row's cell
         // view in this off-screen test harness (confirmed: `view(atColumn:
         // row:makeIfNecessary: false)` is always nil here), so an assertion on

@@ -1030,16 +1030,13 @@ struct VMCommandCoreConfigurationTests {
     }
 
     @Test("A bundle still being copied takes no configuration write")
-    func aPreparingVMTakesNoWrite() throws {
+    func anArrivalTakesNoWrite() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-        let before = instance.configuration
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(named: "Alpha", gate: gate)
 
-        // The capability gate is the whole of what refuses this: no capability a
-        // configuration key is gated on survives preparing.
+        // Resolution is the whole of what refuses this: an arrival is no VM, so
+        // no configuration write can name one.
         do {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
@@ -1052,7 +1049,10 @@ struct VMCommandCoreConfigurationTests {
                 return
             }
         }
-        #expect(instance.configuration == before)
+        #expect(harness.storage.saveConfigurationCallCount == 0)
+
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - Shared directories

@@ -80,7 +80,8 @@ func makeWiredLibrary(
     fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-    arpTable: ScriptedARPTable = ScriptedARPTable()
+    arpTable: ScriptedARPTable = ScriptedARPTable(),
+    guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -89,7 +90,8 @@ func makeWiredLibrary(
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        entitlements: .entitled)
+        entitlements: .entitled,
+        guestAccountPasswords: guestAccountPasswords)
     for instance in instances {
         library.register(instance, storage: storage)
     }
@@ -109,7 +111,7 @@ extension VMLibrary {
     /// of its own hands that store's files to `storage` and writes through it
     /// from then on.
     func register(_ instance: VMInstance, storage: MockVMStorageService) {
-        if let files = instance.bundle?.fileAccessForTesting as? InMemoryVMBundleFiles {
+        if let files = instance.bundle.fileAccessForTesting as? InMemoryVMBundleFiles {
             files.forward(to: storage.files)
         }
         wireHooks(for: instance)
@@ -166,7 +168,7 @@ extension VMInstance {
     /// The in-memory store this fixture VM's bundle files live in — the store
     /// a library it was registered with owns, once registered.
     var fixtureBundleFiles: InMemoryVMBundleFiles {
-        guard let files = bundle?.fileAccessForTesting as? InMemoryVMBundleFiles else {
+        guard let files = bundle.fileAccessForTesting as? InMemoryVMBundleFiles else {
             preconditionFailure("'\(name)' is not a fixture VM over in-memory bundle files")
         }
         return files
@@ -182,7 +184,6 @@ extension VMInstance {
     /// A commit that changes nothing reads the file and publishes what it
     /// holds, which is how a seeded file reaches memory.
     private func refreshBundle(_ commit: (VMBundle) throws -> Void) {
-        guard let bundle else { preconditionFailure("'\(name)' has no bundle") }
         do {
             try commit(bundle)
         } catch {

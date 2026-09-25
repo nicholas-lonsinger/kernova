@@ -258,7 +258,7 @@ struct VMCommandSocketListenerTests {
 
         // A path nothing can read, so the sandbox's grant is what is asked for.
         let unreadable = "/nonexistent-\(UUID().uuidString)/Alpha.kernova"
-        try client.send(VMCommandRequest(verb: .importVM(path: unreadable)))
+        try client.send(VMCommandRequest(verb: .importVM(path: unreadable, waitForOutcome: false)))
 
         #expect(try await client.nextResponse()?.result == .activate)
         #expect(try await client.nextResponse()?.failure != nil)
@@ -268,21 +268,23 @@ struct VMCommandSocketListenerTests {
     @Test("A client that hangs up cancels the verb it left running")
     func closingAConnectionCancelsItsRequest() async throws {
         let alpha = VMSummary(
-            id: UUID(), name: "Alpha", status: "preparing", ipAddress: .unavailable)
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
         let harness = try makeHarness(library: [alpha])
         let park = CancellationPark()
-        harness.commands.awaitPreparingPark = park
+        harness.commands.outcomePark = park
         harness.listener.start()
         defer { harness.listener.stop() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        try client.send(VMCommandRequest(verb: .awaitPreparing(.id(alpha.id))))
+        try client.send(
+            VMCommandRequest(
+                verb: .clone(.id(alpha.id), machineIdentity: .new, waitForOutcome: true)))
         // The verb has to be running before the hang-up, or the close would be
         // cancelling nothing and the test would prove nothing.
-        try await harness.commands.awaitPreparingEntered.wait {
-            harness.commands.awaitPreparingSelectors.count == 1
+        try await harness.commands.outcomeEntered.wait {
+            harness.commands.cloneCalls.count == 1
         }
 
         client.close()

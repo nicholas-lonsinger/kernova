@@ -672,7 +672,7 @@ struct VMCommandEnvelopeRouterTests {
         let transport = makeTransport(over: double)
 
         let response = try await transport.send(
-            .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
+            .importVM(path: "/Users/somebody/Desktop/Named.kernova", waitForOutcome: false))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
@@ -682,6 +682,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(
             double.importURLs.map { $0.path(percentEncoded: false) }
                 == ["/Users/somebody/Desktop/Named.kernova"])
+        #expect(double.importWaits == [false])
     }
 
     @Test("An import nobody granted comes back as the verb's own refusal")
@@ -693,7 +694,7 @@ struct VMCommandEnvelopeRouterTests {
         let transport = makeTransport(over: double)
 
         let response = try await transport.send(
-            .importVM(path: "/Users/somebody/Desktop/Named.kernova"))
+            .importVM(path: "/Users/somebody/Desktop/Named.kernova", waitForOutcome: false))
 
         guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -705,124 +706,32 @@ struct VMCommandEnvelopeRouterTests {
 
     // MARK: - Preparing Copies
 
-    @Test("A wait on a VM that is not copying answers at once with its row")
-    func awaitPreparingOnASettledVMAnswersAtOnce() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Settled")
-
-        let response = try await harness.transport.send(.awaitPreparing(.id(instance.id)))
-
-        #expect(
-            response.result
-                == .summary(
-                    VMSummary(
-                        id: instance.id, name: "Settled", status: "stopped", ipAddress: .unavailable)))
-    }
-
-    @Test("A wait on a clone still copying answers with the settled row")
-    func awaitPreparingAnswersTheSettledRow() async throws {
+    @Test("A waited clone the user cancels answers that it was cancelled")
+    func waitedCloneCancelledAnswersCancelled() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        let started = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
-        guard case .summary(let phantom) = started.result else {
-            Issue.record("expected a summary, got \(started.result)")
-            return
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
+        let waiting = Task {
+            try await harness.transport.send(
+                .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
         }
-        #expect(phantom.status == "preparing")
+        // Held inside the copy, so the cancel is what the settle finds rather
+        // than a race with it.
+        try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
+        let arrival = try #require(harness.library.arrivals.first)
 
-        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
-
-        guard case .summary(let copy) = settled.result else {
-            Issue.record("expected a summary, got \(settled.result)")
-            return
-        }
-        #expect(copy.id == phantom.id)
-        #expect(copy.status == "stopped")
-    }
-
-    @Test("A wait on a copy that failed answers with the copy's own failure")
-    func awaitPreparingAnswersTheCopysFailure() async throws {
-        let harness = makeHarness()
-        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
-        harness.storage.cloneVMBundleError = cloneError
-        let instance = makeInstance(in: harness, name: "Source")
-        let started = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
-        guard case .summary(let phantom) = started.result else {
-            Issue.record("expected a summary, got \(started.result)")
-            return
-        }
-
-        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
-
-        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
-            return
-        }
-        // The copy's own failure, verb included — not one this wait invented.
-        #expect(verb == .clone)
-        #expect(message == cloneError.localizedDescription)
-    }
-
-    @Test("A wait that lands after the failed copy's row is gone still answers with its failure")
-    func awaitPreparingAfterTheFailedRowIsGone() async throws {
-        let harness = makeHarness()
-        let cloneError = VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova"))
-        harness.storage.cloneVMBundleError = cloneError
-        let instance = makeInstance(in: harness, name: "Source")
-        let started = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
-        guard case .summary(let phantom) = started.result else {
-            Issue.record("expected a summary, got \(started.result)")
-            return
-        }
-        // The wire's second round trip can land after the copy has settled, and
-        // a failed copy evicts its row — so the wait is driven here from a
-        // library that has already forgotten the identifier it names.
-        guard
-            let task = harness.library.instances.first(where: { $0.id == phantom.id })?
-                .preparingState?.task
-        else {
-            Issue.record("expected the clone's row to be preparing")
-            return
-        }
-        await task.value
-        #expect(!harness.library.instances.contains { $0.id == phantom.id })
-
-        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
+        try await harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        hold.signal()
+        let settled = try await waiting.value
 
         guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
             Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
             return
         }
         #expect(verb == .clone)
-        #expect(message == cloneError.localizedDescription)
-    }
-
-    @Test("A wait on a cancelled copy answers that it was cancelled")
-    func awaitPreparingOnACancelledCopy() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Source")
-        let started = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
-        guard case .summary(let phantom) = started.result else {
-            Issue.record("expected a summary, got \(started.result)")
-            return
-        }
-        // Before the copy task has had a turn, so the cancel is what the settle
-        // finds rather than a race with it.
-        try harness.core.cancelPreparing(.id(phantom.id), confirmed: true)
-
-        let settled = try await harness.transport.send(.awaitPreparing(.id(phantom.id)))
-
-        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
-            return
-        }
-        #expect(verb == .awaitPreparing)
         #expect(message == "The clone was cancelled.")
-        #expect(!harness.library.instances.contains { $0.id == phantom.id })
+        #expect(!harness.library.entries.contains { $0.id == arrival.id })
     }
 
     // MARK: - Events
@@ -834,18 +743,18 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
+            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
         }
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        await arrival.settle()
 
         var sawSettled = false
         while let event = await events.next() {
             if case .event(.statusChanged(let id, _, let from, let to)) = event.result,
-                id == phantom.id, from == "preparing"
+                id == arrival.id, from == "preparing"
             {
                 #expect(to == "stopped")
                 sawSettled = true
@@ -863,17 +772,17 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new))
+            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
         }
-        let phantom = try #require(harness.library.instances.first { $0.id == summary.id })
-        await phantom.preparingState?.task.value
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        await arrival.settle()
 
         var sawFailure = false
         while let event = await events.next() {
-            if case .event(.failure(let id, _, _)) = event.result, id == phantom.id {
+            if case .event(.failure(let id, _, _)) = event.result, id == arrival.id {
                 sawFailure = true
                 break
             }
@@ -944,25 +853,26 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     @Test("A Finder reveal of a bundle still being written is refused")
-    func showInFinderRefusesAPreparingVM() async throws {
+    func showInFinderRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Copying")
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: Task {})
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var revealed: [UUID] = []
         harness.core.revealInFinder = { revealed.append($0.id) }
 
-        let response = try await harness.transport.send(.showInFinder(.id(instance.id)))
+        let response = try await harness.transport.send(.showInFinder(.id(arrival.id)))
 
         // The bundle is under a hidden staging path until the copy publishes it,
-        // so there is nothing at `bundleURL` for the Finder to select yet.
+        // so there is nothing at its destination for the Finder to select yet.
         #expect(
             response.failure
                 == .busy(
                     vm: VMSummary(
-                        id: instance.id, name: "Copying", status: "preparing", ipAddress: .unavailable),
+                        id: arrival.id, name: "Copying", status: "preparing", ipAddress: .unavailable),
                     operation: "import"))
         #expect(revealed.isEmpty)
-        instance.preparingState = nil
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("A quit crosses the wire once, and is answered before anything acts on it")

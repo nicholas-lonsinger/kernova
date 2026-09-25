@@ -391,50 +391,6 @@ struct VMToolbarManagerTests {
         withExtendedLifetime(operation) {}
     }
 
-    // MARK: - Preparing State
-
-    @Test("Every VM item is disabled while a clone or import writes into the bundle")
-    func preparingDisablesEveryItem() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
-        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
-        #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
-    }
-
-    @Test("A preparing VM's lifecycle labels name what its own state admits")
-    func preparingKeepsTheLabelsItsStateAdmits() throws {
-        let instance = makeInstance(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        // Labels follow applicability and enablement follows availability: a
-        // suspended row names the Resume and the discard its state admits while
-        // the copy that is still writing disables all three.
-        let lifecycle =
-            toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" }
-            as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].label == "Resume")
-        #expect(lifecycle?.subitems[2].label == "Discard Saved State")
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-    }
-
     // MARK: - Lifecycle Labels
 
     @Test("Play button shows 'Start' when status is stopped")

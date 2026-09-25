@@ -22,8 +22,7 @@ final class StubUSBAccessoryPairingWriter: USBAccessoryPairingWriting {
         of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
     ) throws {
         if let writeError { throw writeError }
-        guard let bundle = instance.bundle else { throw VMLibrary.SettingsRefusal.noBundle }
-        try bundle.commitUSBPairings(mutate)
+        try instance.bundle.commitUSBPairings(mutate)
     }
 
     func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws {

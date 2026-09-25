@@ -45,14 +45,6 @@ struct VMLibraryTests {
         return (library, storageService, virtualizationService, removableMediaDeviceService)
     }
 
-    /// Helper to mark an instance as preparing with a no-op task.
-    private func markPreparing(
-        _ instance: VMInstance,
-        operation: VMInstance.PreparingOperation = .cloning(sourceID: UUID())
-    ) {
-        instance.preparingState = VMInstance.PreparingState(operation: operation, task: Task {})
-    }
-
     // MARK: - Load
 
     @Test("init reads nothing — the library is loaded after launch, not during construction")
@@ -107,8 +99,8 @@ struct VMLibraryTests {
         #expect(failures.showError == true)
     }
 
-    @Test("A VM registered while the read is in flight survives the load")
-    func loadVMsKeepsInstancesAddedDuringTheRead() async {
+    @Test("An arrival registered while the read is in flight survives the load")
+    func loadVMsKeepsArrivalsAddedDuringTheRead() async {
         let storage = MockVMStorageService()
         let onDisk = VMConfiguration(name: "On Disk", guestOS: .linux, bootMode: .efi)
         let url = FileManager.default.temporaryDirectory
@@ -122,18 +114,21 @@ struct VMLibraryTests {
         // in the read window, with no `await` before it for `apply` to slip in.
         await Task { @MainActor in }.value
 
-        // Stands in for an import phantom or a wizard-created VM: registered
-        // after the scan started, so the scan cannot know about it.
-        let arrival = VMInstanceFixture.make(name: "Arrived Mid-Read")
-        library.admitForTesting(arrival)
+        // An import or a wizard-created VM registered after the scan started,
+        // so the scan cannot know about it.
+        let gate = GatedArrivalWrite()
+        let arrival = library.beginGatedArrival(named: "Arrived Mid-Read", gate: gate)
 
         await load.value
 
-        // The scan's result must not delete it — its bundle copy may still be
+        // The scan's result must not delete it — its bundle copy is still
         // running, and nothing else would put the row back.
-        #expect(library.instances.contains { $0.id == arrival.id })
-        #expect(library.instances.contains { $0.id == onDisk.id })
-        #expect(library.instances.count == 2)
+        #expect(library.arrivals.map(\.id) == [arrival.id])
+        #expect(library.instances.map(\.id) == [onDisk.id])
+        #expect(library.entries.count == 2)
+
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("loadVMs auto-selects the first VM")
@@ -433,11 +428,11 @@ struct VMLibraryTests {
         #expect(failures.showError)
     }
 
-    @Test("A preparing row takes on the configuration its copy wrote when it publishes")
-    func preparedRowAdoptsTheWrittenConfiguration() async {
+    @Test("An arrival becomes a VM holding the configuration its write put in the bundle")
+    func arrivalAdoptsTheWrittenConfiguration() async throws {
         let (library, storage, _, _) = makeLibrary()
-        let phantom = VMInstanceFixture.makeArriving(name: "Copy")
-        var written = phantom.configuration
+        let requested = VMConfiguration(name: "Copy", guestOS: .linux, bootMode: .efi)
+        var written = requested
         written.storageDisks = [
             StorageDisk(
                 path: "AdditionalDisks/\(UUID().uuidString).asif", readOnly: false,
@@ -445,26 +440,21 @@ struct VMLibraryTests {
         ]
         let published = written
 
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            library.prepareBundle(
-                phantom, operation: .creating,
-                copyWork: { staged in
-                    try storage.createVMBundle(at: staged)
-                    try VMBundleFiles(url: staged, access: storage.bundleFiles)
-                        .writeInitial(published)
-                },
-                onSuccess: { done.resume() },
-                onFailure: { error in
-                    Issue.record(error)
-                    done.resume()
-                })
+        let arrival = library.beginArrival(
+            kind: .creating, configuration: requested,
+            destination: try storage.bundleURL(for: requested)
+        ) { staged in
+            try storage.createVMBundle(at: staged)
+            try VMBundleFiles(url: staged, access: storage.bundleFiles).writeInitial(published)
         }
+        let instance = try await arrival.settled.value
 
         // What the bundle holds, which is the written configuration as its
         // coding keeps it.
-        #expect(phantom.configuration == storage.bundles[phantom.bundleURL])
-        #expect(phantom.configuration.storageDisks == published.storageDisks)
-        #expect(!phantom.isPreparing)
+        #expect(instance.configuration == storage.bundles[instance.bundleURL])
+        #expect(instance.configuration.storageDisks == published.storageDisks)
+        #expect(library.arrivals.isEmpty)
+        #expect(library.instances.map(\.id) == [requested.id])
     }
 
     // MARK: - Guest Addresses
@@ -557,7 +547,7 @@ struct VMLibraryTests {
         instance.enter(.stopped)
         library.admitForTesting(instance)
         library.holdGuestAccountPassword(
-            GuestAccountPassword("analytical-engine"), for: instance)
+            GuestAccountPassword("analytical-engine"), for: instance.id)
 
         // Storage has no bundles, so the VM is evicted — and eviction is where a
         // held answer goes, whichever way the VM left the library.
@@ -578,19 +568,6 @@ struct VMLibraryTests {
 
         #expect(library.instances.count == 1)
         #expect(library.instances.first?.name == "Running VM")
-    }
-
-    @Test("reconcileWithDisk preserves paused VMs even if bundle is missing")
-    func reconcilePreservesPausedVMs() {
-        let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Paused VM")
-        instance.enter(.suspended)
-        library.admitForTesting(instance)
-
-        library.reconcileWithDisk()
-
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first?.name == "Paused VM")
     }
 
     /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
@@ -620,15 +597,18 @@ struct VMLibraryTests {
 
     @Test("reconcileWithDisk leaves a suspension alone when it could not read the bundle")
     func reconcileLeavesAnUnreadBundlesSuspensionAlone() {
-        let (library, _, _, _) = makeLibrary()
+        let (library, storage, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Bundle out of sight")
         instance.enter(.suspended)
+        // Listed, but its configuration cannot be read this pass.
+        storage.bundles[instance.bundleURL] = instance.configuration
+        storage.loadConfigurationFailURLs = [instance.bundleURL]
         library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
-        // A bundle the scan never saw says nothing about the slot inside it,
-        // and the eviction pass keeps such a VM.
+        // A bundle the scan could not read says nothing about the slot inside
+        // it, and the eviction pass keeps a VM whose bundle is still listed.
         #expect(library.instances.count == 1)
         #expect(instance.phase == .suspended)
     }
@@ -962,68 +942,23 @@ struct VMLibraryTests {
         #expect(library.instances.isEmpty)
     }
 
-    // MARK: - hasPreparing
+    // MARK: - Reconcile With Disk (Arrivals)
 
-    @Test("hasPreparing returns true when an instance is preparing")
-    func hasPreparingTrue() {
+    @Test("reconcileWithDisk leaves an arrival in flight in place")
+    func reconcilePreservesArrivals() async {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        markPreparing(instance)
-        library.admitForTesting(instance)
+        let gate = GatedArrivalWrite()
+        let arrival = library.beginGatedArrival(named: "Preparing VM", gate: gate)
 
-        #expect(library.hasPreparing == true)
-    }
-
-    @Test("hasPreparing returns false when no instances are preparing")
-    func hasPreparingFalse() {
-        let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        library.admitForTesting(instance)
-
-        #expect(library.hasPreparing == false)
-    }
-
-    // MARK: - Reconcile With Disk (Preparing)
-
-    @Test("reconcileWithDisk skips when instances are preparing")
-    func reconcileSkipsWhenPreparing() {
-        let storage = MockVMStorageService()
-        let config = VMConfiguration(name: "New VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.bundles[bundleURL] = config
-
-        let (library, _, _, _) = makeLibrary(storageService: storage)
-        for instance in library.instances {
-            library.evict(instance)
-        }
-
-        // Add a preparing instance
-        let preparing = VMInstanceFixture.make(name: "Preparing")
-        markPreparing(preparing)
-        library.admitForTesting(preparing)
-
+        // Storage lists no bundle — the arrival's is still under the staging
+        // directory, which no listing admits.
         library.reconcileWithDisk()
 
-        // Should not have added the disk bundle because hasPreparing is true
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first?.name == "Preparing")
-    }
+        #expect(library.arrivals.map(\.id) == [arrival.id])
+        #expect(library.entries.map(\.name) == ["Preparing VM"])
 
-    @Test("reconcileWithDisk preserves preparing instances from removal")
-    func reconcilePreservesPreparingInstances() {
-        let (library, _, _, _) = makeLibrary()
-        let preparing = VMInstanceFixture.make(name: "Preparing VM")
-        markPreparing(preparing)
-        preparing.enter(.stopped)
-        library.admitForTesting(preparing)
-
-        // Storage has no bundles — normally this instance would be removed
-        // but hasPreparing guard should prevent reconcile from running
-        library.reconcileWithDisk()
-
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first?.name == "Preparing VM")
+        gate.release()
+        await arrival.settle()
     }
 
     // MARK: - USB Accessory Pairings
@@ -1059,32 +994,31 @@ struct VMLibraryTests {
         #expect(library.instances.first?.usbPairings.pairings.map(\.key) == ["k"])
     }
 
-    @Test("A preparing row takes on its bundle's pairings when it publishes, and not before")
-    func publicationMirrorsPairings() async {
+    @Test("An arrival's VM takes on its bundle's pairings when it publishes, and not before")
+    func publicationMirrorsPairings() async throws {
         let (library, storage) = makePairingLibrary()
-        let phantom = VMInstanceFixture.makeArriving(name: "Fresh VM")
+        let written = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
         let pairings = USBAccessoryPairingSet(pairings: [pairing(key: "k")])
-        let written = phantom.configuration
+        let gate = GatedArrivalWrite()
 
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            library.prepareBundle(
-                phantom, operation: .importing,
-                copyWork: { staged in
-                    try storage.createVMBundle(at: staged)
-                    let files = VMBundleFiles(url: staged, access: storage.bundleFiles)
-                    try files.writeInitial(written)
-                    try files.update(.usbPairings) { $0 = pairings }
-                },
-                onSuccess: { done.resume() },
-                onFailure: { error in
-                    Issue.record(error)
-                    done.resume()
-                })
-            // Registered, but its bundle does not exist yet.
-            #expect(phantom.usbPairings.isEmpty)
+        let arrival = library.beginArrival(
+            kind: .importing, configuration: written,
+            destination: try storage.bundleURL(for: written)
+        ) { staged in
+            try await gate.pass()
+            try storage.createVMBundle(at: staged)
+            let files = VMBundleFiles(url: staged, access: storage.bundleFiles)
+            try files.writeInitial(written)
+            try files.update(.usbPairings) { $0 = pairings }
         }
+        // Registered, but no VM exists yet to hold any pairing.
+        #expect(library.instances.isEmpty)
+        #expect(library.arrivals.map(\.id) == [arrival.id])
 
-        #expect(phantom.usbPairings.pairings.map(\.key) == ["k"])
+        gate.release()
+        let instance = try await arrival.settled.value
+
+        #expect(instance.usbPairings.pairings.map(\.key) == ["k"])
     }
 
     @Test("A bundle with no pairings mirrors an empty set")

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
@@ -105,6 +106,18 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     /// arrival's adoption. The publish runs detached while the main actor
     /// waits on it, so the hop cannot deadlock.
     var afterPublish: (@MainActor () -> Void)?
+
+    /// Holds a publish on its own thread, after its rename has landed, until
+    /// signalled — the arrival stays past the point a cancel stops it while the
+    /// main actor is free. ``publishLanded`` fires as the hold begins.
+    var publishHold: DispatchSemaphore?
+    let publishLanded = AsyncGate()
+
+    /// Holds a clone's copy on its own thread, before it writes anything,
+    /// until signalled; ``cloneEntered`` fires as the hold begins. An error set
+    /// while held is the one the copy throws.
+    var cloneHold: DispatchSemaphore?
+    let cloneEntered = AsyncGate()
     /// Thrown by every later replace of `config.json`.
     var saveConfigurationError: (any Error)? {
         get { files.replaceError(for: VMBundleLayout.configRelativePath) }
@@ -192,6 +205,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     {
         cloneVMBundleCallCount += 1
         lastCloneFilesToCopy = filesToCopy
+        if let cloneHold {
+            cloneEntered.notify()
+            cloneHold.wait()
+        }
         if let error = cloneVMBundleError { throw error }
         // Mirrors the real service actually creating the bundle directory on disk:
         // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
@@ -216,6 +233,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             try fm.moveItem(at: stagedURL, to: bundleURL)
         }
         files.moveBundle(from: stagedURL, to: bundleURL)
+        if let publishHold {
+            publishLanded.notify()
+            publishHold.wait()
+        }
         if let afterPublish {
             DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }
         }

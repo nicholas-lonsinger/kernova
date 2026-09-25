@@ -922,26 +922,27 @@ struct VMCommandCoreAttachmentTests {
     }
 
     @Test("A bundle still being copied refuses every attachment edit as busy")
-    func preparingVMRefusesEveryEdit() async throws {
+    func arrivalRefusesEveryEdit() async throws {
         let harness = makeHarness()
-        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [disk] }
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
+        let gate = GatedArrivalWrite()
+        let arrival = harness.library.beginGatedArrival(
+            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
         let storageRefusal = await commandError {
             try harness.core.setStorageDiskReadOnly(
-                .id(instance.id), disk: disk.id, readOnly: true)
+                .id(arrival.id), disk: UUID(), readOnly: true)
         }
         let removableRefusal = await commandError {
             try harness.core.attachRemovableMedia(
-                .id(instance.id), paths: [PickedFile(path: "/tmp/x.iso", bookmark: nil)])
+                .id(arrival.id), paths: [PickedFile(path: "/tmp/x.iso", bookmark: nil)])
         }
 
         #expect(storageRefusal?.isBusy == true)
         #expect(removableRefusal?.isBusy == true)
-        #expect(instance.configuration.storageDisks?[0].readOnly == false)
+        #expect(harness.storage.saveConfigurationCallCount == 0)
+
+        gate.release()
+        await arrival.settle()
     }
 
     @Test("A storage edit on a VM being cloned is refused as busy, naming the clone")
@@ -949,11 +950,13 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
-        let phantom = makeInstance(in: harness, name: "Source Copy")
-        let task = Task {}
-        defer { task.cancel() }
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: source.id), task: task)
+        let gate = GatedArrivalWrite()
+        let clone = harness.library.beginGatedArrival(
+            .cloning(sourceID: source.id), named: "Source Copy", gate: gate)
+        defer {
+            _ = clone.requestCancel()
+            gate.release()
+        }
 
         let removeError = try #require(
             await commandError {
@@ -1342,11 +1345,13 @@ struct VMCommandCoreAttachmentTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A clone reading this VM's files locks a storage-disk edit, and the
         // discard cannot clear that.
-        let task = Task {}
-        defer { task.cancel() }
-        let phantom = makeInstance(in: harness, name: "Clone of it")
-        phantom.preparingState = VMInstance.PreparingState(
-            operation: .cloning(sourceID: instance.id), task: task)
+        let gate = GatedArrivalWrite()
+        let clone = harness.library.beginGatedArrival(
+            .cloning(sourceID: instance.id), named: "Clone of it", gate: gate)
+        defer {
+            _ = clone.requestCancel()
+            gate.release()
+        }
 
         await #expect(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(

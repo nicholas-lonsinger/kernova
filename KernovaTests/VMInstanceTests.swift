@@ -496,15 +496,6 @@ struct VMInstanceTests {
 
     // MARK: - isKeepingAppAlive
 
-    @Test("isKeepingAppAlive is true when preparing")
-    func isKeepingAppAlivePreparing() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.isKeepingAppAlive == true)
-    }
-
     @Test("isKeepingAppAlive is true for active statuses")
     func isKeepingAppAliveActive() {
         for phase in [VMLifecyclePhase.running(sessionID: UUID())] + Self.transitionalPhases {
@@ -669,18 +660,6 @@ struct VMInstanceTests {
         for phase in [VMLifecyclePhase.running(sessionID: UUID())] + Self.transitionalPhases {
             #expect(VMInstanceFixture.make(phase: phase).canDelete == false)
         }
-    }
-
-    @Test("canDelete is false while an import or clone is writing into the bundle")
-    func canDeletePreparing() {
-        // The toolbar's Move to Trash reads this predicate without a preparing
-        // guard of its own, so the check has to live here to hold on every surface.
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.isPreparing == true)
-        #expect(instance.canDelete == false)
     }
 
     // MARK: - Bundle Paths
@@ -1099,81 +1078,41 @@ struct VMInstanceTests {
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
-    @Test("canRename refuses a bundle a clone or import is still writing into")
-    func canRenameRefusesWhilePreparing() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        #expect(instance.canRename)
+    // MARK: - Arrival labels
 
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(!instance.canRename)
+    @Test("An arrival's label names its operation")
+    func arrivalLabelNamesItsOperation() {
+        #expect(VMArrival.Kind.creating.displayLabel == "Creating\u{2026}")
+        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayLabel == "Cloning\u{2026}")
+        #expect(VMArrival.Kind.importing.displayLabel == "Importing\u{2026}")
     }
 
-    // MARK: - Preparing State
+    @Test("An arrival reads Cancelling… once a cancel is taken")
+    func arrivalLabelReadsCancellingOnceCancelled() {
+        let configuration = VMConfiguration(name: "Copy", guestOS: .linux, bootMode: .efi)
+        let arrival = VMArrival(
+            id: configuration.id, kind: .importing, configuration: configuration,
+            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id)
+        ) { _ in throw CancellationError() }
+        #expect(arrival.displayLabel == "Importing\u{2026}")
 
-    @Test("preparingState defaults to nil and isPreparing to false")
-    func preparingStateDefaultsNil() {
-        let instance = VMInstanceFixture.make()
-        #expect(instance.preparingState == nil)
-        #expect(instance.isPreparing == false)
+        #expect(arrival.requestCancel() == .cancelled)
+
+        #expect(arrival.displayLabel == "Cancelling\u{2026}")
     }
 
-    @Test("isPreparing is true when preparingState is set")
-    func isPreparingTrueWhenSet() {
-        let instance = VMInstanceFixture.make()
-        let task = Task {}
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.isPreparing == true)
-
-        instance.preparingState = nil
-        #expect(instance.isPreparing == false)
-        task.cancel()
+    @Test("Arrival kind cancelLabel and cancelAlertTitle")
+    func arrivalKindCancelLabels() {
+        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelLabel == "Cancel Clone")
+        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelAlertTitle == "Cancel Clone?")
+        #expect(VMArrival.Kind.importing.cancelLabel == "Cancel Import")
+        #expect(VMArrival.Kind.importing.cancelAlertTitle == "Cancel Import?")
     }
 
-    @Test("statusDisplayName returns preparing label when isPreparing")
-    func statusDisplayNamePreparing() {
-        let instance = VMInstanceFixture.make()
-        let task = Task {}
-        defer { task.cancel() }
-
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.statusDisplayName == "Cloning\u{2026}")
-
-        instance.preparingState = VMInstance.PreparingState(operation: .importing, task: task)
-        #expect(instance.statusDisplayName == "Importing\u{2026}")
-    }
-
-    @Test("statusDisplayNSColor returns systemOrange when isPreparing")
-    func statusDisplayNSColorPreparing() {
-        let instance = VMInstanceFixture.make()
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.statusDisplayNSColor == .systemOrange)
-    }
-
-    @Test("statusToolTip returns preparing label when isPreparing")
-    func statusToolTipPreparing() {
-        let instance = VMInstanceFixture.make()
-        let task = Task {}
-        defer { task.cancel() }
-        instance.preparingState = VMInstance.PreparingState(operation: .cloning(sourceID: UUID()), task: task)
-        #expect(instance.statusToolTip == "Cloning\u{2026}")
-    }
-
-    @Test("PreparingOperation cancelLabel and cancelAlertTitle")
-    func preparingOperationLabels() {
-        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).cancelLabel == "Cancel Clone")
-        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).cancelAlertTitle == "Cancel Clone?")
-        #expect(VMInstance.PreparingOperation.importing.cancelLabel == "Cancel Import")
-        #expect(VMInstance.PreparingOperation.importing.cancelAlertTitle == "Cancel Import?")
-    }
-
-    @Test("PreparingOperation displayNoun")
-    func preparingOperationDisplayNoun() {
-        #expect(VMInstance.PreparingOperation.cloning(sourceID: UUID()).displayNoun == "Clone")
-        #expect(VMInstance.PreparingOperation.importing.displayNoun == "Import")
+    @Test("Arrival kind displayNoun")
+    func arrivalKindDisplayNoun() {
+        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayNoun == "Clone")
+        #expect(VMArrival.Kind.importing.displayNoun == "Import")
     }
 
     // MARK: - agentStatus dispatch
