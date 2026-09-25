@@ -243,7 +243,7 @@ struct VMInstanceTests {
 
         try VMInstanceFixture.writeSaveFile(for: instance)
         for phase: VMLifecyclePhase in [.suspended, .stopped, .failed(message: "x"), .initialBoot] {
-            instance.enter(phase)
+            instance.activity.placeForTesting(phase)
             #expect(instance.holdsSuspendedSession, "\(phase)")
             #expect(!instance.canEditSettings, "\(phase)")
             #expect(instance.canResume, "\(phase)")
@@ -253,7 +253,7 @@ struct VMInstanceTests {
             .running(sessionID: UUID()), .saving(sessionID: UUID()), .starting(sessionID: nil),
             .revertingToSnapshot,
         ] {
-            instance.enter(phase)
+            instance.activity.placeForTesting(phase)
             #expect(!instance.holdsSuspendedSession, "\(phase)")
         }
     }
@@ -377,7 +377,7 @@ struct VMInstanceTests {
 
         // Only that term is lifted: a VM no phase admits an edit in stays
         // refused inside the window.
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.answeringAsIfSavedStateDiscarded {
             #expect(!instance.canEditSettings)
         }
@@ -777,7 +777,7 @@ struct VMInstanceTests {
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
         coordinator.activate()
         #expect(device.appliedPlans == [.nat])
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
 
         library.editConfiguration(of: instance) { $0.networkMode = .bridged }
 
@@ -1030,7 +1030,7 @@ struct VMInstanceTests {
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
@@ -1177,7 +1177,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .failed(message: "The disk went away."))
         #expect(instance.errorMessage == "The disk went away.")
 
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
 
         #expect(instance.errorMessage == nil)
     }
@@ -1406,7 +1406,7 @@ struct VMInstanceTests {
         // control channel settles for silence at the same time, which is what
         // re-arms the watchdog — hence the guard rather than caller discipline.
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.enter(phase)
+        instance.activity.placeForTesting(phase)
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         #expect(instance.agentPostStartTaskForTesting == nil)
@@ -1592,7 +1592,7 @@ struct VMInstanceTests {
         #expect(context.agentExpectedButMissing == false)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
@@ -1618,7 +1618,7 @@ struct VMInstanceTests {
         // Teardown, then a fresh session arming its own watchdog on a grace
         // long enough that it cannot legitimately fire during this test.
         instance.tearDownSession(restingAt: .stopped)
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContext()
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
         #expect(instance.agentPostStartTaskForTesting != nil)

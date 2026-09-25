@@ -536,7 +536,7 @@ struct VMSettingsOverviewTests {
     @Test("The capture command dims when the VM is in no state to be captured")
     func takeSnapshotFollowsTheViewModelGate() throws {
         let (vc, instance, viewModel) = makeController()
-        instance.enter(.starting(sessionID: nil))
+        instance.activity.placeForTesting(.starting(sessionID: nil))
         reapply(vc, (instance, viewModel))
 
         let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))

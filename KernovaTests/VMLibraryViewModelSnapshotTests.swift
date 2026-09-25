@@ -552,7 +552,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
 
         // The sheet gathers a name, and the VM starts restoring while it is up.
-        instance.enter(.revertingToSnapshot)
+        instance.activity.placeForTesting(.revertingToSnapshot)
         await harness.viewModel.takeSnapshot(instance, name: "Too late").value
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
@@ -566,7 +566,7 @@ struct VMLibraryViewModelSnapshotTests {
             in: harness.viewModel, files: harness.storage.files, phase: .running(sessionID: UUID()))
         harness.viewModel.requestTakeSnapshot(instance)
 
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
         await harness.viewModel.takeSnapshot(instance, name: "Powered off first").value
 
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])

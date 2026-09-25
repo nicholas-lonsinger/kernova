@@ -48,6 +48,15 @@
 # `UserDefaults()`; `UserDefaults(suiteName:)` names a store of the caller's own
 # and is not one.
 #
+# The third gate runs over the first one's files. Most seams are reached from
+# app code by design — a hook it invokes, a task it hands out — but one that
+# skips a rule the app must obey is reached by tests alone: `placeForTesting`
+# places a lifecycle phase past every rule a transition obeys. The compiler
+# cannot refuse an app-code call — CI builds only Debug, and a call inside
+# `#if DEBUG` compiles in every configuration — so this check does. Such a name
+# is listed in `test_only_calls`, and outside test code it may appear only in
+# its own `func` declaration.
+#
 # Line comments are stripped before matching, so prose may name what it forbids.
 # A string literal is not stripped, and reads as a reference.
 #
@@ -66,6 +75,9 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Test code, by the path convention the header states; each gate takes one side
 # of it.
 test_paths='(^|/)[^/]*(Tests|TestSupport)/'
+
+# Seams only test code may call, as the third gate reads them.
+test_only_calls='placeForTesting'
 
 report() {
     local summary=$1 text=$2
@@ -199,6 +211,24 @@ store_findings=$(git ls-files '*.swift' \
     ')
 store_scan_status=$?
 
+call_findings=$(git ls-files '*.swift' \
+    | grep -vE "$test_paths" \
+    | tr '\n' '\0' \
+    | xargs -0 awk -v names="$test_only_calls" '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+
+        BEGIN { gsub(/[[:space:]]+/, "|", names) }
+
+        {
+            code = $0
+            sub(/\/\/.*$/, "", code)
+            if (code !~ "(^|[^A-Za-z0-9_])(" names ")([^A-Za-z0-9_]|$)") next
+            if (code ~ "(^|[^A-Za-z0-9_])func[[:space:]]+(" names ")([^A-Za-z0-9_]|$)") next
+            printf "%s:%d — %s\n", FILENAME, FNR, trim(code)
+        }
+    ')
+call_scan_status=$?
+
 if [ -n "$findings" ]; then
     report 'test-seam finding(s): a ForTesting declaration outside #if DEBUG, or a file whose #if blocks do not close' \
         "$findings"
@@ -209,16 +239,22 @@ if [ -n "$store_findings" ]; then
         "$store_findings"
 fi
 
-for scan in "$scan_status" "$store_scan_status"; do
+if [ -n "$call_findings" ]; then
+    report 'test-only-call finding(s): code outside a test target naming a seam only tests may call' \
+        "$call_findings"
+fi
+
+for scan in "$scan_status" "$store_scan_status" "$call_scan_status"; do
     if [ "$scan" -ne 0 ]; then
         echo "check-test-seams: a scan exited $scan — at least one tracked Swift file went unread, so a finding in it would not appear above" >&2
         exit 1
     fi
 done
 
-if [ -n "$findings" ] || [ -n "$store_findings" ]; then
+if [ -n "$findings" ] || [ -n "$store_findings" ] || [ -n "$call_findings" ]; then
     exit 1
 fi
 
 pass "test seams: every ForTesting declaration is inside #if DEBUG"
 pass "test stores: no test reaches the process-wide UserDefaults"
+pass "test-only calls: no code outside a test target calls a seam only tests may call"

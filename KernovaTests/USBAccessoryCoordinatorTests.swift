@@ -32,7 +32,7 @@ struct USBAccessoryCoordinatorTests {
 
     private func makeInstance(sessionID: UUID, named name: String = "USB VM") -> VMInstance {
         let instance = makeStoppedInstance(named: name)
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         return instance
     }
@@ -296,7 +296,7 @@ struct USBAccessoryCoordinatorTests {
         // The library moves on while the second accessory waits its turn.
         first.tearDownSession(restingAt: .stopped)
         second.beginSessionContext()
-        second.enter(.running(sessionID: UUID()))
+        second.activity.placeForTesting(.running(sessionID: UUID()))
         recorder.requests[0].answer(nil)
 
         // Offering the guest that has since stopped would refuse the attach the
@@ -566,7 +566,7 @@ struct USBAccessoryCoordinatorTests {
         service.accessories = [mine, theirs]
 
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
         #expect(service.attachedRegistryIDs == [1])
@@ -587,7 +587,7 @@ struct USBAccessoryCoordinatorTests {
         service.accessories = [accessory]
         let sessionID = UUID()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
 
         // Both phases are attachable, so neither transition is an edge.

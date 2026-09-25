@@ -254,6 +254,14 @@ final class VMActivity {
         setPhase(phase)
     }
 
+    #if DEBUG
+    /// Puts the VM straight into `phase`, bypassing every rule a transition
+    /// obeys; tests only, and the one way a test places a phase.
+    func placeForTesting(_ phase: VMLifecyclePhase) {
+        setPhase(phase)
+    }
+    #endif
+
     /// The one write of ``phase`` after construction, so the edge onto an
     /// attachable session is noticed wherever the transition came from.
     private func setPhase(_ new: VMLifecyclePhase) {

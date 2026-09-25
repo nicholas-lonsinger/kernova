@@ -544,7 +544,7 @@ struct VMCapabilityCatalogTests {
 
         // A state the manifest cannot be edited in takes both rows, and says so
         // as the state rather than as the mode.
-        instance.enter(.revertingToSnapshot)
+        instance.activity.placeForTesting(.revertingToSnapshot)
         #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .unavailable)
         #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .unavailable)
     }

@@ -364,7 +364,7 @@ struct VMCommandCoreTests {
         try await harness.core.resume(.id(instance.id))
         #expect(harness.virtualization.resumeCallCount == 1)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         try await harness.core.suspend(.id(instance.id))
         #expect(harness.virtualization.saveCallCount == 1)
     }
@@ -1164,7 +1164,7 @@ struct VMCommandCoreTests {
 
         // Hot-paused: the live object already holds the identity, so refusing
         // would be refusing a VM its own.
-        twin.enter(.livePaused(sessionID: UUID()))
+        twin.activity.placeForTesting(.livePaused(sessionID: UUID()))
         try await harness.core.resume(.id(twin.id))
         #expect(harness.virtualization.resumeCallCount == 2)
         #expect(twin.status == .running)
@@ -1743,7 +1743,7 @@ struct VMCommandCoreTests {
         // The sheet leaves the menu key equivalents live, so the finished clone
         // can be running by the time the stale confirm lands — and its bundle
         // holds the disks that guest is booted off.
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         let error = try #require(
             commandError {
@@ -2016,7 +2016,7 @@ struct VMCommandCoreTests {
         #expect(harness.library.instances.contains { $0.id == summary.id })
         #expect(harness.library.arrivals.isEmpty)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(
             await commandError {
                 _ = try await harness.core.clone(
@@ -2295,7 +2295,7 @@ struct VMCommandCoreTests {
         var events = VMLibraryEventReader(harness.core.events())
         // A fresh subscriber is told what happens from here, not replayed the
         // library it can already list.
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         let first = try #require(await events.next())
         guard case .statusChanged(let id, let name, let from, let to) = first else {
@@ -2337,7 +2337,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
         var events = VMLibraryEventReader(harness.core.events())
 
-        instance.enter(.failed(message: "The disk went away"))
+        instance.activity.placeForTesting(.failed(message: "The disk went away"))
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {

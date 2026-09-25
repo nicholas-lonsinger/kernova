@@ -222,7 +222,7 @@ struct VirtualizationServiceTests {
         // Force Stop, then an immediate re-Start, both landing before the
         // aborted start's `session.start()` throws.
         instance.restAfterPowerOff()
-        instance.enter(.starting(sessionID: nil))
+        instance.activity.placeForTesting(.starting(sessionID: nil))
         let successor = instance.beginSessionContext()
 
         #expect(
@@ -1198,7 +1198,7 @@ struct VirtualizationServiceTests {
         #expect(holding.hasSaveFile)
 
         let emptied = VMInstanceFixture.make(phase: .restoringSavedState(sessionID: nil))
-        emptied.enter(emptied.restingPhase(withoutSlot: .stopped))
+        emptied.activity.placeForTesting(emptied.restingPhase(withoutSlot: .stopped))
         #expect(emptied.status == .stopped)
         #expect(emptied.errorMessage == nil)
     }

@@ -259,7 +259,7 @@ func makeInstanceWithLiveSession(named name: String = "Live Session VM")
         $0.dropFilesEnabled = true
     }
     let sessionID = UUID()
-    instance.enter(.running(sessionID: sessionID))
+    instance.activity.placeForTesting(.running(sessionID: sessionID))
     instance.beginSessionContext()
     instance.vsockAdmissionGate.publish(
         VsockAdmissionGate.State(
