@@ -771,6 +771,9 @@ struct ClipboardPassthroughSwitchTests {
         ClipboardContentViewController, VMLibraryViewModel
     ) {
         let viewModel = makeClipboardViewModel(preferences: preferences)
+        // The switch writes through the configuration verb, which resolves the
+        // VM through the library.
+        registerSettingsInstance(instance, in: viewModel)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: viewModel, publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
@@ -842,8 +845,8 @@ struct ClipboardPassthroughSwitchTests {
         let (vc, viewModel) = makeController(instance)
         #expect(vc.isPassthroughSwitchOnForTesting == false)
 
-        // The settings pane's write path, landing on the same model.
-        _ = viewModel.updateConfiguration(of: instance) {
+        // Another surface's write, landing on the same model.
+        _ = viewModel.library.updateConfiguration(of: instance) {
             $0.clipboardPassthroughEnabled = true
         }
 

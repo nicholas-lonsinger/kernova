@@ -129,6 +129,35 @@ struct VMSettingsViewControllerTests {
         #expect(instance.configuration.clipboardSharingEnabled == true)
     }
 
+    // MARK: - Ephemeral Mode through the card
+
+    /// The card's switch is dimmed for a VM with no snapshot, so its action is
+    /// sent directly: the shell's one dispatcher reaches the verb, and the key
+    /// decides.
+    @Test("A VM with no snapshot refuses Ephemeral Mode from the overview card, as the key does")
+    func ephemeralEnableFromTheCardIsRefusedByTheKey() throws {
+        let (vc, instance, viewModel) = makeController(guestOS: .linux, isReadOnly: false)
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let hostStateOnDisk = storage.hostStates[instance.bundleURL]
+        let card = try #require(vc.overviewCardForTesting(.general))
+        let toggle = try #require(
+            firstSubview(NSSwitch.self, in: card) {
+                $0.identifier?.rawValue == VMOverviewToggle.ephemeralMode.rawValue
+            })
+        #expect(instance.snapshotManifest.isEmpty)
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(storage.hostStates[instance.bundleURL] == hostStateOnDisk)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains("Take a snapshot first") == true)
+        #expect(toggle.state == .off)
+    }
+
     // MARK: - App activation
 
     /// Carries a microphone status the test moves between activations, which is

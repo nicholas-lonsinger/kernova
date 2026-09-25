@@ -1712,7 +1712,7 @@ struct VMLibraryViewModelTests {
         switching.enter(.running(sessionID: UUID()))
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching) {
+        let accepted = viewModel.library.updateConfiguration(of: switching) {
             $0.networkMode = .shared
         }
 
@@ -1729,7 +1729,7 @@ struct VMLibraryViewModelTests {
         switching.enter(.stopped)
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching) {
+        let accepted = viewModel.library.updateConfiguration(of: switching) {
             $0.networkMode = .shared
         }
 
@@ -1745,13 +1745,92 @@ struct VMLibraryViewModelTests {
         switching.enter(.running(sessionID: UUID()))
         other.enter(.running(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: switching) {
+        let accepted = viewModel.library.updateConfiguration(of: switching) {
             $0.memorySizeInGB = 6
         }
 
         #expect(accepted.landed)
         #expect(switching.configuration.memorySizeInGB == 6)
         #expect(presenter.showError == false)
+    }
+
+    // MARK: - Configuration forward
+
+    /// A VM in the view model's library, which is what lets the forward's verb
+    /// resolve it.
+    private func registerConfigurationVM(
+        in viewModel: VMLibraryViewModel, storage: MockVMStorageService,
+        phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        let instance = VMInstanceFixture.make(phase: phase, mutate: mutate)
+        viewModel.library.register(instance, storage: storage)
+        return instance
+    }
+
+    /// A CPU count the guest takes that is not `config`'s own.
+    private func movedCPUCount(_ config: VMConfiguration) -> Int {
+        config.cpuCount == config.guestOS.minCPUCount ? config.cpuCount + 1 : config.cpuCount - 1
+    }
+
+    @Test("the configuration forward hands a consent refusal back without presenting it")
+    func setConfigurationForwardReturnsConsentWithoutPresenting() throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = registerConfigurationVM(in: viewModel, storage: storage) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = false
+        }
+
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.clipboardPassthrough.assigning(true)], on: instance)
+
+        guard case .consentRequired(let prompt) = outcome else {
+            Issue.record("expected consentRequired, got \(outcome)")
+            return
+        }
+        #expect(prompt == ClipboardPassthroughConsent.prompt(vmName: instance.name))
+        #expect(presenter.errors.isEmpty)
+        #expect(!instance.configuration.clipboardPassthroughEnabled)
+
+        let confirmed = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.clipboardPassthrough.assigning(true)], on: instance,
+            confirmed: true)
+        #expect(confirmed == .applied)
+        #expect(instance.configuration.clipboardPassthroughEnabled)
+    }
+
+    @Test("the configuration forward presents a refusal, naming the setting it refused")
+    func setConfigurationForwardPresentsARefusal() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = registerConfigurationVM(
+            in: viewModel, storage: storage, phase: .running(sessionID: UUID()))
+        let before = instance.configuration
+
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.cpus.assigning(String(movedCPUCount(before)))],
+            on: instance)
+
+        #expect(outcome == .refused)
+        #expect(instance.configuration == before)
+        #expect(presenter.errorTitles == ["Error"])
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains("cpus") == true)
+    }
+
+    @Test("the configuration forward leaves a failed save to the library's own alert")
+    func setConfigurationForwardLeavesAFailedSaveToTheLibrary() {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let instance = registerConfigurationVM(in: viewModel, storage: storage)
+        storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
+        let before = instance.configuration
+
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.cpus.assigning(String(movedCPUCount(before)))],
+            on: instance)
+
+        #expect(outcome == .refused)
+        #expect(instance.configuration == before)
+        // The library presented the failure it hit; the forward adds nothing.
+        #expect(presenter.errors.count == 1)
     }
 
     // MARK: - Removable media on a live-but-unattachable session
@@ -1777,7 +1856,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .saving(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance) {
+        let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
         }
 
@@ -1792,7 +1871,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance) {
+        let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
             $0.memorySizeInGB = 6
         }
@@ -1809,7 +1888,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .capturingLive(sessionID: UUID()))
 
-        let accepted = viewModel.updateConfiguration(of: instance) {
+        let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.memorySizeInGB = 6
         }
 
@@ -1825,7 +1904,7 @@ struct VMLibraryViewModelTests {
             let (viewModel, storage, _, _, _) = makeViewModel()
             let instance = appendVMWithMedia(to: viewModel, storage: storage, in: phase)
 
-            let accepted = viewModel.updateConfiguration(of: instance) {
+            let accepted = viewModel.library.updateConfiguration(of: instance) {
                 $0.removableMedia = nil
             }
 
@@ -2866,7 +2945,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
             storage: storage)
 
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2884,7 +2963,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2899,7 +2978,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
         viewModel.library.editConfiguration(of: holder) { $0.networkEnabled = false }
 
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2913,7 +2992,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.name = "Renamed"
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
@@ -2931,7 +3010,7 @@ struct VMLibraryViewModelTests {
 
         // Only a change of address is refused, so a pair that arrived from disk
         // sharing one stays editable in every other respect.
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.name = "Renamed"
         }
 
@@ -2946,10 +3025,10 @@ struct VMLibraryViewModelTests {
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        viewModel.updateConfiguration(of: holder) {
+        viewModel.library.updateConfiguration(of: holder) {
             $0.macAddress = "aa:bb:cc:dd:ee:11"
         }
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2965,7 +3044,7 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         await viewModel.delete(holder)
-        let accepted = viewModel.updateConfiguration(of: editor) {
+        let accepted = viewModel.library.updateConfiguration(of: editor) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -3696,7 +3775,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed persists in both directions")
     func setAgentInstallNudgeDismissedPersistsBothDirections() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(files: storage.files)
+        let instance = VMInstanceFixture.make(guestOS: .macOS, files: storage.files)
         viewModel.instances.append(instance)
 
         viewModel.setAgentInstallNudgeDismissed(true, for: instance)
@@ -3715,7 +3794,7 @@ struct VMLibraryViewModelTests {
     @Test("setAgentInstallNudgeDismissed no-ops when unchanged")
     func setAgentInstallNudgeDismissedNoOpsWhenUnchanged() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(files: storage.files)
+        let instance = VMInstanceFixture.make(guestOS: .macOS, files: storage.files)
         viewModel.instances.append(instance)
 
         // Default is already false; setting false again writes nothing.
@@ -3726,7 +3805,7 @@ struct VMLibraryViewModelTests {
     @Test("dismissAgentInstallNudge still sets the flag to true")
     func dismissAgentInstallNudgeSetsTrue() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = VMInstanceFixture.make(files: storage.files)
+        let instance = VMInstanceFixture.make(guestOS: .macOS, files: storage.files)
         viewModel.instances.append(instance)
 
         viewModel.dismissAgentInstallNudge(for: instance)
@@ -3738,9 +3817,13 @@ struct VMLibraryViewModelTests {
     @Test("resetAllAgentInstallNudges re-arms every VM and the app-wide preference")
     func resetAllAgentInstallNudgesReArmsEveryVM() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let first = VMInstanceFixture.make(name: "First", hostState: VMHostState(agentInstallNudgeDismissed: true))
-        let second = VMInstanceFixture.make(name: "Second", hostState: VMHostState(agentInstallNudgeDismissed: true))
-        let third = VMInstanceFixture.make(name: "Third")
+        let first = VMInstanceFixture.make(
+            name: "First", guestOS: .macOS,
+            hostState: VMHostState(agentInstallNudgeDismissed: true))
+        let second = VMInstanceFixture.make(
+            name: "Second", guestOS: .macOS,
+            hostState: VMHostState(agentInstallNudgeDismissed: true))
+        let third = VMInstanceFixture.make(name: "Third", guestOS: .macOS)
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
         viewModel.instances = [first, second, third]
         viewModel.agentInstallPromptDisabled = true

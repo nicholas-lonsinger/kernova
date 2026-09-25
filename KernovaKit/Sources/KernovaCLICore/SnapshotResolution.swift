@@ -5,16 +5,14 @@ import KernovaKit
 ///
 /// Client-side, because the wire addresses a snapshot by identifier alone: the
 /// listing every snapshot verb already reads is what a typed name is matched
-/// against, so the app needs no second way to name one.
+/// against.
 enum SnapshotResolution {
     /// The snapshot `text` names among `snapshots`, where `vm` is what the user
     /// called the virtual machine.
     ///
-    /// Text that parses as an identifier is matched against the identifiers
-    /// first and falls back to the names, so a snapshot literally named after
-    /// another's identifier is still reachable. `forcingID` stops at the
-    /// identifier reading, and refuses text that is not one rather than
-    /// silently searching by name.
+    /// Matched by ``SnapshotSelection``. `forcingID` stops at the identifier
+    /// reading, and refuses text that is not one rather than silently
+    /// searching by name.
     ///
     /// - Throws: ``CLIFailure`` — ``CLIExitCode/usage`` for `forcingID` text
     ///   that is not an identifier, ``CLIExitCode/notFound`` when nothing
@@ -23,19 +21,19 @@ enum SnapshotResolution {
     static func snapshot(
         named text: String, of vm: String, in snapshots: [SnapshotSummary], forcingID: Bool
     ) throws -> SnapshotSummary {
-        let identifier = UUID(uuidString: text)
-        if let identifier, let match = snapshots.first(where: { $0.id == identifier }) {
-            return match
-        }
-        guard !forcingID else {
-            guard identifier != nil else {
-                throw CLIFailure(.usage, "\u{201C}\(text)\u{201D} is not a snapshot identifier.")
+        guard forcingID else {
+            switch SnapshotSelection(text, in: snapshots, id: \.id, name: \.name) {
+            case .found(let match): return match
+            case .notFound: throw notFound(text, of: vm)
+            case .ambiguous(let candidates): throw ambiguous(text, of: vm, candidates: candidates)
             }
+        }
+        guard let identifier = UUID(uuidString: text) else {
+            throw CLIFailure(.usage, "\u{201C}\(text)\u{201D} is not a snapshot identifier.")
+        }
+        guard let match = snapshots.first(where: { $0.id == identifier }) else {
             throw notFound(text, of: vm)
         }
-        let matching = snapshots.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
-        guard matching.count <= 1 else { throw ambiguous(text, of: vm, candidates: matching) }
-        guard let match = matching.first else { throw notFound(text, of: vm) }
         return match
     }
 

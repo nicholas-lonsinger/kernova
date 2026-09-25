@@ -186,6 +186,115 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
+    @Test("A set of the value memory holds is written when the bundle holds another")
+    func anAssignmentIsJudgedAgainstTheBundle() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let held = instance.configuration.cpuCount
+        // Another Kernova copy changed the count after this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.cpuCount = held + 1
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [ConfigurationEntry(key: "cpus", value: String(held))],
+            confirmed: false)
+
+        #expect(try value(answered, "cpus") == String(held))
+        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held)
+        #expect(instance.configuration.cpuCount == held)
+    }
+
+    @Test("A running VM refuses the value memory holds when it would move the bundle's")
+    func aRunningVMRefusesWhatMovesTheBundle() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let held = instance.configuration.cpuCount
+        var onDisk = instance.configuration
+        onDisk.cpuCount = held + 1
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        let assignment = ConfigurationEntry(key: "cpus", value: String(held))
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"), assignments: [assignment], confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            #expect(settings == [assignment])
+        }
+        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held + 1)
+    }
+
+    @Test("A Retina display's odd size reads back as a set that changes nothing")
+    func anOddRetinaSizeRoundTrips() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1602, height: 1202, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = true
+        }
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let read = try harness.core.configuration(
+            .name("Alpha"), keys: ["display.width", "display.height"])
+        #expect(read.map(\.value) == ["801", "601"])
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("The smallest size a Retina window fit stores reads back as a set that changes nothing")
+    func theSmallestRetinaFitRoundTrips() throws {
+        let harness = makeHarness()
+        let smallest = DisplayBootSizing.resolution(fittingPoints: .zero, backingScaleFactor: 2)
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displayResolution = smallest
+            $0.displaySizesToWindow = true
+            $0.displayHiDPI = true
+        }
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let read = try harness.core.configuration(.name("Alpha"), keys: nil)
+        #expect(read.contains(ConfigurationEntry(key: "display.width", value: String(smallest.width / 2))))
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A Retina base size down to half the pixel floor is taken, not refused")
+    func aRetinaBaseTakesHalfThePixelFloor() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = true
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1920, height: 1200, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+        }
+        let floor = DisplayBootSizing.Resolution(
+            width: DisplayBootSizing.minimumWidth, height: DisplayBootSizing.minimumHeight,
+            ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "display.width", value: String(floor.width / 2)),
+                ConfigurationEntry(key: "display.height", value: String(floor.height / 2)),
+            ],
+            confirmed: false)
+
+        #expect(instance.configuration.displayResolution == floor)
+    }
+
     @Test("One bad value in a batch writes nothing at all")
     func aBatchIsAtomic() throws {
         let harness = makeHarness()
@@ -267,6 +376,143 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.displayAutoResizes)
         #expect(instance.configuration.systemKeyForwarding == .fullscreenOnly)
+    }
+
+    @Test("A running VM refuses the new machine keys, naming each one it refused")
+    func runningVMRefusesTheNewMachineKeys() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+        let moved = [
+            ConfigurationEntry(key: "audio.input", value: String(!before.audioInputEnabled)),
+            ConfigurationEntry(key: "audio.output", value: String(!before.audioOutputEnabled)),
+            ConfigurationEntry(
+                key: "input.devices",
+                value: before.inputDeviceMode == .usb ? "mac" : "usb"),
+        ]
+
+        for assignment in moved {
+            do {
+                try harness.core.setConfiguration(
+                    .name("Alpha"), assignments: [assignment], confirmed: false)
+                Issue.record("expected a refusal of \(assignment.key)")
+            } catch let error as CommandError {
+                guard case .invalidState(_, _, _, let settings) = error else {
+                    Issue.record("expected invalidState, got \(error)")
+                    continue
+                }
+                #expect(settings == [assignment])
+                #expect(error.message.contains(assignment.key))
+            }
+        }
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: moved + [ConfigurationEntry(key: "serial.socket", value: "true")],
+                confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            // The live key in the batch is not what the state refused.
+            #expect(settings == moved)
+        }
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A running VM takes the new live keys")
+    func runningVMTakesTheNewLiveKeys() throws {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(
+            name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold,
+            macAddress: nil)
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS,
+            snapshots: [snapshot])
+        let before = instance.settings
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(
+                    key: "serial.socket", value: String(!before.configuration.serialSocketRelayEnabled)),
+                ConfigurationEntry(
+                    key: "agent.logForwarding",
+                    value: String(!before.configuration.agentLogForwardingEnabled)),
+                ConfigurationEntry(
+                    key: "dropFiles", value: String(!before.configuration.dropFilesEnabled)),
+                ConfigurationEntry(
+                    key: "autoStart", value: String(!before.hostState.startsAutomaticallyOnLaunch)),
+                ConfigurationEntry(
+                    key: "agent.installReminder",
+                    value: String(before.hostState.agentInstallNudgeDismissed)),
+                ConfigurationEntry(key: "ephemeral.baseline", value: "Clean"),
+            ],
+            confirmed: false)
+
+        let after = instance.settings
+        #expect(after.configuration.serialSocketRelayEnabled != before.configuration.serialSocketRelayEnabled)
+        #expect(
+            after.configuration.agentLogForwardingEnabled
+                != before.configuration.agentLogForwardingEnabled)
+        #expect(after.configuration.dropFilesEnabled != before.configuration.dropFilesEnabled)
+        #expect(
+            after.hostState.startsAutomaticallyOnLaunch
+                != before.hostState.startsAutomaticallyOnLaunch)
+        #expect(
+            after.hostState.agentInstallNudgeDismissed
+                != before.hostState.agentInstallNudgeDismissed)
+        #expect(after.hostState.ephemeralModeEnabled)
+        #expect(after.hostState.ephemeralBaselineSnapshotID == snapshot.id)
+    }
+
+    @Test("An assignment that leaves its value where it is passes any gate and writes nothing")
+    func anUnmovedAssignmentIsNoEdit() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "cpus", value: String(before.cpuCount)),
+                ConfigurationEntry(key: "memory", value: String(before.memorySizeInGB)),
+            ],
+            confirmed: false)
+
+        #expect(try value(answered, "cpus") == String(before.cpuCount))
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A refusal names the value the state refused, not the whole key")
+    func aRefusalNamesTheRefusedValue() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness, phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+        }
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
+                confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            // Other modes hot-swap, so the copy says which value is refused.
+            #expect(
+                error.message.hasPrefix(
+                    "\u{201C}Alpha\u{201D} is running, so network.mode cannot be set to "
+                        + "\u{201C}none\u{201D} while it is. "))
+        }
     }
 
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")
@@ -574,14 +820,17 @@ struct VMCommandCoreConfigurationTests {
         }
         let before = instance.configuration
 
+        // A HiDPI base is doubled before it reaches VZ, so it stops at half the
+        // pixel floor and half the pixel ceiling.
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "display.width", value: "640")],
+                assignments: [
+                    ConfigurationEntry(
+                        key: "display.width", value: String(DisplayBootSizing.minimumWidth / 2 - 1))
+                ],
                 confirmed: false)
         }
-        // A HiDPI base is doubled before it reaches VZ, so it stops at half the
-        // pixel ceiling rather than at the ceiling itself.
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),

@@ -28,6 +28,16 @@ struct VMConfigurationWriteContext: Sendable {
     /// The VM's restore points, which an Ephemeral Mode enable pins its
     /// baseline from.
     let snapshots: VMSnapshotManifest
+
+    init(snapshots: VMSnapshotManifest) {
+        self.snapshots = snapshots
+    }
+
+    /// What `instance` holds for a key's write to read.
+    @MainActor
+    init(_ instance: VMInstance) {
+        self.init(snapshots: instance.snapshotManifest)
+    }
 }
 
 /// One dotted configuration key: what it is called, what it reads, and what a
@@ -104,11 +114,18 @@ struct VMConfigurationKey: Sendable {
             ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
     }
 
-    /// A key over the VM's host state, which every VM has.
+    /// A key over the VM's host state, which is always ``VMConfigurationKeyGate/live``.
+    ///
+    /// Its gate is asked before either file is touched, whether or not the
+    /// value moves: host state commits after the configuration, where a
+    /// refusal would leave the configuration landed without it. A live gate
+    /// refuses only a VM still being created, cloned or imported, which has no
+    /// bundle to write, so an unmoved assignment passes wherever any write
+    /// could land.
     init(
         name: String,
         summary: String,
-        gate: VMConfigurationKeyGate,
+        applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
         readHostState: @escaping @Sendable (VMHostState) -> String,
         changeHostState:
             @escaping @Sendable (String, VMConfigurationWriteContext) throws
@@ -116,8 +133,8 @@ struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
-        self.gate = gate
-        applies = { _ in true }
+        self.gate = .live
+        self.applies = applies
         field = .hostState(HostStateField(read: readHostState, change: changeHostState))
     }
 
@@ -127,6 +144,58 @@ struct VMConfigurationKey: Sendable {
         case .configuration(let field): field.read(settings.configuration)
         case .hostState(let field): field.read(settings.hostState)
         }
+    }
+
+    /// Lands `value` on `settings` the way a write does, refusing with
+    /// ``CommandError/invalidArgument(_:)`` a value this key cannot take.
+    ///
+    /// The whole-result refusal is not asked here;
+    /// ``accepts(_:settings:context:)`` adds it.
+    func apply(
+        _ value: String, to settings: inout VMSettings, context: VMConfigurationWriteContext
+    ) throws {
+        switch field {
+        case .configuration(let field):
+            try field.write(value, &settings.configuration, context)
+        case .hostState(let field):
+            try field.change(value, context)(&settings.hostState)
+        }
+    }
+
+    /// Whether a write of `value` to `settings` would be taken on its value
+    /// alone: this key's own parsing and refusals, and the whole-result refusal
+    /// when the value moved. Nothing is written, and the VM's state is not
+    /// consulted — that is the verb's gate.
+    func accepts(
+        _ value: String, settings: VMSettings, context: VMConfigurationWriteContext
+    ) -> Bool {
+        guard applies(settings.configuration) else { return false }
+        var candidate = settings
+        do {
+            try apply(value, to: &candidate, context: context)
+        } catch {
+            return false
+        }
+        guard case .configuration(let field) = field,
+            field.read(candidate.configuration) != field.read(settings.configuration)
+        else { return true }
+        return field.refusalOnResult(candidate.configuration) == nil
+    }
+
+    /// ``accepts(_:settings:context:)`` against what `instance` holds.
+    @MainActor
+    func accepts(_ value: String, for instance: VMInstance) -> Bool {
+        accepts(value, settings: instance.settings, context: VMConfigurationWriteContext(instance))
+    }
+
+    /// An assignment of `value` to this key.
+    func assigning(_ value: String) -> ConfigurationEntry {
+        ConfigurationEntry(key: name, value: value)
+    }
+
+    /// An assignment of `value` to this key, spelled the way a read answers it.
+    func assigning(_ value: Bool) -> ConfigurationEntry {
+        assigning(String(value))
     }
 
     /// How this key describes itself to a client listing the keyspace.
@@ -155,220 +224,366 @@ struct VMConfigurationKey: Sendable {
 /// The keyspace `get` and `set` address, and the only place a configuration
 /// value's name, spelling and gate are decided.
 ///
-/// Every automation surface reads this one table, so a key added here becomes
-/// addressable everywhere at once. Declaration order is presentation order.
+/// Every automation surface and every settings pane writes through
+/// ``VMCommandCore/setConfiguration(_:assignments:confirmed:)`` with these keys,
+/// so a key added here becomes addressable everywhere at once. ``keys`` order
+/// is presentation order.
 enum VMConfigurationKeyRegistry {
     /// What the network mode key answers, and takes, for a VM with no network
     /// device at all.
     static let noNetworkValue = "none"
 
     static let keys: [VMConfigurationKey] = [
-        VMConfigurationKey(
-            name: "cpus",
-            summary: "Virtual CPU cores, within what the guest and this Mac allow.",
-            gate: .atRest,
-            read: { String($0.cpuCount) },
-            write: { value, config, _ in
-                config.cpuCount = try ConfigurationValue.integer(
-                    value, key: "cpus",
-                    in: config.guestOS.minCPUCount...config.guestOS.maxCPUCount)
-            }),
-        VMConfigurationKey(
-            name: "memory",
-            summary: "Guest memory in whole gigabytes.",
-            gate: .atRest,
-            read: { String($0.memorySizeInGB) },
-            write: { value, config, _ in
-                config.memorySizeInGB = try ConfigurationValue.integer(
-                    value, key: "memory",
-                    in: config.guestOS.minMemoryInGB...config.guestOS.maxMemoryInGB)
-            }),
-        VMConfigurationKey(
-            name: "display.width",
-            summary: "Display width the guest lays out at; a Retina guest boots at twice this.",
-            gate: .atRest,
-            read: { String($0.displayBaseSize.width) },
-            write: { value, config, _ in
-                let width = try ConfigurationValue.integer(
-                    value, key: "display.width",
-                    in: DisplayBootSizing.minimumWidth...config.displayBaseSizeLimit)
-                config.setDisplayBaseSize(width: width, height: config.displayBaseSize.height)
-            },
-            refusalOnResult: sizedToWindowRefusal("display.width")),
-        VMConfigurationKey(
-            name: "display.height",
-            summary: "Display height the guest lays out at; a Retina guest boots at twice this.",
-            gate: .atRest,
-            read: { String($0.displayBaseSize.height) },
-            write: { value, config, _ in
-                let height = try ConfigurationValue.integer(
-                    value, key: "display.height",
-                    in: DisplayBootSizing.minimumHeight...config.displayBaseSizeLimit)
-                config.setDisplayBaseSize(width: config.displayBaseSize.width, height: height)
-            },
-            refusalOnResult: sizedToWindowRefusal("display.height")),
-        VMConfigurationKey(
-            name: "display.hidpi",
-            summary: "Boot the guest display Retina-sharp: true or false.",
-            gate: .atRest,
-            applies: { $0.guestOS.supportsDisplayDensity },
-            read: { String($0.guestOS.supportsDisplayDensity && $0.displayHiDPI) },
-            write: { value, config, _ in
-                let hiDPI = try ConfigurationValue.boolean(value, key: "display.hidpi")
-                guard hiDPI != config.displayHiDPI else { return }
-                config.displayHiDPI = hiDPI
-                // While the display is sized to the window the stored trio is
-                // the last boot's artifact and the next boot recomputes it at
-                // this density; outside that it is the resolution the VM boots
-                // at, so it carries the change now.
-                guard !config.displaySizesToWindow else { return }
-                config.displayResolution = DisplayBootSizing.rescaled(
-                    config.displayResolution, toHiDPI: hiDPI)
-            }),
-        VMConfigurationKey(
-            name: "display.sizeToWindow",
-            summary: "Size the display to its window at each cold start: true or false.",
-            gate: .atRest,
-            read: { String($0.displaySizesToWindow) },
-            write: { value, config, _ in
-                let sizesToWindow = try ConfigurationValue.boolean(
-                    value, key: "display.sizeToWindow")
-                guard sizesToWindow != config.displaySizesToWindow else { return }
-                config.displaySizesToWindow = sizesToWindow
-                // Leaving the mode promotes the trio from the last boot's
-                // artifact to the resolution the VM boots at, so it has to
-                // carry the density set while nothing was reconciling it.
-                let hiDPI = config.guestOS.supportsDisplayDensity && config.displayHiDPI
-                guard !sizesToWindow, hiDPI != DisplayBootSizing.isHiDPI(ppi: config.displayPPI)
-                else { return }
-                config.displayResolution = DisplayBootSizing.rescaled(
-                    config.displayResolution, toHiDPI: hiDPI)
-            }),
-        VMConfigurationKey(
-            name: "display.autoResize",
-            summary: "Let the guest follow the window as it is resized: true or false.",
-            gate: .live,
-            read: { String($0.displayAutoResizes) },
-            write: { value, config, _ in
-                config.displayAutoResizes = try ConfigurationValue.boolean(
-                    value, key: "display.autoResize")
-            }),
-        VMConfigurationKey(
-            name: "display.preference",
-            summary: "Where the display opens: inline, popOut or fullscreen.",
-            gate: .live,
-            readHostState: { $0.displayPreference.rawValue },
-            changeHostState: { value, _ in
-                let preference: VMDisplayPreference = try ConfigurationValue.choice(
-                    value, key: "display.preference")
-                return { $0.displayPreference = preference }
-            }),
-        VMConfigurationKey(
-            name: "input.systemKeys",
-            summary: "When system hot keys go to the guest: never, fullscreenOnly or always.",
-            gate: .live,
-            read: { $0.systemKeyForwarding.rawValue },
-            write: { value, config, _ in
-                config.systemKeyForwarding = try ConfigurationValue.choice(
-                    value, key: "input.systemKeys")
-            }),
-        VMConfigurationKey(
-            name: "network.mode",
-            summary: "The network the guest joins: none, shared, bridged or hostOnly.",
-            gate: .networkMode,
-            read: { $0.effectiveNetworkMode?.rawValue ?? noNetworkValue },
-            write: { value, config, _ in
-                guard value != noNetworkValue else {
-                    config.applyNetworkMode(nil)
-                    return
-                }
-                config.applyNetworkMode(
-                    try ConfigurationValue.choice(
-                        value, key: "network.mode", also: [noNetworkValue]))
-            }),
-        VMConfigurationKey(
-            name: "network.bridgedInterface",
-            summary: "BSD name of the interface a bridged guest attaches to; empty is automatic.",
-            gate: .networkDevice,
-            read: { $0.bridgedInterfaceIdentifier ?? "" },
-            write: { value, config, _ in
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                config.bridgedInterfaceIdentifier = trimmed.isEmpty ? nil : trimmed
-            }),
-        VMConfigurationKey(
-            name: "network.mac",
-            summary:
-                "The guest's MAC address as six colon-separated hex pairs; empty removes it.",
-            gate: .atRest,
-            read: { $0.macAddress ?? "" },
-            write: { value, config, _ in
-                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else {
-                    config.macAddress = nil
-                    return
-                }
-                guard let normalized = GuestMACAddress.normalized(trimmed) else {
-                    throw CommandError.invalidArgument(
-                        "\u{201C}\(value)\u{201D} is not a MAC address a guest can send from. "
-                            + "Give six colon-separated hex pairs, unicast and not all zero.")
-                }
-                config.macAddress = normalized
-            },
-            refusalOnResult: { config in
-                guard config.networkEnabled, config.macAddress == nil else { return nil }
-                return
-                    "A guest with a network device sends from a MAC address, and network.mac "
-                    + "names none. Give an address, or set network.mode=\(noNetworkValue) to take "
-                    + "the device away."
-            }),
-        VMConfigurationKey(
-            name: "ephemeral",
-            summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
-            gate: .live,
-            readHostState: { String($0.ephemeralModeEnabled) },
-            changeHostState: { value, context in
-                let enabled = try ConfigurationValue.boolean(value, key: "ephemeral")
-                guard enabled else {
-                    return { $0.applyEphemeralMode(enabled: false, baseline: nil) }
-                }
-                let snapshots = context.snapshots
-                guard snapshots.defaultEphemeralBaseline(preferring: nil) != nil else {
-                    throw CommandError.invalidArgument(
-                        "Ephemeral Mode returns the virtual machine to a snapshot, and this one "
-                            + "has none. Take a snapshot first.")
-                }
-                return { hostState in
-                    hostState.applyEphemeralMode(
-                        enabled: true,
-                        baseline: snapshots.defaultEphemeralBaseline(
-                            preferring: hostState.ephemeralBaselineSnapshotID))
-                }
-            }),
-        VMConfigurationKey(
-            name: "clipboard.sharing",
-            summary: "Exchange clipboard text with the guest: true or false.",
-            gate: .live,
-            read: { String($0.clipboardSharingEnabled) },
-            write: { value, config, _ in
-                config.clipboardSharingEnabled = try ConfigurationValue.boolean(
-                    value, key: "clipboard.sharing")
-            }),
-        VMConfigurationKey(
-            name: "clipboard.passthrough",
-            summary:
-                "Forward the clipboard both ways with no window step, which needs sharing on.",
-            gate: .live,
-            read: { String($0.clipboardPassthroughEnabled) },
-            write: { value, config, _ in
-                config.clipboardPassthroughEnabled = try ConfigurationValue.boolean(
-                    value, key: "clipboard.passthrough")
-            }),
+        cpus, memory, displayWidth, displayHeight, displayHiDPI, displaySizeToWindow,
+        displayAutoResize, displayPreference, audioInput, audioOutput, inputDevices,
+        inputSystemKeys, serialSocket, networkMode, networkBridgedInterface, networkMAC,
+        autoStart, ephemeral, ephemeralBaseline, clipboardSharing, clipboardPassthrough,
+        dropFiles, agentLogForwarding, agentInstallReminder,
     ]
 
     /// The key `name` addresses, or `nil` when the keyspace holds none.
     static func key(named name: String) -> VMConfigurationKey? {
         keys.first { $0.name == name }
     }
+
+    // MARK: - Resources
+
+    static let cpus = VMConfigurationKey(
+        name: "cpus",
+        summary: "Virtual CPU cores, within what the guest and this Mac allow.",
+        gate: .atRest,
+        read: { String($0.cpuCount) },
+        write: { value, config, _ in
+            config.cpuCount = try ConfigurationValue.integer(
+                value, key: "cpus",
+                in: config.guestOS.minCPUCount...config.guestOS.maxCPUCount)
+        })
+
+    static let memory = VMConfigurationKey(
+        name: "memory",
+        summary: "Guest memory in whole gigabytes.",
+        gate: .atRest,
+        read: { String($0.memorySizeInGB) },
+        write: { value, config, _ in
+            config.memorySizeInGB = try ConfigurationValue.integer(
+                value, key: "memory",
+                in: config.guestOS.minMemoryInGB...config.guestOS.maxMemoryInGB)
+        })
+
+    // MARK: - Display
+
+    static let displayWidth = VMConfigurationKey(
+        name: "display.width",
+        summary: "Display width the guest lays out at; a Retina guest boots at twice this.",
+        gate: .atRest,
+        read: { String($0.displayBaseSize.width) },
+        write: { value, config, _ in
+            let width = try ConfigurationValue.integer(
+                value, key: "display.width",
+                in: config.displayBaseSizeRange.width)
+            config.setDisplayBaseSize(width: width, height: config.displayBaseSize.height)
+        },
+        refusalOnResult: sizedToWindowRefusal("display.width"))
+
+    static let displayHeight = VMConfigurationKey(
+        name: "display.height",
+        summary: "Display height the guest lays out at; a Retina guest boots at twice this.",
+        gate: .atRest,
+        read: { String($0.displayBaseSize.height) },
+        write: { value, config, _ in
+            let height = try ConfigurationValue.integer(
+                value, key: "display.height",
+                in: config.displayBaseSizeRange.height)
+            config.setDisplayBaseSize(width: config.displayBaseSize.width, height: height)
+        },
+        refusalOnResult: sizedToWindowRefusal("display.height"))
+
+    static let displayHiDPI = VMConfigurationKey(
+        name: "display.hidpi",
+        summary: "Boot the guest display Retina-sharp: true or false.",
+        gate: .atRest,
+        applies: { $0.guestOS.supportsDisplayDensity },
+        read: { String($0.guestOS.supportsDisplayDensity && $0.displayHiDPI) },
+        write: { value, config, _ in
+            let hiDPI = try ConfigurationValue.boolean(value, key: "display.hidpi")
+            guard hiDPI != config.displayHiDPI else { return }
+            config.displayHiDPI = hiDPI
+            // While the display is sized to the window the stored trio is
+            // the last boot's artifact and the next boot recomputes it at
+            // this density; outside that it is the resolution the VM boots
+            // at, so it carries the change now.
+            guard !config.displaySizesToWindow else { return }
+            config.displayResolution = DisplayBootSizing.rescaled(
+                config.displayResolution, toHiDPI: hiDPI)
+        })
+
+    static let displaySizeToWindow = VMConfigurationKey(
+        name: "display.sizeToWindow",
+        summary: "Size the display to its window at each cold start: true or false.",
+        gate: .atRest,
+        read: { String($0.displaySizesToWindow) },
+        write: { value, config, _ in
+            let sizesToWindow = try ConfigurationValue.boolean(
+                value, key: "display.sizeToWindow")
+            guard sizesToWindow != config.displaySizesToWindow else { return }
+            config.displaySizesToWindow = sizesToWindow
+            // Leaving the mode promotes the trio from the last boot's
+            // artifact to the resolution the VM boots at, so it has to
+            // carry the density set while nothing was reconciling it.
+            let hiDPI = config.guestOS.supportsDisplayDensity && config.displayHiDPI
+            guard !sizesToWindow, hiDPI != DisplayBootSizing.isHiDPI(ppi: config.displayPPI)
+            else { return }
+            config.displayResolution = DisplayBootSizing.rescaled(
+                config.displayResolution, toHiDPI: hiDPI)
+        })
+
+    static let displayAutoResize = VMConfigurationKey(
+        name: "display.autoResize",
+        summary: "Let the guest follow the window as it is resized: true or false.",
+        gate: .live,
+        read: { String($0.displayAutoResizes) },
+        write: { value, config, _ in
+            config.displayAutoResizes = try ConfigurationValue.boolean(
+                value, key: "display.autoResize")
+        })
+
+    static let displayPreference = VMConfigurationKey(
+        name: "display.preference",
+        summary: "Where the display opens: inline, popOut or fullscreen.",
+        readHostState: { $0.displayPreference.rawValue },
+        changeHostState: { value, _ in
+            let preference: VMDisplayPreference = try ConfigurationValue.choice(
+                value, key: "display.preference")
+            return { $0.displayPreference = preference }
+        })
+
+    // MARK: - Audio and Input
+
+    static let audioInput = VMConfigurationKey(
+        name: "audio.input",
+        summary: "Let the guest capture from this Mac's audio input: true or false.",
+        gate: .atRest,
+        read: { String($0.audioInputEnabled) },
+        write: { value, config, _ in
+            config.audioInputEnabled = try ConfigurationValue.boolean(value, key: "audio.input")
+        })
+
+    static let audioOutput = VMConfigurationKey(
+        name: "audio.output",
+        summary: "Play the guest's sound through this Mac: true or false.",
+        gate: .atRest,
+        read: { String($0.audioOutputEnabled) },
+        write: { value, config, _ in
+            config.audioOutputEnabled = try ConfigurationValue.boolean(
+                value, key: "audio.output")
+        })
+
+    static let inputDevices = VMConfigurationKey(
+        name: "input.devices",
+        summary: "The keyboard and pointer a macOS guest sees: automatic, mac or usb.",
+        gate: .atRest,
+        applies: { $0.guestOS == .macOS },
+        read: { $0.inputDeviceMode.rawValue },
+        write: { value, config, _ in
+            config.inputDeviceMode = try ConfigurationValue.choice(value, key: "input.devices")
+        })
+
+    static let inputSystemKeys = VMConfigurationKey(
+        name: "input.systemKeys",
+        summary: "When system hot keys go to the guest: never, fullscreenOnly or always.",
+        gate: .live,
+        read: { $0.systemKeyForwarding.rawValue },
+        write: { value, config, _ in
+            config.systemKeyForwarding = try ConfigurationValue.choice(
+                value, key: "input.systemKeys")
+        })
+
+    static let serialSocket = VMConfigurationKey(
+        name: "serial.socket",
+        summary: "Expose the serial port over a local UNIX socket: true or false.",
+        gate: .live,
+        read: { String($0.serialSocketRelayEnabled) },
+        write: { value, config, _ in
+            config.serialSocketRelayEnabled = try ConfigurationValue.boolean(
+                value, key: "serial.socket")
+        })
+
+    // MARK: - Network
+
+    static let networkMode = VMConfigurationKey(
+        name: "network.mode",
+        summary: "The network the guest joins: none, shared, bridged or hostOnly.",
+        gate: .networkMode,
+        read: { $0.effectiveNetworkMode?.rawValue ?? noNetworkValue },
+        write: { value, config, _ in
+            guard value != noNetworkValue else {
+                config.applyNetworkMode(nil)
+                return
+            }
+            config.applyNetworkMode(
+                try ConfigurationValue.choice(
+                    value, key: "network.mode", also: [noNetworkValue]))
+        })
+
+    static let networkBridgedInterface = VMConfigurationKey(
+        name: "network.bridgedInterface",
+        summary: "BSD name of the interface a bridged guest attaches to; empty is automatic.",
+        gate: .networkDevice,
+        read: { $0.bridgedInterfaceIdentifier ?? "" },
+        write: { value, config, _ in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            config.bridgedInterfaceIdentifier = trimmed.isEmpty ? nil : trimmed
+        })
+
+    static let networkMAC = VMConfigurationKey(
+        name: "network.mac",
+        summary:
+            "The guest's MAC address as six colon-separated hex pairs; empty removes it.",
+        gate: .atRest,
+        read: { $0.macAddress ?? "" },
+        write: { value, config, _ in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                config.macAddress = nil
+                return
+            }
+            guard let normalized = GuestMACAddress.normalized(trimmed) else {
+                throw CommandError.invalidArgument(
+                    "\u{201C}\(value)\u{201D} is not a MAC address a guest can send from. "
+                        + "Give six colon-separated hex pairs, unicast and not all zero.")
+            }
+            config.macAddress = normalized
+        },
+        refusalOnResult: { config in
+            guard config.networkEnabled, config.macAddress == nil else { return nil }
+            return
+                "A guest with a network device sends from a MAC address, and network.mac "
+                + "names none. Give an address, or set network.mode=\(noNetworkValue) to take "
+                + "the device away."
+        })
+
+    // MARK: - Startup
+
+    static let autoStart = VMConfigurationKey(
+        name: "autoStart",
+        summary: "Start the VM each time Kernova opens: true or false.",
+        readHostState: { String($0.startsAutomaticallyOnLaunch) },
+        changeHostState: { value, _ in
+            let enabled = try ConfigurationValue.boolean(value, key: "autoStart")
+            return { $0.startsAutomaticallyOnLaunch = enabled }
+        })
+
+    static let ephemeral = VMConfigurationKey(
+        name: "ephemeral",
+        summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
+        readHostState: { String($0.ephemeralModeEnabled) },
+        changeHostState: { value, context in
+            let enabled = try ConfigurationValue.boolean(value, key: "ephemeral")
+            guard enabled else {
+                return { $0.applyEphemeralMode(enabled: false, baseline: nil) }
+            }
+            let snapshots = context.snapshots
+            guard snapshots.defaultEphemeralBaseline(preferring: nil) != nil else {
+                throw CommandError.invalidArgument(
+                    "Ephemeral Mode returns the virtual machine to a snapshot, and this one "
+                        + "has none. Take a snapshot first.")
+            }
+            return { hostState in
+                hostState.applyEphemeralMode(
+                    enabled: true,
+                    baseline: snapshots.defaultEphemeralBaseline(
+                        preferring: hostState.ephemeralBaselineSnapshotID))
+            }
+        })
+
+    static let ephemeralBaseline = VMConfigurationKey(
+        name: "ephemeral.baseline",
+        summary:
+            "The snapshot Ephemeral Mode returns to, by identifier or name; setting one turns "
+            + "the mode on.",
+        readHostState: { $0.ephemeralBaselineSnapshotID?.uuidString ?? "" },
+        changeHostState: { value, context in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            // What a read answers while the mode is off, so it writes back as
+            // no change.
+            guard !trimmed.isEmpty else { return { _ in } }
+            switch SnapshotSelection(
+                trimmed, in: context.snapshots.ordered, id: \.id, name: \.name)
+            {
+            case .found(let snapshot):
+                return { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
+            case .notFound:
+                throw CommandError.invalidArgument(
+                    "This virtual machine has no snapshot \u{201C}\(trimmed)\u{201D}.")
+            case .ambiguous(let candidates):
+                throw CommandError.invalidArgument(
+                    "\u{201C}\(trimmed)\u{201D} names \(candidates.count) snapshots. "
+                        + "Use one of their identifiers instead: "
+                        + candidates.map { "\($0.name) (\($0.id.uuidString))" }
+                        .joined(separator: ", ") + ".")
+            }
+        })
+
+    // MARK: - Guest Agent
+
+    static let clipboardSharing = VMConfigurationKey(
+        name: "clipboard.sharing",
+        summary: "Exchange clipboard text with the guest: true or false.",
+        gate: .live,
+        read: { String($0.clipboardSharingEnabled) },
+        write: { value, config, _ in
+            config.clipboardSharingEnabled = try ConfigurationValue.boolean(
+                value, key: "clipboard.sharing")
+        })
+
+    static let clipboardPassthrough = VMConfigurationKey(
+        name: "clipboard.passthrough",
+        summary:
+            "Forward the clipboard both ways with no window step, which needs sharing on.",
+        gate: .live,
+        read: { String($0.clipboardPassthroughEnabled) },
+        write: { value, config, _ in
+            config.clipboardPassthroughEnabled = try ConfigurationValue.boolean(
+                value, key: "clipboard.passthrough")
+        },
+        refusalOnResult: { config in
+            guard config.clipboardPassthroughEnabled, !config.clipboardSharingEnabled
+            else { return nil }
+            return
+                "Automatic clipboard passthrough rides on clipboard sharing, which is off. "
+                + "Set clipboard.sharing=true as well."
+        })
+
+    static let dropFiles = VMConfigurationKey(
+        name: "dropFiles",
+        summary: "Send files dropped on the display to the guest's Downloads: true or false.",
+        gate: .live,
+        applies: { $0.guestOS == .macOS },
+        read: { String($0.dropFilesEnabled) },
+        write: { value, config, _ in
+            config.dropFilesEnabled = try ConfigurationValue.boolean(value, key: "dropFiles")
+        })
+
+    static let agentLogForwarding = VMConfigurationKey(
+        name: "agent.logForwarding",
+        summary: "Forward the guest agent's log records to this Mac: true or false.",
+        gate: .live,
+        applies: { $0.guestOS == .macOS },
+        read: { String($0.agentLogForwardingEnabled) },
+        write: { value, config, _ in
+            config.agentLogForwardingEnabled = try ConfigurationValue.boolean(
+                value, key: "agent.logForwarding")
+        })
+
+    static let agentInstallReminder = VMConfigurationKey(
+        name: "agent.installReminder",
+        summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
+        applies: { $0.guestOS == .macOS },
+        readHostState: { String(!$0.agentInstallNudgeDismissed) },
+        changeHostState: { value, _ in
+            let reminds = try ConfigurationValue.boolean(value, key: "agent.installReminder")
+            return { $0.agentInstallNudgeDismissed = !reminds }
+        })
 
     /// The refusal a size key owes while the display is sized to its window:
     /// every cold start recomputes the trio from the window, so a size written

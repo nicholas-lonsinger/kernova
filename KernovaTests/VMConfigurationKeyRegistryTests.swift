@@ -212,9 +212,9 @@ struct VMConfigurationKeyRegistryTests {
             ("cpus", "four"),
             ("memory", "1"),
             ("memory", String(original.guestOS.maxMemoryInGB + 1)),
-            ("display.width", String(DisplayBootSizing.minimumWidth - 1)),
-            ("display.width", String(DisplayBootSizing.maximumDimension + 1)),
-            ("display.height", String(DisplayBootSizing.minimumHeight - 1)),
+            ("display.width", String(original.displayBaseSizeRange.width.lowerBound - 1)),
+            ("display.width", String(original.displayBaseSizeRange.width.upperBound + 1)),
+            ("display.height", String(original.displayBaseSizeRange.height.lowerBound - 1)),
             ("display.autoResize", "maybe"),
             ("display.preference", "windowed"),
             ("input.systemKeys", "sometimes"),
@@ -451,5 +451,135 @@ struct VMConfigurationKeyRegistryTests {
         #expect(settings.hostState.displayPreference == .popOut)
         #expect(settings.configuration == original.configuration)
         #expect(key.read(settings) == "popOut")
+    }
+
+    // MARK: - Keys the settings panes write
+
+    @Test("The keys the settings panes gained write the fields the panes did")
+    func newKeysWriteTheFieldsThePaneDid() throws {
+        typealias Keys = VMConfigurationKeyRegistry
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+        let original = settings
+
+        try write(Keys.audioInput, "true", to: &settings)
+        try write(Keys.audioOutput, "false", to: &settings)
+        try write(Keys.inputDevices, "usb", to: &settings)
+        try write(Keys.serialSocket, "true", to: &settings)
+        try write(Keys.agentLogForwarding, "true", to: &settings)
+        try write(Keys.dropFiles, "false", to: &settings)
+        try write(Keys.autoStart, "true", to: &settings)
+        try write(Keys.agentInstallReminder, "false", to: &settings)
+
+        var expected = original
+        expected.configuration.audioInputEnabled = true
+        expected.configuration.audioOutputEnabled = false
+        expected.configuration.inputDeviceMode = .usb
+        expected.configuration.serialSocketRelayEnabled = true
+        expected.configuration.agentLogForwardingEnabled = true
+        expected.configuration.dropFilesEnabled = false
+        expected.hostState.startsAutomaticallyOnLaunch = true
+        // The key names the reminder; the stored flag names its dismissal.
+        expected.hostState.agentInstallNudgeDismissed = true
+        #expect(settings == expected)
+        #expect(Keys.agentInstallReminder.read(settings) == "false")
+    }
+
+    @Test("The guest-agent and input-device keys apply to macOS guests only")
+    func agentKeysApplyToMacOSOnly() {
+        typealias Keys = VMConfigurationKeyRegistry
+        let linux = makeConfiguration(guestOS: .linux)
+        let macOS = makeConfiguration(guestOS: .macOS)
+        for key in [
+            Keys.inputDevices, Keys.dropFiles, Keys.agentLogForwarding, Keys.agentInstallReminder,
+        ] {
+            #expect(!key.applies(linux), "\(key.name)")
+            #expect(key.applies(macOS), "\(key.name)")
+        }
+    }
+
+    @Test("A baseline named by identifier or by name turns the mode on with that snapshot")
+    func ephemeralBaselinePicksASnapshotAndTurnsTheModeOn() throws {
+        let key = VMConfigurationKeyRegistry.ephemeralBaseline
+        let older = VMSnapshot(
+            name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
+        let newer = VMSnapshot(
+            name: "Configured", createdAt: Date(timeIntervalSince1970: 2), kind: .warm,
+            macAddress: nil)
+        let manifest = VMSnapshotManifest(snapshots: [older, newer], currentID: older.id)
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+        #expect(key.read(settings) == "")
+
+        try write(key, newer.id.uuidString, to: &settings, manifest: manifest)
+        #expect(settings.hostState.ephemeralModeEnabled)
+        #expect(settings.hostState.ephemeralBaselineSnapshotID == newer.id)
+        #expect(key.read(settings) == newer.id.uuidString)
+
+        // Matched the way the snapshot verbs match a typed name: case aside.
+        try write(key, "clean", to: &settings, manifest: manifest)
+        #expect(settings.hostState.ephemeralBaselineSnapshotID == older.id)
+    }
+
+    @Test("A baseline the VM has no snapshot for is refused, and an empty one changes nothing")
+    func ephemeralBaselineRefusesASnapshotTheVMLacks() throws {
+        let key = VMConfigurationKeyRegistry.ephemeralBaseline
+        let manifest = makeManifest()
+        let original = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+        var settings = original
+
+        #expect(throws: CommandError.self) {
+            try write(key, UUID().uuidString, to: &settings, manifest: manifest)
+        }
+        #expect(throws: CommandError.self) {
+            try write(key, "Nothing by this name", to: &settings, manifest: manifest)
+        }
+        #expect(settings == original)
+
+        try write(key, "", to: &settings, manifest: manifest)
+        #expect(settings == original)
+    }
+
+    @Test("A snapshot name two snapshots share is refused rather than guessed")
+    func ephemeralBaselineRefusesAnAmbiguousName() throws {
+        let key = VMConfigurationKeyRegistry.ephemeralBaseline
+        let first = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
+        let second = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 2), kind: .cold, macAddress: nil)
+        let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: first.id)
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+
+        #expect(throws: CommandError.self) {
+            try write(key, "Twin", to: &settings, manifest: manifest)
+        }
+        #expect(!settings.hostState.ephemeralModeEnabled)
+    }
+
+    // MARK: - accepts
+
+    @Test("accepts answers what a write would refuse, and writes nothing")
+    func acceptsAnswersWhatAWriteWouldRefuse() {
+        typealias Keys = VMConfigurationKeyRegistry
+        var config = makeConfiguration()
+        config.clipboardSharingEnabled = false
+        let settings = VMSettings(configuration: config, hostState: VMHostState())
+        let withSnapshot = context()
+        let withoutSnapshot = context(VMSnapshotManifest())
+
+        // The key's own parsing.
+        #expect(!Keys.cpus.accepts("many", settings: settings, context: withSnapshot))
+        #expect(Keys.cpus.accepts(String(config.cpuCount), settings: settings, context: withSnapshot))
+        // The key's own refusal.
+        #expect(!Keys.ephemeral.accepts("true", settings: settings, context: withoutSnapshot))
+        #expect(Keys.ephemeral.accepts("true", settings: settings, context: withSnapshot))
+        #expect(Keys.ephemeral.accepts("false", settings: settings, context: withoutSnapshot))
+        // The whole-result refusal, asked only of a value that moves.
+        #expect(!Keys.clipboardPassthrough.accepts("true", settings: settings, context: withSnapshot))
+        var inert = settings
+        inert.configuration.clipboardPassthroughEnabled = true
+        #expect(Keys.clipboardPassthrough.accepts("false", settings: inert, context: withSnapshot))
+        #expect(Keys.clipboardPassthrough.accepts("true", settings: inert, context: withSnapshot))
+        // A key the guest cannot have.
+        let linux = VMSettings(configuration: makeConfiguration(guestOS: .linux), hostState: VMHostState())
+        #expect(!Keys.dropFiles.accepts("true", settings: linux, context: withSnapshot))
     }
 }

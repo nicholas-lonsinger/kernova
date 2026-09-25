@@ -39,8 +39,10 @@ enum CommandError: Error, Sendable, Equatable {
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
-    /// verbs it does admit.
-    case invalidState(vm: VMSummary, current: VMStatus, allowed: [VMVerb])
+    /// verbs it does admit, and `settings` the assignments a refused
+    /// `setConfiguration` would have made.
+    case invalidState(
+        vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
     /// The VM has work in flight that this verb would race.
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
@@ -115,8 +117,8 @@ extension CommandError {
             .itemNotFoundOnHost(item: item)
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
-        case .invalidState(let vm, let current, let allowed):
-            .invalidState(vm: vm, current: current.rawValue, allowed: allowed)
+        case .invalidState(let vm, let current, let allowed, let settings):
+            .invalidState(vm: vm, current: current.rawValue, allowed: allowed, settings: settings)
         case .busy(let vm, let operation):
             .busy(vm: vm, operation: operation)
         case .confirmationRequired(let prompt):

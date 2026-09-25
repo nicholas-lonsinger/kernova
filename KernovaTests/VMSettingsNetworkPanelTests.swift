@@ -438,7 +438,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController()
         let field = try #require(editableField("MAC address", in: vc.view))
 
-        field.stringValue = " AA:BB:CC:DD:EE:0F "
+        typeText(" AA:BB:CC:DD:EE:0F ", into: field)
         commitEdit(field)
 
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:0f")
@@ -457,7 +457,7 @@ struct VMSettingsNetworkPanelTests {
             let (vc, instance) = makeNetworkController()
             let field = try #require(editableField("MAC address", in: vc.view))
 
-            field.stringValue = text
+            typeText(text, into: field)
             commitEdit(field)
 
             #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
@@ -488,12 +488,59 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(viewModel: viewModel)
         let field = try #require(editableField("MAC address", in: vc.view))
 
-        field.stringValue = "AA:BB:CC:DD:EE:0F"
+        typeText("AA:BB:CC:DD:EE:0F", into: field)
         commitEdit(field)
 
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
         #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
         #expect(presenter.errorTitle == "MAC Address In Use")
+    }
+
+    /// The pane opened while the VM was stopped; the start lands while an edit
+    /// is still in the field, and the commit comes after it.
+    @Test("A MAC address committed after the VM started is refused and changes nothing")
+    func macEditCommittedAfterAStartIsRefused() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let before = instance.configuration
+        let onDisk = storage.bundles[instance.bundleURL]
+        let field = try #require(editableField("MAC address", in: vc.view))
+        typeText("aa:bb:cc:dd:ee:01", into: field)
+
+        instance.enter(.running(sessionID: UUID()))
+        commitEdit(field)
+
+        #expect(instance.configuration == before)
+        #expect(storage.bundles[instance.bundleURL] == onDisk)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains("network.mac") == true)
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+    }
+
+    @Test("A refused MAC end-edit puts the model's address back in a field whose editor is still attached")
+    func refusedMACEndEditRevertsAFieldStillBeingEdited() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        #expect(field.currentEditor() != nil)
+        typeText("aa:bb:cc:dd:ee:01", into: field)
+
+        instance.enter(.running(sessionID: UUID()))
+        // The refresh the start makes leaves the typed address to its end-edit.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == "aa:bb:cc:dd:ee:01")
+        commitEdit(field)
+
+        #expect(presenter.errors.count == 1)
+        #expect(field.stringValue == instance.configuration.macAddress)
     }
 
     private static let duplicateMACBanner =
@@ -553,7 +600,7 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:0f"
+        typeText("aa:bb:cc:dd:ee:0f", into: field)
         let generate = try #require(findButton(titled: "Generate", in: vc.view))
 
         generate.sendAction(generate.action, to: generate.target)
@@ -573,7 +620,7 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        try #require(field.currentEditor()).string = "nonsense"
+        typeText("nonsense", into: field)
 
         #expect(window.makeFirstResponder(nil))
 
@@ -588,7 +635,7 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        try #require(field.currentEditor()).string = "AA:BB:CC:DD:EE:0F"
+        typeText("AA:BB:CC:DD:EE:0F", into: field)
 
         #expect(window.makeFirstResponder(nil))
 
@@ -603,7 +650,7 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        typeText("aa:bb:cc:dd:ee:01", into: field)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
         popUp.selectItem(withTitle: "None")
@@ -621,7 +668,7 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        try #require(field.currentEditor()).string = "aa:bb:cc:dd:ee:01"
+        typeText("aa:bb:cc:dd:ee:01", into: field)
         let generate = try #require(findButton(titled: "Generate", in: vc.view))
 
         generate.sendAction(generate.action, to: generate.target)
@@ -633,6 +680,29 @@ struct VMSettingsNetworkPanelTests {
         #expect(field.stringValue == mac)
         #expect(window.makeFirstResponder(nil))
         #expect(instance.configuration.macAddress == mac)
+    }
+
+    @Test("A focused MAC field nobody typed in follows a CLI set and writes nothing when focus leaves")
+    func aFocusedUntypedMACFollowsTheModel() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:0f", presenter: presenter)
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("MAC address", in: vc.view))
+        #expect(window.makeFirstResponder(field))
+        #expect(field.currentEditor() != nil)
+
+        let outcome = viewModel.setConfiguration(
+            [ConfigurationEntry(key: "network.mac", value: "aa:bb:cc:dd:ee:01")], on: instance)
+        #expect(outcome == .applied)
+        // Stands in for the observation pass the write drives.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == "aa:bb:cc:dd:ee:01")
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
+        #expect(!presenter.showError)
     }
 
     @Test("Generate mints a fresh locally administered address and shows it")
@@ -668,8 +738,8 @@ struct VMSettingsNetworkPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("MAC address", in: vc.view))
         #expect(window.makeFirstResponder(field))
-        let editor = try #require(field.currentEditor())
-        editor.string = "aa:bb:cc:dd:ee:0"
+        #expect(field.currentEditor() != nil)
+        typeText("aa:bb:cc:dd:ee:0", into: field)
 
         // Stands in for any observation pass — starting the VM from the toolbar
         // mutates status, which refreshes the whole pane.

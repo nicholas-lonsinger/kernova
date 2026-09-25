@@ -219,10 +219,9 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// The Startup card's two toggles, their captions, and the capacity banner's
     /// container.
     ///
-    /// Not `lockable`, and neither switch is in `persistentLockableControls`:
-    /// the auto-start flag is read once at app launch, the ephemeral one at
-    /// power-off, and neither reaches a `VZVirtualMachineConfiguration` — so
-    /// both edit while the VM runs.
+    /// Not `lockable`: the auto-start flag is read once at app launch, the
+    /// ephemeral one at power-off, and neither reaches a
+    /// `VZVirtualMachineConfiguration` — so both edit while the VM runs.
     private func buildStartupSection() -> NSView {
         autoStartSwitch = makeGroupedFormSwitch(target: self, action: #selector(autoStartToggled))
         ephemeralSwitch = makeGroupedFormSwitch(target: self, action: #selector(ephemeralModeToggled))
@@ -336,12 +335,12 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private func refreshEphemeralMode() {
         let manifest = instance.snapshotManifest
         let enabled = instance.hostState.ephemeralModeEnabled
+        let key = VMConfigurationKeyRegistry.ephemeral
         ephemeralSwitch.state = enabled ? .on : .off
-        // A VM with nothing to fall back to can't take the mode — but one that
-        // is already in it can always be taken back out.
-        let offerable = !manifest.isEmpty || enabled
-        applyGroupedFormRowEnabled(offerable, control: ephemeralSwitch, label: ephemeralLabel)
-        ephemeralNoSnapshotsCaption.isHidden = !manifest.isEmpty
+        applyGroupedFormRowEnabled(
+            key.accepts(String(!enabled), for: instance), control: ephemeralSwitch,
+            label: ephemeralLabel)
+        ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
         ephemeralGroup?.isSubOptionHidden = !enabled
 
         let listed = manifest.ordered.map {
@@ -398,7 +397,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }
-        writeHostState { $0.applyEphemeralMode(enabled: true, baseline: id) }
+        write(VMConfigurationKeyRegistry.ephemeralBaseline.assigning(id.uuidString))
     }
 
     // MARK: - Mirrored toggles

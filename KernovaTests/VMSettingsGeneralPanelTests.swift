@@ -325,9 +325,10 @@ struct VMSettingsGeneralPanelTests {
     /// Builds a settings pane over a VM carrying `snapshots`, the first of which
     /// is the Current one and, in the mode, the baseline.
     private func makeEphemeralController(
-        snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false
+        snapshots: [VMSnapshot], ephemeral: Bool, isReadOnly: Bool = false,
+        viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
-        let viewModel = makeViewModel()
+        let viewModel = viewModel ?? makeViewModel()
         let baseline = ephemeral ? snapshots.first : nil
         let instance = makeSettingsInstance(
             guestOS: .linux,
@@ -335,6 +336,7 @@ struct VMSettingsGeneralPanelTests {
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: snapshots, currentID: snapshots.first?.id))
+        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -382,6 +384,72 @@ struct VMSettingsGeneralPanelTests {
         let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
         #expect(toggle?.isEnabled == true)
         #expect(toggle?.alphaValue == 1)
+    }
+
+    /// The switch is dimmed for a VM with nothing to fall back to, so its
+    /// action is sent directly: what decides the edit is the key, not the
+    /// dimming.
+    @Test("A VM with no snapshot refuses Ephemeral Mode from the pane, as the key does")
+    func ephemeralEnableFromThePaneIsRefusedByTheKey() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let (vc, instance) = makeEphemeralController(
+            snapshots: [], ephemeral: false, viewModel: viewModel)
+        let hostStateOnDisk = storage.hostStates[instance.bundleURL]
+        let keyRefusal = try #require(
+            ephemeralRefusal(writing: "true", on: instance), "the key takes the mode")
+        let toggle = try #require(firstSwitch(action: "ephemeralModeToggled", in: vc.view))
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(storage.hostStates[instance.bundleURL] == hostStateOnDisk)
+        #expect(presenter.errors == [keyRefusal])
+        #expect(toggle.state == .off)
+    }
+
+    /// What the `ephemeral` key itself refuses `value` with on `instance`, or
+    /// `nil` when it takes it.
+    private func ephemeralRefusal(writing value: String, on instance: VMInstance) -> String? {
+        var settings = instance.settings
+        do {
+            try VMConfigurationKeyRegistry.ephemeral.apply(
+                value, to: &settings, context: VMConfigurationWriteContext(instance))
+            return nil
+        } catch let error as CommandError {
+            return error.message
+        } catch {
+            Issue.record("unexpected \(error)")
+            return nil
+        }
+    }
+
+    @Test("The Ephemeral offer and the no-snapshot caption are the key's answer")
+    func ephemeralOfferIsTheKeysAnswer() throws {
+        let key = VMConfigurationKeyRegistry.ephemeral
+        for hasSnapshots in [false, true] {
+            for ephemeral in [false, true] {
+                // A VM can only have entered the mode with a snapshot; one with
+                // none has since lost its manifest.
+                let (vc, instance) = makeEphemeralController(
+                    snapshotCount: hasSnapshots || ephemeral ? 2 : 0, ephemeral: ephemeral)
+                if !hasSnapshots && ephemeral {
+                    instance.seedSnapshotManifest(VMSnapshotManifest())
+                    vc.viewDidAppear()
+                }
+                let label = "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)"
+                let toggle = try #require(firstSwitch(action: "ephemeralModeToggled", in: vc.view))
+
+                #expect(
+                    toggle.isEnabled == key.accepts(String(!ephemeral), for: instance), "\(label)")
+                #expect(
+                    visibleLabel(EphemeralModeCopy.noSnapshotsCaption, in: vc.view)
+                        == !key.accepts("true", for: instance), "\(label)")
+            }
+        }
     }
 
     @Test("Turning the mode on defaults the baseline to the current snapshot")

@@ -188,11 +188,10 @@ enum VMOverviewSummary {
             return [
                 ToggleState(
                     toggle: .autoStart, isOn: hostState.startsAutomaticallyOnLaunch, isEnabled: true),
-                // A VM with nothing to fall back to can't take the mode — but one
-                // already in it can always be taken back out, matching the panel.
                 ToggleState(
                     toggle: .ephemeralMode, isOn: ephemeralOn,
-                    isEnabled: !instance.snapshotManifest.isEmpty || ephemeralOn),
+                    isEnabled: VMConfigurationKeyRegistry.ephemeral.accepts(
+                        String(!ephemeralOn), for: instance)),
             ]
         case .sharing:
             // Passthrough is a panel setting: its enable confirms in a sheet,

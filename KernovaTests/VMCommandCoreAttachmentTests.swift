@@ -789,7 +789,7 @@ struct VMCommandCoreAttachmentTests {
                     .id(instance.id), directory: directory.id, readOnly: true)
             },
         ] {
-            guard case .invalidState(_, let current, let allowed) = try #require(refusal) else {
+            guard case .invalidState(_, let current, let allowed, _) = try #require(refusal) else {
                 Issue.record("expected an invalid-state refusal, got \(String(describing: refusal))")
                 continue
             }
@@ -814,7 +814,7 @@ struct VMCommandCoreAttachmentTests {
         let refusal = await commandError {
             try harness.core.renameStorageDisk(.id(instance.id), disk: disk.id, to: "New")
         }
-        guard case .invalidState(_, let current, let allowed) = try #require(refusal) else {
+        guard case .invalidState(_, let current, let allowed, _) = try #require(refusal) else {
             Issue.record("expected an invalid-state refusal")
             return
         }

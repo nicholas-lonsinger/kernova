@@ -396,7 +396,7 @@ struct VMCommandCoreTests {
         harness.core.surfaceDisplay = { _ in surfaced += 1 }
 
         let error = try #require(commandError { try harness.core.open(.id(instance.id)) })
-        guard case .invalidState(let vm, let current, let allowed) = error else {
+        guard case .invalidState(let vm, let current, let allowed, _) = error else {
             Issue.record("expected an invalid-state refusal, got \(error)")
             return
         }
@@ -802,7 +802,7 @@ struct VMCommandCoreTests {
                     .id(instance.id), disposition: .force, confirmed: false)
             })
 
-        guard case .invalidState(let vm, let current, _) = error else {
+        guard case .invalidState(let vm, let current, _, _) = error else {
             Issue.record("Expected an invalid-state refusal, got \(error)")
             return
         }
@@ -1013,7 +1013,7 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(instance.id), recovery: false) })
-        guard case .invalidState(let vm, let current, let allowed) = error else {
+        guard case .invalidState(let vm, let current, let allowed, _) = error else {
             Issue.record("expected an invalid-state refusal, got \(error)")
             return
         }

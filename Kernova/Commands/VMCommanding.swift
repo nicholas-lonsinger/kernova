@@ -408,9 +408,10 @@ protocol VMCommanding: AnyObject {
     ///
     /// Each key's gate and value is checked before anything is written, so a
     /// batch naming one key the VM's state will not take, or one value it
-    /// cannot parse, changes nothing. `confirmed` supplies the consent the one
-    /// assignment that asks for it needs — turning automatic clipboard
-    /// passthrough on.
+    /// cannot parse, changes nothing. An assignment that leaves its value where
+    /// it is makes no edit, so no gate refuses it. `confirmed` supplies the
+    /// consent the one assignment that asks for it needs — turning automatic
+    /// clipboard passthrough on.
     @discardableResult
     func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool

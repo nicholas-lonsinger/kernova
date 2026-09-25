@@ -31,6 +31,7 @@ struct VMSettingsOverviewTests {
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: guestOS, mutate: mutate)
+        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -217,6 +218,7 @@ struct VMSettingsOverviewTests {
     func drillInSettlesAnOpenFieldEditor() throws {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
+        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -227,7 +229,7 @@ struct VMSettingsOverviewTests {
         let panel = try #require(vc.panelForTesting(.network))
         let field = try #require(findEditableField(in: panel))
         #expect(window.makeFirstResponder(field))
-        field.stringValue = "aa:bb:cc:dd:ee:01"
+        typeText("aa:bb:cc:dd:ee:01", into: field)
 
         vc.showOverview()
 
@@ -493,8 +495,6 @@ struct VMSettingsOverviewTests {
     @Test("The snapshots' footprint is never claimed for a set it doesn't cover")
     func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
         let (vc, instance, viewModel) = makeController()
-        // Listed, because the snapshot-size read addresses its VM by id.
-        viewModel.library.instances.append(instance)
         let first = VMSnapshot(name: "First", macAddress: nil)
         let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.seedSnapshotManifest(

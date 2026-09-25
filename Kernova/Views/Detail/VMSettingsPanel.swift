@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaKit
 
 /// The bindings every settings panel reads: the VM under edit, the view model
 /// to write through, the read-only state, and the injected services a panel
@@ -143,21 +144,20 @@ extension VMSettingsPanel {
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }
 
-    /// - Returns: Whether the mutation was applied, so a caller whose control
-    ///   already moved can put it back — refused or unsaved alike, the
-    ///   configuration kept its old value.
+    /// Writes `assignments` through the configuration verb, the one path a
+    /// panel's edit takes.
+    ///
+    /// An edit that does not land repaints the panel from the model, so no
+    /// control is left showing a value that was not saved; the verb has already
+    /// told the user why.
+    ///
+    /// - Returns: Whether the edit was applied.
     @discardableResult
-    func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        guard case .saved = viewModel.updateConfiguration(of: instance, mutate: mutate)
-        else { return false }
-        return true
-    }
-
-    /// ``writeConfig(_:)`` for a mutation of the VM's host state.
-    @discardableResult
-    func writeHostState(_ mutate: (inout VMHostState) -> Void) -> Bool {
-        guard case .saved = viewModel.updateHostState(of: instance, mutate: mutate)
-        else { return false }
+    func write(_ assignments: ConfigurationEntry...) -> Bool {
+        guard case .applied = viewModel.setConfiguration(assignments, on: instance) else {
+            refresh()
+            return false
+        }
         return true
     }
 
@@ -171,6 +171,62 @@ extension VMSettingsPanel {
     /// panel's own re-render doesn't state what the model held a moment ago.
     func refreshResolved() {
         context.overview.refresh()
+    }
+}
+
+/// A settings field showing one model value, which knows whether the user has
+/// typed in it since the model last painted it.
+///
+/// A refresh repaints the field unless the user has typed in it, so typed text
+/// survives any refresh — an observation pass, a status change a CLI start
+/// makes — and a field nobody touched stays current. Its end-edit writes only
+/// typed text (``holdsUserEdit``): focus leaving a field fires one whether or
+/// not anything was typed, and writing what the field holds would put back a
+/// value another writer has since replaced.
+final class ModelValueField: NSTextField {
+    /// Whether the user has typed in the field since the model last painted it
+    /// or its edit was discarded — an edit for the field's end-edit to write.
+    private(set) var holdsUserEdit = false
+
+    /// Paints `value` from the model unless the user has typed in the field.
+    ///
+    /// Text already reading `value` is left alone, so a refresh that changes
+    /// nothing keeps a focused field's selection — the select-all a tab-in
+    /// leaves, which the next keystroke replaces.
+    func show(_ value: String) {
+        guard !holdsUserEdit, (currentEditor()?.string ?? stringValue) != value else { return }
+        paint(value)
+    }
+
+    /// Shows `value` in place of any edit the field holds: at end-edit, once
+    /// the edit has been written or refused, and for an explicit control
+    /// action — a stepper, a preset — whose value is the newer intent.
+    ///
+    /// At end-edit time the editor can still be attached, holding the text just
+    /// consumed; a value set beneath it does not read back
+    /// (`refusedEndEditRevertsAFieldStillBeingEdited`), so the editor is
+    /// discarded first.
+    func showDiscardingEdit(_ value: String) {
+        abortEditing()
+        paint(value)
+    }
+
+    override func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        holdsUserEdit = true
+    }
+
+    @discardableResult
+    override func abortEditing() -> Bool {
+        defer { holdsUserEdit = false }
+        return super.abortEditing()
+    }
+
+    /// Sets the text through `stringValue`, which during an edit updates the
+    /// field editor and the cell together and keeps the edit open.
+    private func paint(_ value: String) {
+        stringValue = value
+        holdsUserEdit = false
     }
 }
 

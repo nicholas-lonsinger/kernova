@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Sharing panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Sharing Panel Tests", .serialized, .admissionGated)
+@Suite("VM Settings Sharing Panel Tests", .serialized, .admissionGated, .scopedWindows)
 @MainActor
 struct VMSettingsSharingPanelTests {
     private let preferences = makeTestPreferences()
@@ -79,6 +79,7 @@ struct VMSettingsSharingPanelTests {
             $0.clipboardSharingEnabled = sharingEnabled
             mutate(&$0)
         }
+        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -142,6 +143,27 @@ struct VMSettingsSharingPanelTests {
         vc.confirmPassthroughEnableForTesting(.passthrough(true))
 
         #expect(instance.configuration.clipboardPassthroughEnabled == true)
+    }
+
+    @Test("The passthrough prompt is the verb's, and confirming it re-issues the write consented")
+    func passthroughConsentIsTheVerbsPrompt() throws {
+        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let toggle = try #require(firstSwitch(action: "clipboardPassthroughToggled", in: vc.view))
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        // The verb refused for want of consent, so nothing landed; the sheet
+        // asks in the words that refusal carried.
+        #expect(!instance.configuration.clipboardPassthroughEnabled)
+        let sheet = try #require(window.attachedSheet)
+        let prompt = ClipboardPassthroughConsent.prompt(vmName: instance.name)
+        #expect(findLabel(withText: prompt.title, in: try #require(sheet.contentView)) != nil)
+
+        vc.confirmPassthroughEnableForTesting(.passthrough(true))
+        #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
     @Test("Cancelling the security prompt reverts the switch and writes nothing")
@@ -212,12 +234,10 @@ struct VMSettingsSharingPanelTests {
     func passthroughConfirmationAlertWiring() {
         var confirmed = false
         var cancelled = false
-        let alert = ClipboardPassthroughSetting.alert(
-            vmName: "Alpha", onConfirm: { confirmed = true }, onCancel: { cancelled = true })
-
-        // The words a wire client is refused with are the words the alert asks
-        // in, because both come from the one consent policy.
         let prompt = ClipboardPassthroughConsent.prompt(vmName: "Alpha")
+        let alert = ClipboardPassthroughSetting.alert(
+            prompt: prompt, onConfirm: { confirmed = true }, onCancel: { cancelled = true })
+
         #expect(alert.title == prompt.title)
         #expect(alert.message == prompt.message)
         // Turning the setting on destroys nothing, so Turn On takes Return here

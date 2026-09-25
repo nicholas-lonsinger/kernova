@@ -328,7 +328,7 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await harness.transport.send(
             .start(.id(instance.id), recovery: false))
 
-        guard case .invalidState(_, let current, let allowed)? = response.failure else {
+        guard case .invalidState(_, let current, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
             return
         }
@@ -431,7 +431,7 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await harness.transport.send(
             .cancelGuestSetup(.id(instance.id), confirmed: true))
 
-        guard case .invalidState(_, _, let allowed)? = response.failure else {
+        guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
             return
         }
@@ -516,7 +516,7 @@ struct VMCommandEnvelopeRouterTests {
         await virtualization.waitUntilSuspended()
 
         let response = try await transport.send(.cancelGuestSetup(.id(instance.id), confirmed: true))
-        guard case .invalidState(_, _, let allowed)? = response.failure else {
+        guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
             return
         }
@@ -628,7 +628,7 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await harness.transport.send(
             .editStorageDisk(.id(instance.id), .rename(disk: disk.id, newLabel: "New")))
 
-        guard case .invalidState(_, _, let allowed) = try #require(response.failure) else {
+        guard case .invalidState(_, _, let allowed, _) = try #require(response.failure) else {
             Issue.record("expected an invalid-state refusal, got \(String(describing: response.failure))")
             return
         }

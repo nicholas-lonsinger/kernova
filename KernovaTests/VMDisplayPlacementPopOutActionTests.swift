@@ -1,3 +1,4 @@
+import Foundation
 import KernovaTestSupport
 import Testing
 
@@ -32,5 +33,32 @@ struct VMDisplayPlacementPopOutActionTests {
         arguments: [VMDisplayMode.inline, .popOut, .fullscreen])
     func noWindowPopsOut(mode: VMDisplayMode) {
         #expect(VMDisplayPlacementController.popOutAction(hasWindow: false, mode: mode) == .popOut)
+    }
+}
+
+/// What a placement transition persists.
+@Suite("VMDisplayPlacementController placement persistence", .serialized, .admissionGated)
+@MainActor
+struct VMDisplayPlacementPersistenceTests {
+    private let preferences = makeTestPreferences()
+
+    /// The write goes through the `display.preference` key, which resolves the
+    /// VM through the library — so the VM has to be in it.
+    @Test("Popping a headless display back in persists Inline through the configuration verb")
+    func popInFromHeadlessPersistsInlineThroughTheVerb() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: UUID()), hostState: VMHostState(displayPreference: .popOut))
+        registerSettingsInstance(instance, in: viewModel)
+        instance.displayMode = .hidden
+        let placement = VMDisplayPlacementController(
+            viewModel: viewModel, autosaveScope: .unsaved())
+
+        placement.togglePopOut(for: instance)
+
+        #expect(instance.displayMode == .inline)
+        #expect(instance.hostState.displayPreference == .inline)
+        #expect(storage.hostStates[instance.bundleURL]?.displayPreference == .inline)
     }
 }
