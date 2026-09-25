@@ -26,7 +26,6 @@ struct VMCommandCoreAttachmentTests {
 
     private func makeHarness(diskImages: MockDiskImageService = MockDiskImageService()) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
         let fileSystem = MockFileSystem()
         let removableMediaDevices = MockRemovableMediaDeviceService()
         let virtualization = MockVirtualizationService()
@@ -36,7 +35,9 @@ struct VMCommandCoreAttachmentTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            // Real, so the in-bundle disk a verb writes or trashes goes through
+            // the same recorded file system as every other.
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
@@ -44,7 +45,6 @@ struct VMCommandCoreAttachmentTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences
@@ -131,7 +131,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.diskImages.lastCreatedSizeInGB == 100)
     }
 
-    @Test("A failed disk write trashes what it may have left and leaves the list alone")
+    @Test("A failed disk write removes what it may have left and leaves the list alone")
     func createStorageDiskWriteFailureCleansUp() async throws {
         let diskImages = MockDiskImageService()
         diskImages.createDiskImageError = DiskImageError.writeFailed(NSError(domain: "t", code: 1))
@@ -144,7 +144,9 @@ struct VMCommandCoreAttachmentTests {
         }
 
         #expect(refusal?.isOperationFailure == true)
-        #expect(harness.fileSystem.trashedURLs.count == 1)
+        // App-internal: the path was minted for this create and no entry names it.
+        #expect(harness.fileSystem.removedURLs.count == 1)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(instance.configuration.storageDisks == nil)
     }
 
@@ -162,6 +164,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(refusal?.isOperationFailure == true)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
+        #expect(harness.fileSystem.removedURLs.isEmpty)
         #expect(instance.configuration.storageDisks == nil)
     }
 

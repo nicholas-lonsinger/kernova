@@ -137,7 +137,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        instance.removeSaveFile()
+        instance.bundle.removeSaveFile()
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
@@ -148,9 +148,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         instance.tearDownSession(restingAt: .suspended)
     }
 
-    func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
-    ) async throws -> VMSnapshot {
+    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         instance.enter(phases.resting)
@@ -158,19 +156,19 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        _ instance: VMInstance, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
-        let plan = try store.planRestore(
-            bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
+        let plan = try await instance.bundle.planRestore(
+            fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
-        try store.stageRestore(bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: plan)
+        try await instance.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
-        try store.installRestore(bundleURL: instance.bundleURL, plan: plan)
+        try await instance.bundle.installRestore(plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
-        // the store mock copies no files, so the slot is written here.
+        // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)
         instance.tearDownSession(restingAt: .suspended)
     }

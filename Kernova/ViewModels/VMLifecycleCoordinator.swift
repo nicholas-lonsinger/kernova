@@ -287,7 +287,7 @@ final class VMLifecycleCoordinator {
     // MARK: - Snapshots
 
     func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshot: VMSnapshotRecord
     ) async throws -> VMSnapshot {
         try await serialized(instance, action: "takeSnapshot") {
             // A warm capture takes every passthrough accessory off before it
@@ -305,7 +305,7 @@ final class VMLifecycleCoordinator {
             let captured: VMSnapshot
             do {
                 captured = try await virtualizationService.takeSnapshot(
-                    instance, snapshot: snapshot, store: store)
+                    instance, snapshot: snapshot)
             } catch {
                 if let sessionID {
                     await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
@@ -441,13 +441,12 @@ final class VMLifecycleCoordinator {
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        _ instance: VMInstance, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
         try await serialized(instance, action: "revertToSnapshot") {
             try await virtualizationService.revertToSnapshot(
-                instance, snapshot: snapshot, store: store,
-                commitConfiguration: commitConfiguration)
+                instance, snapshot: snapshot, commitConfiguration: commitConfiguration)
         }
     }
 
@@ -459,15 +458,11 @@ final class VMLifecycleCoordinator {
     /// runs inside the same claim, so a delete this refuses as busy has
     /// unlisted nothing. An `unlist` that throws leaves the files in place.
     func discardSnapshot(
-        _ instance: VMInstance, snapshotID: UUID, store: any VMSnapshotStoring,
-        unlist: @MainActor () throws -> Void
+        _ instance: VMInstance, snapshotID: UUID, unlist: @MainActor () throws -> Void
     ) async throws {
-        let bundleURL = instance.bundleURL
         try await serialized(instance, action: "discardSnapshot") {
             try unlist()
-            try await Task.detached {
-                try store.discardSnapshot(bundleURL: bundleURL, snapshotID: snapshotID)
-            }.value
+            try await instance.bundle.discardSnapshot(snapshotID)
         }
     }
 

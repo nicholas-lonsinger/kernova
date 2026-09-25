@@ -2,13 +2,18 @@ import Foundation
 
 @testable import Kernova
 
-/// In-memory mock for `VMSnapshotStoring` that records file operations without
-/// touching disk. The manifest is a bundle state file, seeded through
-/// ``MockVMStorageService/files``.
+/// Mock for `VMBundleMachineFileWorking` whose snapshot store records file
+/// operations without touching disk. The manifest is a bundle state file,
+/// seeded through ``MockVMStorageService/files``.
+///
+/// The suspend slot, the firmware and platform files and the in-bundle disks
+/// go to a real ``VMBundleMachineFiles`` trashing through `fileSystem`: every
+/// predicate that asks about the slot reads the file, so a removal has to
+/// happen for real.
 ///
 /// Lock-based because production reads and writes it from `Task.detached`, so
 /// calls arrive off the test's isolation.
-final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
+final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sendable {
     /// One call this store answered, in the order a revert makes them.
     enum Event: Equatable {
         case stageRestore
@@ -38,8 +43,12 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     /// snapshot's MAC address from. `nil` writes it nowhere.
     private let files: InMemoryVMBundleFiles?
 
-    init(files: InMemoryVMBundleFiles? = nil) {
+    /// What every operation outside the snapshot store runs through.
+    private let real: VMBundleMachineFiles
+
+    init(files: InMemoryVMBundleFiles? = nil, fileSystem: MockFileSystem = MockFileSystem()) {
         self.files = files
+        real = VMBundleMachineFiles(fileSystem: fileSystem)
     }
 
     // MARK: - Seeding
@@ -86,7 +95,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
         set { lock.withLock { state.discardError = newValue } }
     }
 
-    // MARK: - VMSnapshotStoring
+    // MARK: - VMBundleMachineFileWorking
 
     func prepareSnapshot(
         bundleURL: URL, snapshotID: UUID, configuration: VMConfiguration
@@ -97,7 +106,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
             state.capturedConfigurations[snapshotID] = configuration
             return VMSnapshotCapturePlan(
                 saveFileURL: layout.snapshotLayout(id: snapshotID).saveFileURL,
-                relativePaths: VMSnapshotStore.capturedRelativePaths(
+                relativePaths: VMBundleMachineFiles.capturedRelativePaths(
                     for: configuration, layout: layout))
         }
     }
@@ -118,7 +127,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
     /// Answers the plan for a snapshot this store captured or was seeded with;
     /// a snapshot with no recorded configuration refuses, exactly as a snapshot
     /// directory missing its `config.json` does. The saved state a warm snapshot
-    /// also needs has no stand-in here — `VMSnapshotStoreTests` covers that
+    /// also needs has no stand-in here — `VMBundleMachineFilesTests` covers that
     /// check against real files.
     func planRestore(
         bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
@@ -130,7 +139,7 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
             }
             return VMSnapshotRestorePlan(
                 configuration: configuration,
-                relativePaths: VMSnapshotStore.capturedRelativePaths(
+                relativePaths: VMBundleMachineFiles.capturedRelativePaths(
                     for: configuration, layout: layout),
                 kind: kind)
         }
@@ -174,5 +183,28 @@ final class MockVMSnapshotStore: VMSnapshotStoring, @unchecked Sendable {
             for id in snapshotIDs { sizes[id] = state.sizes[id] ?? 0 }
             return sizes
         }
+    }
+
+    func removeSaveFile(bundleURL: URL) throws {
+        try real.removeSaveFile(bundleURL: bundleURL)
+    }
+
+    func ensureEFIVariableStore(bundleURL: URL) throws {
+        try real.ensureEFIVariableStore(bundleURL: bundleURL)
+    }
+
+    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
+        try real.createMacPlatformFiles(bundleURL: bundleURL, hardwareModel: hardwareModel)
+    }
+
+    func createInternalDisk(
+        bundleURL: URL, id: UUID, sizeInGB: Int, diskImages: any DiskImageProviding
+    ) async throws -> String {
+        try await real.createInternalDisk(
+            bundleURL: bundleURL, id: id, sizeInGB: sizeInGB, diskImages: diskImages)
+    }
+
+    func trashInternalDisk(bundleURL: URL, relativePath: String) throws {
+        try real.trashInternalDisk(bundleURL: bundleURL, relativePath: relativePath)
     }
 }

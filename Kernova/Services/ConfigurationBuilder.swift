@@ -206,16 +206,15 @@ struct ConfigurationBuilder: Sendable {
         }
         vzConfig.platform = platform
 
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let variableStore: VZEFIVariableStore
-        if FileManager.default.fileExists(atPath: layout.efiVariableStoreURL.path(percentEncoded: false)) {
-            variableStore = VZEFIVariableStore(url: layout.efiVariableStoreURL)
-        } else {
-            variableStore = try VZEFIVariableStore(creatingVariableStoreAt: layout.efiVariableStoreURL, options: [])
+        // The builder reads the bundle and writes nothing to it: a bring-up
+        // creates the store first, through ``VMBundle/ensureEFIVariableStore()``.
+        let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
+        guard FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)) else {
+            throw ConfigurationBuilderError.efiVariableStoreMissing
         }
 
         let bootLoader = VZEFIBootLoader()
-        bootLoader.variableStore = variableStore
+        bootLoader.variableStore = VZEFIVariableStore(url: storeURL)
         vzConfig.bootLoader = bootLoader
 
         let graphics = VZVirtioGraphicsDeviceConfiguration()
@@ -955,6 +954,8 @@ struct ConfigurationBuilder: Sendable {
 enum ConfigurationBuilderError: LocalizedError {
     case invalidHardwareModel
     case invalidMachineIdentifier
+    /// An EFI boot found no variable store in the bundle.
+    case efiVariableStoreMissing
     case missingKernelPath
     case kernelNotFound(String)
     case kernelPathIsDirectory(String)
@@ -997,6 +998,8 @@ enum ConfigurationBuilderError: LocalizedError {
             "The stored hardware model data is invalid."
         case .invalidMachineIdentifier:
             "The stored machine identifier data is invalid."
+        case .efiVariableStoreMissing:
+            "The virtual machine's EFI variable store is missing."
         case .missingKernelPath:
             "A kernel path is required for Linux kernel boot mode."
         case .kernelNotFound(let path):
@@ -1050,7 +1053,8 @@ enum ConfigurationBuilderError: LocalizedError {
         case .storageDiskPathIsDirectory, .removableMediaPathIsDirectory: .pathIsDirectory
         case .storageDiskNotWritable, .removableMediaNotWritable: .notWritable
         case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
-        case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
+        case .invalidHardwareModel, .invalidMachineIdentifier, .efiVariableStoreMissing,
+            .missingKernelPath,
             .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,
             .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled,
             .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,

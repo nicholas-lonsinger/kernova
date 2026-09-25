@@ -33,7 +33,7 @@ struct VMCommandCoreUSBAccessoryTests {
 
     private func makeHarness(withAccessorySupport: Bool = true) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
         let fileSystem = MockFileSystem()
         let accessories = withAccessorySupport ? MockUSBAccessoryService() : nil
         let lifecycle = makeTestLifecycle(
@@ -42,7 +42,7 @@ struct VMCommandCoreUSBAccessoryTests {
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
             preferences: preferences)
@@ -50,7 +50,6 @@ struct VMCommandCoreUSBAccessoryTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: snapshots,
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem,
             preferences: preferences

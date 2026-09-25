@@ -96,7 +96,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             throw error
         }
         // A restore consumes the slot it loaded, as the real one does.
-        if route == .restoredSavedState { instance.removeSaveFile() }
+        if route == .restoredSavedState { instance.bundle.removeSaveFile() }
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
         return route
     }
@@ -152,7 +152,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         // A cold resume consumes the slot it restored; a hot one drops the file
         // its pause left behind. Either way the guest is live again.
-        instance.removeSaveFile()
+        instance.bundle.removeSaveFile()
         instance.enter(.running(sessionID: MockVirtualizationPhases.sessionIdentity(for: instance)))
     }
 
@@ -179,9 +179,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// through `.snapshotting` and comes back where it started — live back
     /// where it was found, suspended and stopped resting session-less where
     /// they started.
-    func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
-    ) async throws -> VMSnapshot {
+    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot {
         let phases = try MockVirtualizationPhases.capturePhases(for: instance, kind: snapshot.kind)
         instance.enter(phases.capturing)
         // Stands in for what a real warm capture does to the VM mid-flight —
@@ -192,17 +190,15 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.enter(phases.resting)
             throw error
         }
-        // The store is exercised for real so a test can assert on the files the
-        // capture writes; the VZ saved state has no stand-in, so only the disk
-        // copies land.
+        // The bundle is exercised for real so a test can assert on the files
+        // the capture writes; the VZ saved state has no stand-in, so only the
+        // disk copies land.
         let configuration = instance.configuration
-        if let prepared = try? store.prepareSnapshot(
-            bundleURL: instance.bundleURL, snapshotID: snapshot.id,
-            configuration: configuration)
+        if let prepared = try? await instance.bundle.prepareSnapshot(
+            snapshot.id, configuration: configuration)
         {
-            try? store.captureDisks(
-                bundleURL: instance.bundleURL, snapshotID: snapshot.id,
-                relativePaths: prepared.relativePaths)
+            try? await instance.bundle.captureDisks(
+                intoSnapshot: snapshot.id, relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
         instance.enter(phases.resting)
@@ -214,11 +210,11 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// the snapshot captured — cold-paused on a warm snapshot's saved state and
     /// settings, stopped on a cold snapshot's disks.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        _ instance: VMInstance, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
-        let plan = try store.planRestore(
-            bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
+        let plan = try await instance.bundle.planRestore(
+            fromSnapshot: snapshot.id, kind: snapshot.kind)
 
         let wasLive = instance.hasLiveVirtualMachine
         instance.tearDownSession(restingAt: .revertingToSnapshot)
@@ -228,26 +224,26 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         // Staged, committed, installed, in the real service's order.
         do {
-            try store.stageRestore(bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: plan)
+            try await instance.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
             do {
                 try commitConfiguration(plan)
             } catch {
-                store.sweepRestoreStaging(bundleURL: instance.bundleURL)
+                await instance.bundle.discardRestoreStaging()
                 throw error
             }
-            try store.installRestore(bundleURL: instance.bundleURL, plan: plan)
+            try await instance.bundle.installRestore(plan)
         } catch {
             instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
         revertedSnapshots.append(snapshot)
         // A warm snapshot's own saved state is what the VM comes back on, and a
-        // cold one leaves the bundle without a slot. The store mock copies no
-        // files, so the slot every predicate reads is written here.
+        // cold one leaves the bundle without a slot. The machine-files mock
+        // copies no files, so the slot every predicate reads is written here.
         if plan.kind == .warm {
             try VMInstanceFixture.writeSaveFile(for: instance)
         } else {
-            instance.removeSaveFile()
+            instance.bundle.removeSaveFile()
         }
         instance.enter(plan.kind == .warm ? .suspended : .stopped)
         // A VM that was live goes back to being live at a warm snapshot's

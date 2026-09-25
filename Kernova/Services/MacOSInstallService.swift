@@ -48,17 +48,13 @@ final class MacOSInstallService {
             throw MacOSInstallError.unsupportedHardwareModel
         }
 
-        try setupPlatformFiles(
-            for: instance,
-            hardwareModel: supportedConfig.hardwareModel
-        )
-
         let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
-        let machineIDData = try Data(contentsOf: instance.machineIdentifierURL)
+        let machineIDData = try await instance.bundle.createMacPlatformFiles(
+            hardwareModel: hardwareModelData)
         // The install stops unless the identity lands: the build below prefers
         // the configuration's hardware model over the bundle's file, which
-        // `setupPlatformFiles` writes only when absent, so a model an earlier
-        // attempt recorded would stand in for this image's.
+        // `createMacPlatformFiles` writes only when absent, so a model an
+        // earlier attempt recorded would stand in for this image's.
         try instance.performConfigurationMutation {
             $0.hardwareModelData = hardwareModelData
             $0.machineIdentifierData = machineIDData
@@ -118,40 +114,6 @@ final class MacOSInstallService {
         return .macOSRestoreImage(
             version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
             build: restoreImage.buildVersion)
-    }
-
-    // MARK: - Platform Setup
-
-    /// Creates the auxiliary storage, hardware model, and machine identifier files.
-    ///
-    /// Idempotent across install retries: hardware model and machine identifier are
-    /// written only when absent, so the guest sees a stable machine identity however
-    /// many attempts it took. Auxiliary storage is always re-created — it carries
-    /// firmware/NVRAM state that must match a fresh install run.
-    private func setupPlatformFiles(
-        for instance: VMInstance,
-        hardwareModel: VZMacHardwareModel
-    ) throws {
-        let fm = FileManager.default
-
-        if !fm.fileExists(atPath: instance.hardwareModelURL.path(percentEncoded: false)) {
-            try hardwareModel.dataRepresentation.write(to: instance.hardwareModelURL)
-        }
-
-        if !fm.fileExists(atPath: instance.machineIdentifierURL.path(percentEncoded: false)) {
-            let machineIdentifier = VZMacMachineIdentifier()
-            try machineIdentifier.dataRepresentation.write(to: instance.machineIdentifierURL)
-        }
-
-        // Without `.allowOverwrite`, a second Start after an install that got past
-        // setup but didn't finish throws "File exists" before the installer runs.
-        _ = try VZMacAuxiliaryStorage(
-            creatingStorageAt: instance.auxiliaryStorageURL,
-            hardwareModel: hardwareModel,
-            options: [.allowOverwrite]
-        )
-
-        #log(Self.logger, .info, "Created platform files for '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Helpers

@@ -258,7 +258,7 @@ enum VMLifecyclePhase: Sendable, Equatable {
     ///
     /// The restore phases are the ones that do not: a revert reads the
     /// configuration it will assign back before it starts writing files
-    /// (``VirtualizationService/revertToSnapshot(_:snapshot:store:)``) and then
+    /// (``VirtualizationService/revertToSnapshot(_:snapshot:commitConfiguration:)``) and then
     /// chains a save-file restore behind that write, so a name typed while
     /// either runs is overwritten when the revert lands. Every other phase
     /// leaves the configuration alone, so a rename typed into a field editor

@@ -19,16 +19,9 @@ extension VMCommandCore {
         await snapshotOnDiskBytes(for: try resolve(selector))
     }
 
-    /// Bytes each of this VM's snapshots occupies on disk, read off the main
-    /// actor — the copies live on the same volume and can be many gigabytes.
+    /// Bytes each of this VM's snapshots occupies on disk.
     func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
-        let store = snapshotStore
-        let bundleURL = instance.bundleURL
-        let ids = instance.snapshotManifest.snapshots.map(\.id)
-        guard !ids.isEmpty else { return [:] }
-        return await Task.detached {
-            store.onDiskBytes(bundleURL: bundleURL, snapshotIDs: ids)
-        }.value
+        await instance.bundle.snapshotSizes()
     }
 
     // MARK: - Take
@@ -77,8 +70,7 @@ extension VMCommandCore {
             kind: mode.kind)
         let captured: VMSnapshot
         do {
-            captured = try await lifecycle.takeSnapshot(
-                instance, snapshot: snapshot, store: snapshotStore)
+            captured = try await lifecycle.takeSnapshot(instance, snapshot: snapshot)
         } catch {
             #log(
                 Self.logger, .error,
@@ -91,12 +83,7 @@ extension VMCommandCore {
         } catch {
             // Unlisted files are files no surface can reach or remove, so the
             // capture is undone rather than left orphaned in the bundle.
-            let store = snapshotStore
-            let bundleURL = instance.bundleURL
-            let id = snapshot.id
-            await Task.detached {
-                store.removeSnapshotDirectory(bundleURL: bundleURL, snapshotID: id)
-            }.value
+            await instance.bundle.removeSnapshotDirectory(snapshot.id)
             throw error
         }
         return captured
@@ -251,9 +238,7 @@ extension VMCommandCore {
         }
         var revertFailure: CommandError?
         do {
-            try await lifecycle.revertToSnapshot(
-                instance, snapshot: snapshot, store: snapshotStore
-            ) { [library] plan in
+            try await lifecycle.revertToSnapshot(instance, snapshot: snapshot) { [library] plan in
                 try library.commitRevertedConfiguration(plan, on: instance)
             }
         } catch {
@@ -348,7 +333,7 @@ extension VMCommandCore {
         // directory, which costs space and no data.
         var unlisted = false
         do {
-            try await lifecycle.discardSnapshot(instance, snapshotID: id, store: snapshotStore) {
+            try await lifecycle.discardSnapshot(instance, snapshotID: id) {
                 try self.commitSnapshotManifest(of: instance, verb: .deleteSnapshot) {
                     $0.remove(id: id)
                 }

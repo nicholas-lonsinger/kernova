@@ -1,20 +1,23 @@
 import Foundation
 import KernovaLogging
+import Virtualization
 
-/// Manages the snapshot directories inside a VM bundle's `Snapshots/`: one
-/// per snapshot, holding its VZ saved state, the configuration it was captured
-/// under and copy-on-write disk copies, and the sizes those copies occupy.
+/// The file operations behind a VM bundle's machine files: the snapshot
+/// directories inside `Snapshots/` — one per snapshot, holding its VZ saved
+/// state, the configuration it was captured under and copy-on-write disk
+/// copies — the suspend slot, the firmware and platform files, and the
+/// in-bundle disks.
 ///
 /// `VMBundleLayout` owns the names; this owns the file operations.
-struct VMSnapshotStore: VMSnapshotStoring {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSnapshotStore")
+struct VMBundleMachineFiles: VMBundleMachineFileWorking {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundleMachineFiles")
 
-    /// The one operation a test must not run for real: trashing moves the
-    /// directory into the user's own Trash. Every other file operation here
-    /// runs against real files, which is what this type's tests exercise.
+    /// The operations a test must not run for real: trashing moves a file into
+    /// the user's own Trash. Every other file operation here runs against real
+    /// files, which is what this type's tests exercise.
     private let fileSystem: any FileSystemOperating
 
-    init(fileSystem: any FileSystemOperating = FileManager.default) {
+    init(fileSystem: any FileSystemOperating) {
         self.fileSystem = fileSystem
     }
 
@@ -191,7 +194,7 @@ struct VMSnapshotStore: VMSnapshotStoring {
                 // the catch below exists to undo, so a cold revert never lets that
                 // pairing exist. An interruption after this point leaves a stopped
                 // VM on its pre-revert disks, which costs nothing.
-                try removeSaveFile(at: layout.saveFileURL)
+                try removeSaveFile(bundleURL: bundleURL)
             }
             for relativePath in plan.relativePaths {
                 try swapIntoPlace(
@@ -211,17 +214,6 @@ struct VMSnapshotStore: VMSnapshotStoring {
             // the VM at `.stopped` instead.
             try? manager.removeItem(at: layout.saveFileURL)
             throw error
-        }
-    }
-
-    /// Drops the bundle's suspend slot, tolerating a bundle that holds none.
-    private func removeSaveFile(at url: URL) throws {
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch let error as NSError
-            where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
-        {
-            // A stopped VM holds no suspend slot, which is the common case.
         }
     }
 
@@ -285,6 +277,87 @@ struct VMSnapshotStore: VMSnapshotStoring {
                 "Failed to clean up the partial snapshot directory '\(snapshotID.uuidString, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    // MARK: - Suspend slot
+
+    func removeSaveFile(bundleURL: URL) throws {
+        do {
+            try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: bundleURL).saveFileURL)
+        } catch let error as NSError
+            where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
+        {
+            // A stopped VM holds no suspend slot, which is the common case.
+        }
+    }
+
+    // MARK: - Firmware and platform
+
+    func ensureEFIVariableStore(bundleURL: URL) throws {
+        let url = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
+        guard !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return }
+        _ = try VZEFIVariableStore(creatingVariableStoreAt: url, options: [])
+        #log(
+            Self.logger, .notice,
+            "Created the EFI variable store in '\(bundleURL.lastPathComponent, privacy: .public)'")
+    }
+
+    func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
+        guard let model = VZMacHardwareModel(dataRepresentation: hardwareModel) else {
+            throw ConfigurationBuilderError.invalidHardwareModel
+        }
+        let layout = VMBundleLayout(bundleURL: bundleURL)
+        let manager = FileManager.default
+        if !manager.fileExists(atPath: layout.hardwareModelURL.path(percentEncoded: false)) {
+            try hardwareModel.write(to: layout.hardwareModelURL)
+        }
+        if !manager.fileExists(atPath: layout.machineIdentifierURL.path(percentEncoded: false)) {
+            try VZMacMachineIdentifier().dataRepresentation.write(to: layout.machineIdentifierURL)
+        }
+        // Without `.allowOverwrite`, a second Start after an install that got past
+        // setup but didn't finish throws "File exists" before the installer runs.
+        _ = try VZMacAuxiliaryStorage(
+            creatingStorageAt: layout.auxiliaryStorageURL, hardwareModel: model,
+            options: [.allowOverwrite])
+        #log(
+            Self.logger, .info,
+            "Created platform files in '\(bundleURL.lastPathComponent, privacy: .public)'")
+        return try Data(contentsOf: layout.machineIdentifierURL)
+    }
+
+    // MARK: - In-bundle disks
+
+    func createInternalDisk(
+        bundleURL: URL, id: UUID, sizeInGB: Int, diskImages: any DiskImageProviding
+    ) async throws -> String {
+        let relativePath = VMBundleLayout.additionalDiskRelativePath(id: id)
+        let url = bundleURL.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            try await diskImages.createDiskImage(at: url, sizeInGB: sizeInGB)
+        } catch {
+            // Only when the write itself failed — the earlier phases throw
+            // before the destination file is touched. The path is minted per
+            // create and no configuration names it yet, so what the write left
+            // is app-internal.
+            if case DiskImageError.writeFailed = error {
+                do {
+                    try fileSystem.removeItem(at: url)
+                } catch {
+                    #log(
+                        Self.logger, .warning,
+                        "Failed to clean up partial disk image at '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+            throw error
+        }
+        return relativePath
+    }
+
+    func trashInternalDisk(bundleURL: URL, relativePath: String) throws {
+        try fileSystem.trashItem(at: bundleURL.appendingPathComponent(relativePath))
     }
 
     // MARK: - Sizes

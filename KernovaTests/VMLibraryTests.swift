@@ -27,7 +27,7 @@ struct VMLibraryTests {
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = makeWiredLibrary(
             storage: storageService,
-            snapshotStore: VMSnapshotStore(),
+            machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
             lifecycle: makeTestLifecycle(
                 virtualization: virtualizationService,
                 removableMedia: removableMediaDeviceService,
@@ -70,6 +70,25 @@ struct VMLibraryTests {
 
         #expect(storage.reclaimStagedBundlesCallCount == 1)
         #expect(library.hasLoadedLibrary == true)
+    }
+
+    @Test("A bundle read leaves an interrupted revert's staging in place, and the launch reclaim removes it")
+    func launchReclaimsRestoreStaging() async throws {
+        let storage = MockVMStorageService()
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        let config = VMConfiguration(name: "Interrupted", guestOS: .linux, bootMode: .efi)
+        let bundleURL = try storage.bundleURL(for: config)
+        storage.bundles[bundleURL] = config
+        let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
+
+        _ = try library.bundleReader.read(at: bundleURL)
+        #expect(FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
+
+        await library.startLibrary()
+        #expect(!FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)))
     }
 
     @Test("hasLoadedLibrary flips once the read applies, even for an empty library")
@@ -1015,8 +1034,8 @@ struct VMLibraryTests {
     private func makePairingLibrary() -> (VMLibrary, MockVMStorageService) {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(
-            storage: storage, snapshotStore: VMSnapshotStore(), fileSystem: fileSystem,
-            preferences: preferences)
+            storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            fileSystem: fileSystem, preferences: preferences)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }

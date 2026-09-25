@@ -80,9 +80,7 @@ protocol VirtualizationProviding: Sendable {
     ///
     /// Answers `snapshot` carrying the ``VMSnapshot/macAddress`` of the
     /// configuration the capture wrote.
-    func takeSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord, store: any VMSnapshotStoring
-    ) async throws -> VMSnapshot
+    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot
 
     /// Returns the VM to `snapshot`, discarding whatever session is live and
     /// keeping the snapshot itself.
@@ -97,7 +95,7 @@ protocol VirtualizationProviding: Sendable {
     /// bundle; a throw there discards the staging and leaves the bundle as it
     /// was.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
+        _ instance: VMInstance, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws
 }

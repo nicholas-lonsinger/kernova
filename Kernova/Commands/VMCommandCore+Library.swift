@@ -351,7 +351,7 @@ extension VMCommandCore {
                     uniqueKeysWithValues: diskMapping.map { mapping in
                         (
                             mapping.clonedDisk.id,
-                            "AdditionalDisks/\(mapping.clonedDisk.id.uuidString).asif"
+                            VMBundleLayout.additionalDiskRelativePath(id: mapping.clonedDisk.id)
                         )
                     }
                 )

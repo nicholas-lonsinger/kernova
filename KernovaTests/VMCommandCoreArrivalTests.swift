@@ -43,7 +43,6 @@ struct VMCommandCoreArrivalTests {
             library: library,
             lifecycle: lifecycle,
             storageService: storage,
-            snapshotStore: MockVMSnapshotStore(files: storage.files),
             diskImageService: MockDiskImageService(),
             fileSystem: MockFileSystem(),
             preferences: preferences)

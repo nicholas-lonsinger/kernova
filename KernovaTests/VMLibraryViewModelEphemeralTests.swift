@@ -16,7 +16,7 @@ struct VMLibraryViewModelEphemeralTests {
         let viewModel: VMLibraryViewModel
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
-        let snapshots: MockVMSnapshotStore
+        let snapshots: MockVMBundleMachineFiles
         let instance: VMInstance
         let baseline: VMSnapshot
         let later: VMSnapshot
@@ -29,7 +29,7 @@ struct VMLibraryViewModelEphemeralTests {
     /// captured, and answers the pair.
     private func seedVM(
         named name: String, ephemeral: Bool, storage: MockVMStorageService,
-        snapshots: MockVMSnapshotStore, baselineKind: VMSnapshotKind = .warm
+        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -67,7 +67,7 @@ struct VMLibraryViewModelEphemeralTests {
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
-        let snapshots = MockVMSnapshotStore(files: storage.files)
+        let snapshots = MockVMBundleMachineFiles(files: storage.files)
 
         let first = try seedVM(
             named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
@@ -80,7 +80,7 @@ struct VMLibraryViewModelEphemeralTests {
         let viewModel = VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
-            snapshotStore: snapshots,
+            machineFiles: snapshots,
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),

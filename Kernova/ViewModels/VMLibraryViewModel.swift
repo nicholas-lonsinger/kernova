@@ -33,7 +33,7 @@ final class VMLibraryViewModel {
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
-    let snapshotStore: any VMSnapshotStoring
+    let machineFiles: any VMBundleMachineFileWorking
     let lifecycle: VMLifecycleCoordinator
 
     /// Pauses running VMs for system sleep and resumes them on wake.
@@ -493,10 +493,13 @@ final class VMLibraryViewModel {
     /// runs as the app, in its container and with its signature, so a default
     /// would hand that state to every test that left it out. ``AppDelegate``
     /// supplies each.
+    ///
+    /// `machineFiles` defaults to the real bundle file work, trashing through
+    /// `fileSystem`.
     init(
         storageService: any VMStorageProviding,
         diskImageService: any DiskImageProviding = DiskImageService(),
-        snapshotStore: any VMSnapshotStoring = VMSnapshotStore(),
+        machineFiles: (any VMBundleMachineFileWorking)? = nil,
         virtualizationService: any VirtualizationProviding,
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding = IPSWService(),
@@ -517,7 +520,8 @@ final class VMLibraryViewModel {
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
-        self.snapshotStore = snapshotStore
+        let machineFiles = machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem)
+        self.machineFiles = machineFiles
         self.preferences = preferences
         self.entitlements = entitlements
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
@@ -536,7 +540,7 @@ final class VMLibraryViewModel {
         self.lifecycle = lifecycle
         let library = VMLibrary(
             storageService: storageService,
-            snapshotStore: snapshotStore,
+            machineFiles: machineFiles,
             lifecycle: lifecycle,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
@@ -553,7 +557,6 @@ final class VMLibraryViewModel {
             library: library,
             lifecycle: lifecycle,
             storageService: storageService,
-            snapshotStore: snapshotStore,
             diskImageService: diskImageService,
             fileSystem: fileSystem,
             preferences: preferences
