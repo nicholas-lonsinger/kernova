@@ -625,7 +625,6 @@ final class AppTerminationController: NSObject {
     private func saveForTermination(_ instance: VMInstance) async -> Bool {
         do {
             try await viewModel.trySave(instance)
-            viewModel.saveConfiguration(for: instance)
             return true
         } catch let error as CommandError where error.isBusy {
             #log(

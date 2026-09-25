@@ -100,16 +100,21 @@ final class VMCommandCore: VMCommanding {
     /// A hook rather than a call: what an attach *means* for the future is the
     /// accessory coordinator's policy, and a build that cannot pass accessories
     /// through has no coordinator to hold it.
-    var onUserAttachedAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
+    var onUserAttachedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
+
+    /// Reports an accessory the user is about to take back by hand, before the
+    /// detach runs: the detach re-enumerates the device, and the return it
+    /// causes can arrive while the detach is still in flight.
+    ///
+    /// Not fired by the lifecycle's own eject sweeps, and neither is
+    /// ``onUserReleasedAccessory``: a stop, a suspend or a snapshot capture
+    /// takes an accessory off without the user asking, and must leave the
+    /// pairing alone.
+    var onUserDetachingAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
 
     /// Reports an accessory the user has just taken back by hand, which ends
-    /// that pairing — and, because the detach re-enumerates the device, has to
-    /// keep the return it causes from re-creating one.
-    ///
-    /// Not fired by the lifecycle's own eject sweeps: a stop, a suspend or a
-    /// snapshot capture takes an accessory off without the user asking, and
-    /// must leave the pairing alone.
-    var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
+    /// that pairing.
+    var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
 
     /// Measures the window or screen a starting VM's display is about to occupy,
     /// for `displaySizesToWindow` — `nil` when nothing can measure one.
@@ -340,33 +345,36 @@ final class VMCommandCore: VMCommanding {
         return sourceAuthority
     }
 
-    /// Applies `mutate` to the VM's settings, refusing when the result did not
-    /// reach disk.
+    /// Throws unless `write` landed whole.
     ///
     /// The one write convention every verb in the core shares: a change that
-    /// was refused, or whose save failed, changes nothing, and the verb says
-    /// which.
-    func writeSettings(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) -> Void
-    ) throws {
-        switch library.updateSettings(of: instance, ifNotSaved: .discard, mutate: mutate) {
+    /// was refused changes nothing, and one whose save failed says whether
+    /// part of it landed.
+    func requireSaved(_ write: VMLibrary.SettingsWrite, of instance: VMInstance, verb: VMVerb)
+        throws
+    {
+        switch write {
         case .saved:
             return
         case .refused(let refusal):
             throw refusalError(refusal, on: instance)
-        case .notSaved:
+        case .notSaved(let failure):
             throw CommandError.operationFailed(
                 verb: verb,
-                message:
-                    "The change to \u{201C}\(instance.name)\u{201D} was not saved.")
+                message: failure.landed.isEmpty
+                    ? "The change to \u{201C}\(instance.name)\u{201D} was not saved."
+                    : "The change to \u{201C}\(instance.name)\u{201D} was saved only in part: its configuration changed, but Kernova\u{2019}s own settings for it did not."
+            )
         }
     }
 
-    /// ``writeSettings(of:verb:_:)`` for a mutation of the configuration alone.
+    /// Applies `mutate` to what the VM's `config.json` holds, throwing unless
+    /// it landed (``requireSaved(_:of:verb:)``).
     func writeConfiguration(
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
     ) throws {
-        try writeSettings(of: instance, verb: verb) { mutate(&$0.configuration) }
+        try requireSaved(
+            library.updateConfiguration(of: instance, mutate: mutate), of: instance, verb: verb)
     }
 
     /// The refusal a verb raises when the library turned its settings write
@@ -377,7 +385,7 @@ final class VMCommandCore: VMCommanding {
         switch refusal {
         case .macAddressInUse(let conflict):
             .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-        case .sessionNotAttachable:
+        case .sessionNotAttachable, .noBundle:
             invalidState(instance)
         case .noLibrary:
             .notFound(.id(instance.id))

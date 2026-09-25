@@ -173,7 +173,6 @@ struct VMCommandCoreAttachmentTests {
         let disk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Original", isInternal: true, kind: .virtio)
         let instance = makeInstance(in: harness) { $0.storageDisks = [disk] }
-        harness.storage.saveConfigurationCallCount = 0
 
         try harness.core.renameStorageDisk(.id(instance.id), disk: disk.id, to: "  Renamed  ")
 
@@ -188,7 +187,6 @@ struct VMCommandCoreAttachmentTests {
         let disk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Original", isInternal: true, kind: .virtio)
         let instance = makeInstance(in: harness) { $0.storageDisks = [disk] }
-        harness.storage.saveConfigurationCallCount = 0
 
         try harness.core.renameStorageDisk(.id(instance.id), disk: disk.id, to: "   ")
 
@@ -202,7 +200,6 @@ struct VMCommandCoreAttachmentTests {
         let disk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Data", isInternal: true, kind: .virtio)
         let instance = makeInstance(in: harness) { $0.storageDisks = [disk] }
-        harness.storage.saveConfigurationCallCount = 0
 
         try harness.core.setStorageDiskNotes(
             .id(instance.id), disk: disk.id, notes: "  holds the build cache  ")
@@ -223,7 +220,6 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         let main = instance.effectiveStorageDisks[0]
-        harness.storage.saveConfigurationCallCount = 0
 
         try harness.core.setStorageDiskNotes(.id(instance.id), disk: main.id, notes: main.notes)
         try harness.core.renameStorageDisk(.id(instance.id), disk: main.id, to: main.label)

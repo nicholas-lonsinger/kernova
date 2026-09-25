@@ -398,7 +398,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             assertionFailure("Ephemeral baseline popup selection carries no snapshot")
             return
         }
-        writeSettings { $0.hostState.applyEphemeralMode(enabled: true, baseline: id) }
+        writeHostState { $0.applyEphemeralMode(enabled: true, baseline: id) }
     }
 
     // MARK: - Mirrored toggles

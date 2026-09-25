@@ -509,7 +509,7 @@ struct DetailAlertsPresenterTests {
         vm.enter(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
-        vm.snapshotManifest = VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id)
+        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id))
 
         let alert = presenter.forceStopAlertForTesting(vm)
 

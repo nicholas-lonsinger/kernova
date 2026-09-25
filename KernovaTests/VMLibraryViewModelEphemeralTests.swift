@@ -45,8 +45,8 @@ struct VMLibraryViewModelEphemeralTests {
             hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
             storage.hostStates[bundleURL] = hostState
         }
-        snapshots.setManifest(
-            VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), for: bundleURL)
+        storage.files.setManifest(
+            VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), at: bundleURL)
         // What each snapshot's own config.json holds, so a revert has something
         // to read back.
         for snapshot in [baseline, later] {
@@ -67,7 +67,7 @@ struct VMLibraryViewModelEphemeralTests {
     ) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMSnapshotStore(files: storage.files)
 
         let first = try seedVM(
             named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
@@ -243,13 +243,15 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness()
         let instance = harness.instance
         let capturedCPUs = instance.configuration.cpuCount
-        harness.viewModel.updateSettings(of: instance, ifNotSaved: .discard) {
-            $0.configuration.cpuCount = capturedCPUs + 1
-            $0.hostState.startsAutomaticallyOnLaunch = true
-            $0.hostState.displayPreference = .fullscreen
-            $0.hostState.lastFullscreenDisplayID = 4_280_803_137
-            $0.hostState.agentInstallNudgeDismissed = true
-        }
+        harness.viewModel.library.updateSettings(
+            of: instance,
+            configuration: { $0.cpuCount = capturedCPUs + 1 },
+            hostState: {
+                $0.startsAutomaticallyOnLaunch = true
+                $0.displayPreference = .fullscreen
+                $0.lastFullscreenDisplayID = 4_280_803_137
+                $0.agentInstallNudgeDismissed = true
+            })
         let editedHostState = instance.hostState
 
         await harness.viewModel.stop(instance)

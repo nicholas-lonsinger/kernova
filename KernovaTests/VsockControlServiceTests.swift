@@ -1104,7 +1104,7 @@ struct VsockControlServiceTests {
 
         // Service fires the closure verbatim each time. Suppressing duplicate
         // writes is `VMInstance`'s responsibility (it compares against the
-        // persisted value before invoking onUpdateSettings).
+        // persisted value before invoking onUpdateConfiguration).
         try await observed.changed.wait { observed.values.count == 2 }
         #expect(observed.values.map(\.agentVersion) == ["0.9.2", "0.9.2"])
     }

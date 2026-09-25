@@ -172,8 +172,16 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         return AttachedUSBAccessory(deviceID: nextDeviceID ?? UUID(), accessory: info)
     }
 
+    /// Runs inside the next `detach`, before it returns — where macOS can hand
+    /// the detached device back while the detach is still in flight.
+    var duringNextDetach: (@MainActor () -> Void)?
+
     func detach(deviceID: UUID, from instance: VMInstance) async throws {
         detachedDeviceIDs.append(deviceID)
+        if let duringNextDetach {
+            self.duringNextDetach = nil
+            duringNextDetach()
+        }
         if let detachError { throw detachError }
     }
 

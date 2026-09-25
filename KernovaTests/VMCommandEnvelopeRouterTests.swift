@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Measured")
         let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
 
         let response = try await harness.transport.send(.snapshotOnDiskBytes(.id(instance.id)))

@@ -31,7 +31,7 @@ extension VMInstance {
     /// channel stays connected while the guest is frozen and cannot answer.
     var displayDropAvailability: DisplayDropAvailability {
         guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
-            configuration.lastSeenAgentVersion != nil
+            lastSeenAgentVersion != nil
         else { return .none }
         guard status == .running else { return .disconnected }
         guard let drop = vsockDropService, drop.isConnected,
@@ -111,7 +111,7 @@ extension VMInstance {
     /// What an agent reports is peer-supplied, so it is read through
     /// `KernovaOSVersion.numericVersion(in:)` rather than shown raw.
     var guestOSVersionDisplay: String? {
-        guard let reported = configuration.lastSeenGuestOSVersion, !reported.isEmpty else {
+        guard let reported = reportedGuestOSVersion, !reported.isEmpty else {
             return nil
         }
         return KernovaOSVersion.numericVersion(in: reported) ?? reported

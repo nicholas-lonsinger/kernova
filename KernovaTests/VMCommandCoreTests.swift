@@ -34,7 +34,7 @@ struct VMCommandCoreTests {
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMSnapshotStore(files: storage.files)
         let fileSystem = MockFileSystem()
         let vmnet = MockVmnetNetworkProvider()
         let arpTable = ScriptedARPTable()
@@ -82,7 +82,7 @@ struct VMCommandCoreTests {
         clock: any EngineClock = makePlatformEngineClock()
     ) -> SuspendingHarness {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMSnapshotStore(files: storage.files)
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
         let lifecycle = makeTestLifecycle(
@@ -264,7 +264,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         harness.vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
         let instance = makeInstance(in: harness, name: "Addressed", phase: .running(sessionID: UUID()))
-        harness.library.updateConfiguration(of: instance, ifNotSaved: .discard) {
+        harness.library.updateConfiguration(of: instance) {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:01"
@@ -291,7 +291,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness)
         let older = VMSnapshot(name: "Older", createdAt: Date(timeIntervalSince1970: 1), macAddress: nil)
         let newer = VMSnapshot(name: "Newer", createdAt: Date(timeIntervalSince1970: 2), macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id))
 
         let listed = try harness.core.snapshots(of: .id(instance.id))
 
@@ -798,7 +798,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()),
             hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
 
         let error = try #require(
             await commandError {
@@ -1037,7 +1037,7 @@ struct VMCommandCoreTests {
     @Test("A cancel accepted as the pipeline finishes stops the chained auto-boot")
     func cancelAtTheTailOfSetupDoesNotBoot() async throws {
         let storage = MockVMStorageService()
-        let snapshots = MockVMSnapshotStore()
+        let snapshots = MockVMSnapshotStore(files: storage.files)
         let fileSystem = MockFileSystem()
         let virtualization = MockVirtualizationService()
         // Returns normally once released, so the pipeline succeeds *after* the
@@ -1200,7 +1200,7 @@ struct VMCommandCoreTests {
         // taken: the revert puts it back, and the resume that follows would put
         // it on the holder's network.
         let snapshot = VMSnapshot(name: "Before", kind: .warm, macAddress: heldMAC)
-        reverting.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         var captured = reverting.configuration
         captured.macAddress = heldMAC
         harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
@@ -1409,7 +1409,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         // Nothing to shut down: this stop deletes the suspended session and
@@ -1546,7 +1546,7 @@ struct VMCommandCoreTests {
                 + "and its saved state. Restore them with Finder's Put Back, or empty the Trash "
                 + "to delete them permanently.")
 
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [VMSnapshot(name: "Before", macAddress: nil)])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Before", macAddress: nil)]))
 
         let full = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
         #expect(full.message.contains("its disks"))
@@ -1603,7 +1603,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Keeper")
         let snapshot = VMSnapshot(name: "Before", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
 
         let error = try #require(
             await commandError {
@@ -1625,7 +1625,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Reverter", phase: .stopped)
         let snapshot = VMSnapshot(name: "Clean", kind: .cold, macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
 
         let error = try #require(
@@ -1800,7 +1800,7 @@ struct VMCommandCoreTests {
         harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
 
         _ = await commandError {
@@ -1836,7 +1836,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
 
         let error = try #require(
             await commandError {
@@ -1856,7 +1856,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         let snapshot = VMSnapshot(name: "Old", notes: "old note", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
 
         try harness.core.renameSnapshot(.id(instance.id), snapshot: snapshot.id, to: "  New  ")
         try harness.core.setSnapshotNotes(.id(instance.id), snapshot: snapshot.id, notes: "  ")
@@ -1864,7 +1864,7 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.name == "New")
         #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == "")
         #expect(
-            harness.snapshots.manifest(for: instance.bundleURL)?.snapshot(id: snapshot.id)?.name
+            instance.manifestOnDisk?.snapshot(id: snapshot.id)?.name
                 == "New")
     }
 
@@ -1873,7 +1873,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         let snapshot = VMSnapshot(name: "Kept", notes: "a note", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
 
         // Unchanged commits against a listed snapshot write nothing.
         #expect(
@@ -1898,7 +1898,7 @@ struct VMCommandCoreTests {
             commandError {
                 try harness.core.setSnapshotNotes(.id(instance.id), snapshot: gone, notes: "a note")
             } == nil)
-        #expect(harness.snapshots.manifest(for: instance.bundleURL) == nil)
+        #expect(instance.fixtureBundleFiles.replaceCount(of: VMBundleLayout.snapshotManifestRelativePath) == 0)
     }
 
     // MARK: - Library verbs
@@ -2117,15 +2117,15 @@ struct VMCommandCoreTests {
         #expect(harness.storage.permanentlyDeleteVMBundleCallCount == 1)
     }
 
-    /// A `.kernova`-shaped source the mocked `loadConfiguration(from:)` answers
-    /// for, under a per-call temp parent and created on disk because the import
-    /// copies real files. The caller removes the parent, not this leaf.
+    /// A `.kernova`-shaped source with its `config.json` on disk, under a
+    /// per-call temp parent, because the import copies real files. The caller removes the parent, not this leaf.
     private func makeImportSource(name: String, storage: MockVMStorageService) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        storage.bundles[url] = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
+        try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess())
+            .writeInitial(VMConfiguration(name: name, guestOS: .linux, bootMode: .efi))
         return url
     }
 
@@ -2160,8 +2160,9 @@ struct VMCommandCoreTests {
         let pairing = USBAccessoryPairing(
             key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
             receptacleLabel: nil)
-        try USBAccessoryPairingStore().save(
-            USBAccessoryPairingSet(pairings: [pairing]), bundleURL: source)
+        try VMBundleFiles(url: source, access: CoordinatedBundleFileAccess()).update(.usbPairings) {
+            $0 = USBAccessoryPairingSet(pairings: [pairing])
+        }
 
         _ = try harness.core.importVM(from: source)
         for task in harness.library.instances.compactMap({ $0.preparingState?.task }) {
@@ -2471,7 +2472,7 @@ struct VMCommandCoreTests {
         harness.core.onFailure = { failure, _ in reported.append(failure) }
         let instance = makeInstance(in: harness, name: "Reverter", phase: .running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
 
         let error = try #require(
@@ -2497,7 +2498,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
         defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let error = try #require(
@@ -2521,7 +2522,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
             hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         // A power-off revert has no call waiting on it, so its failure has only
@@ -2805,6 +2806,24 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.lastStartProvisioning == nil)
     }
 
+    @available(macOS 27.0, *)
+    @Test("Skipping an account whose retraction fails throws")
+    func skipWhoseRetractionFailsThrows() async throws {
+        let harness = makeHarness()
+        let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
+        try harness.core.provideGuestAccountPassword(
+            .id(instance.id), password: "analytical-engine")
+        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        let failure = commandError { try harness.core.skipGuestAccount(.id(instance.id)) }
+
+        #expect(failure?.message.contains("could not be skipped") == true)
+        // Both halves stay, so the question is still there to answer.
+        #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.storage.bundles[instance.bundleURL]?.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.library.heldGuestAccountPassword(for: instance) != nil)
+    }
+
     // MARK: - What a start does about it
 
     @available(macOS 27.0, *)
@@ -2878,6 +2897,26 @@ struct VMCommandCoreTests {
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
         #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A cold boot whose account retraction fails reports it with the start and keeps the password")
+    func aColdBootWhoseRetractionFailsReportsItAndKeepsThePassword() async throws {
+        let harness = makeHarness()
+        let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
+        try harness.core.provideGuestAccountPassword(
+            .id(instance.id), password: "analytical-engine")
+        harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        let failure = await commandError { try await harness.core.start(instance) }
+
+        #expect(harness.virtualization.lastStartRoute == .coldBoot)
+        #expect(failure?.message.contains("the boot that delivers its macOS account has run") == true)
+        // The VM came up; only the record of the spent window is missing.
+        #expect(instance.status == .running)
+        #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.storage.bundles[instance.bundleURL]?.pendingGuestAccount == makeAccountIntent())
+        #expect(harness.library.heldGuestAccountPassword(for: instance)?.value == "analytical-engine")
     }
 
     @available(macOS 27.0, *)
@@ -3327,7 +3366,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
             hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil) }
@@ -3471,7 +3510,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
             hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         try await harness.core.stop(
@@ -3562,7 +3601,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
             hostState: .ephemeral(baseline: baseline.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [baseline])
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         let restart = Task {

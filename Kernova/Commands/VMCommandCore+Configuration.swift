@@ -6,9 +6,9 @@ import KernovaLogging
 /// two list edits a caller names by path rather than by id, and the reads that
 /// answer those two lists.
 ///
-/// Every write lands as one ``VMLibrary/updateSettings(of:ifNotSaved:mutate:)``: the
-/// gates and the values are all checked first, so a batch that names one bad
-/// key writes nothing at all.
+/// Every write lands as one ``VMLibrary/updateSettings(of:configuration:hostState:)``:
+/// the gates and the values are all checked before either file is written, so
+/// a batch that names one bad key writes nothing at all.
 extension VMCommandCore {
     // MARK: - Keys
 
@@ -39,51 +39,68 @@ extension VMCommandCore {
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
     ///
-    /// The cross-key refusals are judged on the result, so turning clipboard
-    /// sharing on in the same call as passthrough works whichever order they
-    /// arrive in. A key whose write derives another key's value — `network.mode`
-    /// minting a MAC address — sees the batch in the order given.
+    /// Each file's assignments apply once, to what that file holds rather than
+    /// to memory, so a field another process changed since this one last read
+    /// survives. The configuration's refusals are judged on its result, so
+    /// turning clipboard sharing on in the same call as passthrough works
+    /// whichever order they arrive in. A key whose write derives another key's
+    /// value — `network.mode` minting a MAC address — sees the batch in the
+    /// order given.
     @discardableResult
     func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let current = instance.settings
 
         var resolved: [(key: VMConfigurationKey, value: String)] = []
         for assignment in assignments {
-            let key = try requireKey(named: assignment.key, on: current.configuration)
+            let key = try requireKey(named: assignment.key, on: instance.configuration)
             try require(key.capability(writing: assignment.value), on: instance)
             resolved.append((key, assignment.value))
         }
 
         let context = VMConfigurationWriteContext(snapshots: instance.snapshotManifest)
-        var candidate = current
+        var configurationWrites: [(field: VMConfigurationKey.ConfigurationField, value: String)] =
+            []
+        var hostStateChanges: [(inout VMHostState) -> Void] = []
         for entry in resolved {
-            try entry.key.write(entry.value, &candidate, context)
-        }
-        for entry in resolved where entry.key.read(candidate) != entry.key.read(current) {
-            // Only a key this call actually moved is judged: writing back what
-            // a read answered has to stay a no-op, so `get` output is `set`
-            // input on a VM whose stored value is already inert.
-            guard let message = entry.key.refusalOnResult(candidate.configuration) else { continue }
-            throw CommandError.invalidArgument(message)
+            switch entry.key.field {
+            case .configuration(let field): configurationWrites.append((field, entry.value))
+            case .hostState(let field): hostStateChanges.append(try field.change(entry.value, context))
+            }
         }
 
-        try refuseClipboardPassthrough(
-            on: instance, from: current.configuration, to: candidate.configuration,
-            confirmed: confirmed)
-        if let conflict = library.macAddresses.macAddressConflict(
-            on: instance, movingFrom: current.configuration, to: candidate.configuration)
-        {
-            throw CommandError.conflict(
-                vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-        }
-
-        // Assigning the whole candidate is safe because nothing between reading
-        // `current` and this write awaits — a suspension there would clobber
-        // whatever a concurrent writer landed in between.
-        try writeSettings(of: instance, verb: .setConfiguration) { $0 = candidate }
+        try requireSaved(
+            library.updateSettings(
+                of: instance,
+                configuration: { config in
+                    let held = config
+                    for write in configurationWrites {
+                        try write.field.write(write.value, &config, context)
+                    }
+                    for write in configurationWrites
+                    where write.field.read(config) != write.field.read(held) {
+                        // Only a key this call actually moved is judged: writing
+                        // back what a read answered has to stay a no-op, so `get`
+                        // output is `set` input on a VM whose stored value is
+                        // already inert.
+                        guard let message = write.field.refusalOnResult(config) else { continue }
+                        throw CommandError.invalidArgument(message)
+                    }
+                    try refuseClipboardPassthrough(
+                        on: instance, from: held, to: config, confirmed: confirmed)
+                    if let conflict = library.macAddresses.macAddressConflict(
+                        on: instance, movingFrom: held, to: config)
+                    {
+                        throw CommandError.conflict(
+                            vm: summary(instance), with: summary(conflict.other),
+                            reason: conflict.reason)
+                    }
+                },
+                hostState: { hostState in
+                    for change in hostStateChanges { change(&hostState) }
+                }),
+            of: instance, verb: .setConfiguration)
         #log(
             Self.logger, .notice,
             "Changed \(resolved.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"

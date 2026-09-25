@@ -54,6 +54,15 @@ struct VMSnapshotStoreTests {
         try? FileManager.default.removeItem(at: fixture.bundleURL)
     }
 
+    /// Stages `plan` and installs it, the two steps a revert runs around the
+    /// configuration commit that is not this store's job.
+    private func restore(
+        with store: VMSnapshotStore, _ fixture: Fixture, snapshotID: UUID, plan: VMSnapshotRestorePlan
+    ) throws {
+        try store.stageRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try store.installRestore(bundleURL: fixture.bundleURL, plan: plan)
+    }
+
     private func contents(of url: URL) -> String? {
         (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
     }
@@ -105,73 +114,6 @@ struct VMSnapshotStoreTests {
         let paths = VMSnapshotStore.capturedRelativePaths(
             for: fixture.configuration, layout: fixture.layout)
         #expect(paths == ["Disk.asif"])
-    }
-
-    // MARK: - Manifest
-
-    @Test("A bundle with no manifest reads as empty")
-    func missingManifestReadsEmpty() throws {
-        let fixture = try makeFixture()
-        defer { cleanUp(fixture) }
-        #expect(try VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL).isEmpty)
-    }
-
-    @Test("A saved manifest reads back")
-    func manifestRoundTrips() throws {
-        let fixture = try makeFixture()
-        defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
-        // A whole-second date: the shared config coders write ISO-8601, whose
-        // precision is the second.
-        let snapshot = VMSnapshot(
-            name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            notes: "tools configured", macAddress: nil)
-        let manifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-
-        try store.saveManifest(manifest, bundleURL: fixture.bundleURL)
-
-        #expect(try store.loadManifest(bundleURL: fixture.bundleURL) == manifest)
-    }
-
-    @Test("A loaded snapshot carries the MAC address of the configuration it was taken under")
-    func loadedManifestCarriesEachSnapshotsMACAddress() throws {
-        let fixture = try makeFixture()
-        defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
-        var configuration = fixture.configuration
-        configuration.macAddress = "aa:bb:cc:dd:ee:01"
-        // Listed carrying some other address, which the manifest must not keep.
-        let captured = VMSnapshot(
-            name: "Captured", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            macAddress: "aa:bb:cc:dd:ee:09")
-        let unrecorded = VMSnapshot(
-            name: "No settings", createdAt: Date(timeIntervalSince1970: 1_700_000_100), macAddress: nil)
-        _ = try store.prepareSnapshot(
-            bundleURL: fixture.bundleURL, snapshotID: captured.id, configuration: configuration)
-        try store.saveManifest(
-            VMSnapshotManifest(snapshots: [captured, unrecorded]), bundleURL: fixture.bundleURL)
-
-        let loaded = try store.loadManifest(bundleURL: fixture.bundleURL)
-
-        #expect(loaded.snapshot(id: captured.id)?.macAddress == "aa:bb:cc:dd:ee:01")
-        #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
-        // The snapshot's own configuration is where the address lives; the
-        // manifest never records a second copy of it.
-        let manifestData = try Data(contentsOf: fixture.layout.snapshotManifestURL)
-        #expect(!String(decoding: manifestData, as: UTF8.self).contains("macAddress"))
-    }
-
-    @Test("A corrupt manifest throws rather than reading as empty")
-    func corruptManifestThrows() throws {
-        let fixture = try makeFixture()
-        defer { cleanUp(fixture) }
-        try FileManager.default.createDirectory(
-            at: fixture.layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-        try Data("not json".utf8).write(to: fixture.layout.snapshotManifestURL)
-
-        #expect(throws: VMBundleSidecarFile.Unreadable.self) {
-            try VMSnapshotStore().loadManifest(bundleURL: fixture.bundleURL)
-        }
     }
 
     // MARK: - Capture and restore
@@ -269,7 +211,7 @@ struct VMSnapshotStoreTests {
         try Data("stale-suspend".utf8).write(to: fixture.layout.saveFileURL)
 
         let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
         #expect(contents(of: fixture.layout.saveFileURL) == "saved-state")
@@ -306,7 +248,7 @@ struct VMSnapshotStoreTests {
 
         let plan = try store.planRestore(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
 
         // The clone lands carrying the captured file's modification date, which
         // is what tells a restored slot apart from a guest's own suspend.
@@ -359,7 +301,7 @@ struct VMSnapshotStoreTests {
             configuration: fixture.configuration,
             relativePaths: ["Disk.asif", "AuxiliaryStorage", "Nowhere.asif"], kind: .warm)
         #expect(throws: (any Error).self) {
-            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+            try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
         }
 
         #expect(contents(of: fixture.layout.diskImageURL) == "diverged")
@@ -400,7 +342,7 @@ struct VMSnapshotStoreTests {
             configuration: fixture.configuration,
             relativePaths: ["AdditionalDisks/\(extraID.uuidString).asif"], kind: .warm)
         #expect(throws: (any Error).self) {
-            try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+            try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
         }
 
         // The suspend slot describes the guest RAM belonging to the disks this
@@ -471,7 +413,7 @@ struct VMSnapshotStoreTests {
 
         let plan = try store.planRestore(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
         #expect(!fixture.layout.hasSaveFile)
@@ -496,7 +438,7 @@ struct VMSnapshotStoreTests {
 
         let plan = try store.planRestore(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
 
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
         #expect(!fixture.layout.hasSaveFile)
@@ -559,37 +501,14 @@ struct VMSnapshotStoreTests {
         }
     }
 
-    @Test("Restore writes the plan's configuration into the bundle")
-    func restoreWritesTheConfiguration() throws {
-        let fixture = try makeFixture()
-        defer { cleanUp(fixture) }
-        let store = VMSnapshotStore()
-        let snapshotID = UUID()
-
-        let prepared = try store.prepareSnapshot(
-            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
-            configuration: fixture.configuration)
-        try store.captureDisks(
-            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
-            relativePaths: prepared.relativePaths)
-        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
-
-        var plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
-        plan.configuration.memorySizeInGB = 12
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
-
-        let written = try VMConfiguration.load(fromBundle: fixture.bundleURL)
-        #expect(written.memorySizeInGB == 12)
-    }
-
     @Test("A snapshot neither captures the host state nor writes it back")
     func hostStateStaysOutOfSnapshots() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let store = VMSnapshotStore()
-        let storage = VMStorageService()
+        let files = VMBundleFiles(url: fixture.bundleURL, access: CoordinatedBundleFileAccess())
         let snapshotID = UUID()
-        try storage.saveHostState(VMHostState(), to: fixture.bundleURL)
+        try files.update(.hostState) { $0.displayPreference = .fullscreen }
 
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID,
@@ -600,17 +519,18 @@ struct VMSnapshotStoreTests {
         let edited = VMHostState(
             startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
             agentInstallNudgeDismissed: true)
-        try storage.saveHostState(edited, to: fixture.bundleURL)
+        try files.update(.hostState) { $0 = edited }
 
         let plan = try store.planRestore(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
-        try store.restore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, plan: plan)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
 
         #expect(
             !FileManager.default.fileExists(
                 atPath: fixture.layout.snapshotLayout(id: snapshotID).hostStateURL
                     .path(percentEncoded: false)))
-        #expect(try storage.loadHostState(from: fixture.bundleURL) == edited)
+        // A change that moves nothing answers what the file holds.
+        #expect(try files.update(.hostState) { _ in } == edited)
     }
 
     // MARK: - Staging sweep

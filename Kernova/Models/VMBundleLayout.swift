@@ -11,14 +11,27 @@ import Foundation
 struct VMBundleLayout: Sendable {
     let bundleURL: URL
 
-    /// The serialized `VMConfiguration` (read via `VMConfiguration.load(fromBundle:)`).
+    // MARK: - State files
+
+    /// The four files ``VMBundle`` reads and writes, relative to the bundle root.
+    static let configRelativePath = "config.json"
+    static let hostStateRelativePath = "host-state.json"
+    static let snapshotManifestRelativePath = "Snapshots/manifest.json"
+    static let usbPairingsRelativePath = "usb-accessories.json"
+
+    /// A snapshot's own `config.json`, relative to the bundle root.
+    static func snapshotConfigRelativePath(id: UUID) -> String {
+        "Snapshots/\(id.uuidString)/\(configRelativePath)"
+    }
+
+    /// The serialized `VMConfiguration`.
     var configURL: URL {
-        bundleURL.appendingPathComponent("config.json")
+        bundleURL.appendingPathComponent(Self.configRelativePath)
     }
 
     /// The serialized ``VMHostState``, absent until something first writes it.
     var hostStateURL: URL {
-        bundleURL.appendingPathComponent("host-state.json")
+        bundleURL.appendingPathComponent(Self.hostStateRelativePath)
     }
 
     var diskImageURL: URL {
@@ -57,7 +70,7 @@ struct VMBundleLayout: Sendable {
     /// The USB accessories this VM takes back automatically
     /// (``USBAccessoryPairingSet``).
     var usbPairingsURL: URL {
-        bundleURL.appendingPathComponent("usb-accessories.json")
+        bundleURL.appendingPathComponent(Self.usbPairingsRelativePath)
     }
 
     var additionalDisksDirectoryURL: URL {
@@ -79,7 +92,7 @@ struct VMBundleLayout: Sendable {
     }
 
     var snapshotManifestURL: URL {
-        snapshotsDirectoryURL.appendingPathComponent("manifest.json")
+        bundleURL.appendingPathComponent(Self.snapshotManifestRelativePath)
     }
 
     /// Where a revert clones the snapshot's files before swapping them into the

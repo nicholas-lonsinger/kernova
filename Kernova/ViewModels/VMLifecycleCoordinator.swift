@@ -442,23 +442,29 @@ final class VMLifecycleCoordinator {
 
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
-        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
+        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
         try await serialized(instance, action: "revertToSnapshot") {
             try await virtualizationService.revertToSnapshot(
-                instance, snapshot: snapshot, store: store, adopt: adopt)
+                instance, snapshot: snapshot, store: store,
+                commitConfiguration: commitConfiguration)
         }
     }
 
-    /// Moves one snapshot's captured files to the Trash.
+    /// Takes one snapshot off the list with `unlist`, then moves its captured
+    /// files to the Trash.
     ///
     /// Serialized like the operations that read those files, so a delete cannot
-    /// run while a revert is copying out of the same directory.
+    /// run while a revert is copying out of the same directory — and `unlist`
+    /// runs inside the same claim, so a delete this refuses as busy has
+    /// unlisted nothing. An `unlist` that throws leaves the files in place.
     func discardSnapshot(
-        _ instance: VMInstance, snapshotID: UUID, store: any VMSnapshotStoring
+        _ instance: VMInstance, snapshotID: UUID, store: any VMSnapshotStoring,
+        unlist: @MainActor () throws -> Void
     ) async throws {
         let bundleURL = instance.bundleURL
         try await serialized(instance, action: "discardSnapshot") {
+            try unlist()
             try await Task.detached {
                 try store.discardSnapshot(bundleURL: bundleURL, snapshotID: snapshotID)
             }.value
@@ -602,12 +608,14 @@ final class VMLifecycleCoordinator {
                                 at: persistedDestination, permanently: false)
                             // Keep the persisted path on the file the download
                             // actually writes, so resume across relaunches and
-                            // delete-time cleanup stay keyed to it.
-                            instance.performConfigurationMutation(ifNotSaved: .keep) {
+                            // delete-time cleanup stay keyed to it — a step the
+                            // install stops on, since a download no record
+                            // points at can be neither resumed nor cleaned up.
+                            try instance.performConfigurationMutation {
                                 $0.installContext?.downloadDestinationPath =
                                     downloadDestination.path(percentEncoded: false)
                                 $0.installContext?.requestedFreshDownload = false
-                            }
+                            }.get()
                         }
                     }
 
@@ -635,9 +643,11 @@ final class VMLifecycleCoordinator {
                             Self.logger, .notice,
                             "installMacOS: honoring requestedFreshDownload for '\(instance.name, privacy: .public)' — the existing IPSW + bundle are trashed before the download starts"
                         )
-                        instance.performConfigurationMutation(ifNotSaved: .keep) {
+                        // Recorded before anything is trashed, or a retry would
+                        // trash what this download fetched.
+                        try instance.performConfigurationMutation {
                             $0.installContext?.requestedFreshDownload = false
-                        }
+                        }.get()
                     }
 
                     try await ipswService.downloadRestoreImage(
@@ -664,9 +674,11 @@ final class VMLifecycleCoordinator {
                     ipswURL = localIPSWScope?.url ?? localURL
                     // The context survives relaunches until the install succeeds,
                     // so its stored path and bookmark can both drift between
-                    // retries.
+                    // retries. The install reads the resolved URL above, so a
+                    // write that fails costs nothing here: it is reported, and
+                    // the next attempt resolves the bookmark again.
                     if let reference, let healed = opened?.healedTo {
-                        instance.performConfigurationMutation(ifNotSaved: .keep) {
+                        instance.performConfigurationMutation {
                             $0.healExternalReference(
                                 reference, movedTo: healed.path, bookmark: healed.bookmark)
                         }
@@ -688,11 +700,12 @@ final class VMLifecycleCoordinator {
                 // caller chains an auto-boot. The account the VM was set up with
                 // stays: the boot that delivers it has not run yet, and anything
                 // interrupting the two must leave the next Start something to ask
-                // about.
-                instance.performConfigurationMutation(ifNotSaved: .keep) {
+                // about. An install whose completion does not land fails: the
+                // context stays on disk, so the next Start installs again.
+                try instance.performConfigurationMutation {
                     $0.installContext = nil
                     $0.installedImage = installedImage
-                }
+                }.get()
                 instance.setupState = nil
             } catch is CancellationError {
                 #log(Self.logger, .info, "macOS installation cancelled for '\(instance.name, privacy: .public)'")
@@ -878,11 +891,11 @@ final class VMLifecycleCoordinator {
                 }
                 // Keep the persisted path on the file the download writes, so
                 // resume across relaunches and delete-time cleanup stay keyed
-                // to it.
-                instance.performConfigurationMutation(ifNotSaved: .keep) {
+                // to it; the download does not start unless it lands.
+                try instance.performConfigurationMutation {
                     $0.linuxInstallContext?.downloadDestinationPath =
                         downloadDestination.path(percentEncoded: false)
-                }
+                }.get()
 
                 // The mirror's own size, so the bar reads against the whole
                 // file from the first sample; the transfer's `Content-Length`
@@ -942,7 +955,7 @@ final class VMLifecycleCoordinator {
                     }
                 }
 
-                attachInstallerImage(
+                try attachInstallerImage(
                     at: downloadDestination, named: image.filename,
                     from: InstalledImage(linuxSource: context.source), to: instance)
                 instance.setupState = nil
@@ -1002,7 +1015,8 @@ final class VMLifecycleCoordinator {
 
     /// Attaches the fetched installer image ahead of the VM's main disk,
     /// records `installedImage` as what the VM was set up from, and clears the
-    /// pending download intent.
+    /// pending download intent — throwing when that write does not land, so the
+    /// setup fails and nothing boots.
     ///
     /// `filename` is the name the source gave the ISO, which is what the disk
     /// is labelled with — the file it was written to carries a discriminator
@@ -1015,7 +1029,7 @@ final class VMLifecycleCoordinator {
     private func attachInstallerImage(
         at destination: URL, named filename: String, from installedImage: InstalledImage?,
         to instance: VMInstance
-    ) {
+    ) throws {
         let installer = StorageDisk(
             path: destination.path(percentEncoded: false),
             readOnly: true,
@@ -1023,13 +1037,13 @@ final class VMLifecycleCoordinator {
             bookmark: SecurityScopedBookmark.make(for: destination)
         )
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        instance.performConfigurationMutation(ifNotSaved: .keep) { config in
+        try instance.performConfigurationMutation { config in
             // Position [0] is what EFI boots first, which is the whole reason
             // the installer is on the list at all.
             config.setStorageDisks([installer] + config.effectiveStorageDisks(layout: layout))
             config.linuxInstallContext = nil
             config.installedImage = installedImage
-        }
+        }.get()
         #log(
             Self.logger, .notice,
             "Attached installer image '\(destination.lastPathComponent, privacy: .public)' to '\(instance.name, privacy: .public)'"

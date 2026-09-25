@@ -15,9 +15,9 @@ struct VMSnapshotRestorePlan: Sendable {
     /// The configuration the saved state was written under.
     ///
     /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
-    /// configuration the state was saved from, so a revert installs this over
-    /// the VM's current one; the caller carries the VM's identity across first.
-    var configuration: VMConfiguration
+    /// configuration the state was saved from, so a revert commits this over
+    /// the VM's current one, keeping the VM's identity.
+    let configuration: VMConfiguration
 
     /// The files to write back, derived from ``configuration`` rather than the
     /// VM's current one — a disk the VM gained or lost since the capture is
@@ -29,21 +29,13 @@ struct VMSnapshotRestorePlan: Sendable {
     let kind: VMSnapshotKind
 }
 
-/// The `Snapshots/` store inside a VM bundle: its manifest, the captured disk
-/// copies, and their on-disk footprints.
+/// The `Snapshots/` store inside a VM bundle: the captured disk copies, and
+/// their on-disk footprints. The manifest is a bundle state file, which only
+/// ``VMBundle`` reads and writes.
 ///
 /// Every method blocks on the filesystem, so callers run them off the main
 /// actor.
 protocol VMSnapshotStoring: Sendable {
-    /// Reads the manifest, answering an empty one for a bundle that holds no
-    /// snapshots and throwing for a manifest that can't be read.
-    ///
-    /// Each snapshot carries the ``VMSnapshot/macAddress`` its own
-    /// configuration records.
-    func loadManifest(bundleURL: URL) throws -> VMSnapshotManifest
-
-    func saveManifest(_ manifest: VMSnapshotManifest, bundleURL: URL) throws
-
     /// Creates the snapshot's directory and writes the configuration the
     /// capture is taken under, ready for a saved state to be written beside it.
     func prepareSnapshot(
@@ -70,22 +62,28 @@ protocol VMSnapshotStoring: Sendable {
         bundleURL: URL, snapshotID: UUID, kind: VMSnapshotKind
     ) throws -> VMSnapshotRestorePlan
 
-    /// Writes the snapshot's captured disks and configuration back over the
-    /// bundle's own, replacing whatever is there — installing the snapshot's
-    /// saved state for a warm plan, dropping the bundle's for a cold one.
+    /// Clones the snapshot's captured disks — and, for a warm plan, its saved
+    /// state — into the bundle's restore staging directory, touching nothing
+    /// in the bundle itself.
     ///
-    /// The files are cloned aside first and swapped in only once every clone
-    /// exists, so a failure before the swap leaves the bundle untouched. A
-    /// failure during the swaps leaves the bundle with no saved state at all,
-    /// since the one it held belongs to the disks already replaced.
-    func restore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws
+    /// A failure removes whatever it staged.
+    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws
 
-    /// Removes the staging directory an interrupted revert left in the bundle.
+    /// Swaps the files ``stageRestore(bundleURL:snapshotID:plan:)`` staged into
+    /// the bundle, replacing whatever is there — installing the snapshot's
+    /// saved state for a warm plan, dropping the bundle's for a cold one — and
+    /// removes the staging directory.
     ///
-    /// A revert discards its own staging directory, so one found here outlived
-    /// the process that made it. Its clones stop sharing blocks the moment the
-    /// snapshot they came from is discarded, and no snapshot the library lists
-    /// accounts for them.
+    /// A failure during the swaps leaves the bundle with no saved state at
+    /// all, since the one it held belongs to the disks already replaced.
+    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws
+
+    /// Removes the bundle's restore staging directory: the one an interrupted
+    /// revert left, or the one a revert that stopped before its install
+    /// staged.
+    ///
+    /// Clones left there stop sharing blocks the moment the snapshot they came
+    /// from is discarded, and no snapshot the library lists accounts for them.
     func sweepRestoreStaging(bundleURL: URL)
 
     /// Moves one snapshot's directory to the Trash.

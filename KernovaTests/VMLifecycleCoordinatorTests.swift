@@ -359,7 +359,7 @@ struct VMLifecycleCoordinatorTests {
 
         // A revert reads the very directory this would move to the Trash.
         await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
-            try await coordinator.discardSnapshot(instance, snapshotID: UUID(), store: store)
+            try await coordinator.discardSnapshot(instance, snapshotID: UUID(), store: store) {}
         }
         #expect(store.discardedIDs.isEmpty)
 
@@ -532,6 +532,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
 
         try await coordinator.installMacOS(on: instance, context: context)
@@ -546,6 +548,8 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         // What the wizard persisted: the fallback name it shows before its own
         // lookup answers.
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
@@ -606,6 +610,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSCatalogUsesPinnedURL() async throws {
         let (coordinator, _, installService, ipswService, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
+        let library = makeWiredLibrary(holding: [instance])
+        defer { withExtendedLifetime(library) {} }
         let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
@@ -1045,6 +1051,128 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
+    // MARK: - macOS Install Steps Whose Write Fails
+
+    /// A VM carrying `context`, registered in a library over `storage`.
+    private func makeInstallingInstance(
+        context: MacOSInstallContext, storage: MockVMStorageService
+    ) -> (VMInstance, VMLibrary) {
+        let instance = VMInstanceFixture.make(guestOS: .macOS) { $0.installContext = context }
+        return (instance, makeWiredLibrary(holding: [instance], storage: storage))
+    }
+
+    @Test("A latest install whose destination move cannot be saved fails before the download")
+    func installMacOSLatestWhoseDestinationMoveFailsStopsBeforeTheDownload() async {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("latestMoveUnsaved-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+            downloadsDirectory: downloads)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: downloads.appendingPathComponent(RestoreImageFilename.fallback)
+                .path(percentEncoded: false))
+        let storage = MockVMStorageService()
+        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        #expect(ipswService.downloadCallCount == 0)
+        #expect(installService.installCallCount == 0)
+        #expect(instance.configuration.installContext == context)
+        #expect(storage.bundles[instance.bundleURL]?.installContext == context)
+        #expect(instance.status == .error)
+    }
+
+    @Test("A Download & Replace whose flag cannot be cleared fails before anything is replaced")
+    func installMacOSFreshDownloadWhoseClearFailsReplacesNothing() async {
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("freshClearUnsaved-\(UUID().uuidString)", isDirectory: true)
+        let (coordinator, _, installService, ipswService, _) = makeCoordinator(
+            downloadsDirectory: downloads)
+        // Honored, not lapsed: nothing is written before the flag's clear.
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: downloads.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false),
+            requestedFreshDownload: true)
+        let storage = MockVMStorageService()
+        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        // The replace belongs to the download, which never ran.
+        #expect(ipswService.downloadCallCount == 0)
+        #expect(ipswService.discardResumeDataCallCount == 0)
+        #expect(installService.installCallCount == 0)
+        #expect(instance.configuration.installContext?.requestedFreshDownload == true)
+        #expect(storage.bundles[instance.bundleURL]?.installContext == context)
+        #expect(instance.status == .error)
+    }
+
+    @Test("An install whose completion cannot be saved fails and keeps its context for the next Start")
+    func installMacOSWhoseCompletionFailsKeepsTheContext() async {
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        let storage = MockVMStorageService()
+        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await coordinator.installMacOS(on: instance, context: context)
+        }
+
+        #expect(installService.installCallCount == 1)
+        #expect(instance.configuration.installContext == context)
+        #expect(instance.configuration.installedImage == nil)
+        #expect(storage.bundles[instance.bundleURL] == instance.configuration)
+        #expect(instance.status == .error)
+    }
+
+    @Test("A local IPSW whose heal cannot be saved still installs from the resolved file")
+    func installMacOSLocalIPSWWhoseHealFailsInstallsFromTheResolvedFile() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("localIPSWHeal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let picked = directory.appendingPathComponent("Picked.ipsw")
+        try Data("restore image".utf8).write(to: picked)
+        let bookmark = try #require(SecurityScopedBookmark.make(for: picked))
+        // Moved since the pick, so the bookmark resolves somewhere the stored
+        // path no longer names.
+        try FileManager.default.moveItem(at: picked, to: directory.appendingPathComponent("Moved.ipsw"))
+        let context = MacOSInstallContext(
+            source: .localFile, localIPSWPath: picked.path(percentEncoded: false),
+            localIPSWBookmark: bookmark)
+        let (coordinator, _, installService, _, _) = makeCoordinator()
+        let storage = MockVMStorageService()
+        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
+        defer { withExtendedLifetime(library) {} }
+        storage.saveConfigurationError = NSError(domain: "test", code: 1)
+        var contextDuringInstall: MacOSInstallContext?
+        installService.onInstall = {
+            contextDuringInstall = instance.configuration.installContext
+            // Writable again by the time the install completes.
+            storage.saveConfigurationError = nil
+        }
+
+        try await coordinator.installMacOS(on: instance, context: context)
+
+        #expect(installService.lastRestoreImageURL?.lastPathComponent == "Moved.ipsw")
+        // The heal never landed: the bundle still named the picked path.
+        #expect(contextDuringInstall == context)
+        #expect(instance.configuration.installContext == nil)
+    }
+
     // MARK: - Linux Installer Image
 
     /// The Linux pipeline's own seams, over a test-owned Downloads directory
@@ -1220,6 +1348,50 @@ struct VMLifecycleCoordinatorTests {
         #expect(disks.count == 2)
         #expect(disks[1].label == "Main Disk")
         #expect(disks[1].isInternal)
+    }
+
+    @Test("A Linux download whose destination cannot be saved fails before the download")
+    func downloadLinuxImageWhoseDestinationFailsStopsBeforeTheDownload() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context, in: fixture)
+        fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.downloadService.downloadCallCount == 0)
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
+        #expect(instance.configuration.linuxInstallContext == context)
+        #expect(fixture.storage.bundles[instance.bundleURL]?.linuxInstallContext == context)
+        #expect(instance.status == .error)
+    }
+
+    @Test("A Linux installer whose attach cannot be saved fails the setup and attaches nothing")
+    func downloadLinuxImageWhoseAttachFailsAttachesNothing() async throws {
+        let fixture = try makeLinuxFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
+        // Already naming the resolved destination, so the attach is the one
+        // write the pipeline makes.
+        let destination = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.destinationFilename)
+        let context = LinuxInstallContext(
+            source: .catalogEntry(makeLinuxCatalogEntry()),
+            downloadDestinationPath: destination.path(percentEncoded: false))
+        let instance = makeLinuxInstance(context: context, in: fixture)
+        let held = instance.configuration
+        fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
+
+        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
+            try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
+        }
+
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(instance.configuration == held)
+        #expect(fixture.storage.bundles[instance.bundleURL] == held)
+        #expect(instance.status == .error)
     }
 
     @Test("downloadLinuxImage persists the destination before the download runs")
@@ -1411,10 +1583,10 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1630,10 +1802,10 @@ struct VMLifecycleCoordinatorTests {
         // whose step is known: the destination is persisted while Download
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)
@@ -1689,10 +1861,10 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         var observedSteps: [Int] = []
-        let persist = instance.onUpdateSettings
-        instance.onUpdateSettings = { unsaved, mutate in
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(unsaved, mutate) ?? .refused(.noLibrary)
+            return persist?(mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.downloadLinuxImage(on: instance, context: context)

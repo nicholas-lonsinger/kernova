@@ -332,8 +332,9 @@ struct VMSettingsGeneralPanelTests {
         let instance = makeSettingsInstance(
             guestOS: .linux,
             hostState: baseline.map { .ephemeral(baseline: $0.id) } ?? VMHostState())
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: snapshots, currentID: snapshots.first?.id)
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: snapshots, currentID: snapshots.first?.id))
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -374,7 +375,7 @@ struct VMSettingsGeneralPanelTests {
     @Test("A VM already in the mode keeps a live toggle with no snapshots")
     func ephemeralToggleStaysLiveWhenAlreadyOn() {
         let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
-        instance.snapshotManifest = VMSnapshotManifest()
+        instance.seedSnapshotManifest(VMSnapshotManifest())
         // Re-runs `apply()` over the mutated manifest.
         vc.viewDidAppear()
 

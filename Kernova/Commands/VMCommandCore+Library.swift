@@ -48,7 +48,7 @@ extension VMCommandCore {
             Self.logger, .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
         switch library.updateConfiguration(
-            of: instance, ifNotSaved: .discard, mutate: { $0.name = trimmed })
+            of: instance, mutate: { $0.name = trimmed })
         {
         case .saved:
             return
@@ -82,7 +82,7 @@ extension VMCommandCore {
         }
 
         let phantom = VMInstance(
-            configuration: configuration, bundleURL: bundleURL,
+            arriving: configuration, bundleURL: bundleURL,
             phase: VMLibrary.initialPhase(
                 for: configuration, layout: VMBundleLayout(bundleURL: bundleURL)),
             preferences: preferences)
@@ -107,11 +107,13 @@ extension VMCommandCore {
                 // write is a `createDirectory` and one small atomic
                 // `config.json`, and queueing it behind two in-flight imports
                 // would hold the new VM at "Creating…" for their copies.
-                try await Task.detached { try storage.createVMBundle(configuration, at: staged) }
-                    .value
+                try await Task.detached {
+                    try storage.createVMBundle(at: staged)
+                    try VMBundleFiles(url: staged, access: storage.bundleFiles)
+                        .writeInitial(configuration)
+                }.value
                 try await diskImages.createDiskImage(
                     at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
-                return configuration
             },
             onSuccess: { [weak self] in
                 #log(
@@ -233,7 +235,8 @@ extension VMCommandCore {
         }
 
         let phantom = VMInstance(
-            configuration: clonedConfig, bundleURL: bundleURL, preferences: preferences)
+            arriving: clonedConfig, bundleURL: bundleURL, phase: .stopped,
+            preferences: preferences)
 
         let sourceBundleURL = instance.bundleURL
         let sourceName = instance.name
@@ -251,8 +254,7 @@ extension VMCommandCore {
                 let log = Self.logger
                 let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
                     try storage.cloneVMBundle(
-                        from: sourceBundleURL, to: staged, newConfiguration: config,
-                        filesToCopy: bundleFilesToCopy)
+                        from: sourceBundleURL, to: staged, filesToCopy: bundleFilesToCopy)
 
                     if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
                         let layout = VMBundleLayout(bundleURL: staged)
@@ -284,12 +286,18 @@ extension VMCommandCore {
                     return skipped
                 }
 
+                // The one configuration the clone writes: remapped onto the
+                // disks the copy wrote, when it copied any.
+                let stagedFiles = VMBundleFiles(url: staged, access: storage.bundleFiles)
                 // `clonedForNewInstance` gives every disk a fresh `id` but copies its
                 // `path` verbatim, while the copy above wrote each file to
                 // `AdditionalDisks/<new-id>.asif` — without this remap, boot-time
                 // resolution looks for the source bundle's id and fails with
                 // `storageDiskNotFound`.
-                guard !diskMapping.isEmpty else { return config }
+                guard !diskMapping.isEmpty else {
+                    try stagedFiles.writeInitial(config)
+                    return
+                }
                 let remappedPaths: [UUID: String] = Dictionary(
                     uniqueKeysWithValues: diskMapping.map { mapping in
                         (
@@ -319,8 +327,7 @@ extension VMCommandCore {
                 }
                 var remappedConfig = config
                 remappedConfig.setStorageDisks(remapped)
-                try storage.saveConfiguration(remappedConfig, to: staged)
-                return remappedConfig
+                try stagedFiles.writeInitial(remappedConfig)
             },
             onSuccess: {
                 #log(
@@ -362,7 +369,8 @@ extension VMCommandCore {
     func importVM(from sourceURL: URL) throws -> VMSummary {
         do {
             let vmsDir = try storageService.vmsDirectory
-            let config = try storageService.loadConfiguration(from: sourceURL)
+            let config = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
+                .readConfiguration()
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
@@ -381,7 +389,7 @@ extension VMCommandCore {
 
             let destinationURL = library.reserveDestination(for: sourceURL, in: vmsDir)
             let phantom = VMInstance(
-                configuration: config, bundleURL: destinationURL, phase: initialPhase,
+                arriving: config, bundleURL: destinationURL, phase: initialPhase,
                 preferences: preferences)
 
             let storage = storageService
@@ -395,12 +403,10 @@ extension VMCommandCore {
                         // something a bundle carries in: a VM arriving
                         // pre-marked would boot on the next launch without
                         // ever being asked for. The local user marks it.
-                        var hostState = try storage.loadHostState(from: staged)
-                        guard hostState.startsAutomaticallyOnLaunch else { return }
-                        hostState.startsAutomaticallyOnLaunch = false
-                        try storage.saveHostState(hostState, to: staged)
+                        try VMBundleFiles(url: staged, access: storage.bundleFiles).update(.hostState) {
+                            $0.startsAutomaticallyOnLaunch = false
+                        }
                     }
-                    return config
                 },
                 onSuccess: {
                     #log(

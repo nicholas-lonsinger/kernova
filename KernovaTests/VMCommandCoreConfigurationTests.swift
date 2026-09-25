@@ -160,6 +160,32 @@ struct VMCommandCoreConfigurationTests {
             ])
     }
 
+    @Test("A set keeps what another copy wrote to the bundle since this one read it")
+    func setKeepsFieldsChangedOnDiskSinceLoad() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        // Another Kernova copy changed memory and the display preference after
+        // this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.memorySizeInGB += 2
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        var hostStateOnDisk = instance.hostState
+        hostStateOnDisk.displayPreference = .fullscreen
+        harness.storage.files.setHostState(hostStateOnDisk, at: instance.bundleURL)
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [ConfigurationEntry(key: "display.autoResize", value: "false")],
+            confirmed: false)
+
+        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
+        #expect(configuration.memorySizeInGB == onDisk.memorySizeInGB)
+        #expect(!configuration.displayAutoResizes)
+        #expect(harness.storage.hostStates[instance.bundleURL]?.displayPreference == .fullscreen)
+        #expect(instance.configuration == configuration)
+        #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
+    }
+
     @Test("One bad value in a batch writes nothing at all")
     func aBatchIsAtomic() throws {
         let harness = makeHarness()
@@ -177,6 +203,26 @@ struct VMCommandCoreConfigurationTests {
         }
 
         #expect(instance.configuration == before)
+    }
+
+    @Test("A bad host-state value writes neither file")
+    func aBadHostStateValueWritesNothing() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        let before = instance.settings
+
+        #expect(throws: CommandError.self) {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [
+                    ConfigurationEntry(key: "cpus", value: "3"),
+                    ConfigurationEntry(key: "display.preference", value: "sideways"),
+                ],
+                confirmed: false)
+        }
+
+        #expect(instance.settings == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == before.configuration)
     }
 
     @Test("One key the state will not take writes nothing at all")
@@ -595,6 +641,35 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.displayWidth == 1600)
     }
 
+    @Test("A width the new density would refuse lands whole when set before it")
+    func displayWidthThenHiDPILandsWhole() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = false
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch)
+        }
+
+        // The width is judged against the density it arrives under; the
+        // density then rescales what landed. Each write runs once, so the
+        // width is never judged a second time under the density that followed.
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "display.width", value: "6000"),
+                ConfigurationEntry(key: "display.hidpi", value: "true"),
+            ],
+            confirmed: false)
+
+        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
+        #expect(configuration.displayHiDPI)
+        #expect(instance.configuration == configuration)
+        #expect(try value(answered, "display.hidpi") == "true")
+        #expect(
+            try value(answered, "display.width") == String(configuration.displayBaseSize.width))
+    }
+
     // MARK: - MAC address
 
     @Test("A networked VM cannot be left with no address to send from")
@@ -627,6 +702,59 @@ struct VMCommandCoreConfigurationTests {
             confirmed: false)
         #expect(instance.configuration.macAddress == nil)
         #expect(!instance.configuration.networkEnabled)
+    }
+
+    @Test("Clearing the address while giving the VM a network lands whole")
+    func emptyMACWithANewNetworkLandsWhole() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness) {
+            $0.networkEnabled = false
+            $0.macAddress = nil
+        }
+
+        // The mode's write mints the address the empty spelling cleared a
+        // moment before, and the result is judged once, on what both left.
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "network.mac", value: ""),
+                ConfigurationEntry(key: "network.mode", value: "shared"),
+            ],
+            confirmed: false)
+
+        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
+        #expect(configuration.networkEnabled)
+        let minted = try #require(configuration.macAddress)
+        #expect(instance.configuration == configuration)
+        #expect(try value(answered, "network.mac") == minted)
+        #expect(try value(answered, "network.mode") == "shared")
+    }
+
+    @Test("A batch of configuration keys and a host-state key lands in both files")
+    func aMixedBatchLandsInBothFiles() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness) {
+            $0.networkEnabled = false
+            $0.macAddress = nil
+        }
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "network.mac", value: ""),
+                ConfigurationEntry(key: "display.preference", value: "popOut"),
+                ConfigurationEntry(key: "network.mode", value: "shared"),
+                ConfigurationEntry(key: "cpus", value: "3"),
+            ],
+            confirmed: false)
+
+        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
+        #expect(configuration.networkEnabled)
+        #expect(configuration.macAddress != nil)
+        #expect(configuration.cpuCount == 3)
+        #expect(harness.storage.hostStates[instance.bundleURL]?.displayPreference == .popOut)
+        #expect(instance.configuration == configuration)
+        #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
     // MARK: - Persistence

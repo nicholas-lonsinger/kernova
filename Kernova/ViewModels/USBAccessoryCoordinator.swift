@@ -53,15 +53,18 @@ final class USBAccessoryCoordinator {
     private let lifecycle: VMLifecycleCoordinator
     private let service: any USBAccessoryProviding
 
-    /// Accessories the user has just taken back by hand, each spent by the next
-    /// assignment carrying it.
+    /// Accessories the user has asked to take back by hand, each spent by the
+    /// next assignment carrying it.
     ///
     /// A one-shot token rather than a time window: a detach re-enumerates the
-    /// device and macOS hands it back after a delay nothing bounds, and the
-    /// returning unit must neither be re-attached nor prompted for. A token
-    /// whose device never comes back is inert; a genuine replug of the same unit
-    /// in the same port before the token is spent costs one suppressed prompt
-    /// and leaves the accessory with the host, one menu item from being placed.
+    /// device and macOS hands it back after a delay nothing bounds — possibly
+    /// before the detach has returned — and the returning unit must neither be
+    /// re-attached nor prompted for. A token whose device never comes back is
+    /// inert. One armed for a detach that failed stays until that device next
+    /// arrives, which holds it for the host as the user last asked. A genuine
+    /// replug of the same unit in the same port before the token is spent costs
+    /// one suppressed prompt and leaves the accessory with the host, one menu
+    /// item from being placed.
     private var releasedByUser: Set<USBAccessoryIdentity> = []
 
     /// Accessories waiting to be asked about, and the prompt on screen.
@@ -259,27 +262,33 @@ final class USBAccessoryCoordinator {
     // MARK: - The User's Own Edits
 
     /// Records the pairing an attach the user asked for creates, and takes the
-    /// accessory's key off every other VM.
-    func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) {
+    /// accessory's key off every other VM; throws when a pairing write fails.
+    func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) throws {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
-        pairings.pairUSBAccessory(pairing, with: instance)
+        try pairings.pairUSBAccessory(pairing, with: instance)
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will take USB accessory \(accessory.displayName, privacy: .public) back automatically"
         )
     }
 
-    /// Forgets the pairing a detach the user asked for ends, and arms the token
-    /// that keeps the detach's own echo from undoing it.
+    /// Arms the token that keeps a detach the user is asking for from being
+    /// undone by its own echo — before the detach runs, since the echo can
+    /// arrive while it is in flight.
     ///
-    /// Both halves or neither: the detach re-enumerates the device and macOS
-    /// hands it straight back, so a forgotten pairing without the token would
-    /// prompt on every detach, and a token without the forgetting would attach
-    /// the device again before the user could pick it up.
-    func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) {
+    /// Without the token the returning device would meet the pairing the
+    /// detach has not yet ended, and go straight back into the guest.
+    func userDetaching(_ accessory: USBAccessoryInfo) {
         guard let identity = accessory.identity else { return }
         releasedByUser.insert(identity)
-        pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
+    }
+
+    /// Forgets the pairing a detach the user asked for ends; throws when the
+    /// write fails, and the pairing stays for the device's next arrival after
+    /// the echo ``userDetaching(_:)`` armed for.
+    func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) throws {
+        guard let identity = accessory.identity else { return }
+        try pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"

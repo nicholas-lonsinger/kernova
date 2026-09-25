@@ -220,7 +220,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 // registers and unregisters as a drag destination when the guest
                 // agent comes and goes, the VM pauses, or the toggle flips.
                 _ = self.instance.configuration.dropFilesEnabled
-                _ = self.instance.configuration.lastSeenAgentVersion
+                _ = self.instance.lastSeenAgentVersion
                 _ = self.instance.vsockDropService?.isConnected
                 _ = self.instance.vsockControlService?.guestSupportsDropFiles
                 _ = self.instance.hasLiveEphemeralSession

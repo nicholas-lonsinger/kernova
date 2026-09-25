@@ -428,8 +428,9 @@ struct VMSettingsOverviewTests {
         #expect(findLabel(withText: "Latest", in: snapshots) == nil)
 
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [snapshot], currentID: snapshot.id))
         reapply(vc, (instance, viewModel))
 
         // The count sits beside the title, the footprint joining it once the
@@ -496,8 +497,9 @@ struct VMSettingsOverviewTests {
         viewModel.library.instances.append(instance)
         let first = VMSnapshot(name: "First", macAddress: nil)
         let second = VMSnapshot(name: "Second", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: [first, second], currentID: second.id)
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [first, second], currentID: second.id))
         reapply(vc, (instance, viewModel))
 
         let resolver = vc.overviewResolverForTesting
@@ -507,8 +509,9 @@ struct VMSettingsOverviewTests {
         // Capturing another leaves the set part-measured, so the card states the
         // count alone until the fresh read covers the newcomer too.
         let third = VMSnapshot(name: "Third", macAddress: nil)
-        instance.snapshotManifest = VMSnapshotManifest(
-            snapshots: [first, second, third], currentID: third.id)
+        instance.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [first, second, third], currentID: third.id))
         reapply(vc, (instance, viewModel))
         #expect(resolver.resolved.snapshotTotalBytes == nil)
 
@@ -520,8 +523,9 @@ struct VMSettingsOverviewTests {
         let other = makeInstance(guestOS: .macOS)
         viewModel.library.instances.append(other)
         let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
-        other.snapshotManifest = VMSnapshotManifest(
-            snapshots: [onlySnapshot], currentID: onlySnapshot.id)
+        other.seedSnapshotManifest(
+            VMSnapshotManifest(
+                snapshots: [onlySnapshot], currentID: onlySnapshot.id))
         vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
         #expect(resolver.resolved.snapshotTotalBytes == nil)
         #expect(

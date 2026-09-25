@@ -47,7 +47,7 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 ///
 /// Every one resolves through a ``VMSelector``, refuses through
 /// ``VMCommandCore/require(_:on:)``, and writes through
-/// ``VMLibrary/updateConfiguration(of:ifNotSaved:mutate:)``. Consent is a parameter:
+/// ``VMLibrary/updateConfiguration(of:mutate:)``. Consent is a parameter:
 /// trashing the file behind an attachment refuses without it.
 extension VMCommandCore {
     // MARK: - Storage Disks
@@ -310,7 +310,7 @@ extension VMCommandCore {
         // configuration write refuses. The file is the user's and stays.
         let created = destinationURL.path(percentEncoded: false)
         switch library.updateConfiguration(
-            of: instance, ifNotSaved: .discard,
+            of: instance,
             mutate: { config in
                 config.removableMedia = (config.removableMedia ?? []) + [item]
             })
@@ -547,7 +547,7 @@ extension VMCommandCore {
                 verb: .guestAgentDisk,
                 message: "The Guest Agent installer is missing from this copy of Kernova.")
         }
-        let delivery = GuestAgentDiskDelivery.mode(for: instance.configuration)
+        let delivery = GuestAgentDiskDelivery.mode(for: instance.effectiveConfiguration)
         guard delivery == .usb else {
             #log(
                 Self.logger, .debug,
@@ -599,7 +599,7 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
         switch library.updateConfiguration(
-            of: instance, ifNotSaved: .discard,
+            of: instance,
             mutate: { config in
                 let pruned = (config.removableMedia ?? []).filter { $0.path != path }
                 config.removableMedia = pruned.isEmpty ? nil : pruned

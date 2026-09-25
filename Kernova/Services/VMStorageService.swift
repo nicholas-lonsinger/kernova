@@ -42,6 +42,8 @@ struct VMStorageService: Sendable {
         }
     }
 
+    var bundleFiles: any VMBundleFileAccessing { CoordinatedBundleFileAccess() }
+
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         try vmsDirectory.appendingPathComponent(
             "\(configuration.id.uuidString).\(VMBundleFormat.fileExtension)",
@@ -157,48 +159,22 @@ struct VMStorageService: Sendable {
         }
     }
 
-    func loadConfiguration(from bundleURL: URL) throws -> VMConfiguration {
-        try VMConfiguration.load(fromBundle: bundleURL)
-    }
-
-    func saveConfiguration(_ configuration: VMConfiguration, to bundleURL: URL) throws {
-        let configURL = VMBundleLayout(bundleURL: bundleURL).configURL
-        let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
-        try data.write(to: configURL, options: .atomic)
-        #log(
-            Self.logger, .info,
-            "Saved configuration for VM '\(configuration.name, privacy: .public)' to \(bundleURL.lastPathComponent, privacy: .public)"
-        )
-    }
-
-    func loadHostState(from bundleURL: URL) throws -> VMHostState {
-        try VMBundleSidecarFile.read(
-            VMHostState.self, at: VMBundleLayout(bundleURL: bundleURL).hostStateURL)
-            ?? VMHostState()
-    }
-
-    func saveHostState(_ hostState: VMHostState, to bundleURL: URL) throws {
-        try VMBundleSidecarFile.write(
-            hostState, to: VMBundleLayout(bundleURL: bundleURL).hostStateURL)
-    }
-
-    /// Creates a new VM bundle directory at `bundleURL` and saves the initial configuration.
+    /// Creates a new, empty VM bundle directory at `bundleURL`.
     ///
     /// Every caller writes into a freshly minted ``makeStagedBundleURL()``; the
     /// collision guard is the rename in ``publishBundle(from:to:)``.
-    func createVMBundle(_ configuration: VMConfiguration, at bundleURL: URL) throws {
+    func createVMBundle(at bundleURL: URL) throws {
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
-        try saveConfiguration(configuration, to: bundleURL)
-
         #log(
             Self.logger, .notice,
-            "Created VM bundle for '\(configuration.name, privacy: .public)' at \(bundleURL.lastPathComponent, privacy: .public)"
-        )
+            "Created VM bundle directory \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
+    /// Creates `destinationBundleURL` and copies `filesToCopy` into it from the
+    /// source bundle, skipping any the source lacks; the clone writes its own
+    /// configuration.
     func cloneVMBundle(
-        from sourceBundleURL: URL, to destinationBundleURL: URL, newConfiguration: VMConfiguration,
-        filesToCopy: [String]
+        from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String]
     ) throws {
         try FileManager.default.createDirectory(at: destinationBundleURL, withIntermediateDirectories: true)
 
@@ -210,8 +186,6 @@ struct VMStorageService: Sendable {
                 try fm.copyItem(at: sourceFile, to: destinationFile)
             }
         }
-
-        try saveConfiguration(newConfiguration, to: destinationBundleURL)
 
         #log(
             Self.logger, .notice,

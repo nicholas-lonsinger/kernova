@@ -91,7 +91,7 @@ struct EphemeralModeInstanceTests {
     func noBaselineWhileOff() {
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         let instance = makeInstance(VMHostState(ephemeralBaselineSnapshotID: snapshot.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
 
         #expect(instance.ephemeralBaselineSnapshot == nil)
         #expect(!instance.isEphemeralBaseline(snapshot))
@@ -99,9 +99,11 @@ struct EphemeralModeInstanceTests {
 
     @Test("The baseline resolves through the manifest")
     func baselineResolves() {
-        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
+        // A whole-second date: the manifest is ISO-8601, whose precision is the second.
+        let snapshot = VMSnapshot(
+            name: "Clean", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
         let instance = makeInstance(.ephemeral(baseline: snapshot.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
 
         #expect(instance.ephemeralBaselineSnapshot == snapshot)
         #expect(instance.isEphemeralBaseline(snapshot))
@@ -119,7 +121,7 @@ struct EphemeralModeInstanceTests {
     func liveSessionMarkerFollowsTheSession() {
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         let instance = makeInstance(.ephemeral(baseline: snapshot.id))
-        instance.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
 
         // Stopped: the mode is on, but nothing is running to discard.
         #expect(!instance.hasLiveEphemeralSession)

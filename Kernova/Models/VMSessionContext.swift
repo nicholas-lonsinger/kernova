@@ -74,12 +74,20 @@ final class VMSessionContext {
     let bootedIntoRecovery: Bool
 
     /// `true` when this VM has reached `.running`, the host previously saw a
-    /// guest agent connect (`configuration.lastSeenAgentVersion != nil`), and a
+    /// guest agent connect (`VMInstance.lastSeenAgentVersion != nil`), and a
     /// grace period has elapsed without a `Hello` arriving over the control
     /// channel.
     ///
     /// Cleared by the next successful Hello.
     var agentExpectedButMissing = false
+
+    /// What this session's latest Hello reported, `nil` before one arrives.
+    var observedAgentInfo: ObservedAgentInfo?
+
+    /// The external file references this session's boot found moved, and
+    /// where to — what its configuration build reads
+    /// (`VMInstance.effectiveConfiguration`).
+    @ObservationIgnored var heals: [ExternalReferenceHeal] = []
 
     /// `true` once a `Hello` has arrived on this VM session.
     ///

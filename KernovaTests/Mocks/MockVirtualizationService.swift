@@ -215,12 +215,10 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// settings, stopped on a cold snapshot's disks.
     func revertToSnapshot(
         _ instance: VMInstance, snapshot: VMSnapshot, store: any VMSnapshotStoring,
-        adopt: @MainActor (VMSnapshotRestorePlan) -> Void
+        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws {
         let plan = try store.planRestore(
             bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind)
-        var restore = plan
-        restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
 
         let wasLive = instance.hasLiveVirtualMachine
         instance.tearDownSession(restingAt: .revertingToSnapshot)
@@ -228,9 +226,20 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.enter(instance.restingPhase(withoutSlot: .stopped))
             throw error
         }
-        try store.restore(
-            bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: restore)
-        adopt(restore)
+        // Staged, committed, installed, in the real service's order.
+        do {
+            try store.stageRestore(bundleURL: instance.bundleURL, snapshotID: snapshot.id, plan: plan)
+            do {
+                try commitConfiguration(plan)
+            } catch {
+                store.sweepRestoreStaging(bundleURL: instance.bundleURL)
+                throw error
+            }
+            try store.installRestore(bundleURL: instance.bundleURL, plan: plan)
+        } catch {
+            instance.enter(instance.restingPhase(withoutSlot: .stopped))
+            throw error
+        }
         revertedSnapshots.append(snapshot)
         // A warm snapshot's own saved state is what the VM comes back on, and a
         // cold one leaves the bundle without a slot. The store mock copies no
