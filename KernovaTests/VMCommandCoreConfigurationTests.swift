@@ -1191,7 +1191,7 @@ struct VMCommandCoreConfigurationTests {
         harness.authority.substitute = picked
         // The panel waits on a person, so the VM can be started under it — and
         // a share written onto a running VM is stored inert until it next boots.
-        harness.authority.whilePanelStands = { instance.enter(.running(sessionID: UUID())) }
+        harness.authority.whilePanelStands = { instance.activity.placeForTesting(.running(sessionID: UUID())) }
 
         do {
             try await harness.core.addSharedDirectory(

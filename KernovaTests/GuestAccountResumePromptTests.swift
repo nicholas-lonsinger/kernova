@@ -58,7 +58,7 @@ struct GuestAccountResumePromptTests {
             $0.pendingGuestAccount = intent
             mutate(&$0)
         }
-        instance.enter(installPending ? .initialBoot : .stopped)
+        instance.activity.placeForTesting(installPending ? .initialBoot : .stopped)
         viewModel.library.register(instance, storage: storage)
         return instance
     }

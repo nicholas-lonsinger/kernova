@@ -187,7 +187,7 @@ struct VMInstanceDisplayDropTests {
 
         // Pausing tears down no vsock, so every channel below still reads as
         // connected — only the phase says the guest cannot answer.
-        harness.instance.enter(.suspended)
+        harness.instance.activity.placeForTesting(.suspended)
 
         #expect(harness.instance.vsockDropService?.isConnected == true)
         #expect(harness.instance.displayDropAvailability == .disconnected)

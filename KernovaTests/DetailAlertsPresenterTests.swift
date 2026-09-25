@@ -334,7 +334,7 @@ struct DetailAlertsPresenterTests {
     func takeSnapshotSheetDedupesWhileQueued() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.running(sessionID: UUID()))
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
 
         // No window, so nothing drains: both requests would otherwise sit in
         // `pending` and show two sheets back to back.
@@ -349,7 +349,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertNamesTheSuspendedSession() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.suspended)
+        vm.activity.placeForTesting(.suspended)
         // A capturable suspend slot: every predicate a suspended VM is judged
         // by needs one on disk, not just the status.
         defer { VMInstanceFixture.removeBundle(of: vm) }
@@ -370,7 +370,7 @@ struct DetailAlertsPresenterTests {
     func forceStopAlertOrdersItsButtons() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.running(sessionID: UUID()))
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
 
         let alert = presenter.forceStopAlertForTesting(vm)
 
@@ -506,7 +506,7 @@ struct DetailAlertsPresenterTests {
         var hostState = VMHostState()
         hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         let vm = makeInstance(in: viewModel, hostState: hostState)
-        vm.enter(.suspended)
+        vm.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id))
@@ -522,7 +522,7 @@ struct DetailAlertsPresenterTests {
     func discardAlertOnAPlainVMIsUnchanged() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.suspended)
+        vm.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
 
@@ -536,7 +536,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnALiveVMOffersSnapshotFirst() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.running(sessionID: UUID()))
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -549,7 +549,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAStoppedVMOffersSnapshotFirst() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.stopped)
+        vm.activity.placeForTesting(.stopped)
         let snapshot = VMSnapshot(name: "Before the update", kind: .cold, macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -561,7 +561,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAColdTargetNamesThePowerOff() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.running(sessionID: UUID()))
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
@@ -574,7 +574,7 @@ struct DetailAlertsPresenterTests {
     func revertAlertOnAColdTargetFromColdPaused() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
-        vm.enter(.suspended)
+        vm.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)

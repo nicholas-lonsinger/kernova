@@ -510,7 +510,7 @@ struct VMSettingsNetworkPanelTests {
         let field = try #require(editableField("MAC address", in: vc.view))
         typeText("aa:bb:cc:dd:ee:01", into: field)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         commitEdit(field)
 
         #expect(instance.configuration == before)
@@ -533,7 +533,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(field.currentEditor() != nil)
         typeText("aa:bb:cc:dd:ee:01", into: field)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         // The refresh the start makes leaves the typed address to its end-edit.
         vc.viewDidAppear()
         #expect(field.currentEditor()?.string == "aa:bb:cc:dd:ee:01")
@@ -577,7 +577,7 @@ struct VMSettingsNetworkPanelTests {
         // The holder is live on Shared; this VM shares its address on Host Only,
         // which the start guard permits — the two are on different networks.
         let holder = try #require(viewModel.instances.first)
-        holder.enter(.running(sessionID: UUID()))
+        holder.activity.placeForTesting(.running(sessionID: UUID()))
         let (vc, instance) = makeNetworkController(
             mode: .hostOnly, isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))

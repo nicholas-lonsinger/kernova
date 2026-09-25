@@ -83,13 +83,13 @@ struct SidebarViewControllerTests {
         // stopped color on the selection highlight instead of inverting to white.
         #expect(instance.statusDisplayNSColor == .systemGray)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(instance.statusDisplayNSColor == .systemGreen)
 
-        instance.enter(.failed(message: "Test failure"))
+        instance.activity.placeForTesting(.failed(message: "Test failure"))
         #expect(instance.statusDisplayNSColor == .systemRed)
 
-        instance.enter(.starting(sessionID: nil))
+        instance.activity.placeForTesting(.starting(sessionID: nil))
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 

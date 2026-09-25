@@ -556,7 +556,7 @@ struct VMCommandCoreAttachmentTests {
             }
         }
         try await diskImages.parked.wait { diskImages.isParked }
-        instance.enter(.saving(sessionID: sessionID))
+        instance.activity.placeForTesting(.saving(sessionID: sessionID))
         diskImages.resumeCreateDiskImage()
         let refusal = await creation.value
 
@@ -842,7 +842,7 @@ struct VMCommandCoreAttachmentTests {
         // can land in the suspension the sharing resolve opens — this is that
         // keystroke, landing there deterministically.
         harness.core.afterSharingResolveForTesting = {
-            instance.enter(.starting(sessionID: UUID()))
+            instance.activity.placeForTesting(.starting(sessionID: UUID()))
         }
 
         let refusal = await commandError {
@@ -868,7 +868,7 @@ struct VMCommandCoreAttachmentTests {
         // Removable media is hot-pluggable, so the state that refuses is a VM
         // still coming up: no live session to attach to yet.
         harness.core.afterSharingResolveForTesting = {
-            instance.enter(.starting(sessionID: UUID()))
+            instance.activity.placeForTesting(.starting(sessionID: UUID()))
         }
 
         let refusal = await commandError {
@@ -1088,7 +1088,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.hasGuestAgentInstallerMounted)
         #expect(harness.removableMediaDevices.detachCallCount == 0)
 
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         try harness.core.unmountGuestAgentDisk(.id(instance.id))
         #expect(instance.configuration.removableMedia == nil)
     }
@@ -1292,7 +1292,7 @@ struct VMCommandCoreAttachmentTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A bring-up another door issued while the alert was up — the slot is
         // still on disk, and VZ has not finished loading it.
-        instance.enter(phase)
+        instance.activity.placeForTesting(phase)
 
         await #expect(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(

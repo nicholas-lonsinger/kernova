@@ -53,7 +53,7 @@ struct VMRemovableMediaReconcilerTests {
         let instance = VMInstanceFixture.make(mutate: mutate)
         harness.library.register(instance, storage: harness.storage)
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         return (instance, sessionID)
     }
@@ -83,7 +83,7 @@ struct VMRemovableMediaReconcilerTests {
 
         for phase in unattachable + admitting {
             let instance = VMInstanceFixture.make()
-            instance.enter(phase)
+            instance.activity.placeForTesting(phase)
             let old = instance.configuration
             let mediaChange = configWithRemovable(old, path: "/tmp/A.iso")
             var otherChange = old
@@ -214,7 +214,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let instance = VMInstanceFixture.make()
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
 
         let old = instance.configuration
         let new = configWithRemovable(old, path: "/tmp/install.iso")
@@ -232,7 +232,7 @@ struct VMRemovableMediaReconcilerTests {
         let mock = MockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let instance = VMInstanceFixture.make()
-        instance.enter(.suspended)
+        instance.activity.placeForTesting(.suspended)
 
         let old = instance.configuration
         let new = configWithRemovable(old, path: "/tmp/install.iso")
@@ -413,7 +413,7 @@ struct VMRemovableMediaReconcilerTests {
         await mock.waitUntilSuspended()
         // Stop the VM before the suspended attach resolves.
         harness.library.editConfiguration(of: instance) { $0 = configB }
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
 
         mock.resumeSuspended()
         for _ in 0..<10 { await Task.yield() }
@@ -437,7 +437,7 @@ struct VMRemovableMediaReconcilerTests {
         // session two transitions old.
         instance.tearDownSession(restingAt: .stopped)
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
@@ -466,7 +466,7 @@ struct VMRemovableMediaReconcilerTests {
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
         instance.tearDownSession(restingAt: .stopped)
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
@@ -500,7 +500,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance) { $0 = configC }
         instance.beginSessionContext()
         let successorID = UUID()
-        instance.enter(.running(sessionID: successorID))
+        instance.activity.placeForTesting(.running(sessionID: successorID))
         let coldBooted = RemovableMediaDeviceInfo(
             id: try #require(configC.removableMedia?.first?.id), path: "/tmp/C.iso", readOnly: true)
         instance.recordAttachedMedia(coldBooted, for: successorID)
@@ -648,11 +648,11 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance) { $0 = configA }
         await mock.waitUntilSuspended()
 
-        instance.enter(.capturingLive(sessionID: sessionID))
+        instance.activity.placeForTesting(.capturingLive(sessionID: sessionID))
         mock.resumeSuspended()
         await waitForObservedChange { !instance.hasRemovableMediaReconcileOwed }
 
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         #expect(!instance.hasRemovableMediaReconcileOwed)
         #expect(mock.attachCallCount == 1)
         #expect(!failures.showError)
@@ -702,7 +702,7 @@ struct VMRemovableMediaReconcilerTests {
         instance.tearDownSession(restingAt: .stopped)
         #expect(!instance.hasRemovableMediaReconcileOwed)
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         for _ in 0..<10 { await Task.yield() }
 
         #expect(mock.attachCallCount == 0)

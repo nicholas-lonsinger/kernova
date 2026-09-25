@@ -246,7 +246,7 @@ struct VMSessionContextTests {
                 coldRemovableMedia: [coldBooted],
                 vmnetNetworks: MockVmnetNetworkProvider(),
                 entitlements: .unentitled))
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         instance.recordAttachedMedia(carried, for: sessionA)
         instance.forgetAttachedMedia(deviceID: carried.id, for: sessionA)

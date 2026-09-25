@@ -174,7 +174,7 @@ struct VMInstanceAgentReconnectTests {
         try guest.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
 
-        instance.enter(.livePaused(sessionID: try #require(instance.liveSessionID)))
+        instance.activity.placeForTesting(.livePaused(sessionID: try #require(instance.liveSessionID)))
         #expect(instance.isLivePaused)
 
         try await Task.sleep(for: .milliseconds(500))
@@ -201,7 +201,7 @@ struct VMInstanceAgentReconnectTests {
         try guest.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
 
-        instance.enter(.suspended)
+        instance.activity.placeForTesting(.suspended)
         guest.close()
         try await waitForChange { instance.vsockControlService?.isConnected == false }
 
@@ -209,7 +209,7 @@ struct VMInstanceAgentReconnectTests {
 
         // Resuming is what starts the clock — and the resumed VM is exactly the
         // case that must escalate.
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentStatus == .expectedMissing(expected: version))

@@ -94,7 +94,7 @@ struct VMLibraryViewModelEphemeralTests {
         await viewModel.loadVMs()
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
-        instance.enter(phase)
+        instance.activity.placeForTesting(phase)
         // A suspension is a slot on disk, not a phase name: every predicate the
         // discard paths read asks the file.
         if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
@@ -190,7 +190,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness(secondVM: true)
         let other = try #require(harness.other)
         let otherBaseline = try #require(harness.otherBaseline)
-        other.enter(.running(sessionID: UUID()))
+        other.activity.placeForTesting(.running(sessionID: UUID()))
 
         await harness.viewModel.stop(harness.instance)
         await harness.viewModel.stop(other)

@@ -212,7 +212,7 @@ struct VMMACAddressRegistryTests {
         let twin = makeVM(
             "Twin", mac: "aa:bb:cc:dd:ee:02",
             snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")])
-        twin.enter(.running(sessionID: UUID()))
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
         let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
         roster.instances = [twin, instance]
 
@@ -221,7 +221,7 @@ struct VMMACAddressRegistryTests {
         #expect(registry.liveMACAddressConflict(for: instance.configuration, excluding: instance) == nil)
 
         let sameAddress = makeVM("Same", mac: "aa:bb:cc:dd:ee:01")
-        sameAddress.enter(.running(sessionID: UUID()))
+        sameAddress.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances = [twin, sameAddress, instance]
         #expect(
             registry.liveMACAddressConflict(for: instance.configuration, excluding: instance)
@@ -245,11 +245,11 @@ struct VMMACAddressRegistryTests {
     func refuseMACAddressConflictRefusesALiveModeSwitch() {
         let registry = makeRegistry()
         let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01") { $0.networkMode = .hostOnly }
-        twin.enter(.running(sessionID: UUID()))
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
 
         let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
         let old = instance.configuration
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances = [twin, instance]
 
         // The address is unchanged; only the network it lands on moves.
@@ -264,13 +264,13 @@ struct VMMACAddressRegistryTests {
     func refuseMACAddressConflictLeavesAnExistingConflictEditable() {
         let registry = makeRegistry()
         let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01")
-        twin.enter(.running(sessionID: UUID()))
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
 
         // Already sharing the address on the same network — reached by some
         // other route, and the user has to be able to edit their way out.
         let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
         let old = instance.configuration
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances = [twin, instance]
 
         var new = old
@@ -284,11 +284,11 @@ struct VMMACAddressRegistryTests {
     func refuseMACAddressConflictOnlyGuardsALiveVM() {
         let registry = makeRegistry()
         let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01") { $0.networkMode = .hostOnly }
-        twin.enter(.running(sessionID: UUID()))
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
 
         let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
         let old = instance.configuration
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
         roster.instances = [twin, instance]
 
         var new = old

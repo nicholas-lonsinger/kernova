@@ -289,7 +289,7 @@ struct VMLibraryTests {
     ) -> UUID {
         library.register(instance, storage: storage)
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         return sessionID
     }
@@ -323,7 +323,7 @@ struct VMLibraryTests {
         let instance = VMInstanceFixture.make(name: "Mine") { $0.removableMedia = [queued] }
         let sessionID = registerRunning(instance, in: library, storage: storage)
         // A phase whose edits the write funnel refuses: the settle is not one.
-        instance.enter(.saving(sessionID: sessionID))
+        instance.activity.placeForTesting(.saving(sessionID: sessionID))
         let before = instance.configuration
 
         library.settleRemovableMedia(of: instance, toLive: [live])
@@ -550,7 +550,7 @@ struct VMLibraryTests {
     func reconcileRemovesStoppedVMs() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Gone VM")
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
         library.admitForTesting(instance)
 
         // Storage has no bundles, so instance should be removed
@@ -563,7 +563,7 @@ struct VMLibraryTests {
     func reconcileDropsTheHeldGuestAccountPassword() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Gone VM")
-        instance.enter(.stopped)
+        instance.activity.placeForTesting(.stopped)
         library.admitForTesting(instance)
         library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
@@ -580,7 +580,7 @@ struct VMLibraryTests {
     func reconcilePreservesRunningVMs() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Running VM")
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         library.admitForTesting(instance)
 
         library.reconcileWithDisk()
@@ -644,11 +644,11 @@ struct VMLibraryTests {
     func reconcileNormalizesAnEmptiedSuspension() throws {
         let (library, storage, _, _) = makeLibrary()
         let holding = VMInstanceFixture.make(name: "Still suspended")
-        holding.enter(.suspended)
+        holding.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: holding) }
         try VMInstanceFixture.writeSaveFile(for: holding)
         let emptied = VMInstanceFixture.make(name: "Slot gone")
-        emptied.enter(.suspended)
+        emptied.activity.placeForTesting(.suspended)
         // Both bundles are on disk, so the pass has read them and what it found
         // inside them stands.
         storage.bundles[holding.bundleURL] = holding.configuration
@@ -666,7 +666,7 @@ struct VMLibraryTests {
     func reconcileLeavesAnUnreadBundlesSuspensionAlone() {
         let (library, storage, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Bundle out of sight")
-        instance.enter(.suspended)
+        instance.activity.placeForTesting(.suspended)
         // Listed, but its configuration cannot be read this pass.
         storage.bundles[instance.bundleURL] = instance.configuration
         storage.loadConfigurationFailURLs = [instance.bundleURL]
@@ -685,7 +685,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         let remaining = VMInstanceFixture.make(name: "Remaining")
         let removed = VMInstanceFixture.make(name: "Removed")
-        removed.enter(.stopped)
+        removed.activity.placeForTesting(.stopped)
         library.admitForTesting([remaining, removed])
         library.selectedID = removed.id
 

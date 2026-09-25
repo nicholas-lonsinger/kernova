@@ -72,7 +72,7 @@ struct VMLifecycleCoordinatorTests {
     func stopForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await coordinator.stop(instance)
 
@@ -83,7 +83,7 @@ struct VMLifecycleCoordinatorTests {
     func forceStopForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await coordinator.forceStop(instance)
 
@@ -94,7 +94,7 @@ struct VMLifecycleCoordinatorTests {
     func pauseForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await coordinator.pause(instance)
 
@@ -105,7 +105,7 @@ struct VMLifecycleCoordinatorTests {
     func resumeForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.suspended)
+        instance.activity.placeForTesting(.suspended)
 
         try await coordinator.resume(instance)
 
@@ -116,7 +116,7 @@ struct VMLifecycleCoordinatorTests {
     func saveForwards() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await coordinator.save(instance)
 
@@ -221,7 +221,7 @@ struct VMLifecycleCoordinatorTests {
         // second concurrent VZ operation.
         let (coordinator, suspendingService) = makeSuspendingCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         let task = Task { @MainActor in
             try await coordinator.start(instance)
@@ -265,7 +265,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         instance.markRemovableMediaReconcileOwed(for: sessionID)
 
@@ -287,7 +287,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         instance.markRemovableMediaReconcileOwed(for: sessionID)
 
@@ -310,7 +310,7 @@ struct VMLifecycleCoordinatorTests {
         for forced in [false, true] {
             let instance = VMInstanceFixture.make()
             let sessionID = UUID()
-            instance.enter(.running(sessionID: sessionID))
+            instance.activity.placeForTesting(.running(sessionID: sessionID))
             instance.beginSessionContext()
             instance.markRemovableMediaReconcileOwed(for: sessionID)
 
@@ -332,7 +332,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContext()
         instance.markRemovableMediaReconcileOwed(for: sessionID)
 
@@ -398,7 +398,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(!coordinator.hasActiveOperation(for: instance.id))
 
         // A second operation should succeed
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         try await coordinator.pause(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
     }
@@ -473,7 +473,7 @@ struct VMLifecycleCoordinatorTests {
     func stopDoesNotAffectActiveOperationTracking() async throws {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await coordinator.stop(instance)
         #expect(!coordinator.hasActiveOperation(for: instance.id))
@@ -684,7 +684,7 @@ struct VMLifecycleCoordinatorTests {
         installService.installError = makeInstallVMLimitExceededError()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
         let instance = VMInstanceFixture.make { $0.installContext = context }
-        instance.enter(.failed(message: "stale message from an earlier failure"))
+        instance.activity.placeForTesting(.failed(message: "stale message from an earlier failure"))
         let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
 
@@ -1226,7 +1226,7 @@ struct VMLifecycleCoordinatorTests {
             $0.linuxInstallContext = context
             mutate(&$0)
         }
-        instance.enter(.initialBoot)
+        instance.activity.placeForTesting(.initialBoot)
         fixture.library.register(instance, storage: fixture.storage)
         return instance
     }
@@ -1934,7 +1934,7 @@ struct VMLifecycleCoordinatorTests {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
@@ -1958,7 +1958,7 @@ struct VMLifecycleCoordinatorTests {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
@@ -1979,7 +1979,7 @@ struct VMLifecycleCoordinatorTests {
         removableMediaService.attachError = RemovableMediaDeviceError.noVirtualMachine
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         await #expect(throws: RemovableMediaDeviceError.self) {
             try await coordinator.attachRemovableMedia(
@@ -1997,7 +1997,7 @@ struct VMLifecycleCoordinatorTests {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
@@ -2022,7 +2022,7 @@ struct VMLifecycleCoordinatorTests {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
             diskImagePath: "/tmp/test.dmg",
@@ -2033,7 +2033,7 @@ struct VMLifecycleCoordinatorTests {
         // Force stop and restart: the pass acting for `sessionID` is overtaken.
         instance.tearDownSession(restingAt: .stopped)
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         let attachesBefore = removableMediaService.attachCallCount
 
         // `noVirtualMachine` specifically: it is the case `VMLibrary`'s
@@ -2070,7 +2070,7 @@ struct VMLifecycleCoordinatorTests {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
         instance.beginSessionContext()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         // A bookmark that tracked a moved file: the resolved location is
         // what must reach the service, while the tracked identity stays the

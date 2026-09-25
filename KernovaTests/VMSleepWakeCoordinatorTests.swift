@@ -31,7 +31,7 @@ struct VMSleepWakeCoordinatorTests {
         _ coordinator: VMSleepWakeCoordinator, roster: StubVMInstanceRoster, name: String
     ) async -> VMInstance {
         let instance = VMInstanceFixture.make(name: name)
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances.append(instance)
         await coordinator.pauseAllForSleep()
         return instance
@@ -43,13 +43,13 @@ struct VMSleepWakeCoordinatorTests {
     func pauseAllForSleepPausesRunning() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let running1 = VMInstanceFixture.make(name: "Running 1")
-        running1.enter(.running(sessionID: UUID()))
+        running1.activity.placeForTesting(.running(sessionID: UUID()))
         let running2 = VMInstanceFixture.make(name: "Running 2")
-        running2.enter(.running(sessionID: UUID()))
+        running2.activity.placeForTesting(.running(sessionID: UUID()))
         let stopped = VMInstanceFixture.make(name: "Stopped")
-        stopped.enter(.stopped)
+        stopped.activity.placeForTesting(.stopped)
         let paused = VMInstanceFixture.make(name: "User Paused")
-        paused.enter(.suspended)
+        paused.activity.placeForTesting(.suspended)
         roster.instances = [running1, running2, stopped, paused]
 
         await coordinator.pauseAllForSleep()
@@ -66,7 +66,7 @@ struct VMSleepWakeCoordinatorTests {
     func resumeAllAfterWakeResumesOnlySleepPaused() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let userPaused = VMInstanceFixture.make(name: "User Paused")
-        userPaused.enter(.suspended)
+        userPaused.activity.placeForTesting(.suspended)
         roster.instances = [userPaused]
         let sleepPaused = await makeSleepPaused(coordinator, roster: roster, name: "Sleep Paused")
 
@@ -84,7 +84,7 @@ struct VMSleepWakeCoordinatorTests {
         virtService.pauseError = VirtualizationError.noVirtualMachine
         let (coordinator, roster, _) = makeCoordinator(virtualizationService: virtService)
         let running = VMInstanceFixture.make(name: "Running")
-        running.enter(.running(sessionID: UUID()))
+        running.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances = [running]
 
         await coordinator.pauseAllForSleep()
@@ -115,7 +115,7 @@ struct VMSleepWakeCoordinatorTests {
     func pauseAllForSleepNoOp() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let stopped = VMInstanceFixture.make(name: "Stopped")
-        stopped.enter(.stopped)
+        stopped.activity.placeForTesting(.stopped)
         roster.instances = [stopped]
 
         await coordinator.pauseAllForSleep()
@@ -128,7 +128,7 @@ struct VMSleepWakeCoordinatorTests {
     func resumeAllAfterWakeNoOp() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let paused = VMInstanceFixture.make(name: "User Paused")
-        paused.enter(.suspended)
+        paused.activity.placeForTesting(.suspended)
         roster.instances = [paused]
         // sleepPausedInstanceIDs is empty
 
@@ -141,11 +141,11 @@ struct VMSleepWakeCoordinatorTests {
     func pauseAllForSleepSkipsNonRunning() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let starting = VMInstanceFixture.make(name: "Starting")
-        starting.enter(.starting(sessionID: nil))
+        starting.activity.placeForTesting(.starting(sessionID: nil))
         let saving = VMInstanceFixture.make(name: "Saving")
-        saving.enter(.saving(sessionID: UUID()))
+        saving.activity.placeForTesting(.saving(sessionID: UUID()))
         let error = VMInstanceFixture.make(name: "Error")
-        error.enter(.failed(message: "Test failure"))
+        error.activity.placeForTesting(.failed(message: "Test failure"))
         roster.instances = [starting, saving, error]
 
         await coordinator.pauseAllForSleep()
@@ -158,7 +158,7 @@ struct VMSleepWakeCoordinatorTests {
     func resumeAllAfterWakeSkipsNonPaused() async {
         let (coordinator, roster, virtService) = makeCoordinator()
         let instance = await makeSleepPaused(coordinator, roster: roster, name: "Was Paused")
-        instance.enter(.stopped)  // Status changed between sleep and wake
+        instance.activity.placeForTesting(.stopped)  // Status changed between sleep and wake
 
         await coordinator.resumeAllAfterWake()
 
@@ -175,7 +175,7 @@ struct VMSleepWakeCoordinatorTests {
             $0.networkEnabled = true
             $0.macAddress = mac
         }
-        sleeper.enter(.running(sessionID: UUID()))
+        sleeper.activity.placeForTesting(.running(sessionID: UUID()))
         let twin = VMInstanceFixture.make(name: "Twin") {
             $0.networkEnabled = true
             $0.macAddress = mac
@@ -192,7 +192,7 @@ struct VMSleepWakeCoordinatorTests {
         // releasing its address, and its twin came up on it.
         try VMInstanceFixture.writeSaveFile(for: sleeper)
         sleeper.tearDownSession(restingAt: .suspended)
-        twin.enter(.running(sessionID: UUID()))
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
 
         await coordinator.resumeAllAfterWake()
 

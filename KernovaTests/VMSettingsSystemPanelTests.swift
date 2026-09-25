@@ -616,7 +616,7 @@ struct VMSettingsSystemPanelTests {
         "A machine edit committed after the VM started is refused and changes nothing",
         arguments: MachineEdit.allCases)
     func machineEditCommittedAfterAStartIsRefused(_ edit: MachineEdit) throws {
-        try expectRefusedAfterPinning(edit) { $0.enter(.running(sessionID: UUID())) }
+        try expectRefusedAfterPinning(edit) { $0.activity.placeForTesting(.running(sessionID: UUID())) }
     }
 
     @Test(
@@ -653,7 +653,7 @@ struct VMSettingsSystemPanelTests {
         let before = instance.configuration
         let onDisk = storage.bundles[instance.bundleURL]
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         for label in ["CPU cores", "Memory", "Width", "Height"] {
             commitEdit(try #require(editableField(label, in: vc.view)))
         }
@@ -718,7 +718,7 @@ struct VMSettingsSystemPanelTests {
         let text = String(typed.changedValue(from: before))
         typeText(text, into: field)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         // Stands in for the observation pass the status change drives.
         vc.viewDidAppear()
         #expect(field.currentEditor()?.string == text)
@@ -949,7 +949,7 @@ struct VMSettingsSystemPanelTests {
         #expect(width.currentEditor() != nil)
         typeText("1440", into: width)
 
-        instance.enter(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         commitEdit(width)
 
         #expect(presenter.errors.count == 1)

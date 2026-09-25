@@ -311,7 +311,7 @@ struct VMInstanceVsockAdmissionTests {
             $0.agentLogForwardingEnabled = true
         }
         let sessionID = UUID()
-        instance.enter(.running(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(
                 handshakeComplete: true,
@@ -369,7 +369,7 @@ struct VMInstanceVsockAdmissionTests {
             // A successor session opens before the hand-off is drained, so the
             // assertions below read a live context the guard must still keep
             // the old hand-off out of.
-            instance.enter(.running(sessionID: UUID()))
+            instance.activity.placeForTesting(.running(sessionID: UUID()))
             instance.beginSessionContext()
 
             await drainMainQueue()
