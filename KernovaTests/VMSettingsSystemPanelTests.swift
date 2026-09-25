@@ -828,20 +828,20 @@ struct VMSettingsSystemPanelTests {
             allSubviews(NSStepper.self, in: vc.view) {
                 $0.action.map(NSStringFromSelector) == "cpuStepperChanged"
             }.first)
-        let os = instance.configuration.guestOS
         let original = instance.configuration.cpuCount
         let typed = TypedField.cpus.changedValue(from: instance.configuration)
-        let stepped = try #require((os.minCPUCount...os.maxCPUCount).first { $0 != original && $0 != typed })
         #expect(window.makeFirstResponder(field))
         typeText(String(typed), into: field)
 
-        stepper.integerValue = stepped
+        // A click that lands on the value the VM already holds: the guest's
+        // count range can be as narrow as two values, and a typed edit that
+        // survived the click would still show here and be written below.
+        stepper.integerValue = original
         stepper.sendAction(stepper.action, to: stepper.target)
 
-        #expect(instance.configuration.cpuCount == stepped)
-        #expect(field.stringValue == String(stepped))
+        #expect(field.stringValue == String(original))
         #expect(window.makeFirstResponder(nil))
-        #expect(instance.configuration.cpuCount == stepped)
+        #expect(instance.configuration.cpuCount == original)
         #expect(presenter.errors.isEmpty)
     }
 
