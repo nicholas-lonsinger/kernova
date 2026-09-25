@@ -310,6 +310,10 @@ struct VMAdmissionTests {
             VMAdmission.decide(
                 .operation(.attachingUSB(registryID: 1)), posture: .commit, phase: Self.live,
                 facts: Self.facts(usbSupported: false)) == .refuse(.unsupportedByBuild))
+        #expect(
+            VMAdmission.decide(
+                .edit(.pairingRules), posture: .commit, phase: .stopped,
+                facts: Self.facts(usbSupported: false)) == .refuse(.unsupportedByBuild))
     }
 
     @Test("A VM with no network device takes no live attachment swap")

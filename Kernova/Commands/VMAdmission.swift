@@ -184,6 +184,12 @@ enum VMAdmission {
         case .operation(let kind):
             return decideSettledOperation(kind, phase: phase, facts: facts)
         case .edit(let classes):
+            // A pairing rule is a preference about which accessory to pass
+            // through, so only a build that cannot pass one through at all
+            // has nothing to edit.
+            if classes.contains(.pairingRules), !facts.usbSupported {
+                return .refuse(.unsupportedByBuild)
+            }
             guard editClasses(settledAt: phase, facts: facts).isSuperset(of: classes) else {
                 return .refuse(.invalidState)
             }
@@ -273,6 +279,9 @@ enum VMAdmission {
         case .cancel(let family):
             if operation.kind.belongs(to: family) { return .admit }
         case .edit(let classes):
+            if classes.contains(.pairingRules), !facts.usbSupported {
+                return .refuse(.unsupportedByBuild)
+            }
             if tolerated(declaration.edits, from: operation.startedFrom, facts: facts)
                 .isSuperset(of: classes)
             {
