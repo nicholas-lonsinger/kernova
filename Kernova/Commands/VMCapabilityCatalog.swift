@@ -481,11 +481,11 @@ struct VMCapabilityCatalog {
             // A start committed against a VM already coming up is asking for the
             // state that bring-up is producing, so it joins it
             // (``VMCommandCore/start(_:recovery:)``) rather than refusing a VM
-            // on its way to running. Both bring-up phases count:
-            // a boot with a save file passes through `.starting` into
-            // `.restoringSavedState` before its first await, so the restore is
-            // the whole of what another caller can observe. Offering it is the
-            // separate question ``isAvailable(_:on:)`` answers.
+            // on its way to running. Both bring-up phases count: a boot with a
+            // save file stands in `.restoringSavedState` from the moment it
+            // leaves rest (``VirtualizationService/start(_:bootIntoRecovery:provisioning:)``).
+            // Offering it is the separate question ``isAvailable(_:on:)``
+            // answers.
             //
             // A VM holding a saved state is the other widening: the start
             // restores that state rather than booting over it, so a door asking

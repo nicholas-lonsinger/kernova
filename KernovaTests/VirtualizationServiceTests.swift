@@ -735,6 +735,56 @@ struct VirtualizationServiceTests {
         }
     }
 
+    // MARK: - Duplicate Identity at Bring-Up
+
+    /// Two VMs on one MAC address and network, in one wired library, with the
+    /// first live — the refusal both bring-up tests below expect.
+    private func makeLiveMACPair(
+        restingAt phase: VMLifecyclePhase
+    ) -> (library: VMLibrary, resting: VMInstance, live: VMInstance) {
+        let resting = VMInstanceFixture.make(name: "Resting", phase: phase) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:40"
+        }
+        let live = VMInstanceFixture.make(name: "Live", phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:40"
+        }
+        return (makeWiredLibrary(holding: [resting, live]), resting, live)
+    }
+
+    @Test("A start onto a live identity is refused before the VM leaves rest")
+    func startRefusesALiveIdentityBeforeLeavingRest() async throws {
+        let (library, resting, live) = makeLiveMACPair(restingAt: .stopped)
+
+        let conflict = await #expect(throws: VMIdentityConflict.self) {
+            try await service.start(resting)
+        }
+
+        #expect(conflict?.other === live)
+        #expect(conflict?.reason == .macAddress)
+        #expect(resting.phase == .stopped)
+        #expect(resting.sessionContext == nil)
+        withExtendedLifetime(library) {}
+    }
+
+    @Test("A cold resume onto a live identity is refused, keeping the saved state")
+    func coldResumeRefusesALiveIdentityKeepingTheSavedState() async throws {
+        let (library, resting, live) = makeLiveMACPair(restingAt: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: resting) }
+        try VMInstanceFixture.writeSaveFile(for: resting)
+
+        let conflict = await #expect(throws: VMIdentityConflict.self) {
+            try await service.resume(resting)
+        }
+
+        #expect(conflict?.other === live)
+        #expect(resting.phase == .suspended)
+        #expect(resting.hasSaveFile)
+        #expect(resting.sessionContext == nil)
+        withExtendedLifetime(library) {}
+    }
+
     // MARK: - Stop Guards
 
     @Test("stop throws when VM is stopped")

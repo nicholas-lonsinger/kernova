@@ -530,6 +530,7 @@ final class VMLifecycleCoordinator {
         context: MacOSInstallContext
     ) async throws {
         try await serialized(instance, action: "installMacOS") {
+            try instance.beginBringUp(.installing)
             #log(
                 Self.logger, .debug,
                 "installMacOS: entering for '\(instance.name, privacy: .public)', source=\(context.source.rawValue, privacy: .public)"
@@ -552,7 +553,6 @@ final class VMLifecycleCoordinator {
                     }
 
                     instance.setupState = .macOSInstall(hasDownloadStep: true)
-                    instance.beginGuestSetup()
 
                     // Local because a moved latest destination lapses it below.
                     var requestedFreshDownload = context.requestedFreshDownload
@@ -673,7 +673,6 @@ final class VMLifecycleCoordinator {
                     }
 
                     instance.setupState = .macOSInstall(hasDownloadStep: false)
-                    instance.beginGuestSetup()
                 }
 
                 let installedImage = try await installService.install(
@@ -829,6 +828,7 @@ final class VMLifecycleCoordinator {
         context: LinuxInstallContext
     ) async throws {
         try await serialized(instance, action: "downloadLinuxImage") {
+            try instance.beginBringUp(.installing)
             #log(
                 Self.logger, .debug,
                 "downloadLinuxImage: entering for '\(instance.name, privacy: .public)', image=\(context.imageDisplayName, privacy: .public)"
@@ -836,7 +836,6 @@ final class VMLifecycleCoordinator {
 
             do {
                 instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
-                instance.beginGuestSetup()
 
                 // Resolved on every attempt: a catalog entry because the mirror
                 // renames its ISO in place (see `LinuxImageCatalogEntry`), a

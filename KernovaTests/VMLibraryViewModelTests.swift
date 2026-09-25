@@ -1276,6 +1276,14 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Duplicate Machine ID Boot Guard
 
+    /// Adds `instances` to `viewModel` wired to its library, as a load would —
+    /// the identity refusal every bring-up passes reads its peers through that
+    /// wiring, and an unwired VM has none.
+    private func wire(_ instances: [VMInstance], into viewModel: VMLibraryViewModel) {
+        for instance in instances { viewModel.library.wireHooks(for: instance) }
+        viewModel.instances.append(contentsOf: instances)
+    }
+
     /// Two VMs carrying the given machine identifiers in whichever identity
     /// field `guestOS` uses, both appended to `viewModel`.
     ///
@@ -1298,7 +1306,7 @@ struct VMLibraryViewModelTests {
         }
         let starting = makeTwin("Starting", identifier: startingID)
         let other = makeTwin("Twin", identifier: otherID)
-        viewModel.instances.append(contentsOf: [starting, other])
+        wire([starting, other], into: viewModel)
         return (starting, other)
     }
 
@@ -1311,7 +1319,7 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
     }
@@ -1352,8 +1360,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(starting.status == .stopped)
     }
 
     @Test("start proceeds when the machine ID twin is cold-paused (it holds no VZ identity)")
@@ -1388,14 +1397,15 @@ struct VMLibraryViewModelTests {
                 try? FileManager.default.removeItem(at: instance.bundleURL)
             }
         }
-        viewModel.instances.append(contentsOf: [starting, other])
+        wire([starting, other], into: viewModel)
         other.enter(.running(sessionID: UUID()))
 
         await viewModel.start(starting)
 
         #expect(starting.configuration.machineIdentifierData == nil)
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(starting.status == .stopped)
     }
 
     @Test("a cold resume is refused while a machine ID twin is running")
@@ -1412,9 +1422,10 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(resuming)
 
-        #expect(virtService.resumeCallCount == 0)
+        #expect(virtService.resumeCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
-        #expect(resuming.status == .paused)
+        #expect(resuming.phase == .suspended)
+        #expect(resuming.hasSaveFile)
     }
 
     @Test("a cold resume proceeds past a machine ID twin when the guard preference is off")
@@ -1470,8 +1481,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(starting.status == .stopped)
     }
 
     // MARK: - Duplicate MAC Address Boot Guard
@@ -1500,7 +1512,7 @@ struct VMLibraryViewModelTests {
             $0.networkMode = otherMode
             mutateOther(&$0)
         }
-        viewModel.instances.append(contentsOf: [starting, other])
+        wire([starting, other], into: viewModel)
         return (starting, other)
     }
 
@@ -1513,7 +1525,7 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(presenter.errorMessage?.contains("Starting") == true)
         #expect(presenter.errorMessage?.contains("Twin") == true)
@@ -1529,8 +1541,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(starting.status == .stopped)
     }
 
     @Test("start proceeds when the MAC address twin is stopped")
@@ -1572,8 +1585,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(starting.status == .stopped)
     }
 
     @Test("start proceeds when the starting VM has networking off")
@@ -1628,8 +1642,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 0)
+        #expect(virtService.startCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
+        #expect(starting.status == .stopped)
     }
 
     @Test("a cold resume is refused while a MAC address twin is running")
@@ -1644,9 +1659,10 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(resuming)
 
-        #expect(virtService.resumeCallCount == 0)
+        #expect(virtService.resumeCallCount == 1)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
-        #expect(resuming.status == .paused)
+        #expect(resuming.phase == .suspended)
+        #expect(resuming.hasSaveFile)
     }
 
     @Test("a hot resume is never refused — the live VM already holds the address")
@@ -1677,10 +1693,12 @@ struct VMLibraryViewModelTests {
         other.enter(.running(sessionID: UUID()))
 
         await viewModel.start(starting)
+        await starting.setupTask?.value
 
         // The installer builds and runs its own VZ virtual machine, so the
-        // refusal has to land before guest setup is dispatched at all.
-        #expect(starting.setupTask == nil)
+        // refusal lands where the setup pipeline leaves rest, before the
+        // installer runs.
+        #expect(starting.status == .initialBoot)
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
     }

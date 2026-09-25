@@ -44,11 +44,10 @@ final class VirtualizationService {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
         }
 
-        instance.enter(.starting(sessionID: nil))
-
         // The branch and the answer are one value: the route decides which way
         // the guest is brought up, and is what the caller is told was done.
         let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
+        try instance.beginBringUp(route == .restoredSavedState ? .restoringSavedState : .starting)
         if bootIntoRecovery, route.dropsRecoveryBoot {
             #log(
                 Self.logger, .fault,
@@ -383,6 +382,11 @@ final class VirtualizationService {
         guard instance.canResume else {
             throw VirtualizationError.invalidStateTransition(from: instance.status, action: "resume")
         }
+
+        // A hot resume's live VM already holds its identity; a cold one builds a
+        // fresh VM that claims it. A refusal leaves the VM suspended on its slot,
+        // with nothing to tear down.
+        if instance.session == nil { try instance.beginBringUp(.restoringSavedState) }
 
         // A hot resume acts for the session it already holds; a cold one for
         // whichever session the restore brings up.
@@ -1110,6 +1114,12 @@ final class VirtualizationService {
     /// discarding the saved state stays an explicit user action
     /// (`stop(_:)` on a cold-paused VM).
     ///
+    /// The caller has already entered
+    /// ``VMLifecyclePhase/restoringSavedState(sessionID:)``
+    /// (``VMInstance/beginBringUp(_:)``), the phase
+    /// ``VMInstance/attachSession(from:)`` promotes to name each attempt's
+    /// session.
+    ///
     /// `attemptSessionID` carries out the session the attempt in flight owns
     /// right now: `nil` before its `VZVirtualMachine` exists, and again once it
     /// is released.
@@ -1160,11 +1170,6 @@ final class VirtualizationService {
     /// propagates as-is (the caller's attachment explainers match on it); a
     /// restore or resume failure is wrapped in `restoreFailed`.
     ///
-    /// The phase is entered before the configuration build, not after the
-    /// bring-up: it is what ``VMInstance/attachSession(from:)`` promotes to name
-    /// the session, and a start and a cold resume reach here from different
-    /// phases.
-    ///
     /// `attemptSessionID` carries out the session this attempt owns right now:
     /// `nil` before its `VZVirtualMachine` exists, and again once it is
     /// released. A throw leaves it naming whatever the caller must act for.
@@ -1172,7 +1177,6 @@ final class VirtualizationService {
         _ instance: VMInstance, attemptSessionID: inout UUID?
     ) async throws -> UUID {
         attemptSessionID = nil
-        instance.enter(.restoringSavedState(sessionID: nil))
         instance.beginSessionContext()
         let result = try await buildConfiguration(for: instance)
         guard let session = await instance.bringUpSession(with: result) else {

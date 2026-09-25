@@ -255,6 +255,13 @@ final class VMInstance {
                 VMLibrary.SettingsWrite
         )?
 
+    /// The live VM whose identity bringing this one up would duplicate, or `nil`
+    /// when nothing collides — what ``beginBringUp(_:)`` refuses on.
+    ///
+    /// Wired by `VMLibrary.wireHooks(for:)`; an instance outside a library has
+    /// no peers, and passes.
+    @ObservationIgnored var liveIdentityConflict: (@MainActor () -> VMIdentityConflict?)?
+
     /// Fired when the guest agent handshakes a new version that is current
     /// (matches or exceeds what the host bundles) — i.e. an install/update just
     /// completed.
@@ -940,10 +947,10 @@ final class VMInstance {
     /// Places the VM at `phase`.
     ///
     /// The write every transition that names no session goes through — a
-    /// start's configuration-build window, a disks-only capture, a revert, an
-    /// install pipeline, a discarded suspend slot. A phase that *does* name one
-    /// is installed by ``settle(_:for:)`` or by ``attachSession(from:)``, and
-    /// released by ``tearDownSession(restingAt:)``.
+    /// disks-only capture, a revert, a discarded suspend slot — except leaving
+    /// rest to bring a guest up, which is ``beginBringUp(_:)``. A phase that
+    /// *does* name one is installed by ``settle(_:for:)`` or by
+    /// ``attachSession(from:)``, and released by ``tearDownSession(restingAt:)``.
     func enter(_ phase: VMLifecyclePhase) {
         setPhase(phase)
     }
@@ -972,19 +979,28 @@ final class VMInstance {
         return true
     }
 
-    /// Marks a guest setup as running: a macOS install, or a Linux installer
-    /// image being fetched.
+    /// Leaves rest for `bringUp`, refusing when another live VM already claims
+    /// the machine identity or the MAC address this one would put in front of
+    /// VZ (``liveIdentityConflict``).
     ///
-    /// The one way into ``VMLifecyclePhase/installing(sessionID:)``, for both
-    /// macOS install paths and the Linux download pipeline. A session the
-    /// installer creates is promoted in by ``attachSession(from:)``.
-    func beginGuestSetup() {
-        enter(.installing(sessionID: nil))
+    /// The check and the phase entry are one synchronous step, so the phase is
+    /// what makes this VM live to every later check: of two twins, the second
+    /// to arrive is refused by the first's bring-up still in flight. A refusal
+    /// leaves the phase untouched.
+    func beginBringUp(_ bringUp: VMBringUpPhase) throws(VMIdentityConflict) {
+        if let conflict = liveIdentityConflict?() {
+            #log(
+                Self.logger, .notice,
+                "Refused to bring up '\(self.name, privacy: .public)': \(conflict.errorDescription ?? "", privacy: .public)"
+            )
+            throw conflict
+        }
+        setPhase(bringUp.lifecyclePhase)
     }
 
     /// Ends a guest setup that ran no VZ session, so no power-off takes the VM
-    /// out of ``beginGuestSetup()`` — the Linux image pipeline, whose caller
-    /// chains a Start straight off it.
+    /// out of ``VMLifecyclePhase/installing(sessionID:)`` — the Linux image
+    /// pipeline, whose caller chains a Start straight off it.
     func endGuestSetup() {
         enter(.stopped)
     }

@@ -97,9 +97,10 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // Read before the suspension, as the real service decides it before its
         // first await.
         let route = GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
-        // Before the suspension, as the real service enters it before its first
-        // await: a start in flight is what every other caller reads off the VM.
-        instance.enter(.starting(sessionID: nil))
+        // Before the suspension, as the real service leaves rest before its
+        // first await: a start in flight is what every other caller reads off
+        // the VM.
+        try instance.beginBringUp(route == .restoredSavedState ? .restoringSavedState : .starting)
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
@@ -132,7 +133,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // A cold resume rebuilds the VM from the save file and stands in
         // `.restoringSavedState` for the whole of that build; a hot one resumes
         // the session it already holds and touches no phase until it settles.
-        if instance.holdsSuspendedSession { instance.enter(.restoringSavedState(sessionID: nil)) }
+        if instance.holdsSuspendedSession { try instance.beginBringUp(.restoringSavedState) }
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }

@@ -274,3 +274,25 @@ enum VMLifecyclePhase: Sendable, Equatable {
         }
     }
 }
+
+/// A phase a VM leaves rest into to bring a guest up — the only phases
+/// ``VMInstance/attachSession(from:)`` promotes to name a session, so the only
+/// ones that can put a machine identity and a MAC address in front of VZ.
+///
+/// Entered only through ``VMInstance/beginBringUp(_:)``, which refuses one
+/// another live VM's identity already claims.
+enum VMBringUpPhase: Sendable, Equatable {
+    case starting
+    case restoringSavedState
+    case installing
+
+    /// The sessionless lifecycle phase this bring-up stands in until its
+    /// `VZVirtualMachine` exists.
+    var lifecyclePhase: VMLifecyclePhase {
+        switch self {
+        case .starting: .starting(sessionID: nil)
+        case .restoringSavedState: .restoringSavedState(sessionID: nil)
+        case .installing: .installing(sessionID: nil)
+        }
+    }
+}

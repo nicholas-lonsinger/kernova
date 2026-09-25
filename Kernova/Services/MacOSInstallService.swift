@@ -18,6 +18,11 @@ final class MacOSInstallService {
 
     /// Installs macOS from a restore image into the given VM instance.
     ///
+    /// The caller has already entered
+    /// ``VMLifecyclePhase/installing(sessionID:)``
+    /// (``VMInstance/beginBringUp(_:)``), the phase the installer's session is
+    /// promoted into.
+    ///
     /// `progressHandler` receives installation progress in 0.0–1.0.
     ///
     /// - Returns: The image's own version and build, read off the loaded
@@ -29,8 +34,6 @@ final class MacOSInstallService {
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
-        instance.beginGuestSetup()
-
         #log(Self.logger, .info, "Starting macOS installation for '\(instance.name, privacy: .public)'")
 
         // Both VZ hand-offs below take the resolved URL — see `resolveRestoreImage`.

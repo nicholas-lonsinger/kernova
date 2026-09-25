@@ -467,20 +467,7 @@ extension CommandErrorDTO {
         case .unsupportedByBuild(let capability):
             "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
-            switch reason {
-            case .macAddressInUse(let address, let holding, let otherHolders):
-                Self.macAddressInUseMessage(
-                    address, vm: vm.name, holder: other.name, holding: holding,
-                    otherHolders: otherHolders)
-            case .machineIdentity:
-                "\u{201C}\(vm.name)\u{201D} has the same machine ID as \u{201C}\(other.name)\u{201D}, which is active. "
-                    + "Two virtual machines with the same machine ID must not run at once. "
-                    + "Stop \u{201C}\(other.name)\u{201D} first, or allow this in Settings \u{2192} Advanced."
-            case .macAddress:
-                "\u{201C}\(vm.name)\u{201D} has the same MAC address as \u{201C}\(other.name)\u{201D}, which is active. "
-                    + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                    + "Stop \u{201C}\(other.name)\u{201D} first, or give one of them a new address in Network settings."
-            }
+            Self.conflictMessage(vm: vm.name, other: other.name, reason: reason)
         case .timedOut(let vm, let verb, let seconds):
             // Only what the expiry observed. What state the VM is in is a
             // separate read, and any sentence guessing it here is wrong for
@@ -492,6 +479,27 @@ extension CommandErrorDTO {
                 + "unsaved inside it."
         case .operationFailed(_, _, let message, _):
             message
+        }
+    }
+
+    /// What a ``conflict(vm:with:reason:)`` refusal of `vm` over `other` tells
+    /// the user — public so a refusal raised before it becomes a command error
+    /// words itself identically.
+    public static func conflictMessage(
+        vm: String, other: String, reason: ConflictReason
+    ) -> String {
+        switch reason {
+        case .macAddressInUse(let address, let holding, let otherHolders):
+            macAddressInUseMessage(
+                address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
+        case .machineIdentity:
+            "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which is active. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "Stop \u{201C}\(other)\u{201D} first, or allow this in Settings \u{2192} Advanced."
+        case .macAddress:
+            "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which is active. "
+                + "Two virtual machines with the same MAC address must not run on the same network at once. "
+                + "Stop \u{201C}\(other)\u{201D} first, or give one of them a new address in Network settings."
         }
     }
 

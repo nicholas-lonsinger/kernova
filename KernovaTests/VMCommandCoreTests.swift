@@ -1100,7 +1100,9 @@ struct VMCommandCoreTests {
         #expect(vm.id == twin.id)
         #expect(other.id == live.id)
         #expect(reason == .machineIdentity)
-        #expect(harness.virtualization.startCallCount == 0)
+        // Refused at the service's bring-up entry, before the VM left rest.
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(twin.phase == .stopped)
     }
 
     @Test("The same refusal fires on a cold resume, and not on a hot one")
@@ -1122,13 +1124,17 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError { try await harness.core.resume(.id(twin.id)) })
         #expect(error.isConflict)
-        #expect(harness.virtualization.resumeCallCount == 0)
+        #expect(harness.virtualization.resumeCallCount == 1)
+        // The refusal leaves it suspended on the slot it would have restored.
+        #expect(twin.phase == .suspended)
+        #expect(twin.hasSaveFile)
 
         // Hot-paused: the live object already holds the identity, so refusing
         // would be refusing a VM its own.
         twin.enter(.livePaused(sessionID: UUID()))
         try await harness.core.resume(.id(twin.id))
-        #expect(harness.virtualization.resumeCallCount == 1)
+        #expect(harness.virtualization.resumeCallCount == 2)
+        #expect(twin.status == .running)
     }
 
     @Test("The machine-identity refusal follows its preference")
@@ -1169,6 +1175,124 @@ struct VMCommandCoreTests {
         }
         #expect(other.id == live.id)
         #expect(reason == .macAddress)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(twin.phase == .stopped)
+    }
+
+    @Test("A warm revert of a live VM onto a MAC address another live VM holds is refused at bring-up")
+    func warmRevertOntoALiveMACAddressIsRefusedAtBringUp() async throws {
+        let harness = makeHarness()
+        let heldMAC = "aa:bb:cc:dd:ee:10"
+        let holder = makeInstance(
+            in: harness, name: "Holder", phase: .running(sessionID: UUID())
+        ) {
+            $0.networkEnabled = true
+            $0.macAddress = heldMAC
+        }
+        let reverting = makeInstance(
+            in: harness, name: "Reverting", phase: .running(sessionID: UUID())
+        ) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:11"
+        }
+        defer { VMInstanceFixture.removeBundle(of: reverting) }
+        // Captured while the VM still carried the address the holder has since
+        // taken: the revert puts it back, and the resume that follows would put
+        // it on the holder's network.
+        let snapshot = VMSnapshot(name: "Before", kind: .warm, macAddress: heldMAC)
+        reverting.snapshotManifest = VMSnapshotManifest(snapshots: [snapshot])
+        var captured = reverting.configuration
+        captured.macAddress = heldMAC
+        harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.revertToSnapshot(
+                    .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
+                    confirmed: true)
+            })
+
+        guard case .operationFailed(let verb, _, let message, _) = error else {
+            Issue.record("expected an operation failure, got \(error)")
+            return
+        }
+        #expect(verb == .revertToSnapshot)
+        #expect(message.contains("\u{201C}Holder\u{201D}"))
+        #expect(reverting.phase == .suspended)
+        #expect(reverting.hasSaveFile)
+        #expect(reverting.configuration.macAddress == heldMAC)
+        #expect(reverting.snapshotManifest.currentID == snapshot.id)
+        #expect(harness.virtualization.resumeCallCount == 1)
+        #expect(holder.status == .running)
+    }
+
+    @Test("A start owing guest setup onto a live identity is refused before the installer runs")
+    func setupStartOntoALiveIdentityIsRefusedBeforeTheInstaller() async throws {
+        let install = MockMacOSInstallService()
+        let harness = makeHarness(install: install)
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let holder = makeInstance(
+            in: harness, name: "Holder", phase: .running(sessionID: UUID()), guestOS: .macOS
+        ) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:20"
+        }
+        let pending = makeInstance(
+            in: harness, name: "Pending", phase: .initialBoot, guestOS: .macOS
+        ) {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:20"
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        }
+
+        try await harness.core.start(.id(pending.id), recovery: false)
+        await pending.setupTask?.value
+
+        #expect(install.installCallCount == 0)
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(pending.status == .initialBoot)
+        guard case .conflict(let vm, let other, let reason) = try #require(reported.first) else {
+            Issue.record("expected a conflict refusal, got \(reported)")
+            return
+        }
+        #expect(vm.id == pending.id)
+        #expect(other.id == holder.id)
+        #expect(reason == .macAddress)
+    }
+
+    @Test("Resume-then-shut-down of a suspended VM onto a live identity is refused")
+    func resumeThenShutDownOfASuspendedVMOntoALiveIdentityIsRefused() async throws {
+        let harness = makeHarness()
+        preferences.blockDuplicateMachineIDBoot = true
+        let identity = Data([7, 7, 7])
+        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID())) {
+            $0.genericMachineIdentifierData = identity
+        }
+        let twin = makeInstance(in: harness, name: "Twin", phase: .suspended) {
+            $0.genericMachineIdentifierData = identity
+        }
+        defer { VMInstanceFixture.removeBundle(of: twin) }
+        try VMInstanceFixture.writeSaveFile(for: twin)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.stop(
+                    .id(twin.id), disposition: .resumeThenShutDown, confirmed: true,
+                    timeout: nil)
+            })
+
+        guard case .conflict(_, let other, let reason) = error else {
+            Issue.record("expected a conflict refusal, got \(error)")
+            return
+        }
+        #expect(other.id == live.id)
+        #expect(reason == .machineIdentity)
+        #expect(harness.virtualization.resumeCallCount == 1)
+        #expect(harness.virtualization.stopCallCount == 0)
+        #expect(twin.phase == .suspended)
+        #expect(twin.hasSaveFile)
     }
 
     // MARK: - Consent

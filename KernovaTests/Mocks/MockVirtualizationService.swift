@@ -86,6 +86,9 @@ final class MockVirtualizationService: VirtualizationProviding {
         let route =
             startRoute ?? GuestStartRoute(startOf: instance, bootIntoRecovery: bootIntoRecovery)
         lastStartRoute = route
+        // Where the real service leaves rest, so the identity refusal every
+        // bring-up passes is the real one.
+        try instance.beginBringUp(route == .restoredSavedState ? .restoringSavedState : .starting)
         if let error = startError {
             instance.tearDownSession(
                 restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
@@ -138,6 +141,9 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func resume(_ instance: VMInstance) async throws {
         resumeCallCount += 1
+        // The real service's cold branch, read off the slot because a mock
+        // session is only a phase: a live-paused VM here has no `VMSession`.
+        if instance.holdsSuspendedSession { try instance.beginBringUp(.restoringSavedState) }
         if let error = resumeError {
             instance.tearDownSession(
                 restingAt: VirtualizationService.restingPhaseAfterLifecycleFailure(
@@ -216,6 +222,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         var restore = plan
         restore.configuration = instance.configuration.adoptingSnapshotState(plan.configuration)
 
+        let wasLive = instance.hasLiveVirtualMachine
         instance.tearDownSession(restingAt: .revertingToSnapshot)
         if let error = revertToSnapshotError {
             instance.enter(instance.restingPhase(withoutSlot: .stopped))
@@ -234,5 +241,14 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.removeSaveFile()
         }
         instance.enter(plan.kind == .warm ? .suspended : .stopped)
+        // A VM that was live goes back to being live at a warm snapshot's
+        // state, as the real service resumes it.
+        if wasLive, plan.kind == .warm {
+            do {
+                try await resume(instance)
+            } catch {
+                throw VirtualizationError.revertResumeFailed(underlying: error)
+            }
+        }
     }
 }
