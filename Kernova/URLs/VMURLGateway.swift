@@ -28,7 +28,7 @@ final class VMURLGateway {
     /// for. It does not activate the app: the opener's Launch Services request
     /// carries the activation (`NSWorkspace.OpenConfiguration.activates`
     /// defaults to `true`).
-    private let prepareToSurface: @MainActor () -> Void
+    private let prepareToSurface: @MainActor @Sendable () -> Void
     /// Puts the library window on screen, which is where an alert is shown.
     private let summonLibrary: @MainActor () -> Void
     /// Shows the user what a link was refused for.
@@ -37,7 +37,7 @@ final class VMURLGateway {
     init(
         commands: any VMCommanding,
         readiness: LibraryReadiness,
-        prepareToSurface: @escaping @MainActor () -> Void,
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void,
         summonLibrary: @escaping @MainActor () -> Void,
         present: @escaping @MainActor (CommandError) -> Void
     ) {
@@ -48,8 +48,12 @@ final class VMURLGateway {
         self.present = present
     }
 
-    /// Answers one `kernova:` link: waits for the first library read, readies
-    /// the app to surface, runs the verb, and shows whatever it refused.
+    /// Answers one `kernova:` link: waits for the first library read, runs the
+    /// verb, and shows whatever it refused.
+    ///
+    /// The verb runs under an ``ActivationRequester`` that only readies the
+    /// app, so a verb readies it at the moment it surfaces and a refused one
+    /// leaves it as it was.
     ///
     /// Only a route waits for the library read — what a link *says* is decided
     /// by the URL alone, so a link naming no route Kernova offers is refused
@@ -61,7 +65,6 @@ final class VMURLGateway {
             assertionFailure("A URL carrying no Kernova link reached the link front door: \(url)")
         case .refused(let refusal):
             #log(Self.logger, .notice, "Refused a Kernova link: \(refusal.message, privacy: .public)")
-            prepareToSurface()
             surface(.invalidArgument(refusal.message))
         case .route(let route):
             #log(
@@ -69,8 +72,9 @@ final class VMURLGateway {
                 "Kernova link asks \(route.verb.rawValue, privacy: .public) of '\(route.selector.displayText, privacy: .private)'"
             )
             await readiness.ready()
-            if route.verb.surfacesInterface { prepareToSurface() }
-            run(route)
+            ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
+                run(route)
+            }
         }
     }
 
@@ -100,6 +104,7 @@ final class VMURLGateway {
     /// the refusal would otherwise wait, buffered, for a window the person has
     /// no reason to open, arriving stale whenever they next did.
     private func surface(_ refusal: CommandError) {
+        prepareToSurface()
         summonLibrary()
         present(refusal)
     }

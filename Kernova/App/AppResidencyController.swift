@@ -86,8 +86,9 @@ final class AppResidencyController: WindowResidencyHosting {
     /// outcome it applied.
     private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
 
-    /// Whether the unhide now being delivered is one ``unhideForSummon(_:)``
-    /// performed, rather than the person reversing a ⌘H.
+    /// Set across ``unhideForSummon(_:)``'s unhide call, and checked by
+    /// ``noteDidUnhide()``. AppKit delivers `applicationDidUnhide` a main-queue
+    /// turn after that call returns, when this is `false` again.
     private var isUnhidingForSummon = false
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
@@ -488,17 +489,18 @@ final class AppResidencyController: WindowResidencyHosting {
     private func unhideForSummon(_ unhide: () -> Void) {
         guard NSApp.isHidden else { return }
         #log(Self.logger, .notice, "Summoned while hidden — unhiding")
-        // Scoped across the call, which is what `applicationDidUnhide` is
-        // delivered inside: the summon is already deciding what goes on screen,
-        // and the unhide leg would otherwise read a window list the
-        // presentation has not reached yet and demote the app mid-summon.
+        // Scoped across the call only: `isHidden` is still `true` when
+        // `unhide(nil)` or `unhideWithoutActivation()` returns, and
+        // `applicationDidUnhide` arrives a main-queue turn later, after the
+        // flag is cleared (observed 2026-09-24), so the unhide leg's reconcile
+        // still runs.
         isUnhidingForSummon = true
         unhide()
         isUnhidingForSummon = false
     }
 
     /// Requests activation for a status-item or Dock-menu summon via Launch
-    /// Services, the only two paths that still use it.
+    /// Services; no other path asks Launch Services to activate the app.
     ///
     /// Those selections arrive as a FrontBoard scene action with no `NSEvent`
     /// behind it, and cooperative activation stamps a request with the sending
@@ -787,8 +789,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// window closed, and an unhide is the one moment where a person has just
     /// asked for the app.
     ///
-    /// An unhide ``unhideForSummon(_:)`` performed is not that moment and decides
-    /// nothing: the summon that asked for it is already putting a surface up.
+    /// It runs for an unhide ``unhideForSummon(_:)`` performed too: that
+    /// notification arrives after the flag guarding against it is cleared.
     func noteDidUnhide() {
         guard !isUnhidingForSummon else { return }
         pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }

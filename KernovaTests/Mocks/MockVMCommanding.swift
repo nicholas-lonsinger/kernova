@@ -437,14 +437,18 @@ final class MockVMCommanding: VMCommanding {
         if let restartError { throw restartError }
     }
 
+    /// Asks the request's requester once it would surface, as the core does.
     func open(_ selector: VMSelector) throws {
         openSelectors.append(selector)
         if let openError { throw openError }
+        ActivationRequester.requestActivation()
     }
 
+    /// Asks the request's requester once it would surface, as the core does.
     func reveal(_ selector: VMSelector) throws {
         revealSelectors.append(selector)
         if let revealError { throw revealError }
+        ActivationRequester.requestActivation()
     }
 
     func showInFinder(_ selector: VMSelector) throws {

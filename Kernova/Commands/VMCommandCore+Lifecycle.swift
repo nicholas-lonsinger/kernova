@@ -978,6 +978,7 @@ extension VMCommandCore {
         // which reads as having a display while the copy is still writing —
         // and a preparing row admits no verb that would surface one.
         try require(.open, on: instance)
+        ActivationRequester.requestActivation()
         surfaceDisplay?(instance)
     }
 
@@ -993,6 +994,7 @@ extension VMCommandCore {
     func reveal(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
         try require(.reveal, on: instance)
+        ActivationRequester.requestActivation()
         if capabilities.accepts(.open, on: instance) {
             surfaceDisplay?(instance)
         } else {

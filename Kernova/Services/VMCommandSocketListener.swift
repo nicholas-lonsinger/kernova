@@ -440,9 +440,6 @@ final class VMCommandConnection: @unchecked Sendable {
                     // The library read has to have landed: a verb run against a
                     // library that has not is not refused, it is answered wrong.
                     await awaitReady()
-                    // Before the verb, so the window it surfaces opens in front
-                    // of the person who asked rather than behind their terminal.
-                    if request.verb.surfacesInterface { requester.requestActivation() }
                     let response = await ActivationRequester.$current.withValue(requester) {
                         await router.respond(to: request)
                     }

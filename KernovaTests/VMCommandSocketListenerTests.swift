@@ -178,7 +178,7 @@ struct VMCommandSocketListenerTests {
     }
 
     @Test(
-        "A verb that surfaces readies the app and asks the client to activate it before answering",
+        "A verb that surfaces readies the app and asks the client to activate it once, before answering",
         arguments: [
             VMCommandRequest.Verb.open(.name("Alpha")),
             .reveal(.name("Alpha")),
@@ -199,6 +199,29 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse()?.result == .activate)
         #expect(try await client.nextResponse()?.result == .ok)
         #expect(harness.preparationCount.value == 1)
+    }
+
+    @Test(
+        "A refused open or reveal neither readies the app nor asks the client to activate it",
+        arguments: [
+            VMCommandRequest.Verb.open(.name("Alpha")),
+            .reveal(.name("Alpha")),
+        ])
+    func refusedSurfacingVerbsSendNoActivate(_ verb: VMCommandRequest.Verb) async throws {
+        let harness = try makeHarness()
+        let refusal = CommandError.notFound(.name("Alpha"))
+        harness.commands.openError = refusal
+        harness.commands.revealError = refusal
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.send(VMCommandRequest(verb: verb))
+
+        #expect(try await client.nextResponse()?.result == .failure(refusal.dto))
+        #expect(harness.preparationCount.value == 0)
     }
 
     @Test("A verb that puts nothing on screen answers with no activate frame")

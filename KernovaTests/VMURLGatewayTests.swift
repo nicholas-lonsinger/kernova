@@ -49,6 +49,7 @@ struct VMURLGatewayTests {
     }
 
     /// Records everything the gateway asked of the app, in order.
+    @MainActor
     private final class Trace {
         private(set) var steps: [Step] = []
 
@@ -116,7 +117,8 @@ struct VMURLGatewayTests {
         #expect(trace.steps == [.prepared])
     }
 
-    @Test("A verb refusal summons the library before it is shown")
+    /// Readied once, for the alert: the refused verb itself surfaced nothing.
+    @Test("A verb refusal readies the app once and summons the library before it is shown")
     func aVerbRefusalSummonsTheLibraryBeforePresenting() async throws {
         let commands = MockVMCommanding()
         let refusal = CommandError.notFound(.idOrName("Sonoma"))
