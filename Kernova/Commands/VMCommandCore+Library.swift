@@ -67,7 +67,8 @@ extension VMCommandCore {
 
     /// The outcome of `arrival` for the caller that waits on it: the VM its
     /// bundle became, or the failure thrown here — and reported nowhere else,
-    /// unless the waiter has gone by the time it settles.
+    /// unless the waiter has gone by the time it settles. The event stream
+    /// already carries the failure (``arrivalFailed(_:with:)``).
     ///
     /// Awaiting ``VMArrival/settled`` does not return early when the waiting
     /// task is cancelled, so whether the waiter is still there is read after
@@ -81,7 +82,6 @@ extension VMCommandCore {
                     verb: arrival.kind.verb,
                     message: "The \(arrival.kind.displayNoun.lowercased()) was cancelled.")
             }
-            emitArrivalFailure(failure, of: arrival)
             if Task.isCancelled { report(failure, on: nil) }
             throw failure
         }
@@ -98,7 +98,6 @@ extension VMCommandCore {
                 await onSettled?(instance)
             } catch {
                 guard let self, let failure = self.arrivalFailure(error, of: arrival) else { return }
-                self.emitArrivalFailure(failure, of: arrival)
                 self.report(failure, on: nil)
             }
         }

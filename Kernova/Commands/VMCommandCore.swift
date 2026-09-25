@@ -189,6 +189,9 @@ final class VMCommandCore: VMCommanding {
         library.onAgentBecameCurrent = { [weak self] instance in
             self?.detachGuestAgentDisk(from: instance)
         }
+        library.onArrivalFailed = { [weak self] arrival, error in
+            self?.arrivalFailed(arrival, with: error)
+        }
         broadcaster.onSubscriberCountChanged = { [weak self] count in
             self?.reconcileEventLoop(subscriberCount: count)
         }
@@ -620,10 +623,11 @@ final class VMCommandCore: VMCommanding {
             ?? .operationFailed(verb: arrival.kind.verb, message: error.localizedDescription)
     }
 
-    /// Puts an arrival's failure on the event stream, whoever it is reported
-    /// to: the arrival has left the library by then, so the diff in
-    /// ``emitLibraryChanges()`` only ever sees it vanish.
-    func emitArrivalFailure(_ failure: CommandError, of arrival: VMArrival) {
+    /// Puts an arrival's failure on the event stream, waited or not, while its
+    /// row is still in the library: the diff in ``emitLibraryChanges()`` only
+    /// ever sees the row vanish, and reports that after this.
+    private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
+        guard let failure = arrivalFailure(error, of: arrival) else { return }
         broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
     }
 }

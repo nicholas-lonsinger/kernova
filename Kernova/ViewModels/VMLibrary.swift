@@ -70,6 +70,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
     @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
 
+    /// Fires when an arrival settles as no VM, in the same main-actor step as
+    /// — and just before — its row leaves the library, so anything the hook
+    /// emits precedes every observer of the removal.
+    @ObservationIgnored var onArrivalFailed: ((VMArrival, any Error) -> Void)?
+
     /// Fires when a VM reaches a state a device can be attached to, for the
     /// accessories paired with it.
     @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> Void)?

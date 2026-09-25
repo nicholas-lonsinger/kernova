@@ -375,14 +375,29 @@ extension VMLibrary {
             destinationURL: destination
         ) { [weak self] arrival in
             guard let self else { throw CancellationError() }
-            return try await self.publish(arrival, writtenBy: write)
+            return try await self.settle(arrival, writtenBy: write)
         }
         register(arrival)
         return arrival
     }
 
-    /// Writes, validates, publishes and adopts `arrival`'s bundle, removing its
-    /// row however it ends.
+    /// Runs `arrival` to its outcome and removes its row, handing a failure to
+    /// ``onArrivalFailed`` first.
+    private func settle(
+        _ arrival: VMArrival, writtenBy write: (URL) async throws -> Void
+    ) async throws -> VMInstance {
+        do {
+            let instance = try await publish(arrival, writtenBy: write)
+            removeArrival(arrival)
+            return instance
+        } catch {
+            onArrivalFailed?(arrival, error)
+            removeArrival(arrival)
+            throw error
+        }
+    }
+
+    /// Writes, validates, publishes and adopts `arrival`'s bundle.
     ///
     /// A cancel is decided before the rename: ``VMArrival/beginPublishing()``
     /// is the last point a cancel stops the arrival, and past it the arrival
@@ -391,7 +406,6 @@ extension VMLibrary {
     private func publish(
         _ arrival: VMArrival, writtenBy write: (URL) async throws -> Void
     ) async throws -> VMInstance {
-        defer { removeArrival(arrival) }
         let storage = storageService
         let reader = bundleReader
         let staged = try storage.makeStagedBundleURL()
