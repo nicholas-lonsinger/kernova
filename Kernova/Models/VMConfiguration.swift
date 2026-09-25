@@ -9,7 +9,7 @@ enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 /// The user's choice of pointing/keyboard device pair for a macOS guest.
-enum VMInputDeviceMode: String, Codable, Sendable, Equatable {
+enum VMInputDeviceMode: String, Codable, Sendable, Equatable, CaseIterable {
     /// Resolve the pair from the guest's effective macOS version.
     case automatic
     /// The Mac trackpad and keyboard, which only macOS 13+ guests recognize.
@@ -626,8 +626,19 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// The stored trio a "looks like" size of `width` × `height` produces —
     /// what every surface that lets a caller name a display size writes.
     mutating func setDisplayBaseSize(width: Int, height: Int) {
-        displayResolution = DisplayBootSizing.resolution(
-            base: width, height: height, hiDPI: displayResolutionIsHiDPI)
+        displayResolution = displayResolution(base: width, height: height)
+    }
+
+    /// The "looks like" size `width` × `height` settles at once fitted to what
+    /// this VM takes — the size ``setDisplayBaseSize(width:height:)`` stores.
+    func fittedDisplayBaseSize(width: Int, height: Int) -> (width: Int, height: Int) {
+        var fitted = self
+        fitted.displayResolution = displayResolution(base: width, height: height)
+        return fitted.displayBaseSize
+    }
+
+    private func displayResolution(base width: Int, height: Int) -> DisplayBootSizing.Resolution {
+        DisplayBootSizing.resolution(base: width, height: height, hiDPI: displayResolutionIsHiDPI)
     }
 
     /// The largest "looks like" size this VM takes: a HiDPI base is doubled

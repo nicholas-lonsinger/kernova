@@ -269,6 +269,120 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.systemKeyForwarding == .fullscreenOnly)
     }
 
+    @Test("A running VM refuses the new machine keys, naming each one it refused")
+    func runningVMRefusesTheNewMachineKeys() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+        let moved = [
+            ConfigurationEntry(key: "audio.input", value: String(!before.audioInputEnabled)),
+            ConfigurationEntry(key: "audio.output", value: String(!before.audioOutputEnabled)),
+            ConfigurationEntry(
+                key: "input.devices",
+                value: before.inputDeviceMode == .usb ? "mac" : "usb"),
+        ]
+
+        for assignment in moved {
+            do {
+                try harness.core.setConfiguration(
+                    .name("Alpha"), assignments: [assignment], confirmed: false)
+                Issue.record("expected a refusal of \(assignment.key)")
+            } catch let error as CommandError {
+                guard case .invalidState(_, _, _, let settings) = error else {
+                    Issue.record("expected invalidState, got \(error)")
+                    continue
+                }
+                #expect(settings == [assignment.key])
+                #expect(error.message.contains(assignment.key))
+            }
+        }
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: moved + [ConfigurationEntry(key: "serial.socket", value: "true")],
+                confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            // The live key in the batch is not what the state refused.
+            #expect(settings == ["audio.input", "audio.output", "input.devices"])
+        }
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A running VM takes the new live keys")
+    func runningVMTakesTheNewLiveKeys() throws {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(
+            name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold,
+            macAddress: nil)
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS,
+            snapshots: [snapshot])
+        let before = instance.settings
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(
+                    key: "serial.socket", value: String(!before.configuration.serialSocketRelayEnabled)),
+                ConfigurationEntry(
+                    key: "agent.logForwarding",
+                    value: String(!before.configuration.agentLogForwardingEnabled)),
+                ConfigurationEntry(
+                    key: "dropFiles", value: String(!before.configuration.dropFilesEnabled)),
+                ConfigurationEntry(
+                    key: "autoStart", value: String(!before.hostState.startsAutomaticallyOnLaunch)),
+                ConfigurationEntry(
+                    key: "agent.installReminder",
+                    value: String(before.hostState.agentInstallNudgeDismissed)),
+                ConfigurationEntry(key: "ephemeral.baseline", value: "Clean"),
+            ],
+            confirmed: false)
+
+        let after = instance.settings
+        #expect(after.configuration.serialSocketRelayEnabled != before.configuration.serialSocketRelayEnabled)
+        #expect(
+            after.configuration.agentLogForwardingEnabled
+                != before.configuration.agentLogForwardingEnabled)
+        #expect(after.configuration.dropFilesEnabled != before.configuration.dropFilesEnabled)
+        #expect(
+            after.hostState.startsAutomaticallyOnLaunch
+                != before.hostState.startsAutomaticallyOnLaunch)
+        #expect(
+            after.hostState.agentInstallNudgeDismissed
+                != before.hostState.agentInstallNudgeDismissed)
+        #expect(after.hostState.ephemeralModeEnabled)
+        #expect(after.hostState.ephemeralBaselineSnapshotID == snapshot.id)
+    }
+
+    @Test("An assignment that leaves its value where it is passes any gate and writes nothing")
+    func anUnmovedAssignmentIsNoEdit() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let answered = try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [
+                ConfigurationEntry(key: "cpus", value: String(before.cpuCount)),
+                ConfigurationEntry(key: "memory", value: String(before.memorySizeInGB)),
+            ],
+            confirmed: false)
+
+        #expect(try value(answered, "cpus") == String(before.cpuCount))
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")
     func networkModeIsLiveSwitchableButNotRemovable() throws {
         let harness = makeHarness()

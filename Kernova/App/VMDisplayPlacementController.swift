@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaKit
 import KernovaLogging
 
 /// The window seams a ``VMDisplayPlacementController`` needs but cannot own.
@@ -11,9 +12,10 @@ protocol VMDisplayPlacementHosting: AnyObject {
 
 /// The one owner of where each VM's display lives.
 ///
-/// Holds the display-window registry and is the sole writer of both placement
-/// fields — the runtime ``VMInstance/displayMode`` and the persisted
-/// ``VMHostState/displayPreference`` — for every transition.
+/// Holds the display-window registry and decides both placement fields — the
+/// runtime ``VMInstance/displayMode`` and the persisted
+/// ``VMHostState/displayPreference``, written through its key — for every
+/// transition.
 /// ``VMDisplayWindowController`` is a view under it: it reports what AppKit did
 /// and writes neither field.
 @MainActor
@@ -227,11 +229,11 @@ final class VMDisplayPlacementController {
         case .popInFromHeadless:
             // There is no window to close — just return the display slot to the
             // main window.
-            viewModel.updateHostState(of: instance) { $0.displayPreference = .inline }
+            persist(.inline, for: instance)
             instance.displayMode = .inline
             viewModel.presenter?.focusGuestDisplay(for: instance)
         case .popOut:
-            viewModel.updateHostState(of: instance) { $0.displayPreference = .popOut }
+            persist(.popOut, for: instance)
             openDisplayWindow(for: instance, show: .front(fullscreen: false))
         }
     }
@@ -241,7 +243,7 @@ final class VMDisplayPlacementController {
             existing.window?.toggleFullScreen(nil)
             return
         }
-        viewModel.updateHostState(of: instance) { $0.displayPreference = .fullscreen }
+        persist(.fullscreen, for: instance)
         openDisplayWindow(for: instance, show: .front(fullscreen: true))
     }
 
@@ -366,10 +368,18 @@ final class VMDisplayPlacementController {
 
     // MARK: - Transition Handling
 
+    /// Persists where `instance`'s display opens, through the
+    /// `display.preference` key.
+    private func persist(_ preference: VMDisplayPreference, for instance: VMInstance) {
+        viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.displayPreference.assigning(preference.rawValue)],
+            on: instance)
+    }
+
     private func apply(_ placement: Placement, to instance: VMInstance) {
         instance.displayMode = placement.mode
         if let preference = placement.persistPreference {
-            viewModel.updateHostState(of: instance) { $0.displayPreference = preference }
+            persist(preference, for: instance)
         }
     }
 
@@ -396,13 +406,11 @@ final class VMDisplayPlacementController {
             self.pendingCloseReasons.removeValue(forKey: vmID)
             guard self.windows.removeValue(forKey: vmID) != nil else { return }
 
-            self.viewModel.updateHostState(of: instance) { hostState in
-                if let displayID = context.lastDisplayID {
-                    hostState.lastFullscreenDisplayID = displayID
-                }
-                if let preference = placement.persistPreference {
-                    hostState.displayPreference = preference
-                }
+            if let displayID = context.lastDisplayID {
+                self.viewModel.recordLastFullscreenDisplay(displayID, for: instance)
+            }
+            if let preference = placement.persistPreference {
+                self.persist(preference, for: instance)
             }
             #log(
                 Self.logger, .notice,

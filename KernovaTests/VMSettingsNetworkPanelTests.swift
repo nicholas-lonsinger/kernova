@@ -496,6 +496,30 @@ struct VMSettingsNetworkPanelTests {
         #expect(presenter.errorTitle == "MAC Address In Use")
     }
 
+    /// The pane opened while the VM was stopped; the start lands while an edit
+    /// is still in the field, and the commit comes after it.
+    @Test("A MAC address committed after the VM started is refused and changes nothing")
+    func macEditCommittedAfterAStartIsRefused() throws {
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let (vc, instance) = makeNetworkController(viewModel: viewModel)
+        let storage = try #require(viewModel.storageService as? MockVMStorageService)
+        let before = instance.configuration
+        let onDisk = storage.bundles[instance.bundleURL]
+        let field = try #require(editableField("MAC address", in: vc.view))
+        field.stringValue = "aa:bb:cc:dd:ee:01"
+
+        instance.enter(.running(sessionID: UUID()))
+        commitEdit(field)
+
+        #expect(instance.configuration == before)
+        #expect(storage.bundles[instance.bundleURL] == onDisk)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains("network.mac") == true)
+        #expect(field.stringValue == "aa:bb:cc:dd:ee:ff")
+    }
+
     private static let duplicateMACBanner =
         "This MAC address is also used by “Holder”. Each virtual machine needs its own."
 

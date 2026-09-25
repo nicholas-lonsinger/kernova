@@ -273,7 +273,7 @@ struct VMLibraryViewModelSnapshotTests {
             $0.macAddress = "aa:bb:cc:dd:ee:07"
         }
 
-        let took = harness.viewModel.updateConfiguration(of: other) {
+        let took = harness.viewModel.library.updateConfiguration(of: other) {
             $0.macAddress = "aa:bb:cc:dd:ee:05"
         }
 
@@ -368,7 +368,7 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let held = instance.configuration
         harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
-        let write = harness.viewModel.updateConfiguration(of: instance) {
+        let write = harness.viewModel.library.updateConfiguration(of: instance) {
             $0.memorySizeInGB = held.memorySizeInGB + 2
         }
         #expect(write.failedToSave)

@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaKit
 import KernovaLogging
 import UniformTypeIdentifiers
 import Virtualization
@@ -472,26 +473,18 @@ extension VMSettingsViewController {
     /// The one write path for the auto-start flag, whichever surface's switch
     /// asked for it.
     private func setAutoStart(_ isOn: Bool) {
-        writeMirrored(
-            viewModel.updateHostState(of: instance) { $0.startsAutomaticallyOnLaunch = isOn })
+        writeMirrored(VMConfigurationKeyRegistry.autoStart.assigning(isOn))
     }
 
     private func setEphemeralMode(_ isOn: Bool) {
-        let manifest = instance.snapshotManifest
-        writeMirrored(
-            viewModel.updateHostState(of: instance) { hostState in
-                hostState.applyEphemeralMode(
-                    enabled: isOn,
-                    baseline: manifest.defaultEphemeralBaseline(
-                        preferring: hostState.ephemeralBaselineSnapshotID))
-            })
+        writeMirrored(VMConfigurationKeyRegistry.ephemeral.assigning(isOn))
     }
 
-    /// Settles a write of a setting that renders on more than one surface,
-    /// re-rendering all of them when it did not land so no control is left
-    /// showing a value the model does not hold.
-    private func writeMirrored(_ write: VMLibrary.SettingsWrite) {
-        guard case .saved = write else {
+    /// Writes a setting that renders on more than one surface, re-rendering all
+    /// of them when it did not land so no control is left showing a value the
+    /// model does not hold.
+    private func writeMirrored(_ assignment: ConfigurationEntry) {
+        guard case .applied = viewModel.setConfiguration([assignment], on: instance) else {
             apply()
             return
         }
@@ -505,8 +498,7 @@ extension VMSettingsViewController {
     }
 
     private func setDropFiles(_ isOn: Bool) {
-        writeMirrored(
-            viewModel.updateConfiguration(of: instance) { $0.dropFilesEnabled = isOn })
+        writeMirrored(VMConfigurationKeyRegistry.dropFiles.assigning(isOn))
     }
 
     /// The clipboard flags' shared write path, which every surface offering

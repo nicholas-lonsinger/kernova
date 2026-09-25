@@ -1,15 +1,16 @@
 import AppKit
+import KernovaKit
 import KernovaLogging
 
 /// The one write path for the two clipboard flags, shared by every surface that
 /// offers either toggle.
 ///
-/// Both go through here because either one can start passthrough running:
-/// ``ClipboardPassthroughConsent`` decides when, so a sharing switch flipped
-/// over a passthrough flag already set confirms exactly as the passthrough
-/// switch does. A write that is refused, cancelled, or has no window to confirm
-/// in writes nothing and calls ``refresh``, so no switch is left showing a value
-/// the model does not hold.
+/// Both go through here because either one can start passthrough running, and
+/// the configuration verb asks for consent whenever one does — so a sharing
+/// switch flipped over a passthrough flag already set confirms exactly as the
+/// passthrough switch does. A write that is refused, cancelled, or has no
+/// window to confirm in writes nothing and calls ``refresh``, so no switch is
+/// left showing a value the model does not hold.
 ///
 /// Built per call site rather than stored: the confirmation alert holds
 /// ``refresh`` across the sheet, so that closure captures its owner weakly.
@@ -25,10 +26,12 @@ struct ClipboardPassthroughSetting {
         /// The clipboard-sharing switch, which carries passthrough.
         case sharing(Bool)
 
-        fileprivate func apply(to config: inout VMConfiguration) {
+        fileprivate var assignment: ConfigurationEntry {
             switch self {
-            case .passthrough(let isOn): config.clipboardPassthroughEnabled = isOn
-            case .sharing(let isOn): config.clipboardSharingEnabled = isOn
+            case .passthrough(let isOn):
+                VMConfigurationKeyRegistry.clipboardPassthrough.assigning(isOn)
+            case .sharing(let isOn):
+                VMConfigurationKeyRegistry.clipboardSharing.assigning(isOn)
             }
         }
     }
@@ -38,33 +41,41 @@ struct ClipboardPassthroughSetting {
     /// Re-renders every surface showing the setting from the model.
     let refresh: () -> Void
 
-    /// Applies `change`, confirming in `window` when it turns passthrough on.
+    /// Applies `change`, confirming in `window` when the verb asks for consent.
     func set(_ change: Change, confirmingIn window: NSWindow?) {
-        var candidate = instance.configuration
-        change.apply(to: &candidate)
-        guard
-            ClipboardPassthroughConsent.isNewlyEffective(
-                from: instance.configuration, to: candidate)
-        else {
-            write(change)
+        switch viewModel.setConfiguration([change.assignment], on: instance) {
+        case .applied:
             return
+        case .refused:
+            refresh()
+        case .consentRequired(let prompt):
+            guard let window else {
+                #log(
+                    Self.logger, .warning,
+                    "No window to confirm clipboard passthrough in; leaving it off")
+                refresh()
+                return
+            }
+            presentSheetAlert(
+                Self.alert(
+                    prompt: prompt,
+                    onConfirm: { confirm(change) },
+                    onCancel: { cancel() }),
+                in: window)
         }
-        guard let window else {
-            #log(Self.logger, .warning, "No window to confirm clipboard passthrough in; leaving it off")
+    }
+
+    /// The confirmation's Turn On: the same write, with the consent given.
+    func confirm(_ change: Change) {
+        guard
+            case .applied = viewModel.setConfiguration(
+                [change.assignment], on: instance, confirmed: true)
+        else {
+            // Refused or unsaved, the configuration kept its old value, which
+            // the controls go back to showing.
             refresh()
             return
         }
-        presentSheetAlert(
-            Self.alert(
-                vmName: instance.name,
-                onConfirm: { confirm(change) },
-                onCancel: { cancel() }),
-            in: window)
-    }
-
-    /// The confirmation's Turn On.
-    func confirm(_ change: Change) {
-        write(change)
     }
 
     /// The confirmation's Cancel: nothing was written, so put every surface back
@@ -73,24 +84,11 @@ struct ClipboardPassthroughSetting {
         refresh()
     }
 
-    /// The enable confirmation, in the words every surface asks it with.
+    /// The consent alert for `prompt`.
     static func alert(
-        vmName: String, onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void
+        prompt: ConfirmationPrompt, onConfirm: @escaping () -> Void,
+        onCancel: @escaping () -> Void
     ) -> AlertConfiguration {
-        AlertConfiguration(
-            confirming: ClipboardPassthroughConsent.prompt(vmName: vmName),
-            confirm: onConfirm,
-            dismiss: onCancel)
-    }
-
-    private func write(_ change: Change) {
-        if case .saved = viewModel.updateConfiguration(
-            of: instance, mutate: { change.apply(to: &$0) })
-        {
-            return
-        }
-        // Refused or unsaved, the configuration kept its old value, which the
-        // controls go back to showing.
-        refresh()
+        AlertConfiguration(confirming: prompt, confirm: onConfirm, dismiss: onCancel)
     }
 }

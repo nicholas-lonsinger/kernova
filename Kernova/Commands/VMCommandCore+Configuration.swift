@@ -39,6 +39,11 @@ extension VMCommandCore {
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
     ///
+    /// An assignment that leaves the VM's settings where they are is no edit:
+    /// no gate applies to it and nothing is written for it, so `get` output is
+    /// `set` input in any state. A gate that refuses names every key it
+    /// refused.
+    ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read
     /// survives. The configuration's refusals are judged on its result, so
@@ -51,22 +56,38 @@ extension VMCommandCore {
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
+        let context = VMConfigurationWriteContext(instance)
 
-        var resolved: [(key: VMConfigurationKey, value: String)] = []
+        var answered: [VMConfigurationKey] = []
+        var edits: [(key: VMConfigurationKey, value: String)] = []
+        var candidate = instance.settings
         for assignment in assignments {
             let key = try requireKey(named: assignment.key, on: instance.configuration)
-            try require(key.capability(writing: assignment.value), on: instance)
-            resolved.append((key, assignment.value))
+            answered.append(key)
+            let before = candidate
+            do {
+                try key.apply(assignment.value, to: &candidate, context: context)
+            } catch {
+                // Still an edit: the gate answers it before the write below
+                // refuses the value.
+                edits.append((key, assignment.value))
+                continue
+            }
+            if candidate != before { edits.append((key, assignment.value)) }
+        }
+        try requireGates(for: edits, on: instance)
+        guard !edits.isEmpty else {
+            let held = instance.settings
+            return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(held)) }
         }
 
-        let context = VMConfigurationWriteContext(snapshots: instance.snapshotManifest)
         var configurationWrites: [(field: VMConfigurationKey.ConfigurationField, value: String)] =
             []
         var hostStateChanges: [(inout VMHostState) -> Void] = []
-        for entry in resolved {
-            switch entry.key.field {
-            case .configuration(let field): configurationWrites.append((field, entry.value))
-            case .hostState(let field): hostStateChanges.append(try field.change(entry.value, context))
+        for edit in edits {
+            switch edit.key.field {
+            case .configuration(let field): configurationWrites.append((field, edit.value))
+            case .hostState(let field): hostStateChanges.append(try field.change(edit.value, context))
             }
         }
 
@@ -87,7 +108,7 @@ extension VMCommandCore {
                         guard let message = write.field.refusalOnResult(config) else { continue }
                         throw CommandError.invalidArgument(message)
                     }
-                    try refuseClipboardPassthrough(
+                    try requireClipboardPassthroughConsent(
                         on: instance, from: held, to: config, confirmed: confirmed)
                     if let conflict = library.macAddresses.macAddressConflict(
                         on: instance, movingFrom: held, to: config)
@@ -103,35 +124,39 @@ extension VMCommandCore {
             of: instance, verb: .setConfiguration)
         #log(
             Self.logger, .notice,
-            "Changed \(resolved.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
+            "Changed \(edits.map(\.key.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
         )
         let written = instance.settings
-        return resolved.map { ConfigurationEntry(key: $0.key.name, value: $0.key.read(written)) }
+        return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(written)) }
+    }
+
+    /// Refuses unless `instance` takes every one of `edits`, naming each key
+    /// its state refused.
+    private func requireGates(
+        for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
+    ) throws {
+        let refused = edits.filter {
+            !capabilities.accepts($0.key.capability(writing: $0.value), on: instance)
+        }
+        guard !refused.isEmpty else { return }
+        let error = refusal(for: refused.map { $0.key.capability(writing: $0.value) }, on: instance)
+        guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
+        var names: [String] = []
+        for edit in refused where !names.contains(edit.key.name) { names.append(edit.key.name) }
+        throw CommandError.invalidState(vm: vm, current: current, allowed: allowed, settings: names)
     }
 
     /// Refuses a change that turns automatic clipboard passthrough on without
-    /// what it needs: clipboard sharing to ride on, and the user's consent.
+    /// the user's consent.
     ///
-    /// The gate itself is ``ClipboardPassthroughConsent``, which the settings
-    /// pane asks too — so a sharing enable over a passthrough flag already set
-    /// confirms here exactly as it does there. A headless caller supplies the
-    /// consent the pane gathers in an alert as a parameter.
-    ///
-    /// Setting the flag on a VM with sharing off is refused rather than stored
-    /// inert, matching the pane, whose passthrough switch is dead while sharing
-    /// is off — but only as a *change*, so a `get` of a VM already in that state
-    /// still writes back.
-    private func refuseClipboardPassthrough(
+    /// The gate itself is ``ClipboardPassthroughConsent``, so a sharing enable
+    /// over a passthrough flag already set confirms exactly as a passthrough
+    /// enable does. A caller supplies the consent as a parameter; the settings
+    /// pane gathers it in an alert.
+    private func requireClipboardPassthroughConsent(
         on instance: VMInstance, from current: VMConfiguration, to candidate: VMConfiguration,
         confirmed: Bool
     ) throws {
-        if candidate.clipboardPassthroughEnabled, !current.clipboardPassthroughEnabled,
-            !candidate.clipboardSharingEnabled
-        {
-            throw CommandError.invalidArgument(
-                "Automatic clipboard passthrough rides on clipboard sharing, which is off. "
-                    + "Set clipboard.sharing=true as well.")
-        }
         guard ClipboardPassthroughConsent.isNewlyEffective(from: current, to: candidate),
             !confirmed
         else { return }

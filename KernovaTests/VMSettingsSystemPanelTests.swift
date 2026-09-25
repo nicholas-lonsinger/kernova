@@ -40,6 +40,7 @@ struct VMSettingsSystemPanelTests {
             $0.displaySizesToWindow = sizesToWindow
             $0.displayHiDPI = hiDPI ?? DisplayBootSizing.isHiDPI(ppi: ppi)
         }
+        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -449,6 +450,224 @@ struct VMSettingsSystemPanelTests {
 
     // MARK: - Serial console
 
+    // MARK: - Edits committed after the machine is pinned
+
+    /// A control the System panel writes a machine setting from — one the VM's
+    /// running session or saved state pins.
+    enum MachineEdit: String, CaseIterable, Sendable {
+        case cpuField, memoryField, widthField, matchWindowSwitch, hiDPISwitch, audioInput,
+            audioOutput, inputDevices
+
+        /// The key the edit writes, which a refusal names.
+        var key: String {
+            switch self {
+            case .cpuField: "cpus"
+            case .memoryField: "memory"
+            case .widthField: "display.width"
+            case .matchWindowSwitch: "display.sizeToWindow"
+            case .hiDPISwitch: "display.hidpi"
+            case .audioInput: "audio.input"
+            case .audioOutput: "audio.output"
+            case .inputDevices: "input.devices"
+            }
+        }
+    }
+
+    /// A stopped, registered macOS VM in a pane open on System that is not
+    /// read-only, with a presenter recording what the refusal shows.
+    private func makeMachineEditController() -> (
+        VMSettingsViewController, VMInstance, MockVMLibraryPresenting, MockVMStorageService
+    ) {
+        let presenter = MockVMLibraryPresenting()
+        let storage = MockVMStorageService()
+        let viewModel = VMLibraryViewModel(
+            storageService: storage, diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
+            entitlements: .entitled)
+        viewModel.presenter = presenter
+        let instance = VMInstanceFixture.make(guestOS: .macOS) {
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch)
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = false
+        }
+        viewModel.library.register(instance, storage: storage)
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.system)
+        return (vc, instance, presenter, storage)
+    }
+
+    /// Moves `edit`'s control off the value the model holds, as a user would,
+    /// without committing it.
+    private func change(_ edit: MachineEdit, in vc: VMSettingsViewController, _ config: VMConfiguration)
+        throws
+    {
+        switch edit {
+        case .cpuField:
+            let field = try #require(editableField("CPU cores", in: vc.view))
+            field.integerValue =
+                config.cpuCount == config.guestOS.minCPUCount
+                ? config.cpuCount + 1 : config.cpuCount - 1
+        case .memoryField:
+            let field = try #require(editableField("Memory", in: vc.view))
+            field.integerValue =
+                config.memorySizeInGB == config.guestOS.minMemoryInGB
+                ? config.memorySizeInGB + 1 : config.memorySizeInGB - 1
+        case .widthField:
+            let field = try #require(editableField("Width", in: vc.view))
+            field.integerValue = config.displayBaseSize.width == 1440 ? 1680 : 1440
+        case .matchWindowSwitch, .hiDPISwitch, .audioInput, .audioOutput:
+            let toggle = try #require(firstSwitch(action: switchAction(edit), in: vc.view))
+            toggle.state = toggle.state == .on ? .off : .on
+        case .inputDevices:
+            let popUp = try #require(firstPopUp(action: "inputDevicesChanged", in: vc.view))
+            let other = try #require(
+                popUp.itemArray.firstIndex {
+                    ($0.representedObject as? VMInputDeviceMode) != config.inputDeviceMode
+                })
+            popUp.selectItem(at: other)
+        }
+    }
+
+    private func switchAction(_ edit: MachineEdit) -> String {
+        switch edit {
+        case .matchWindowSwitch: "displayMatchWindowToggled"
+        case .hiDPISwitch: "displayHiDPIToggled"
+        case .audioInput: "audioInputToggled"
+        case .audioOutput: "audioOutputToggled"
+        case .cpuField, .memoryField, .widthField, .inputDevices: ""
+        }
+    }
+
+    /// Commits `edit`'s control the way AppKit does: a field's end-edit, a
+    /// switch's or popup's action.
+    private func commit(_ edit: MachineEdit, in vc: VMSettingsViewController) throws {
+        switch edit {
+        case .cpuField: commitEdit(try #require(editableField("CPU cores", in: vc.view)))
+        case .memoryField: commitEdit(try #require(editableField("Memory", in: vc.view)))
+        case .widthField: commitEdit(try #require(editableField("Width", in: vc.view)))
+        case .matchWindowSwitch, .hiDPISwitch, .audioInput, .audioOutput:
+            let toggle = try #require(firstSwitch(action: switchAction(edit), in: vc.view))
+            toggle.sendAction(toggle.action, to: toggle.target)
+        case .inputDevices:
+            let popUp = try #require(firstPopUp(action: "inputDevicesChanged", in: vc.view))
+            popUp.sendAction(popUp.action, to: popUp.target)
+        }
+    }
+
+    /// Whether `edit`'s control shows the value `config` holds.
+    private func showsModel(
+        _ edit: MachineEdit, in vc: VMSettingsViewController, _ config: VMConfiguration
+    ) throws -> Bool {
+        switch edit {
+        case .cpuField:
+            return try #require(editableField("CPU cores", in: vc.view)).integerValue
+                == config.cpuCount
+        case .memoryField:
+            return try #require(editableField("Memory", in: vc.view)).integerValue
+                == config.memorySizeInGB
+        case .widthField:
+            return try #require(editableField("Width", in: vc.view)).integerValue
+                == config.displayBaseSize.width
+        case .matchWindowSwitch:
+            return try #require(firstSwitch(action: switchAction(edit), in: vc.view)).state
+                == (config.displaySizesToWindow ? .on : .off)
+        case .hiDPISwitch:
+            return try #require(firstSwitch(action: switchAction(edit), in: vc.view)).state
+                == (config.displayHiDPI ? .on : .off)
+        case .audioInput:
+            return try #require(firstSwitch(action: switchAction(edit), in: vc.view)).state
+                == (config.audioInputEnabled ? .on : .off)
+        case .audioOutput:
+            return try #require(firstSwitch(action: switchAction(edit), in: vc.view)).state
+                == (config.audioOutputEnabled ? .on : .off)
+        case .inputDevices:
+            let popUp = try #require(firstPopUp(action: "inputDevicesChanged", in: vc.view))
+            return (popUp.selectedItem?.representedObject as? VMInputDeviceMode)
+                == config.inputDeviceMode
+        }
+    }
+
+    /// Changes `edit`'s control on a VM at rest, pins the machine with `pin`,
+    /// then commits — the order a pane left open while the CLI starts or
+    /// suspends the VM produces.
+    private func expectRefusedAfterPinning(
+        _ edit: MachineEdit, pin: (VMInstance) throws -> Void
+    ) throws {
+        let (vc, instance, presenter, storage) = makeMachineEditController()
+        let before = instance.configuration
+        let onDisk = storage.bundles[instance.bundleURL]
+        try change(edit, in: vc, before)
+
+        try pin(instance)
+        try commit(edit, in: vc)
+
+        #expect(instance.configuration == before)
+        #expect(storage.bundles[instance.bundleURL] == onDisk)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errors.first?.contains(edit.key) == true)
+        #expect(try showsModel(edit, in: vc, instance.configuration))
+    }
+
+    @Test(
+        "A machine edit committed after the VM started is refused and changes nothing",
+        arguments: MachineEdit.allCases)
+    func machineEditCommittedAfterAStartIsRefused(_ edit: MachineEdit) throws {
+        try expectRefusedAfterPinning(edit) { $0.enter(.running(sessionID: UUID())) }
+    }
+
+    @Test(
+        "A machine edit committed after the VM suspended is refused and changes nothing",
+        arguments: MachineEdit.allCases)
+    func machineEditCommittedAfterASuspendIsRefused(_ edit: MachineEdit) throws {
+        var pinned: VMInstance?
+        defer { pinned.map(VMInstanceFixture.removeBundle(of:)) }
+        try expectRefusedAfterPinning(edit) { instance in
+            pinned = instance
+            // The saved state is what pins the machine: resume restores only
+            // into the configuration it was suspended from.
+            try VMInstanceFixture.writeSaveFile(for: instance)
+        }
+    }
+
+    @Test("Ending an unchanged edit after the VM started raises nothing and writes nothing")
+    func endingAnUnchangedEditAfterAStartRaisesNothing() throws {
+        let (vc, instance, presenter, storage) = makeMachineEditController()
+        let before = instance.configuration
+        let onDisk = storage.bundles[instance.bundleURL]
+
+        instance.enter(.running(sessionID: UUID()))
+        for label in ["CPU cores", "Memory", "Width", "Height"] {
+            commitEdit(try #require(editableField(label, in: vc.view)))
+        }
+
+        #expect(presenter.errors.isEmpty)
+        #expect(instance.configuration == before)
+        #expect(storage.bundles[instance.bundleURL] == onDisk)
+    }
+
+    @Test("A refused end-edit puts the model's value back in a field whose editor is still attached")
+    func refusedEndEditRevertsAFieldStillBeingEdited() throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let width = try #require(editableField("Width", in: vc.view))
+        #expect(window.makeFirstResponder(width))
+        let editor = try #require(width.currentEditor())
+        editor.string = "1440"
+
+        instance.enter(.running(sessionID: UUID()))
+        commitEdit(width)
+
+        #expect(presenter.errors.count == 1)
+        #expect(width.integerValue == instance.configuration.displayBaseSize.width)
+    }
     @Test("The reveal button comes back after a disappearance cancels its probe")
     func serialLogProbeReRunsAfterTheProbeIsCancelled() async throws {
         let instance = VMInstanceFixture.make()

@@ -355,11 +355,11 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshClipboard() {
         clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
-        // Passthrough is hot-toggleable, so it isn't in
-        // `persistentLockableControls`; its enablement is gated here instead.
-        clipboardPassthroughSwitch.state = instance.configuration.clipboardPassthroughEnabled ? .on : .off
+        let passthroughOn = instance.configuration.clipboardPassthroughEnabled
+        clipboardPassthroughSwitch.state = passthroughOn ? .on : .off
         applyGroupedFormRowEnabled(
-            instance.configuration.clipboardSharingEnabled,
+            VMConfigurationKeyRegistry.clipboardPassthrough.accepts(
+                String(!passthroughOn), for: instance),
             control: clipboardPassthroughSwitch, label: clipboardPassthroughLabel)
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section, so gate it here.
@@ -477,13 +477,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     @objc private func logForwardingToggled() {
-        writeConfig { $0.agentLogForwardingEnabled = logForwardingSwitch.state == .on }
+        write(
+            VMConfigurationKeyRegistry.agentLogForwarding.assigning(
+                logForwardingSwitch.state == .on))
     }
 
     @objc private func installReminderToggled() {
-        // Routed through the view model's named accessor rather than the generic
-        // `writeConfig` so every write of this flag shares one logged path.
-        viewModel.setAgentInstallNudgeDismissed(installReminderSwitch.state != .on, for: instance)
+        write(
+            VMConfigurationKeyRegistry.agentInstallReminder.assigning(
+                installReminderSwitch.state == .on))
     }
 
     // MARK: Shared

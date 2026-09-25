@@ -356,8 +356,10 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case notFound(selector: VMSelector)
     /// More than one VM answers to the selector.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
-    /// The VM's current state does not admit the verb.
-    case invalidState(vm: VMSummary, current: String, allowed: [VMVerb])
+    /// The VM's current state does not admit the verb. `settings` names the
+    /// configuration keys a refused `setConfiguration` would have changed,
+    /// empty for every other verb.
+    case invalidState(vm: VMSummary, current: String, allowed: [VMVerb], settings: [String] = [])
     /// The VM has work in flight that the verb would race.
     case busy(vm: VMSummary, operation: String)
     /// The verb is destructive and no consent was supplied.
@@ -442,14 +444,17 @@ extension CommandErrorDTO {
                 + "Use one of their identifiers instead: "
                 + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
                 + "."
-        case .invalidState(let vm, let current, let allowed):
+        case .invalidState(let vm, let current, let allowed, let settings):
             // Display names, never the raw values: those are the wire's
             // vocabulary, and this sentence goes in front of a person. A verb
             // every state admits is left out, since naming it says nothing.
             {
                 let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
                 let state = VMStatus.displayName(forWireName: current).lowercased()
-                return "\u{201C}\(vm.name)\u{201D} is \(state). "
+                return "\u{201C}\(vm.name)\u{201D} is \(state)"
+                    + (settings.isEmpty
+                        ? ". "
+                        : ", and \(settings.joined(separator: ", ")) cannot change while it is. ")
                     + (offered.isEmpty
                         ? "Nothing can be done with it in that state."
                         : "What it accepts now: \(offered.joined(separator: ", ")).")

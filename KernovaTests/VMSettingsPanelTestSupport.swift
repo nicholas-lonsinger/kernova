@@ -97,6 +97,7 @@ func makeSettingsController(
 ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
     let viewModel = makeSettingsViewModel(preferences: preferences)
     let instance = makeSettingsInstance(guestOS: guestOS, phase: phase)
+    registerSettingsInstance(instance, in: viewModel)
     if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
     let vc = makeSettingsPane(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)

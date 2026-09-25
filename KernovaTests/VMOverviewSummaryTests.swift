@@ -43,6 +43,30 @@ struct VMOverviewSummaryTests {
         #expect(rows(.general, makeInstance(guestOS: .linux)).isEmpty)
     }
 
+    @Test("The Ephemeral card switch is offered exactly when the key would take its flip")
+    func ephemeralCardOfferIsTheKeysAnswer() throws {
+        let snapshot = VMSnapshot(
+            name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
+        let key = VMConfigurationKeyRegistry.ephemeral
+        for hasSnapshots in [false, true] {
+            for ephemeral in [false, true] {
+                let instance = makeInstance(
+                    hostState: ephemeral ? .ephemeral(baseline: snapshot.id) : VMHostState())
+                instance.seedSnapshotManifest(
+                    hasSnapshots
+                        ? VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
+                        : VMSnapshotManifest())
+                let state = try #require(
+                    VMOverviewSummary.toggles(for: .general, instance: instance)
+                        .first { $0.toggle == .ephemeralMode })
+
+                #expect(
+                    state.isEnabled == key.accepts(String(!ephemeral), for: instance),
+                    "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
+            }
+        }
+    }
+
     // MARK: - System
 
     @Test("System states the display size and the audio streams, and nothing else")

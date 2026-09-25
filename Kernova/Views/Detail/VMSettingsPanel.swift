@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import KernovaKit
 
 /// The bindings every settings panel reads: the VM under edit, the view model
 /// to write through, the read-only state, and the injected services a panel
@@ -143,21 +144,20 @@ extension VMSettingsPanel {
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }
 
-    /// - Returns: Whether the mutation was applied, so a caller whose control
-    ///   already moved can put it back — refused or unsaved alike, the
-    ///   configuration kept its old value.
+    /// Writes `assignments` through the configuration verb, the one path a
+    /// panel's edit takes.
+    ///
+    /// An edit that does not land repaints the panel from the model, so no
+    /// control is left showing a value that was not saved; the verb has already
+    /// told the user why.
+    ///
+    /// - Returns: Whether the edit was applied.
     @discardableResult
-    func writeConfig(_ mutate: (inout VMConfiguration) -> Void) -> Bool {
-        guard case .saved = viewModel.updateConfiguration(of: instance, mutate: mutate)
-        else { return false }
-        return true
-    }
-
-    /// ``writeConfig(_:)`` for a mutation of the VM's host state.
-    @discardableResult
-    func writeHostState(_ mutate: (inout VMHostState) -> Void) -> Bool {
-        guard case .saved = viewModel.updateHostState(of: instance, mutate: mutate)
-        else { return false }
+    func write(_ assignments: ConfigurationEntry...) -> Bool {
+        guard case .applied = viewModel.setConfiguration(assignments, on: instance) else {
+            refresh()
+            return false
+        }
         return true
     }
 

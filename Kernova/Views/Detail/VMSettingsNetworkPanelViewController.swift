@@ -372,7 +372,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // whatever was typed, so committing first would only refuse a typed
         // duplicate with an alert about an address no longer in play.
         macAddressField.abortEditing()
-        writeConfig { $0.macAddress = GuestMACAddress.random() }
+        write(VMConfigurationKeyRegistry.networkMAC.assigning(GuestMACAddress.random()))
         refreshResolved()
         refreshNetwork()
     }
@@ -380,22 +380,22 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     @objc private func networkModeChanged() {
         guard let choice = networkModePopUp.selectedItem?.representedObject as? NetworkModeChoice
         else { return }
-        let accepted: Bool
-        switch choice {
-        case .shared:
-            accepted = writeConfig { $0.applyNetworkMode(.shared) }
-        case .hostOnly:
-            accepted = writeConfig { $0.applyNetworkMode(.hostOnly) }
-        case .none:
-            accepted = writeConfig { $0.applyNetworkMode(nil) }
-        case .bridged(let identifier):
-            accepted = writeConfig {
-                // Assigned before the mode, so a picker choice that only
+        let mode = VMConfigurationKeyRegistry.networkMode
+        let accepted =
+            switch choice {
+            case .shared:
+                write(mode.assigning(VMNetworkMode.shared.rawValue))
+            case .hostOnly:
+                write(mode.assigning(VMNetworkMode.hostOnly.rawValue))
+            case .none:
+                write(mode.assigning(VMConfigurationKeyRegistry.noNetworkValue))
+            case .bridged(let identifier):
+                // The interface before the mode, so a picker choice that only
                 // changes the interface still lands.
-                $0.bridgedInterfaceIdentifier = identifier
-                $0.applyNetworkMode(.bridged)
+                write(
+                    VMConfigurationKeyRegistry.networkBridgedInterface.assigning(identifier ?? ""),
+                    mode.assigning(VMNetworkMode.bridged.rawValue))
             }
-        }
         // A refused switch leaves the configuration untouched, so nothing marks
         // the menu stale and the picker would go on showing a mode the VM is not
         // on. Rebuilding re-selects the configured one.
@@ -407,16 +407,17 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     /// Persists the typed MAC in canonical form, then shows the address the VM
-    /// ended up with — so text naming no address a guest can use, and an address
-    /// the library refused because another VM holds it, both snap the field back.
-    /// The tooltip names the accepted spelling; the refusal carries its own alert.
+    /// ended up with — so text naming no address a guest can use, and an
+    /// address refused because another VM holds it or the VM's state pins it,
+    /// both snap the field back. The tooltip names the accepted spelling; the
+    /// refusal carries its own alert.
     ///
     /// The field is written directly rather than through
     /// `refreshMACAddressRow()`: editing is still ending here, so the editor the
     /// refresh defers to is the very one being reconciled away.
     private func applyMACAddressFieldEdit() {
         if let normalized = GuestMACAddress.normalized(macAddressField.stringValue) {
-            writeConfig { $0.macAddress = normalized }
+            write(VMConfigurationKeyRegistry.networkMAC.assigning(normalized))
         }
         macAddressField.stringValue = instance.configuration.macAddress ?? ""
     }

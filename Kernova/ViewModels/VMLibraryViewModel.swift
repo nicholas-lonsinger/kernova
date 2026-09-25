@@ -110,18 +110,53 @@ final class VMLibraryViewModel {
         library.guestAddresses.address(for: instance)
     }
 
-    @discardableResult
-    func updateConfiguration(
-        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
-    ) -> VMLibrary.SettingsWrite {
-        library.updateConfiguration(of: instance, mutate: mutate)
+    // MARK: - Configuration Forwarding
+
+    /// How a settings edit a surface asked for came out.
+    enum ConfigurationEditOutcome: Equatable {
+        case applied
+        /// Refused or unsaved; the settings kept their old values, and the user
+        /// has been told why.
+        case refused
+        /// The edit needs the user's consent first, which the caller gathers and
+        /// then repeats the edit with `confirmed: true`. Nothing is presented.
+        case consentRequired(ConfirmationPrompt)
     }
 
+    /// Applies `assignments` to `instance` through the configuration verb — the
+    /// one path a surface's settings edit takes.
     @discardableResult
-    func updateHostState(
-        of instance: VMInstance, mutate: (inout VMHostState) -> Void
-    ) -> VMLibrary.SettingsWrite {
-        library.updateHostState(of: instance, mutate: mutate)
+    func setConfiguration(
+        _ assignments: [ConfigurationEntry], on instance: VMInstance, confirmed: Bool = false
+    ) -> ConfigurationEditOutcome {
+        do {
+            try commands.setConfiguration(
+                .id(instance.id), assignments: assignments, confirmed: confirmed)
+            return .applied
+        } catch let error as CommandError {
+            if let prompt = error.confirmationPrompt { return .consentRequired(prompt) }
+            if error.isOperationFailure {
+                // The library presents a save it could not make itself.
+                #log(
+                    Self.logger, .debug,
+                    "Settings edit on '\(instance.name, privacy: .public)' was not saved: \(error.message, privacy: .public)"
+                )
+            } else {
+                present(error, for: instance)
+            }
+            return .refused
+        } catch {
+            present(error, for: instance)
+            return .refused
+        }
+    }
+
+    /// Records the screen `instance`'s display was last full screen on.
+    ///
+    /// Kernova's own bookkeeping rather than a user's edit, so it takes no key
+    /// and no gate.
+    func recordLastFullscreenDisplay(_ displayID: UInt32, for instance: VMInstance) {
+        library.updateHostState(of: instance) { $0.lastFullscreenDisplayID = displayID }
     }
 
     // MARK: - Command Forwarding
@@ -1221,18 +1256,12 @@ final class VMLibraryViewModel {
     }
 
     /// Sets whether this VM's agent-install nudge is dismissed and persists the
-    /// choice.
+    /// choice, through the `agent.installReminder` key.
     ///
-    /// The single path a user's choice for the per-VM
-    /// `agentInstallNudgeDismissed` flag takes: `true` silences the `.waiting`
-    /// nudge, `false` re-arms it.
+    /// `true` silences the `.waiting` nudge, `false` re-arms it.
     func setAgentInstallNudgeDismissed(_ dismissed: Bool, for instance: VMInstance) {
-        guard instance.hostState.agentInstallNudgeDismissed != dismissed else { return }
-        #log(
-            Self.logger, .notice,
-            "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
-        )
-        updateHostState(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+        setConfiguration(
+            [VMConfigurationKeyRegistry.agentInstallReminder.assigning(!dismissed)], on: instance)
     }
 
     /// Re-arms the agent-install nudge everywhere: clears the app-wide
@@ -1240,10 +1269,11 @@ final class VMLibraryViewModel {
     /// nudge can surface again.
     ///
     /// Each VM's flag lives in its own bundle and is persisted individually;
-    /// VMs already armed no-op.
+    /// VMs already armed make no edit.
     func resetAllAgentInstallNudges() {
         agentInstallPromptDisabled = false
-        for instance in instances {
+        let key = VMConfigurationKeyRegistry.agentInstallReminder
+        for instance in instances where key.applies(instance.configuration) {
             setAgentInstallNudgeDismissed(false, for: instance)
         }
     }
