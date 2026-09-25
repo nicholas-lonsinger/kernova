@@ -160,6 +160,32 @@ struct VMCommandCoreConfigurationTests {
             ])
     }
 
+    @Test("A set keeps what another copy wrote to the bundle since this one read it")
+    func setKeepsFieldsChangedOnDiskSinceLoad() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        // Another Kernova copy changed memory and the display preference after
+        // this one read the bundle.
+        var onDisk = instance.configuration
+        onDisk.memorySizeInGB += 2
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+        var hostStateOnDisk = instance.hostState
+        hostStateOnDisk.displayPreference = .fullscreen
+        harness.storage.files.setHostState(hostStateOnDisk, at: instance.bundleURL)
+
+        try harness.core.setConfiguration(
+            .name("Alpha"),
+            assignments: [ConfigurationEntry(key: "display.autoResize", value: "false")],
+            confirmed: false)
+
+        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
+        #expect(configuration.memorySizeInGB == onDisk.memorySizeInGB)
+        #expect(!configuration.displayAutoResizes)
+        #expect(harness.storage.hostStates[instance.bundleURL]?.displayPreference == .fullscreen)
+        #expect(instance.configuration == configuration)
+        #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
+    }
+
     @Test("One bad value in a batch writes nothing at all")
     func aBatchIsAtomic() throws {
         let harness = makeHarness()

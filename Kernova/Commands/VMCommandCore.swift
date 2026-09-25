@@ -345,11 +345,12 @@ final class VMCommandCore: VMCommanding {
     ///
     /// The one write convention every verb in the core shares: a change that
     /// was refused changes nothing, and one whose save failed says whether
-    /// part of it landed.
+    /// part of it landed. `mutate` is handed what the bundle holds and may
+    /// refuse by throwing (``VMLibrary/updateSettings(of:mutate:)``).
     func writeSettings(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) -> Void
+        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) throws -> Void
     ) throws {
-        switch library.updateSettings(of: instance, mutate: mutate) {
+        switch try library.updateSettings(of: instance, mutate: mutate) {
         case .saved:
             return
         case .refused(let refusal):

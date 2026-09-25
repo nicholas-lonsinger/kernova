@@ -897,6 +897,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         let refusal: SettingsRefusal
     }
 
+    /// Thrown out of a commit when the caller's `mutate` threw, which leaves
+    /// the file as it was; the caller's own error travels beside it.
+    private struct MutateThrew: Error {}
+
     /// How a configuration commit ended, before the host-state half of an
     /// ``updateSettings(of:mutate:)`` runs.
     private enum ConfigurationCommit {
@@ -929,17 +933,24 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     }
 
     /// ``updateConfiguration(of:mutate:)``'s commit, answering whether the
-    /// change moved the file.
-    private func commitConfiguration(
-        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
-    ) -> ConfigurationCommit {
+    /// change moved the file; what `mutate` throws leaves the file as it was
+    /// and is thrown on.
+    private func commitConfiguration<Failure: Error>(
+        of instance: VMInstance, mutate: (inout VMConfiguration) throws(Failure) -> Void
+    ) throws(Failure) -> ConfigurationCommit {
         guard let bundle = instance.bundle else { return .stopped(.refused(.noBundle)) }
         let old = bundle.configuration
         var wrote = false
+        var mutateFailure: Failure?
         do {
             try bundle.commitConfiguration(key: ConfigurationWriteKey()) { config in
                 let onDisk = config
-                mutate(&config)
+                do throws(Failure) {
+                    try mutate(&config)
+                } catch {
+                    mutateFailure = error
+                    throw MutateThrew()
+                }
                 guard config != onDisk else { return }
                 if let conflict = macAddresses.macAddressConflict(
                     on: instance, movingFrom: onDisk, to: config)
@@ -957,6 +968,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             }
             return .stopped(.refused(refused.refusal))
         } catch {
+            if let mutateFailure { throw mutateFailure }
             #log(
                 Self.logger, .error,
                 "Failed to save the configuration for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -986,38 +998,50 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// ``SettingsWriteFailure``, that the configuration half landed.
     ///
     /// `mutate` runs once per file, inside each coordinated write, so it must
-    /// be pure and must not read the instance it mutates.
+    /// be pure and must not read the instance it mutates. It may refuse by
+    /// throwing, judged against what the file holds: thrown before anything
+    /// landed, the error is thrown on and nothing changed; thrown on the
+    /// host-state pass after the configuration landed, it is that half's
+    /// failure.
     @discardableResult
-    func updateSettings(
-        of instance: VMInstance, mutate: (inout VMSettings) -> Void
-    ) -> SettingsWrite {
+    func updateSettings<Failure: Error>(
+        of instance: VMInstance, mutate: (inout VMSettings) throws(Failure) -> Void
+    ) throws(Failure) -> SettingsWrite {
         guard let bundle = instance.bundle else { return .refused(.noBundle) }
         let configurationWrote: Bool
-        switch commitConfiguration(
+        switch try commitConfiguration(
             of: instance,
-            mutate: { config in
+            mutate: { (config: inout VMConfiguration) throws(Failure) in
                 var settings = VMSettings(configuration: config, hostState: bundle.hostState)
-                mutate(&settings)
+                try mutate(&settings)
                 config = settings.configuration
             })
         {
         case .stopped(let write): return write
         case .committed(let wrote): configurationWrote = wrote
         }
+        var mutateFailure: Failure?
         do {
             try bundle.commitHostState { hostState in
                 var settings = VMSettings(configuration: bundle.configuration, hostState: hostState)
-                mutate(&settings)
+                do throws(Failure) {
+                    try mutate(&settings)
+                } catch {
+                    mutateFailure = error
+                    throw MutateThrew()
+                }
                 hostState = settings.hostState
             }
         } catch {
+            if let mutateFailure, !configurationWrote { throw mutateFailure }
+            let underlying: any Error = mutateFailure ?? error
             #log(
                 Self.logger, .error,
-                "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to save the host state for '\(instance.name, privacy: .public)': \(underlying.localizedDescription, privacy: .public)"
             )
             let failure = SettingsWriteFailure(
                 failed: .hostState, landed: configurationWrote ? [.configuration] : [],
-                underlying: error)
+                underlying: underlying)
             presentError(failure)
             return .notSaved(failure)
         }
