@@ -27,7 +27,8 @@ protocol VMActivityOwner: AnyObject {
 
 /// Where a VM is in its lifecycle, and the live session it holds.
 ///
-/// The only writer of ``phase`` and ``sessionContext``, so the two move together.
+/// The only writer of ``phase`` and ``sessionContext``, which it releases
+/// together.
 @MainActor
 @Observable
 final class VMActivity {
@@ -47,15 +48,11 @@ final class VMActivity {
     /// the same call.
     private(set) var phase: VMLifecyclePhase
 
-    /// Everything scoped to the current `VZVirtualMachine`'s lifetime, opened by
-    /// ``beginSessionContext(_:)`` and released whole by
-    /// ``tearDownSession(restingAt:)``.
+    /// Everything scoped to the current `VZVirtualMachine`'s lifetime.
     ///
-    /// The read-only projections on ``VMInstance`` (``VMInstance/liveRemovableMedia``,
-    /// etc.) are the read surface; its "Runtime Removable Media" methods are the
-    /// write surface for the fields they cover. A write that arrives with no
-    /// session open is dropped and logged rather than resurrecting a torn-down
-    /// context.
+    /// Replaced only by ``beginSessionContext(_:)``, which tears down the one it
+    /// displaces, and released whole only by ``tearDownSession(restingAt:)``, in
+    /// the same call that rests the phase.
     private(set) var sessionContext: VMSessionContext?
 
     /// The live VM's isolation domain — the only type that calls into the
