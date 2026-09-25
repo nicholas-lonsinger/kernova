@@ -15,7 +15,7 @@ struct VMAdmissionTests {
     nonisolated private static let session = UUID()
 
     /// Every settled phase, with whether its bundle holds a suspend slot.
-    nonisolated private static let settledColumns: [(phase: VMLifecyclePhaseNext, slot: Bool)] = [
+    nonisolated private static let settledColumns: [(phase: VMLifecyclePhase, slot: Bool)] = [
         (.stopped, false),
         (.initialBoot, false),
         (.failed(message: "boom"), false),
@@ -130,13 +130,13 @@ struct VMAdmissionTests {
 
     private struct HeldRow: Sendable {
         let kind: VMOperationKind
-        let startedFrom: VMLifecyclePhaseNext
+        let startedFrom: VMLifecyclePhase
         let slot: Bool
         let pendingSetup: Bool
         let expected: String
     }
 
-    nonisolated private static let live = VMLifecyclePhaseNext.running(sessionID: session)
+    nonisolated private static let live = VMLifecyclePhase.running(sessionID: session)
 
     nonisolated private static let heldTable: [HeldRow] = [
         HeldRow(
@@ -184,7 +184,7 @@ struct VMAdmissionTests {
             expected: "BBIIIIBBB" + "BBBBBBB" + "IIIB"),
     ]
 
-    private static func holding(_ row: HeldRow) -> VMLifecyclePhaseNext {
+    private static func holding(_ row: HeldRow) -> VMLifecyclePhase {
         let session: VMOperationSession? =
             switch row.startedFrom {
             case .running(let id): VMOperationSession(id: id, guest: .running)
@@ -216,7 +216,7 @@ struct VMAdmissionTests {
     @Test("A join hands back the held operation's own outcome")
     func joinCarriesTheHeldOutcome() {
         let outcome = VMOutcome()
-        let phase = VMLifecyclePhaseNext.operating(
+        let phase = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped, session: nil,
                 sessionEnd: nil, outcome: outcome))
@@ -247,7 +247,7 @@ struct VMAdmissionTests {
 
     @Test("A bring-up is joined only on commit; offered, it reads as busy")
     func joinIsCommitOnly() {
-        let phase = VMLifecyclePhaseNext.operating(
+        let phase = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .bringUp(.restoringSavedState), startedFrom: .suspended, session: nil,
                 sessionEnd: nil, outcome: VMOutcome()))
@@ -336,7 +336,7 @@ struct VMAdmissionTests {
 
     @Test("An operation that presents its base changes nothing a surface reads")
     func baseStatusKindsPresentTheirStart() {
-        let phase = VMLifecyclePhaseNext.operating(
+        let phase = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .attachingUSB(registryID: 1), startedFrom: Self.live,
                 session: VMOperationSession(id: Self.session, guest: .running), sessionEnd: nil,
@@ -350,7 +350,7 @@ struct VMAdmissionTests {
 
     @Test("An operation whose session ended presents stopped")
     func endedSessionPresentsStopped() {
-        let phase = VMLifecyclePhaseNext.operating(
+        let phase = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .pausing, startedFrom: Self.live, session: nil, sessionEnd: .poweredOff,
                 outcome: VMOutcome()))
@@ -362,7 +362,7 @@ struct VMAdmissionTests {
 
     @Test("An operation with a status of its own shows it")
     func declaredStatus() {
-        let saving = VMLifecyclePhaseNext.operating(
+        let saving = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .saving, startedFrom: Self.live,
                 session: VMOperationSession(id: Self.session, guest: .running), sessionEnd: nil,

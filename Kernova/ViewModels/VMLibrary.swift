@@ -23,7 +23,7 @@ import KernovaLogging
 /// wires them all.
 @MainActor
 @Observable
-final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
+final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmissionPeers {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -176,6 +176,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     /// all — the OS and the signature together, answered once by
     /// ``USBAccessorySupport/makeService(entitlements:)``.
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
+
+    /// The live VM whose identity bringing `instance` up would duplicate.
+    func identityConflict(for instance: VMInstance) -> VMIdentityConflict? {
+        liveIdentities.conflict(for: instance)
+    }
 
     /// `true` from the moment a clone of `instance` registers its arrival until
     /// that arrival leaves the library — a cancelled clone stays until its
@@ -554,10 +559,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             return self.updateSettings(
                 of: instance, configuration: configuration, hostState: hostState)
         }
-        instance.activity.liveIdentityConflict = { [weak self, weak instance] in
-            guard let self, let instance else { return nil }
-            return self.liveIdentities.conflict(for: instance)
-        }
+        instance.peers = self
         // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.
         instance.onAgentBecameCurrent = { [weak self, weak instance] in

@@ -11,7 +11,7 @@ import KernovaKit
 /// one long operation that holds it. A live phase carries the session's
 /// identity, and ``VMActivity/sessionContext`` holds the session whose `id`
 /// equals it.
-enum VMLifecyclePhaseNext: Sendable, Equatable {
+enum VMLifecyclePhase: Sendable, Equatable {
     /// Powered off, with no saved state to come back on.
     case stopped
 
@@ -90,7 +90,7 @@ enum VMLifecyclePhaseNext: Sendable, Equatable {
     /// that declares ``VMOperationDeclaration/Status/base`` status, which
     /// presents the phase it started from — so a USB attach or a media
     /// reconcile never changes what the user sees.
-    var presented: VMLifecyclePhaseNext {
+    var presented: VMLifecyclePhase {
         guard case .operating(let operation) = self,
             operation.kind.declaration.status == .base
         else { return self }
@@ -172,7 +172,7 @@ struct VMOperation: Sendable, Equatable {
 
     /// The settled phase the operation was admitted from — what its base
     /// status presents, and what a request during it is classified against.
-    let startedFrom: VMLifecyclePhaseNext
+    let startedFrom: VMLifecyclePhase
 
     /// The session the operation holds, or `nil` while it has none — before a
     /// bring-up creates one, or once the session ended mid-operation.

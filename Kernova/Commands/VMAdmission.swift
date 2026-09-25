@@ -91,7 +91,7 @@ enum VMAdmission {
     // MARK: - Decide
 
     static func decide(
-        _ request: Request, posture: Posture, phase: VMLifecyclePhaseNext, facts: Facts
+        _ request: Request, posture: Posture, phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         if case .affordance(let affordance) = request {
             return decideAffordance(affordance, phase: phase, facts: facts, posture: posture)
@@ -109,7 +109,7 @@ enum VMAdmission {
     /// The bring-up a Start or Resume request performs from `phase`, or `nil`
     /// when it performs none — a hot resume, or a request the phase refuses.
     static func bringUpKind(
-        for request: Request, phase: VMLifecyclePhaseNext, facts: Facts
+        for request: Request, phase: VMLifecyclePhase, facts: Facts
     ) -> VMBringUpKind? {
         switch request {
         case .start(let recovery):
@@ -135,7 +135,7 @@ enum VMAdmission {
     /// Disks alone are captured only from a plainly stopped VM: `.initialBoot`
     /// holds disks with no installed guest, and `.failed` says the last
     /// operation did not finish.
-    static func captureMode(phase: VMLifecyclePhaseNext, facts: Facts) -> VMSnapshotCaptureMode? {
+    static func captureMode(phase: VMLifecyclePhase, facts: Facts) -> VMSnapshotCaptureMode? {
         if phase.isSettledLive { return .live }
         guard phase.isAtRest else { return nil }
         if facts.hasSaveFile { return .suspended }
@@ -143,7 +143,7 @@ enum VMAdmission {
     }
 
     /// The edit classes a settled phase admits.
-    static func editClasses(settledAt phase: VMLifecyclePhaseNext, facts: Facts) -> VMEditClasses {
+    static func editClasses(settledAt phase: VMLifecyclePhase, facts: Facts) -> VMEditClasses {
         switch phase {
         case .stopped, .initialBoot, .failed, .suspended:
             guard facts.hasSaveFile else { return .all }
@@ -161,7 +161,7 @@ enum VMAdmission {
 
     /// One exhaustive answer per request over the settled phases.
     private static func decideSettled(
-        _ request: Request, posture: Posture, phase: VMLifecyclePhaseNext, facts: Facts
+        _ request: Request, posture: Posture, phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         let atRest = phase.isAtRest
         let live = phase.isSettledLive
@@ -203,7 +203,7 @@ enum VMAdmission {
     }
 
     private static func decideSettledOperation(
-        _ kind: VMOperationKind, phase: VMLifecyclePhaseNext, facts: Facts
+        _ kind: VMOperationKind, phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         let atRest = phase.isAtRest
         let live = phase.isSettledLive
@@ -311,7 +311,7 @@ enum VMAdmission {
     }
 
     private static func tolerated(
-        _ edits: VMOperationDeclaration.Edits, from startedFrom: VMLifecyclePhaseNext,
+        _ edits: VMOperationDeclaration.Edits, from startedFrom: VMLifecyclePhase,
         facts: Facts
     ) -> VMEditClasses {
         let base = editClasses(settledAt: startedFrom, facts: facts)
@@ -326,7 +326,7 @@ enum VMAdmission {
     /// Affordances read what the VM presents rather than taking admission: an
     /// operation that presents the phase it started from changes none of them.
     private static func decideAffordance(
-        _ affordance: VMAffordance, phase: VMLifecyclePhaseNext, facts: Facts, posture: Posture
+        _ affordance: VMAffordance, phase: VMLifecyclePhase, facts: Facts, posture: Posture
     ) -> Decision {
         if phase == .removed { return .refuse(.removed) }
         let admitted: Bool
@@ -360,4 +360,22 @@ enum VMAffordance: Sendable, Equatable {
     case clipboard
     /// Attach or eject the guest-agent installer disk.
     case guestAgentDisk
+}
+
+/// A request ``VMActivity`` refused, and why.
+struct VMAdmissionRefusal: Error, Equatable {
+    let refusal: VMAdmission.Refusal
+}
+
+/// What a VM's library contributes to its admission facts.
+@MainActor
+protocol VMAdmissionPeers: AnyObject {
+    /// Whether this build can pass a host USB accessory through to a guest.
+    var supportsUSBAccessories: Bool { get }
+
+    /// Whether a clone is copying `instance`'s files out of its bundle.
+    func hasCloneInFlight(from instance: VMInstance) -> Bool
+
+    /// The live VM whose identity bringing `instance` up would duplicate.
+    func identityConflict(for instance: VMInstance) -> VMIdentityConflict?
 }
