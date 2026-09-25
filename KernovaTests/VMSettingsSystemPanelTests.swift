@@ -135,8 +135,8 @@ struct VMSettingsSystemPanelTests {
             Issue.record("Expected the width, height, and resolution controls")
             return
         }
-        width.integerValue = 640
-        height.integerValue = 401
+        typeText("640", into: width)
+        typeText("401", into: height)
         commitEdit(width)
 
         #expect(instance.configuration.displayWidth == 800)
@@ -309,11 +309,8 @@ struct VMSettingsSystemPanelTests {
             return
         }
         #expect(window.makeFirstResponder(width))
-        guard let editor = width.currentEditor() else {
-            Issue.record("Expected a field editor on the focused width field")
-            return
-        }
-        editor.string = "1600"
+        #expect(width.currentEditor() != nil)
+        typeText("1600", into: width)
 
         // Stands in for any observation pass — starting the VM from the toolbar
         // mutates status, which refreshes the whole pane.
@@ -515,17 +512,13 @@ struct VMSettingsSystemPanelTests {
         switch edit {
         case .cpuField:
             let field = try #require(editableField("CPU cores", in: vc.view))
-            field.integerValue =
-                config.cpuCount == config.guestOS.minCPUCount
-                ? config.cpuCount + 1 : config.cpuCount - 1
+            typeText(String(TypedField.cpus.changedValue(from: config)), into: field)
         case .memoryField:
             let field = try #require(editableField("Memory", in: vc.view))
-            field.integerValue =
-                config.memorySizeInGB == config.guestOS.minMemoryInGB
-                ? config.memorySizeInGB + 1 : config.memorySizeInGB - 1
+            typeText(String(TypedField.memory.changedValue(from: config)), into: field)
         case .widthField:
             let field = try #require(editableField("Width", in: vc.view))
-            field.integerValue = config.displayBaseSize.width == 1440 ? 1680 : 1440
+            typeText(String(TypedField.width.changedValue(from: config)), into: field)
         case .matchWindowSwitch, .hiDPISwitch, .audioInput, .audioOutput:
             let toggle = try #require(firstSwitch(action: switchAction(edit), in: vc.view))
             toggle.state = toggle.state == .on ? .off : .on
@@ -721,9 +714,9 @@ struct VMSettingsSystemPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField(typed.rawValue, in: vc.view))
         #expect(window.makeFirstResponder(field))
-        let editor = try #require(field.currentEditor())
+        #expect(field.currentEditor() != nil)
         let text = String(typed.changedValue(from: before))
-        editor.string = text
+        typeText(text, into: field)
 
         instance.enter(.running(sessionID: UUID()))
         // Stands in for the observation pass the status change drives.
@@ -741,7 +734,7 @@ struct VMSettingsSystemPanelTests {
     @Test(
         "A focused field nobody typed in follows a model change and writes nothing when focus leaves",
         arguments: TypedField.allCases)
-    func aFocusedUntypedFieldFollowsTheModel(_ focused: TypedField) async throws {
+    func aFocusedUntypedFieldFollowsTheModel(_ focused: TypedField) throws {
         let (vc, instance, presenter, _) = makeMachineEditController()
         let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
         let window = makeTestWindow(styleMask: [.titled])
@@ -756,7 +749,9 @@ struct VMSettingsSystemPanelTests {
         let outcome = viewModel.setConfiguration(
             [ConfigurationEntry(key: focused.key, value: changed)], on: instance)
         #expect(outcome == .applied)
-        try await waitForChange { field.currentEditor()?.string == changed }
+        // Stands in for the observation pass the write drives.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == changed)
         let after = instance.configuration
         #expect(window.makeFirstResponder(nil))
 
@@ -766,7 +761,7 @@ struct VMSettingsSystemPanelTests {
     }
 
     @Test("A count committed with Return is not written back over a later CLI set")
-    func aCommittedCountLeavesALaterSetStanding() async throws {
+    func aCommittedCountLeavesALaterSetStanding() throws {
         let (vc, instance, presenter, _) = makeMachineEditController()
         let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
         let window = makeTestWindow(styleMask: [.titled])
@@ -775,20 +770,99 @@ struct VMSettingsSystemPanelTests {
         let original = instance.configuration.cpuCount
         let typed = TypedField.cpus.changedValue(from: instance.configuration)
         #expect(window.makeFirstResponder(field))
-        let editor = try #require(field.currentEditor() as? NSTextView)
-        editor.string = String(typed)
+        typeText(String(typed), into: field)
 
         // Return commits the edit and leaves the field focused, its text
         // reselected in a field editor.
-        editor.insertNewline(nil)
+        try #require(field.currentEditor() as? NSTextView).insertNewline(nil)
         #expect(instance.configuration.cpuCount == typed)
         if field.currentEditor() == nil { #expect(window.makeFirstResponder(field)) }
 
         let outcome = viewModel.setConfiguration(
             [ConfigurationEntry(key: "cpus", value: String(original))], on: instance)
         #expect(outcome == .applied)
-        try await waitForChange { field.currentEditor()?.string == String(original) }
+        // Stands in for the observation pass the write drives.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == String(original))
         // Clicking the sidebar ends the edit.
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.cpuCount == original)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("A refresh that changes nothing keeps a focused field's selection, so a keystroke replaces its value")
+    func aSameValueRefreshKeepsTheTabInSelection() throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("CPU cores", in: vc.view))
+        let shown = field.stringValue
+        #expect(window.makeFirstResponder(field))
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        #expect(editor.selectedRange() == NSRange(location: 0, length: shown.utf16.count))
+
+        // Another control's write, and the refresh it drives.
+        let toggle = try #require(firstSwitch(action: "audioOutputToggled", in: vc.view))
+        toggle.state = toggle.state == .on ? .off : .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+        vc.viewDidAppear()
+
+        #expect(editor.selectedRange() == NSRange(location: 0, length: shown.utf16.count))
+        let typed = TypedField.cpus.changedValue(from: instance.configuration)
+        editor.insertText(String(typed), replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(field.stringValue == String(typed))
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(instance.configuration.cpuCount == typed)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("A stepper click replaces typed text, and focus leaving writes nothing more")
+    func aStepperClickReplacesATypedEdit() throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("CPU cores", in: vc.view))
+        let stepper = try #require(
+            allSubviews(NSStepper.self, in: vc.view) {
+                $0.action.map(NSStringFromSelector) == "cpuStepperChanged"
+            }.first)
+        let os = instance.configuration.guestOS
+        let original = instance.configuration.cpuCount
+        let typed = TypedField.cpus.changedValue(from: instance.configuration)
+        let stepped = try #require((os.minCPUCount...os.maxCPUCount).first { $0 != original && $0 != typed })
+        #expect(window.makeFirstResponder(field))
+        typeText(String(typed), into: field)
+
+        stepper.integerValue = stepped
+        stepper.sendAction(stepper.action, to: stepper.target)
+
+        #expect(instance.configuration.cpuCount == stepped)
+        #expect(field.stringValue == String(stepped))
+        #expect(window.makeFirstResponder(nil))
+        #expect(instance.configuration.cpuCount == stepped)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("Typing back the value a CLI set replaced is an edit, and is written")
+    func typingTheReplacedValueBackIsWritten() throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("CPU cores", in: vc.view))
+        let original = instance.configuration.cpuCount
+        let changed = String(TypedField.cpus.changedValue(from: instance.configuration))
+        #expect(window.makeFirstResponder(field))
+
+        let outcome = viewModel.setConfiguration(
+            [ConfigurationEntry(key: "cpus", value: changed)], on: instance)
+        #expect(outcome == .applied)
+        // Stands in for the observation pass the write drives.
+        vc.viewDidAppear()
+        #expect(field.currentEditor()?.string == changed)
+        typeText(String(original), into: field)
         #expect(window.makeFirstResponder(nil))
 
         #expect(instance.configuration.cpuCount == original)
@@ -850,7 +924,7 @@ struct VMSettingsSystemPanelTests {
     }
 
     @Test("The resolution caption follows a HiDPI write made through the verb")
-    func resolutionCaptionFollowsAVerbWrite() async throws {
+    func resolutionCaptionFollowsAVerbWrite() throws {
         let (vc, instance) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
         let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
 
@@ -860,7 +934,9 @@ struct VMSettingsSystemPanelTests {
             [VMConfigurationKeyRegistry.displayHiDPI.assigning(false)], on: instance)
         #expect(outcome == .applied)
 
-        try await waitForChange { resolutionCaption(in: vc) == "Boots at 800 × 900 pixels." }
+        // Stands in for the observation pass the write drives.
+        vc.viewDidAppear()
+        #expect(resolutionCaption(in: vc) == "Boots at 800 × 900 pixels.")
     }
 
     @Test("A refused end-edit puts the model's value back in a field whose editor is still attached")
@@ -870,8 +946,8 @@ struct VMSettingsSystemPanelTests {
         window.contentView = vc.view
         let width = try #require(editableField("Width", in: vc.view))
         #expect(window.makeFirstResponder(width))
-        let editor = try #require(width.currentEditor())
-        editor.string = "1440"
+        #expect(width.currentEditor() != nil)
+        typeText("1440", into: width)
 
         instance.enter(.running(sessionID: UUID()))
         commitEdit(width)

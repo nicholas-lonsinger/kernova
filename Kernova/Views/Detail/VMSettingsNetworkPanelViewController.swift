@@ -412,7 +412,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         {
             write(VMConfigurationKeyRegistry.networkMAC.assigning(normalized))
         }
-        macAddressField.showEndedEdit(instance.configuration.macAddress ?? "")
+        macAddressField.showDiscardingEdit(instance.configuration.macAddress ?? "")
     }
 
     // MARK: - Panel

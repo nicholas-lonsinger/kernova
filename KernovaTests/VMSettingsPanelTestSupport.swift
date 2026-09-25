@@ -171,6 +171,32 @@ func editableField(_ label: String, in view: NSView) -> NSTextField? {
     return findEditableField(in: row)
 }
 
+/// Types `text` over whatever `field` holds, as a user would: focused, through
+/// its field editor, so the field records the text as typed. A field in no
+/// window yet is hosted in a test window first — only a window's field editor
+/// types.
+@MainActor
+func typeText(_ text: String, into field: NSTextField) {
+    if field.currentEditor() == nil {
+        let window =
+            field.window
+            ?? {
+                var root: NSView = field
+                while let parent = root.superview { root = parent }
+                let window = makeTestWindow(styleMask: [.titled])
+                window.contentView = root
+                return window
+            }()
+        #expect(window.makeFirstResponder(field))
+    }
+    guard let editor = field.currentEditor() as? NSTextView else {
+        Issue.record("Expected a field editor on the focused field")
+        return
+    }
+    editor.selectAll(nil)
+    editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+}
+
 /// Ends editing through the field's own delegate, so the assertion covers the
 /// wiring as well as the commit.
 @MainActor

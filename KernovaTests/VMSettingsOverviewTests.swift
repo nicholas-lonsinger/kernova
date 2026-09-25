@@ -229,7 +229,7 @@ struct VMSettingsOverviewTests {
         let panel = try #require(vc.panelForTesting(.network))
         let field = try #require(findEditableField(in: panel))
         #expect(window.makeFirstResponder(field))
-        field.stringValue = "aa:bb:cc:dd:ee:01"
+        typeText("aa:bb:cc:dd:ee:01", into: field)
 
         vc.showOverview()
 

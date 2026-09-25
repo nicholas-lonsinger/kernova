@@ -174,51 +174,59 @@ extension VMSettingsPanel {
     }
 }
 
-/// A settings field showing one model value, which tells text the user typed
-/// from the value the model last painted.
+/// A settings field showing one model value, which knows whether the user has
+/// typed in it since the model last painted it.
 ///
-/// A refresh repaints the field unless the user has changed its text, so typed
-/// text survives any refresh — an observation pass, a status change a CLI start
-/// makes — and a field nobody touched stays current. Its end-edit writes only a
-/// change (``holdsUserEdit``): focus leaving a field fires one whether or not
-/// anything was typed, and writing what the field holds would put back a value
-/// another writer has since replaced.
+/// A refresh repaints the field unless the user has typed in it, so typed text
+/// survives any refresh — an observation pass, a status change a CLI start
+/// makes — and a field nobody touched stays current. Its end-edit writes only
+/// typed text (``holdsUserEdit``): focus leaving a field fires one whether or
+/// not anything was typed, and writing what the field holds would put back a
+/// value another writer has since replaced.
 final class ModelValueField: NSTextField {
-    /// The value the model last painted, which text still equal to it is not an
-    /// edit of.
-    private var paintedValue: String?
+    /// Whether the user has typed in the field since the model last painted it
+    /// or its edit was discarded — an edit for the field's end-edit to write.
+    private(set) var holdsUserEdit = false
 
-    /// Whether the text shown is not the value the model last painted — an
-    /// edit for the field's end-edit to write.
-    var holdsUserEdit: Bool { shownText != paintedValue }
-
-    /// The text the user sees: the field editor's while one is attached.
-    private var shownText: String { currentEditor()?.string ?? stringValue }
-
-    /// Paints `value` from the model unless the user has changed the text.
+    /// Paints `value` from the model unless the user has typed in the field.
+    ///
+    /// Text already reading `value` is left alone, so a refresh that changes
+    /// nothing keeps a focused field's selection — the select-all a tab-in
+    /// leaves, which the next keystroke replaces.
     func show(_ value: String) {
-        guard currentEditor() == nil || !holdsUserEdit else { return }
+        guard !holdsUserEdit, (currentEditor()?.string ?? stringValue) != value else { return }
         paint(value)
     }
 
-    /// Shows `value` in a field whose edit just ended, written or refused.
+    /// Shows `value` in place of any edit the field holds: at end-edit, once
+    /// the edit has been written or refused, and for an explicit control
+    /// action — a stepper, a preset — whose value is the newer intent.
     ///
     /// At end-edit time the editor can still be attached, holding the text just
     /// consumed; a value set beneath it does not read back
     /// (`refusedEndEditRevertsAFieldStillBeingEdited`), so the editor is
     /// discarded first.
-    func showEndedEdit(_ value: String) {
+    func showDiscardingEdit(_ value: String) {
         abortEditing()
         paint(value)
     }
 
+    override func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        holdsUserEdit = true
+    }
+
+    @discardableResult
+    override func abortEditing() -> Bool {
+        defer { holdsUserEdit = false }
+        return super.abortEditing()
+    }
+
+    /// Sets the text through `stringValue`, which during an edit updates the
+    /// field editor and the cell together and keeps the edit open.
     private func paint(_ value: String) {
-        paintedValue = value
-        if let editor = currentEditor() {
-            editor.string = value
-        } else {
-            stringValue = value
-        }
+        stringValue = value
+        holdsUserEdit = false
     }
 }
 

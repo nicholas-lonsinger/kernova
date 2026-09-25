@@ -597,12 +597,12 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
     @objc private func cpuStepperChanged() {
         write(Keys.cpus.assigning(String(cpuStepper.integerValue)))
-        cpuField.show(String(instance.configuration.cpuCount))
+        cpuField.showDiscardingEdit(String(instance.configuration.cpuCount))
     }
 
     @objc private func memoryStepperChanged() {
         write(Keys.memory.assigning(String(memoryStepper.integerValue)))
-        memoryField.show(String(instance.configuration.memorySizeInGB))
+        memoryField.showDiscardingEdit(String(instance.configuration.memorySizeInGB))
     }
 
     // MARK: Display
@@ -665,8 +665,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     /// Ends any edit in the size fields and shows the size the VM holds.
     private func showStoredDisplaySize() {
         let stored = displayBaseSize
-        displayWidthField.showEndedEdit(String(stored.width))
-        displayHeightField.showEndedEdit(String(stored.height))
+        displayWidthField.showDiscardingEdit(String(stored.width))
+        displayHeightField.showDiscardingEdit(String(stored.height))
         refreshDisplay()
     }
 
@@ -731,7 +731,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             let clamped = Swift.min(Swift.max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
             write(Keys.cpus.assigning(String(clamped)))
         }
-        cpuField.showEndedEdit(String(instance.configuration.cpuCount))
+        cpuField.showDiscardingEdit(String(instance.configuration.cpuCount))
         cpuStepper.integerValue = instance.configuration.cpuCount
     }
 
@@ -742,7 +742,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             let clamped = Swift.min(Swift.max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
             write(Keys.memory.assigning(String(clamped)))
         }
-        memoryField.showEndedEdit(String(instance.configuration.memorySizeInGB))
+        memoryField.showDiscardingEdit(String(instance.configuration.memorySizeInGB))
         memoryStepper.integerValue = instance.configuration.memorySizeInGB
     }
 }
