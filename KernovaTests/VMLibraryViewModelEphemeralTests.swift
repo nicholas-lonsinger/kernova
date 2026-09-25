@@ -243,13 +243,15 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness()
         let instance = harness.instance
         let capturedCPUs = instance.configuration.cpuCount
-        harness.viewModel.updateSettings(of: instance) {
-            $0.configuration.cpuCount = capturedCPUs + 1
-            $0.hostState.startsAutomaticallyOnLaunch = true
-            $0.hostState.displayPreference = .fullscreen
-            $0.hostState.lastFullscreenDisplayID = 4_280_803_137
-            $0.hostState.agentInstallNudgeDismissed = true
-        }
+        harness.viewModel.library.updateSettings(
+            of: instance,
+            configuration: { $0.cpuCount = capturedCPUs + 1 },
+            hostState: {
+                $0.startsAutomaticallyOnLaunch = true
+                $0.displayPreference = .fullscreen
+                $0.lastFullscreenDisplayID = 4_280_803_137
+                $0.agentInstallNudgeDismissed = true
+            })
         let editedHostState = instance.hostState
 
         await harness.viewModel.stop(instance)

@@ -263,10 +263,11 @@ struct VMLibraryViewModelSnapshotTests {
         let baseline = try #require(ephemeral.snapshotManifest.snapshots.first)
         // The VM itself may leave the address, which its baseline still holds.
         #expect(
-            harness.viewModel.updateSettings(of: ephemeral) {
-                $0.hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-                $0.configuration.macAddress = "aa:bb:cc:dd:ee:06"
-            }.landed)
+            harness.viewModel.library.updateSettings(
+                of: ephemeral,
+                configuration: { $0.macAddress = "aa:bb:cc:dd:ee:06" },
+                hostState: { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+            ).landed)
         let other = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .stopped, name: "Other") {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:07"

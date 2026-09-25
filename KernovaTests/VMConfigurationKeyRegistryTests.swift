@@ -35,11 +35,26 @@ struct VMConfigurationKeyRegistryTests {
         VMConfigurationWriteContext(snapshots: manifest ?? makeManifest())
     }
 
+    /// Writes `key` into whichever half of `settings` holds it.
     private func write(
         _ key: VMConfigurationKey, _ value: String, to settings: inout VMSettings,
         manifest: VMSnapshotManifest? = nil
     ) throws {
-        try key.write(value, &settings, context(manifest))
+        switch key.field {
+        case .configuration(let field):
+            try field.write(value, &settings.configuration, context(manifest))
+        case .hostState(let field):
+            try field.change(value, context(manifest))(&settings.hostState)
+        }
+    }
+
+    /// Why `key`'s result cannot stand on `config`, for a configuration key.
+    private func resultRefusal(_ key: VMConfigurationKey, on config: VMConfiguration) -> String? {
+        guard case .configuration(let field) = key.field else {
+            Issue.record("\(key.name) is not a configuration key")
+            return nil
+        }
+        return field.refusalOnResult(config)
     }
 
     /// Writes a configuration key, on a VM whose host state is the default.
@@ -314,10 +329,10 @@ struct VMConfigurationKeyRegistryTests {
     func sizeKeysRefuseUnderSizeToWindow() throws {
         let width = try #require(VMConfigurationKeyRegistry.key(named: "display.width"))
         var config = makeConfiguration()
-        #expect(width.refusalOnResult(config) == nil)
+        #expect(resultRefusal(width, on: config) == nil)
 
         config.displaySizesToWindow = true
-        let refusal = try #require(width.refusalOnResult(config))
+        let refusal = try #require(resultRefusal(width, on: config))
         #expect(refusal.contains("display.sizeToWindow"))
     }
 
@@ -372,16 +387,16 @@ struct VMConfigurationKeyRegistryTests {
     func emptyMACStandsOnlyWithoutADevice() throws {
         let mac = try #require(VMConfigurationKeyRegistry.key(named: "network.mac"))
         var config = makeConfiguration()
-        #expect(mac.refusalOnResult(config) == nil)
+        #expect(resultRefusal(mac, on: config) == nil)
 
         try write(mac, "", to: &config)
         // The write itself lands; what refuses it is the result, so taking the
         // device away in the same call leaves the empty spelling valid.
-        let refusal = try #require(mac.refusalOnResult(config))
+        let refusal = try #require(resultRefusal(mac, on: config))
         #expect(refusal.contains("network.mac"))
 
         config.applyNetworkMode(nil)
-        #expect(mac.refusalOnResult(config) == nil)
+        #expect(resultRefusal(mac, on: config) == nil)
     }
 
     @Test("A MAC address is stored in the one canonical spelling")

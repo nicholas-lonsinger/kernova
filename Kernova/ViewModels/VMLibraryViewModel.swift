@@ -118,10 +118,10 @@ final class VMLibraryViewModel {
     }
 
     @discardableResult
-    func updateSettings(
-        of instance: VMInstance, mutate: (inout VMSettings) -> Void
+    func updateHostState(
+        of instance: VMInstance, mutate: (inout VMHostState) -> Void
     ) -> VMLibrary.SettingsWrite {
-        library.updateSettings(of: instance, mutate: mutate)
+        library.updateHostState(of: instance, mutate: mutate)
     }
 
     // MARK: - Command Forwarding
@@ -578,6 +578,9 @@ final class VMLibraryViewModel {
         // the menu, the CLI and the prompt's answer write the same rule.
         core.onUserAttachedAccessory = { [weak usbAccessories] instance, accessory in
             try usbAccessories?.userAttached(accessory, to: instance)
+        }
+        core.onUserDetachingAccessory = { [weak usbAccessories] _, accessory in
+            usbAccessories?.userDetaching(accessory)
         }
         core.onUserReleasedAccessory = { [weak usbAccessories] instance, accessory in
             try usbAccessories?.userReleased(accessory, from: instance)
@@ -1229,9 +1232,7 @@ final class VMLibraryViewModel {
             Self.logger, .notice,
             "Setting install-agent nudge dismissed=\(dismissed, privacy: .public) for '\(instance.name, privacy: .public)'"
         )
-        updateSettings(of: instance) {
-            $0.hostState.agentInstallNudgeDismissed = dismissed
-        }
+        updateHostState(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
     }
 
     /// Re-arms the agent-install nudge everywhere: clears the app-wide

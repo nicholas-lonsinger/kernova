@@ -510,6 +510,7 @@ struct USBAccessoryCoordinatorTests {
         try pair(accessory, with: instance)
         service.accessories.append(accessory)
 
+        coordinator.userDetaching(accessory)
         try coordinator.userReleased(accessory, from: instance)
         #expect(instance.usbPairings.isEmpty)
 
@@ -534,7 +535,7 @@ struct USBAccessoryCoordinatorTests {
         coordinator.onPairingNeeded = { recorder.requests.append($0) }
         let accessory = MockUSBAccessoryService.accessory(
             registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        try coordinator.userReleased(accessory, from: instance)
+        coordinator.userDetaching(accessory)
 
         service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
         #expect(recorder.requests.isEmpty)

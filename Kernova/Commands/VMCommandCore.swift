@@ -102,13 +102,18 @@ final class VMCommandCore: VMCommanding {
     /// through has no coordinator to hold it.
     var onUserAttachedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
 
-    /// Reports an accessory the user has just taken back by hand, which ends
-    /// that pairing — and, because the detach re-enumerates the device, has to
-    /// keep the return it causes from re-creating one.
+    /// Reports an accessory the user is about to take back by hand, before the
+    /// detach runs: the detach re-enumerates the device, and the return it
+    /// causes can arrive while the detach is still in flight.
     ///
-    /// Not fired by the lifecycle's own eject sweeps: a stop, a suspend or a
-    /// snapshot capture takes an accessory off without the user asking, and
-    /// must leave the pairing alone.
+    /// Not fired by the lifecycle's own eject sweeps, and neither is
+    /// ``onUserReleasedAccessory``: a stop, a suspend or a snapshot capture
+    /// takes an accessory off without the user asking, and must leave the
+    /// pairing alone.
+    var onUserDetachingAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
+
+    /// Reports an accessory the user has just taken back by hand, which ends
+    /// that pairing.
     var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
 
     /// Measures the window or screen a starting VM's display is about to occupy,
@@ -340,17 +345,15 @@ final class VMCommandCore: VMCommanding {
         return sourceAuthority
     }
 
-    /// Applies `mutate` to the VM's settings, refusing when the result did not
-    /// reach disk.
+    /// Throws unless `write` landed whole.
     ///
     /// The one write convention every verb in the core shares: a change that
     /// was refused changes nothing, and one whose save failed says whether
-    /// part of it landed. `mutate` is handed what the bundle holds and may
-    /// refuse by throwing (``VMLibrary/updateSettings(of:mutate:)``).
-    func writeSettings(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMSettings) throws -> Void
-    ) throws {
-        switch try library.updateSettings(of: instance, mutate: mutate) {
+    /// part of it landed.
+    func requireSaved(_ write: VMLibrary.SettingsWrite, of instance: VMInstance, verb: VMVerb)
+        throws
+    {
+        switch write {
         case .saved:
             return
         case .refused(let refusal):
@@ -365,11 +368,13 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// ``writeSettings(of:verb:_:)`` for a mutation of the configuration alone.
+    /// Applies `mutate` to what the VM's `config.json` holds, throwing unless
+    /// it landed (``requireSaved(_:of:verb:)``).
     func writeConfiguration(
         of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
     ) throws {
-        try writeSettings(of: instance, verb: verb) { mutate(&$0.configuration) }
+        try requireSaved(
+            library.updateConfiguration(of: instance, mutate: mutate), of: instance, verb: verb)
     }
 
     /// The refusal a verb raises when the library turned its settings write

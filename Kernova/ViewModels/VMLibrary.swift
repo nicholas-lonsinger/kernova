@@ -797,9 +797,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         // Every closure is stored *on* `instance`, so it must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `instances`.
-        instance.onUpdateSettings = { [weak self, weak instance] mutate in
+        instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
             guard let self, let instance else { return .refused(.noLibrary) }
-            return self.updateSettings(of: instance, mutate: mutate)
+            return self.updateConfiguration(of: instance, mutate: mutate)
+        }
+        instance.onUpdateSettings = { [weak self, weak instance] configuration, hostState in
+            guard let self, let instance else { return .refused(.noLibrary) }
+            return self.updateSettings(
+                of: instance, configuration: configuration, hostState: hostState)
         }
         instance.liveIdentityConflict = { [weak self, weak instance] in
             guard let self, let instance else { return nil }
@@ -902,7 +907,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     private struct MutateThrew: Error {}
 
     /// How a configuration commit ended, before the host-state half of an
-    /// ``updateSettings(of:mutate:)`` runs.
+    /// ``updateSettings(of:configuration:hostState:)`` runs.
     private enum ConfigurationCommit {
         /// Committed; `wrote` says whether the change moved what the file holds.
         case committed(wrote: Bool)
@@ -987,61 +992,59 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         return .committed(wrote: wrote)
     }
 
-    /// The single entry point for a mutation that touches `instance`'s host
-    /// state, alone or beside its configuration.
+    /// Commits a change to `instance`'s configuration and one to its host
+    /// state, each applied once to what its own file holds.
     ///
-    /// Each file commits separately, configuration first:
-    /// ``updateConfiguration(of:mutate:)`` runs `mutate` against what
-    /// `config.json` holds, and a refusal or failed save there leaves the host
-    /// state unattempted; then `mutate` runs again against what
-    /// `host-state.json` holds. A host-state save that fails reports, in its
-    /// ``SettingsWriteFailure``, that the configuration half landed.
+    /// The configuration commits first, on ``updateConfiguration(of:mutate:)``'s
+    /// terms, and a refusal or failed save there leaves the host state
+    /// unattempted. `configuration` may also refuse by throwing, judged on
+    /// what `config.json` holds; the error is thrown on and nothing changed. A
+    /// host-state save that fails reports, in its ``SettingsWriteFailure``,
+    /// whether the configuration landed.
     ///
-    /// `mutate` runs once per file, inside each coordinated write, so it must
-    /// be pure and must not read the instance it mutates. It may refuse by
-    /// throwing, judged against what the file holds: thrown before anything
-    /// landed, the error is thrown on and nothing changed; thrown on the
-    /// host-state pass after the configuration landed, it is that half's
-    /// failure.
+    /// Both changes run inside their coordinated writes, so they must be pure.
     @discardableResult
     func updateSettings<Failure: Error>(
-        of instance: VMInstance, mutate: (inout VMSettings) throws(Failure) -> Void
+        of instance: VMInstance,
+        configuration: (inout VMConfiguration) throws(Failure) -> Void,
+        hostState: (inout VMHostState) -> Void
     ) throws(Failure) -> SettingsWrite {
-        guard let bundle = instance.bundle else { return .refused(.noBundle) }
-        let configurationWrote: Bool
-        switch try commitConfiguration(
-            of: instance,
-            mutate: { (config: inout VMConfiguration) throws(Failure) in
-                var settings = VMSettings(configuration: config, hostState: bundle.hostState)
-                try mutate(&settings)
-                config = settings.configuration
-            })
-        {
-        case .stopped(let write): return write
-        case .committed(let wrote): configurationWrote = wrote
+        switch try commitConfiguration(of: instance, mutate: configuration) {
+        case .stopped(let write):
+            return write
+        case .committed(let wrote):
+            return commitHostState(
+                of: instance, landed: wrote ? [.configuration] : [], mutate: hostState)
         }
-        var mutateFailure: Failure?
+    }
+
+    /// Commits a change to `instance`'s host state, applied to what
+    /// `host-state.json` holds; a save that fails is presented, and memory
+    /// stays equal to the file.
+    ///
+    /// `mutate` runs inside the coordinated write, so it must be pure.
+    @discardableResult
+    func updateHostState(
+        of instance: VMInstance, mutate: (inout VMHostState) -> Void
+    ) -> SettingsWrite {
+        commitHostState(of: instance, landed: [], mutate: mutate)
+    }
+
+    /// The host-state commit both settings writes end in; `landed` is what the
+    /// same write already committed, for the failure to report.
+    private func commitHostState(
+        of instance: VMInstance, landed: [SettingsWriteFailure.File],
+        mutate: (inout VMHostState) -> Void
+    ) -> SettingsWrite {
+        guard let bundle = instance.bundle else { return .refused(.noBundle) }
         do {
-            try bundle.commitHostState { hostState in
-                var settings = VMSettings(configuration: bundle.configuration, hostState: hostState)
-                do throws(Failure) {
-                    try mutate(&settings)
-                } catch {
-                    mutateFailure = error
-                    throw MutateThrew()
-                }
-                hostState = settings.hostState
-            }
+            try bundle.commitHostState(mutate)
         } catch {
-            if let mutateFailure, !configurationWrote { throw mutateFailure }
-            let underlying: any Error = mutateFailure ?? error
             #log(
                 Self.logger, .error,
-                "Failed to save the host state for '\(instance.name, privacy: .public)': \(underlying.localizedDescription, privacy: .public)"
+                "Failed to save the host state for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            let failure = SettingsWriteFailure(
-                failed: .hostState, landed: configurationWrote ? [.configuration] : [],
-                underlying: underlying)
+            let failure = SettingsWriteFailure(failed: .hostState, landed: landed, underlying: error)
             presentError(failure)
             return .notSaved(failure)
         }

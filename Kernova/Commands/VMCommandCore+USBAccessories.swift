@@ -133,6 +133,7 @@ extension VMCommandCore {
             throw itemNotFound(
                 instance, item: "USB accessory with the device identifier \(deviceID.uuidString)")
         }
+        onUserDetachingAccessory?(instance, held.accessory)
         do {
             try await lifecycle.detachUSBAccessory(
                 deviceID: deviceID, from: instance, for: sessionID)
@@ -143,7 +144,7 @@ extension VMCommandCore {
             rememberAccessoryEdit(
                 on: instance,
                 failure:
-                    "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there, so \u{201C}\(instance.name)\u{201D} still takes it back automatically the next time it is connected."
+                    "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
             ) {
                 try onUserReleasedAccessory?(instance, held.accessory)
             }

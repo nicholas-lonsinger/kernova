@@ -118,7 +118,7 @@ extension VMLibrary {
         _ mutate: (inout VMHostState) -> Void
     ) {
         guard
-            case .saved = updateSettings(of: instance, mutate: { mutate(&$0.hostState) })
+            case .saved = updateHostState(of: instance, mutate: mutate)
         else {
             Issue.record("the host-state edit did not land", sourceLocation: sourceLocation)
             return

@@ -227,11 +227,11 @@ final class VMDisplayPlacementController {
         case .popInFromHeadless:
             // There is no window to close — just return the display slot to the
             // main window.
-            viewModel.updateSettings(of: instance) { $0.hostState.displayPreference = .inline }
+            viewModel.updateHostState(of: instance) { $0.displayPreference = .inline }
             instance.displayMode = .inline
             viewModel.presenter?.focusGuestDisplay(for: instance)
         case .popOut:
-            viewModel.updateSettings(of: instance) { $0.hostState.displayPreference = .popOut }
+            viewModel.updateHostState(of: instance) { $0.displayPreference = .popOut }
             openDisplayWindow(for: instance, show: .front(fullscreen: false))
         }
     }
@@ -241,7 +241,7 @@ final class VMDisplayPlacementController {
             existing.window?.toggleFullScreen(nil)
             return
         }
-        viewModel.updateSettings(of: instance) { $0.hostState.displayPreference = .fullscreen }
+        viewModel.updateHostState(of: instance) { $0.displayPreference = .fullscreen }
         openDisplayWindow(for: instance, show: .front(fullscreen: true))
     }
 
@@ -369,7 +369,7 @@ final class VMDisplayPlacementController {
     private func apply(_ placement: Placement, to instance: VMInstance) {
         instance.displayMode = placement.mode
         if let preference = placement.persistPreference {
-            viewModel.updateSettings(of: instance) { $0.hostState.displayPreference = preference }
+            viewModel.updateHostState(of: instance) { $0.displayPreference = preference }
         }
     }
 
@@ -396,12 +396,12 @@ final class VMDisplayPlacementController {
             self.pendingCloseReasons.removeValue(forKey: vmID)
             guard self.windows.removeValue(forKey: vmID) != nil else { return }
 
-            self.viewModel.updateSettings(of: instance) { settings in
+            self.viewModel.updateHostState(of: instance) { hostState in
                 if let displayID = context.lastDisplayID {
-                    settings.hostState.lastFullscreenDisplayID = displayID
+                    hostState.lastFullscreenDisplayID = displayID
                 }
                 if let preference = placement.persistPreference {
-                    settings.hostState.displayPreference = preference
+                    hostState.displayPreference = preference
                 }
             }
             #log(

@@ -60,6 +60,9 @@ struct VMCommandCoreUSBAccessoryTests {
         core.onUserAttachedAccessory = { [weak pairingCoordinator] instance, accessory in
             try pairingCoordinator?.userAttached(accessory, to: instance)
         }
+        core.onUserDetachingAccessory = { [weak pairingCoordinator] _, accessory in
+            pairingCoordinator?.userDetaching(accessory)
+        }
         core.onUserReleasedAccessory = { [weak pairingCoordinator] instance, accessory in
             try pairingCoordinator?.userReleased(accessory, from: instance)
         }
@@ -549,7 +552,10 @@ struct VMCommandCoreUSBAccessoryTests {
         try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
 
         #expect(reported.count == 1)
-        #expect(reported.first?.message.contains("still takes it back") == true)
+        #expect(
+            reported.first?.message.hasPrefix(
+                "\(accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there. "
+            ) == true)
         #expect(instance.usbPairings.pairing(forKey: key) != nil)
         // The detach's echo: macOS hands the same stick back under a new
         // registry ID, and the token keeps it with the Mac.
@@ -560,6 +566,37 @@ struct VMCommandCoreUSBAccessoryTests {
         service.assignComposing(registryID: 9, serial: "0373", receptacle: "hub/Port-A@1")
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
         #expect(service.attachedRegistryIDs.contains(9))
+        #expect(!service.attachedRegistryIDs.contains(8))
+    }
+
+    @Test("A detach's echo that arrives while the detach is in flight stays with the Mac")
+    func echoDuringTheDetachIsNotReattached() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let instance = makeRunningInstance(in: harness)
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let deviceID = try await attach(accessory, to: instance, in: harness)
+        let key = try #require(accessory.identity?.key)
+        // A second accessory the guest takes back on its own: its automatic
+        // attach, queued after the echo's would have been, marks the point by
+        // which an echo that got through has been attached too.
+        let marker = MockUSBAccessoryService.accessory(
+            registryID: 20, serial: "MARKER", receptacle: "hub/Port-B@1")
+        try harness.library.pairUSBAccessory(
+            try #require(USBAccessoryPairing.make(for: marker)), with: instance)
+        // macOS hands the reset stick back under a new registry ID before the
+        // detach has returned, while the pairing it ends is still in place.
+        service.duringNextDetach = {
+            service.accessories.removeAll { $0.registryID == accessory.registryID }
+            service.assignComposing(registryID: 8, serial: "0373", receptacle: "hub/Port-A@1")
+        }
+
+        try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
+        #expect(instance.usbPairings.pairing(forKey: key) == nil)
+
+        service.assignComposing(registryID: 20, serial: "MARKER", receptacle: "hub/Port-B@1")
+        try await waitForChange { service.attachedRegistryIDs.contains(20) }
         #expect(!service.attachedRegistryIDs.contains(8))
     }
 

@@ -415,10 +415,10 @@ struct VMLibraryTests {
         let memory = instance.configuration.memorySizeInGB
         storage.saveHostStateError = NSError(domain: "test", code: 1)
 
-        let outcome = library.updateSettings(of: instance) {
-            $0.configuration.memorySizeInGB = memory + 2
-            $0.hostState.startsAutomaticallyOnLaunch = true
-        }
+        let outcome = library.updateSettings(
+            of: instance,
+            configuration: { $0.memorySizeInGB = memory + 2 },
+            hostState: { $0.startsAutomaticallyOnLaunch = true })
 
         guard case .notSaved(let failure) = outcome else {
             Issue.record("expected a partial write, got \(outcome)")

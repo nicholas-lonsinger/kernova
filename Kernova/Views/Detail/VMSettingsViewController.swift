@@ -472,25 +472,26 @@ extension VMSettingsViewController {
     /// The one write path for the auto-start flag, whichever surface's switch
     /// asked for it.
     private func setAutoStart(_ isOn: Bool) {
-        writeMirrored { $0.hostState.startsAutomaticallyOnLaunch = isOn }
+        writeMirrored(
+            viewModel.updateHostState(of: instance) { $0.startsAutomaticallyOnLaunch = isOn })
     }
 
     private func setEphemeralMode(_ isOn: Bool) {
         let manifest = instance.snapshotManifest
-        writeMirrored { settings in
-            settings.hostState.applyEphemeralMode(
-                enabled: isOn,
-                baseline: manifest.defaultEphemeralBaseline(
-                    preferring: settings.hostState.ephemeralBaselineSnapshotID))
-        }
+        writeMirrored(
+            viewModel.updateHostState(of: instance) { hostState in
+                hostState.applyEphemeralMode(
+                    enabled: isOn,
+                    baseline: manifest.defaultEphemeralBaseline(
+                        preferring: hostState.ephemeralBaselineSnapshotID))
+            })
     }
 
-    /// Writes a setting that renders on more than one surface, re-rendering all
-    /// of them when the view model refuses so no control is left showing a value
-    /// the model does not hold.
-    private func writeMirrored(_ mutate: (inout VMSettings) -> Void) {
-        guard case .saved = viewModel.updateSettings(of: instance, mutate: mutate)
-        else {
+    /// Settles a write of a setting that renders on more than one surface,
+    /// re-rendering all of them when it did not land so no control is left
+    /// showing a value the model does not hold.
+    private func writeMirrored(_ write: VMLibrary.SettingsWrite) {
+        guard case .saved = write else {
             apply()
             return
         }
@@ -504,7 +505,8 @@ extension VMSettingsViewController {
     }
 
     private func setDropFiles(_ isOn: Bool) {
-        writeMirrored { $0.configuration.dropFilesEnabled = isOn }
+        writeMirrored(
+            viewModel.updateConfiguration(of: instance) { $0.dropFilesEnabled = isOn })
     }
 
     /// The clipboard flags' shared write path, which every surface offering

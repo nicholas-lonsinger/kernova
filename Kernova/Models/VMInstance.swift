@@ -252,13 +252,24 @@ final class VMInstance {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Routes a host-side mutation of this instance's settings through
-    /// ``VMLibrary/updateSettings(of:mutate:)``, answering what that answers.
+    /// Routes a host-side mutation of this instance's configuration through
+    /// ``VMLibrary/updateConfiguration(of:mutate:)``, answering what that
+    /// answers.
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateSettings: (@MainActor ((inout VMSettings) -> Void) -> VMLibrary.SettingsWrite)?
+    var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> VMLibrary.SettingsWrite)?
+
+    /// Routes a host-side mutation of both halves of this instance's settings
+    /// through ``VMLibrary/updateSettings(of:configuration:hostState:)``,
+    /// answering what that answers; wired alongside ``onUpdateConfiguration``.
+    @ObservationIgnored
+    var onUpdateSettings:
+        (
+            @MainActor ((inout VMConfiguration) -> Void, (inout VMHostState) -> Void)
+                -> VMLibrary.SettingsWrite
+        )?
 
     /// The live VM whose identity bringing this one up would duplicate, or `nil`
     /// when nothing collides — what ``beginBringUp(_:)`` refuses on.
@@ -294,21 +305,23 @@ final class VMInstance {
     /// guest the accessories paired with it and starts watching its address.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
 
-    /// Applies a settings mutation through ``onUpdateSettings``, answering how
-    /// the write ended. An instance no library has wired changes nothing and
-    /// is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
-    @discardableResult
-    func performSettingsMutation(_ mutate: (inout VMSettings) -> Void) -> VMLibrary.SettingsWrite {
-        onUpdateSettings?(mutate) ?? .refused(.noLibrary)
-    }
-
-    /// ``performSettingsMutation(_:)`` for a mutation of the configuration
-    /// alone.
+    /// Applies a configuration mutation through ``onUpdateConfiguration``,
+    /// answering how the write ended. An instance no library has wired changes
+    /// nothing and is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
     @discardableResult
     func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void)
         -> VMLibrary.SettingsWrite
     {
-        performSettingsMutation { mutate(&$0.configuration) }
+        onUpdateConfiguration?(mutate) ?? .refused(.noLibrary)
+    }
+
+    /// ``performConfigurationMutation(_:)`` for a mutation of both halves of
+    /// the settings, through ``onUpdateSettings``.
+    @discardableResult
+    func performSettingsMutation(
+        configuration: (inout VMConfiguration) -> Void, hostState: (inout VMHostState) -> Void
+    ) -> VMLibrary.SettingsWrite {
+        onUpdateSettings?(configuration, hostState) ?? .refused(.noLibrary)
     }
 
     // MARK: - Session Projection
@@ -1593,10 +1606,9 @@ final class VMInstance {
                     self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performSettingsMutation {
-                        $0.hostState.agentInstallNudgeDismissed = false
-                        $0.configuration.lastSeenGuestOSVersion = nil
-                    }
+                    self.performSettingsMutation(
+                        configuration: { $0.lastSeenGuestOSVersion = nil },
+                        hostState: { $0.agentInstallNudgeDismissed = false })
                 }
             }
             armed.agentPostStartTask = nil
