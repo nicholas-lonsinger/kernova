@@ -521,7 +521,7 @@ struct VMSettingsOverviewTests {
         // A switch to another VM drops the footprint outright: its count must
         // not land beside the previous VM's.
         let other = makeInstance(guestOS: .macOS)
-        viewModel.library.instances.append(other)
+        viewModel.library.admitForTesting(other)
         let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
         other.seedSnapshotManifest(
             VMSnapshotManifest(
@@ -549,7 +549,7 @@ struct VMSettingsOverviewTests {
         let viewModel = makeViewModel()
         let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
         let other = makeInstance(name: "Twin", guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        viewModel.instances = [instance, other]
+        viewModel.library.admitForTesting([instance, other])
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()

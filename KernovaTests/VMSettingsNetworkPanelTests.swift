@@ -476,7 +476,7 @@ struct VMSettingsNetworkPanelTests {
             $0.name = "Holder"
             $0.macAddress = mac
         }
-        viewModel.instances = [holder]
+        viewModel.library.admitForTesting([holder])
         if let presenter { viewModel.presenter = presenter }
         return viewModel
     }

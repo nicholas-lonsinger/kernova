@@ -141,7 +141,7 @@ struct VMSettingsStoragePanelTests {
         defer { task.cancel() }
         phantom.preparingState = VMInstance.PreparingState(
             operation: .cloning(sourceID: instance.id), task: task)
-        viewModel.instances.append(phantom)
+        viewModel.library.admitForTesting(phantom)
         reapply(vc, (instance, viewModel))
         #expect(visibleLockHints(in: vc.view) == [cloneHintText])
 

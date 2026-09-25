@@ -125,7 +125,7 @@ struct VMLibraryTests {
         // Stands in for an import phantom or a wizard-created VM: registered
         // after the scan started, so the scan cannot know about it.
         let arrival = VMInstanceFixture.make(name: "Arrived Mid-Read")
-        library.instances.append(arrival)
+        library.admitForTesting(arrival)
 
         await load.value
 
@@ -183,7 +183,7 @@ struct VMLibraryTests {
     func selectedIDPersistsToUserDefaults() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         library.selectedID = instance.id
 
@@ -194,7 +194,7 @@ struct VMLibraryTests {
     func selectedIDClearsUserDefaults() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         library.selectedID = instance.id
 
         library.selectedID = nil
@@ -482,7 +482,7 @@ struct VMLibraryTests {
             $0.networkMode = .bridged
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         library.guestAddresses.watch()
         // Bridged is nothing the table answers for, so nothing is read.
         #expect(library.guestAddresses.readTaskForTesting == nil)
@@ -503,7 +503,7 @@ struct VMLibraryTests {
     func selectedInstance() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         library.selectedID = instance.id
 
         #expect(library.selectedInstance?.id == instance.id)
@@ -542,7 +542,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Gone VM")
         instance.enter(.stopped)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         // Storage has no bundles, so instance should be removed
         library.reconcileWithDisk()
@@ -555,7 +555,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Gone VM")
         instance.enter(.stopped)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance)
 
@@ -572,7 +572,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Running VM")
         instance.enter(.running(sessionID: UUID()))
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
@@ -585,7 +585,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Paused VM")
         instance.enter(.suspended)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
@@ -609,7 +609,7 @@ struct VMLibraryTests {
         // inside them stands.
         storage.bundles[holding.bundleURL] = holding.configuration
         storage.bundles[emptied.bundleURL] = emptied.configuration
-        library.instances.append(contentsOf: [holding, emptied])
+        library.admitForTesting([holding, emptied])
 
         library.reconcileWithDisk()
 
@@ -623,7 +623,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Bundle out of sight")
         instance.enter(.suspended)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
@@ -639,7 +639,7 @@ struct VMLibraryTests {
         let remaining = VMInstanceFixture.make(name: "Remaining")
         let removed = VMInstanceFixture.make(name: "Removed")
         removed.enter(.stopped)
-        library.instances = [remaining, removed]
+        library.admitForTesting([remaining, removed])
         library.selectedID = removed.id
 
         // Only keep the remaining instance's bundle on disk
@@ -868,7 +868,9 @@ struct VMLibraryTests {
         // Re-corrupt it
         storage.loadConfigurationFailURLs.insert(bundleURL)
         // Remove the instance that was added on successful load so reconciliation tries again
-        library.instances.removeAll { $0.name == "Recoverable VM" }
+        for instance in library.instances where instance.name == "Recoverable VM" {
+            library.evict(instance)
+        }
 
         // Should report the error again since it was cleared from the reported set
         library.reconcileWithDisk()
@@ -921,7 +923,7 @@ struct VMLibraryTests {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
 
         library.reconcileWithDisk()
@@ -951,7 +953,7 @@ struct VMLibraryTests {
                 cancelStream.continuation.finish()
             }
         }
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         // Bundle absent from storage → eligible for eviction.
 
         library.reconcileWithDisk()
@@ -967,7 +969,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
         markPreparing(instance)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         #expect(library.hasPreparing == true)
     }
@@ -976,7 +978,7 @@ struct VMLibraryTests {
     func hasPreparingFalse() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
-        library.instances.append(instance)
+        library.admitForTesting(instance)
 
         #expect(library.hasPreparing == false)
     }
@@ -992,12 +994,14 @@ struct VMLibraryTests {
         storage.bundles[bundleURL] = config
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
-        library.instances.removeAll()
+        for instance in library.instances {
+            library.evict(instance)
+        }
 
         // Add a preparing instance
         let preparing = VMInstanceFixture.make(name: "Preparing")
         markPreparing(preparing)
-        library.instances.append(preparing)
+        library.admitForTesting(preparing)
 
         library.reconcileWithDisk()
 
@@ -1012,7 +1016,7 @@ struct VMLibraryTests {
         let preparing = VMInstanceFixture.make(name: "Preparing VM")
         markPreparing(preparing)
         preparing.enter(.stopped)
-        library.instances.append(preparing)
+        library.admitForTesting(preparing)
 
         // Storage has no bundles — normally this instance would be removed
         // but hasPreparing guard should prevent reconcile from running

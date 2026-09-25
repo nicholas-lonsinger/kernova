@@ -67,7 +67,7 @@ struct VMBundleTests {
             preferences: makeTestPreferences())
         let library = makeWiredLibrary()
         library.wireHooks(for: instance)
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         return (library, instance)
     }
 

@@ -136,7 +136,7 @@ struct VMToolbarManagerTests {
         suspending.shouldSuspendOnResume = true
         let (library, lifecycle) = makeLibrary(virtualization: suspending)
         let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
-        library.instances.append(instance)
+        library.admitForTesting(instance)
         let manager = makeManager(instance: instance, library: library)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

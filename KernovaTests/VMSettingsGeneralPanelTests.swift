@@ -56,9 +56,6 @@ struct VMSettingsGeneralPanelTests {
     func supersededDetailRenameCommitsItsText() throws {
         let (vc, instance, viewModel) = makeController(
             guestOS: .linux, isReadOnly: false, category: .general)
-        // The rename verb resolves the VM through the library, so the pane's
-        // instance has to be in it for a commit to land.
-        viewModel.instances = [instance]
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = vc.view
         viewModel.renameVMInDetail(instance)
@@ -636,7 +633,7 @@ struct VMSettingsGeneralPanelTests {
             }
             library.append(other)
         }
-        viewModel.instances = library
+        viewModel.library.admitForTesting(library)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()

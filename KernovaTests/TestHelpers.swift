@@ -98,6 +98,13 @@ func makeWiredLibrary(
 }
 
 extension VMLibrary {
+    /// Adds each of `instances`, in order, unwired and unread.
+    func admitForTesting(_ instances: [VMInstance]) {
+        for instance in instances {
+            admitForTesting(instance)
+        }
+    }
+
     /// Wires `instance` and adds it to the library, with its bundle's files in
     /// `storage` as a load would have found them: a fixture built over a store
     /// of its own hands that store's files to `storage` and writes through it
