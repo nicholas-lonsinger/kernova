@@ -265,9 +265,9 @@ final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
         session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<Void> {
-        guard let sessionID = context.sessionID else { throw VirtualizationError.noVirtualMachine }
+        guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         do {
-            try await detachUSBAccessories(from: instance, session: session, for: sessionID)
+            try await detachUSBAccessories(context, session: session)
             try await session.pauseIfRunning()
             try await session.saveMachineState(to: context.bundle.saveFileURL)
         } catch {
@@ -365,8 +365,7 @@ final class VirtualizationService {
             // The guest is still there afterwards, so these are put back once
             // the capture is done — see
             // ``VMLifecycleCoordinator/takeSnapshot(_:snapshot:record:)``.
-            try await detachUSBAccessories(
-                from: instance, session: session, for: sessionID)
+            try await detachUSBAccessories(context, session: session)
             try await captureLiveState(
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
             ) {
@@ -462,8 +461,8 @@ final class VirtualizationService {
         return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
 
-    /// Takes every passthrough USB accessory off `instance` before its state is
-    /// written, and answers what it took off.
+    /// Takes every passthrough USB accessory off the VM `context` holds before
+    /// its state is written.
     ///
     /// A saved state is restored only into a configuration compatible with it,
     /// and a passthrough device names host hardware that may be in a drawer by
@@ -479,17 +478,16 @@ final class VirtualizationService {
     /// nothing can restore, so the save must fail where the user can see it
     /// rather than succeed into an unusable file.
     ///
-    /// Each entry is cleared as its device leaves, and the one that threw is
-    /// left, so what the instance still holds afterwards is exactly what this
+    /// Each accessory is released as its device leaves, and the one that threw
+    /// is kept, so what the guest still holds afterwards is exactly what this
     /// never reached — which is how the put-back knows what a sweep that threw
     /// part-way ejected. See
-    /// ``VMLifecycleCoordinator/reattachUSBAccessories(ejectedFrom:on:for:)``.
-    @discardableResult
+    /// ``VMLifecycleCoordinator/reattachUSBAccessories(ejectedFrom:_:)``.
     static func detachUSBAccessories(
-        from instance: VMInstance, session: any VMSnapshotSessionOperating, for sessionID: UUID
-    ) async throws -> [AttachedUSBAccessory] {
-        let attached = instance.liveUSBAccessories
-        for item in attached {
+        _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
+    ) async throws {
+        let instance = context.instance
+        for item in instance.liveUSBAccessories {
             do {
                 try await session.detachUSBDevice(uuid: item.deviceID)
                 // A .notice because it is an irreversible action on the user's
@@ -505,9 +503,8 @@ final class VirtualizationService {
                     "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
                 )
             }
-            instance.forgetAttachedAccessory(deviceID: item.deviceID, for: sessionID)
+            context.releaseAccessory(deviceID: item.deviceID)
         }
-        return attached
     }
 
     /// Writes the guest's live state into `saveFileURL`, copies the disks

@@ -38,6 +38,9 @@ enum VMAdmission {
         case invalidState
         case removed
         case identityConflict(VMIdentityConflict)
+        /// Another attach already holds the accessory an attach names — the
+        /// VM it was reserved for or passed through to.
+        case accessoryHeld(by: VMInstance)
         /// This build cannot do what was asked at all.
         case unsupportedByBuild
         /// The app is terminating, and the request would begin an operation
@@ -55,6 +58,8 @@ enum VMAdmission {
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason
+            case (.accessoryHeld(let l), .accessoryHeld(let r)):
+                l === r
             default: false
             }
         }
@@ -85,6 +90,9 @@ enum VMAdmission {
         /// The live VM whose identity bringing this one up would duplicate —
         /// supplied only when deciding a bring-up.
         var identityConflict: VMIdentityConflict?
+        /// The VM holding the accessory an attach names — supplied only when
+        /// deciding an attach (``VMAccessoryHolders/holder(of:)``).
+        var accessoryHolder: VMInstance?
         /// The app's termination has begun.
         var terminating: Bool
 
@@ -356,6 +364,9 @@ enum VMAdmission {
         if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
             return identityChecked(facts)
         }
+        if case .attachingUSB = kind, let holder = facts.accessoryHolder {
+            return .refuse(.accessoryHeld(by: holder))
+        }
         return .admit
     }
 
@@ -528,6 +539,9 @@ protocol VMAdmissionPeers: AnyObject {
 
     /// Whether a clone is copying `instance`'s files out of its bundle.
     func hasCloneInFlight(from instance: VMInstance) -> Bool
+
+    /// Which VM holds each USB accessory passed through to a guest.
+    var accessoryHolders: VMAccessoryHolders { get }
 
     /// The live VM whose identity bringing `instance` up under `configuration`
     /// would duplicate.

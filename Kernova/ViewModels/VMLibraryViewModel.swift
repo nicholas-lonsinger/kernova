@@ -554,7 +554,8 @@ final class VMLibraryViewModel {
         let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         self.sleepWake = sleepWake
         let usbAccessories = USBAccessoryCoordinator(
-            lifecycle: lifecycle, roster: library, pairings: library)
+            lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
+            pairings: library)
         self.usbAccessories = usbAccessories
         let core = VMCommandCore(
             library: library,

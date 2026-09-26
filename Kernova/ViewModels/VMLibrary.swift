@@ -59,6 +59,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// The address each running VM's guest is seen using on its network.
     @ObservationIgnored let guestAddresses: GuestAddressObserver
 
+    /// Which VM holds each USB accessory passed through to a guest.
+    @ObservationIgnored let accessoryHolders = VMAccessoryHolders()
+
     // MARK: - Adapter Hooks
 
     /// Receives every failure the library needs a user to see.

@@ -28,7 +28,9 @@ struct USBAccessoryCoordinatorTests {
         writer.roster = roster
         roster.supportsUSBAccessories = lifecycle.usbAccessoryService != nil
         return try #require(
-            USBAccessoryCoordinator(lifecycle: lifecycle, roster: roster, pairings: writer))
+            USBAccessoryCoordinator(
+                lifecycle: lifecycle, roster: roster, holders: roster.accessoryHolders,
+                pairings: writer))
     }
 
     private func makeInstance(sessionID: UUID, named name: String = "USB VM") -> VMInstance {
@@ -74,7 +76,7 @@ struct USBAccessoryCoordinatorTests {
         let lifecycle = makeTestLifecycle(usbAccessoryService: nil)
         #expect(
             USBAccessoryCoordinator(
-                lifecycle: lifecycle, roster: StubVMInstanceRoster(),
+                lifecycle: lifecycle, roster: StubVMInstanceRoster(), holders: VMAccessoryHolders(),
                 pairings: StubUSBAccessoryPairingWriter()) == nil)
     }
 
@@ -623,7 +625,7 @@ struct USBAccessoryCoordinatorTests {
 
         service.suspendNextAttach = true
         let held = Task { try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
-        await service.attachStarted()
+        try await service.attachStarted()
 
         // The attach in flight holds the VM, so the automatic attach this
         // assignment asks for is refused as busy rather than waiting for it.
@@ -655,7 +657,7 @@ struct USBAccessoryCoordinatorTests {
 
         service.suspendNextAttach = true
         let held = Task { try? await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
-        await service.attachStarted()
+        try await service.attachStarted()
         service.assign(second)
 
         // The guest powers off while the attach still holds the VM.

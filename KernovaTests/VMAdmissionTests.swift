@@ -59,7 +59,8 @@ struct VMAdmissionTests {
             networkEnabled: variant.networkEnabled,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
-            cloneInFlight: variant.clone, identityConflict: nil, terminating: terminating)
+            cloneInFlight: variant.clone, identityConflict: nil, accessoryHolder: nil,
+            terminating: terminating)
     }
 
     private static func facts(
@@ -70,8 +71,8 @@ struct VMAdmissionTests {
 
     /// One cell: `A` admit, `J` join, `B` busy with the held kind, `b` busy
     /// with a clone copying the VM out, `I` invalid state, `R` removed, `U`
-    /// unsupported by this build, `C` an identity conflict, `T` refused by the
-    /// app's termination.
+    /// unsupported by this build, `C` an identity conflict, `H` an accessory
+    /// another attach holds, `T` refused by the app's termination.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -83,6 +84,7 @@ struct VMAdmissionTests {
         case .refuse(.removed): "R"
         case .refuse(.unsupportedByBuild): "U"
         case .refuse(.identityConflict): "C"
+        case .refuse(.accessoryHeld): "H"
         case .refuse(.terminating): "T"
         }
     }
@@ -785,6 +787,49 @@ struct VMAdmissionTests {
         #expect(VMAdmission.settledCaptureMode(phase: ended, facts: Self.facts()) == .stopped)
         #expect(
             VMAdmission.settledCaptureMode(phase: ended, facts: Self.facts(slot: true)) == .suspended)
+    }
+
+    // MARK: - Accessory Holders
+
+    @Test("An attach of an accessory a VM holds is refused as held wherever an attach would be taken")
+    func anAttachOfAHeldAccessoryIsRefusedAsHeld() {
+        let holder = VMInstanceFixture.make(name: "Holder")
+        let attach = VMAdmission.Request.operation(.attachingUSB(registryID: 7))
+        func facts(slot: Bool = false, _ variant: Variant = .plain) -> VMAdmission.Facts {
+            var facts = Self.facts(slot: slot, variant)
+            facts.accessoryHolder = holder
+            return facts
+        }
+
+        let settled = String(
+            Self.settledColumns.map { column in
+                Self.code(
+                    VMAdmission.decide(
+                        attach, posture: .commit, phase: column.phase,
+                        facts: facts(slot: column.slot)),
+                    held: nil)
+            })
+
+        // Only a live VM takes an attach at all; where one would be taken, the
+        // holder refuses it, and names itself.
+        #expect(settled == "IIIIHHR")
+        #expect(
+            VMAdmission.decide(attach, posture: .commit, phase: Self.live, facts: facts())
+                == .refuse(.accessoryHeld(by: holder)))
+        #expect(
+            VMAdmission.decide(attach, posture: .commit, phase: Self.live, facts: facts(.noUSB))
+                == .refuse(.unsupportedByBuild))
+        // Still held once the operation holding this VM ends, so that is the
+        // answer during it too.
+        #expect(
+            VMAdmission.decide(
+                attach, posture: .commit, phase: .operating(.pausing, from: Self.live),
+                facts: facts()) == .refuse(.accessoryHeld(by: holder)))
+        // A detach names an attachment the VM holds, not an accessory.
+        #expect(
+            VMAdmission.decide(
+                .operation(.detachingUSB(deviceID: Self.session)), posture: .commit,
+                phase: Self.live, facts: facts()) == .admit)
     }
 
     // MARK: - Projections

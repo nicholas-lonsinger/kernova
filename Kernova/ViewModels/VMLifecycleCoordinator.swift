@@ -175,20 +175,15 @@ final class VMLifecycleCoordinator {
         try await instance.activity.captureSnapshot(mode) { context in
             // Read before the capture, since the capture is what clears them.
             let held = instance.liveUSBAccessories
-            let sessionID = context.operation.sessionID
             let ending: VMOperationEnding<VMSnapshot>
             do {
                 ending = try await virtualizationService.takeSnapshot(
                     instance, context, snapshot: snapshot)
             } catch {
-                if let sessionID {
-                    await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
-                }
+                await reattachUSBAccessories(ejectedFrom: held, context.operation)
                 throw error
             }
-            if let sessionID {
-                await reattachUSBAccessories(ejectedFrom: held, on: instance, for: sessionID)
-            }
+            await reattachUSBAccessories(ejectedFrom: held, context.operation)
             guard case .rest(let rest, let captured) = ending else { return ending }
             do {
                 try record(context.operation.permit, captured)
@@ -200,7 +195,8 @@ final class VMLifecycleCoordinator {
         }
     }
 
-    /// Puts back the accessories a capture took off `instance`.
+    /// Puts back the accessories a capture took off its VM, inside the
+    /// capture `context` holds the VM for.
     ///
     /// `held` is what the guest was holding before the capture ran; what it
     /// still holds is what the capture never reached, so the difference is what
@@ -214,16 +210,20 @@ final class VMLifecycleCoordinator {
     /// is on the durable identity and the wait is event-driven — see
     /// ``USBAccessoryProviding/accessory(matching:appearingWithin:)``.
     ///
+    /// Each goes back under a reservation of its own
+    /// (``VMOperationContext/withAccessoryReservation(_:_:)``), so one another
+    /// VM took while it was off the guest stays with that VM.
+    ///
     /// Guarded on the session at every step: a guest that went away under the
     /// capture has no controller to attach to. Failures are logged and
     /// swallowed — the snapshot the user asked for is already written, and an
     /// accessory that will not go back on leaves the guest exactly where a
     /// surprise unplug would.
     private func reattachUSBAccessories(
-        ejectedFrom held: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
+        ejectedFrom held: [AttachedUSBAccessory], _ context: borrowing VMOperationContext
     ) async {
-        guard let usbAccessoryService, !held.isEmpty,
-            instance.liveSessionID == sessionID
+        let instance = context.instance
+        guard let usbAccessoryService, !held.isEmpty, let sessionID = context.sessionID
         else { return }
         let stillHeld = Set(instance.liveUSBAccessories.map(\.deviceID))
         let ejected = held.filter { !stillHeld.contains($0.deviceID) }
@@ -232,16 +232,19 @@ final class VMLifecycleCoordinator {
         let returned = await returningAccessories(ejected, on: instance, for: sessionID)
         for item in ejected {
             guard let accessory = returned[item.deviceID] else { continue }
-            guard instance.liveSessionID == sessionID else { return }
+            guard context.sessionID == sessionID else { return }
             do {
-                let reattached = try await usbAccessoryService.attach(
-                    accessory.registryID, to: instance)
-                guard instance.liveSessionID == sessionID else {
-                    try? await usbAccessoryService.detach(
-                        deviceID: reattached.deviceID, from: instance)
-                    return
+                try await context.withAccessoryReservation(accessory.registryID) { reservation in
+                    let reattached = try await usbAccessoryService.attach(reservation)
+                    // The guest went away under the attach, which released the
+                    // reservation: VZ captured the device for a session nothing
+                    // holds, so it goes back rather than being stranded.
+                    guard reservation.hold(reattached) else {
+                        try? await usbAccessoryService.detach(
+                            deviceID: reattached.deviceID, from: instance)
+                        return
+                    }
                 }
-                instance.recordAttachedAccessory(reattached, for: sessionID)
             } catch {
                 #log(
                     Self.logger, .warning,
@@ -1042,28 +1045,33 @@ final class VMLifecycleCoordinator {
     // MARK: - USB Accessories
 
     /// Passes the accessory `registryID` names through to the guest of the
-    /// session `sessionID` names, and records the attachment, inside an
-    /// operation holding the VM.
+    /// session `sessionID` names, inside an operation holding the VM whose
+    /// admission reserved the accessory for it.
     ///
     /// The operation is what makes the save paths' "no passthrough device on
     /// the controller when `saveMachineState` runs" post-condition hold by
     /// construction rather than by timing: a save or a snapshot cannot start
     /// while this is in flight, and this cannot start while one of those is.
+    ///
+    /// `whileHeld` runs once the accessory is the guest's, as a write of the
+    /// operation still holding the VM.
     @discardableResult
     func attachUSBAccessory(
         _ registryID: UInt64,
         to instance: VMInstance,
-        for sessionID: UUID
+        for sessionID: UUID,
+        whileHeld: ((borrowing VMEditPermit, AttachedUSBAccessory) -> Void)? = nil
     ) async throws -> AttachedUSBAccessory {
-        try await instance.activity.perform(.attachingUSB(registryID: registryID)) { context in
+        try await instance.activity.attachUSBAccessory(registryID) { context in
             guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
-            guard context.sessionID == sessionID else { throw USBAccessoryError.noVirtualMachine }
-            let attached = try await usbAccessoryService.attach(registryID, to: instance)
-            // VZ captured the device while this was suspended, so a session that
-            // went away under the call would leave it captured by a VM nothing
-            // holds. Hand it back rather than record an attachment against a
-            // session that is gone.
-            guard context.sessionID == sessionID else {
+            guard context.operation.sessionID == sessionID else {
+                throw USBAccessoryError.noVirtualMachine
+            }
+            let attached = try await usbAccessoryService.attach(context.reservation)
+            // VZ captured the device while this was suspended, and a session
+            // that went away under the call released the reservation with it —
+            // leaving the device captured by a VM nothing holds. Hand it back.
+            guard context.reservation.hold(attached) else {
                 try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
                 #log(
                     Self.logger, .notice,
@@ -1071,22 +1079,26 @@ final class VMLifecycleCoordinator {
                 )
                 throw USBAccessoryError.noVirtualMachine
             }
-            instance.recordAttachedAccessory(attached, for: sessionID)
+            whileHeld?(context.operation.permit, attached)
             return .rest(.asStarted, attached)
         }
     }
 
-    /// Detaches the passthrough device `deviceID` names and clears its tracking
-    /// entry, inside an operation holding the VM.
+    /// Detaches the passthrough device `deviceID` names and releases it from
+    /// the VM, inside an operation holding the VM.
     ///
     /// A device VZ no longer holds is a success, not a failure: a surprise
     /// unplug or a save's own detach sweep may have got there first, and the
-    /// outcome the caller asked for already holds. The tracking entry goes
-    /// either way.
+    /// outcome the caller asked for already holds. The release happens either
+    /// way.
+    ///
+    /// `whileHeld` runs once the device is off, as a write of the operation
+    /// still holding the VM.
     func detachUSBAccessory(
         deviceID: UUID,
         from instance: VMInstance,
-        for sessionID: UUID
+        for sessionID: UUID,
+        whileHeld: ((borrowing VMEditPermit) -> Void)? = nil
     ) async throws {
         try await instance.activity.perform(.detachingUSB(deviceID: deviceID)) { context in
             guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
@@ -1099,7 +1111,8 @@ final class VMLifecycleCoordinator {
                     "USB accessory \(deviceID.uuidString, privacy: .public) was already off '\(instance.name, privacy: .public)'"
                 )
             }
-            instance.forgetAttachedAccessory(deviceID: deviceID, for: sessionID)
+            context.releaseAccessory(deviceID: deviceID)
+            whileHeld?(context.permit)
             return .rest(.asStarted, ())
         }
     }

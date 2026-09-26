@@ -112,6 +112,9 @@ final class VMActivity {
         {
             facts.identityConflict = owner.identityConflict(for: kind)
         }
+        if case .operation(.attachingUSB(let registryID)) = request {
+            facts.accessoryHolder = accessoryHolders?.holder(of: registryID)
+        }
         return VMAdmission.decide(
             request, origin: origin, posture: posture, phase: phase, facts: facts)
     }
@@ -214,6 +217,23 @@ final class VMActivity {
             .capturingSnapshot(mode), { VMCaptureContext(operation: $0, mode: mode) }, body)
     }
 
+    /// ``perform(_:origin:_:)`` for the attach of the accessory `registryID`
+    /// names, whose body passes it through under the reservation its
+    /// admission wrote.
+    func attachUSBAccessory<T>(
+        _ registryID: UInt64,
+        _ body: (borrowing VMUSBAttachContext) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        try await run(
+            .attachingUSB(registryID: registryID),
+            {
+                let instance = $0.instance
+                return VMUSBAttachContext(
+                    operation: $0,
+                    reservation: VMAccessoryReservation(registryID: registryID, instance: instance))
+            }, body)
+    }
+
     /// Admits `kind`, commits it, runs `body` under the context `makeContext`
     /// builds from the operation's, and commits where the body leaves the VM.
     private func run<Context: ~Copyable, T>(
@@ -222,6 +242,7 @@ final class VMActivity {
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
         let owner = try requireAdmitted(.operation(kind), origin: origin)
+        try reserve(for: kind, on: owner)
         let outcome = commitOperation(kind)
         let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
         let ending: VMOperationEnding<T>
@@ -285,6 +306,7 @@ final class VMActivity {
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         let owner = try requireAdmitted(.operation(kind), origin: origin)
+        try reserve(for: kind, on: owner)
         let outcome = commitOperation(kind)
         outcome.task = Task { @MainActor in
             let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
@@ -305,6 +327,7 @@ final class VMActivity {
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
         let owner = try requireAdmitted(.operation(kind))
+        try reserve(for: kind, on: owner)
         let outcome = commitOperation(kind)
         let context = VMOperationContext(activity: self, kind: kind, owner: owner)
         let ending: VMOperationEnding<T>
@@ -338,6 +361,15 @@ final class VMActivity {
         if sessionContext != nil { releaseSession() }
         setPhase(.removed)
         outcome.resolve(.success(()))
+    }
+
+    /// The reserve stage, between an operation's admission and its commit and
+    /// in the same synchronous step: takes what `kind` claims beyond this VM —
+    /// the accessory an attach passes through — so the next decision on any
+    /// VM sees the claim. Throws, committing nothing, when the claim is held.
+    private func reserve(for kind: VMOperationKind, on owner: VMInstance) throws {
+        guard case .attachingUSB(let registryID) = kind else { return }
+        try reserveAccessory(registryID, for: owner)
     }
 
     /// The admission commit: the operation holds the VM from here until
@@ -395,6 +427,9 @@ final class VMActivity {
         guard let operation = endingOperation(outcome) else {
             return .failure(VMAdmissionRefusal(refusal: .invalidState))
         }
+        // An accessory the operation reserved and never passed through is
+        // free again the moment the operation lets go of the VM.
+        if let owner { accessoryHolders?.releaseReservations(of: owner, AccessoryHoldersKey()) }
         let result: Result<T, any Error>
         let rest: VMOperationRest
         switch ending {
@@ -625,10 +660,7 @@ final class VMActivity {
             // VZ has already detached the device; only Kernova's record of it
             // is left to drop. An unplug is routine — a fast user switch
             // disconnects every assigned accessory too — so it never alerts.
-            guard let context = sessionContext,
-                let gone = context.liveUSBAccessories.first(where: { $0.deviceID == deviceID })
-            else { break }
-            context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
+            guard let gone = accessoryLeftGuest(deviceID: deviceID) else { break }
             #log(
                 Self.logger, .notice,
                 "USB accessory \(gone.accessory.displayName, privacy: .public) disconnected from VM '\(self.name, privacy: .public)'"
@@ -678,11 +710,41 @@ final class VMActivity {
         return session
     }
 
-    /// Releases the session context, if one is open.
+    /// Releases the session context, if one is open, and every accessory the
+    /// session held.
     private func releaseSession() {
         sessionContext?.tearDown()
         sessionContext = nil
-        owner?.sessionDidEnd()
+        guard let owner else { return }
+        accessoryHolders?.releaseAll(of: owner, AccessoryHoldersKey())
+        owner.sessionDidEnd()
+    }
+
+    // MARK: - USB Accessories
+
+    /// The library's record of which VM holds each accessory; `nil` for a VM
+    /// no library holds, which holds none.
+    private var accessoryHolders: VMAccessoryHolders? { owner?.peers?.accessoryHolders }
+
+    /// Reserves the accessory `registryID` names for `owner`; refuses, as
+    /// ``VMAdmission/Refusal/accessoryHeld(by:)``, while any VM holds it.
+    fileprivate func reserveAccessory(_ registryID: UInt64, for owner: VMInstance) throws {
+        let request = VMAdmission.Request.operation(.attachingUSB(registryID: registryID))
+        guard let accessoryHolders else { throw refusal(.unsupportedByBuild, for: request) }
+        do {
+            try accessoryHolders.reserve(registryID, for: owner, AccessoryHoldersKey())
+        } catch let refused as VMAdmissionRefusal {
+            throw refusal(refused.refusal, for: request)
+        }
+    }
+
+    /// Drops the attachment `deviceID` names from what this VM's guest holds,
+    /// answering it — an unplug VZ reported, or one the host's own evidence
+    /// shows. `nil` when the guest held no such attachment.
+    @discardableResult
+    func accessoryLeftGuest(deviceID: UUID) -> AttachedUSBAccessory? {
+        guard let owner else { return nil }
+        return accessoryHolders?.release(deviceID: deviceID, of: owner, AccessoryHoldersKey())
     }
 
     // MARK: - Session Lifecycle
@@ -846,6 +908,92 @@ struct VMOperationContext: ~Copyable, Sendable {
     @MainActor func endSession() {
         activity.endOperationSessionItself()
     }
+
+    /// Reserves the accessory `registryID` names for this VM and runs `body`
+    /// with the reservation, releasing it afterwards unless `body` passed the
+    /// accessory through (``VMAccessoryReservation/hold(_:)``).
+    ///
+    /// Refuses when the operation holds no live session, or while any VM
+    /// holds the accessory.
+    @MainActor func withAccessoryReservation<T>(
+        _ registryID: UInt64, _ body: (borrowing VMAccessoryReservation) async throws -> T
+    ) async throws -> T {
+        guard activity.operationSessionID != nil else {
+            throw VMAdmissionRefusal(refusal: .invalidState)
+        }
+        try activity.reserveAccessory(registryID, for: instance)
+        let reservation = VMAccessoryReservation(registryID: registryID, instance: instance)
+        do {
+            let value = try await body(reservation)
+            reservation.releaseIfUnsettled()
+            return value
+        } catch {
+            reservation.releaseIfUnsettled()
+            throw error
+        }
+    }
+
+    /// Drops the attachment `deviceID` names from what this VM's guest
+    /// holds, answering it — `nil` when the guest held no such attachment.
+    @MainActor @discardableResult
+    func releaseAccessory(deviceID: UUID) -> AttachedUSBAccessory? {
+        activity.accessoryLeftGuest(deviceID: deviceID)
+    }
+}
+
+/// The authority an accessory attach's body acts with: an operation admitted
+/// to attach `reservation`'s accessory, whose admission reserved it — minted
+/// only by ``VMActivity/attachUSBAccessory(_:_:)``.
+struct VMUSBAttachContext: ~Copyable, Sendable {
+    let operation: VMOperationContext
+    let reservation: VMAccessoryReservation
+
+    fileprivate init(
+        operation: consuming VMOperationContext, reservation: consuming VMAccessoryReservation
+    ) {
+        self.operation = operation
+        self.reservation = reservation
+    }
+}
+
+/// One accessory reserved for one VM in the library's
+/// ``VMAccessoryHolders`` — what ``USBAccessoryProviding/attach(_:)`` takes,
+/// so no accessory is passed through to a guest unless it is reserved for
+/// that guest's VM.
+///
+/// Minted only once the reservation is written: by an attach's admission, and
+/// by ``VMOperationContext/withAccessoryReservation(_:_:)``. Non-copyable and
+/// passed borrowed, so it cannot outlive the operation that reserved it.
+struct VMAccessoryReservation: ~Copyable, Sendable {
+    let registryID: UInt64
+    /// The VM the accessory is reserved for.
+    let instance: VMInstance
+
+    fileprivate init(registryID: UInt64, instance: VMInstance) {
+        self.registryID = registryID
+        self.instance = instance
+    }
+
+    /// Records `attached` as the guest's, answering whether the reservation
+    /// still stood — `false` once the VM's session ended under the attach,
+    /// which released it.
+    @MainActor func hold(_ attached: AttachedUSBAccessory) -> Bool {
+        instance.peers?.accessoryHolders.settle(
+            registryID, as: attached, for: instance, AccessoryHoldersKey()) ?? false
+    }
+
+    @MainActor fileprivate func releaseIfUnsettled() {
+        instance.peers?.accessoryHolders.releaseReservation(
+            registryID, of: instance, AccessoryHoldersKey())
+    }
+}
+
+/// What every write to ``VMAccessoryHolders`` asks for, so only this file —
+/// ``VMActivity``'s admission, operation endings, session teardown and
+/// unplugs, and the reservations it mints — writes the holder map. The
+/// initializer is `fileprivate`, which `@testable import` does not open.
+struct AccessoryHoldersKey {
+    fileprivate init() {}
 }
 
 /// The authority a bring-up's body acts with — the only one

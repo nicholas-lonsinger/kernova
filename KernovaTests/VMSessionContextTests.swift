@@ -53,15 +53,6 @@ struct VMSessionContextTests {
         return flag.fired
     }
 
-    /// One attached passthrough accessory, for the live-state assertions.
-    static func attachedAccessory(
-        deviceID: UUID = UUID(), registryID: UInt64 = 0x1_0000
-    ) -> AttachedUSBAccessory {
-        AttachedUSBAccessory(
-            deviceID: deviceID,
-            accessory: MockUSBAccessoryService.accessory(registryID: registryID))
-    }
-
     // MARK: - Teardown
 
     @Test("tearDown releases every service, pipe and hand-off the session held")
@@ -77,7 +68,6 @@ struct VMSessionContextTests {
         context.clipboardService = clipboard
         instance.clipboardDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
-        context.liveUSBAccessories = [Self.attachedAccessory()]
         context.agentExpectedButMissing = true
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
@@ -96,7 +86,6 @@ struct VMSessionContextTests {
         #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
-        #expect(context.liveUSBAccessories.isEmpty)
         #expect(context.agentExpectedButMissing == false)
         #expect(context.hasSeenAgentThisSession == false)
         #expect(context.networkAttachmentPending == false)
@@ -135,6 +124,52 @@ struct VMSessionContextTests {
         #expect(instance.bootedIntoRecovery == false)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.hasSeenAgentThisSession == false)
+    }
+
+    // MARK: - USB Accessories
+
+    /// A library VM whose live session holds the accessory `registryID`,
+    /// attached the way every attach is.
+    private func libraryVMHoldingAccessory(
+        _ registryID: UInt64, deviceID: UUID = UUID()
+    ) async throws -> (VMLibrary, VMInstance) {
+        let accessories = MockUSBAccessoryService()
+        accessories.accessories.append(MockUSBAccessoryService.accessory(registryID: registryID))
+        accessories.nextDeviceID = deviceID
+        let lifecycle = makeTestLifecycle(usbAccessoryService: accessories)
+        let library = makeWiredLibrary(lifecycle: lifecycle)
+        let sessionID = UUID()
+        let instance = library.registerFixture(phase: .running(sessionID: sessionID))
+        instance.beginSessionContextForTesting()
+        try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
+        return (library, instance)
+    }
+
+    @Test("The session's end releases every accessory it held, for any VM to take")
+    func sessionEndReleasesItsAccessories() async throws {
+        let (library, instance) = try await libraryVMHoldingAccessory(1)
+        #expect(library.accessoryHolders.holder(of: 1) === instance)
+
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(library.accessoryHolders.heldRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("An unplug releases the accessory, and wakes whatever reads the guest's accessories")
+    func unplugReleasesTheAccessory() async throws {
+        let deviceID = UUID()
+        let (library, instance) = try await libraryVMHoldingAccessory(1, deviceID: deviceID)
+        let sessionID = try #require(instance.liveSessionID)
+
+        let fired = observationFires(reading: { _ = instance.liveUSBAccessories }) {
+            instance.deliverSessionEvent(
+                .usbPassthroughDeviceDidDisconnect(deviceID), from: sessionID)
+        }
+
+        #expect(fired)
+        #expect(library.accessoryHolders.holder(of: 1) == nil)
+        #expect(instance.phase == .running(sessionID: sessionID))
     }
 
     private static func buildResult(

@@ -105,7 +105,7 @@ struct VMCommandCoreOperationTests {
         let attach = Task { @MainActor in
             try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
         }
-        await accessories.attachStarted()
+        try await accessories.attachStarted()
         let held = instance.phase
         #expect(held.operation?.kind == .attachingUSB(registryID: 42))
 

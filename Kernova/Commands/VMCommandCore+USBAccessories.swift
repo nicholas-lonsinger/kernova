@@ -25,7 +25,7 @@ extension VMCommandCore {
 
     func availableUSBAccessories() throws -> [USBAccessorySummary] {
         let service = try requireUSBAccessoryService()
-        let held = heldAccessoryIDs()
+        let held = library.accessoryHolders.heldRegistryIDs
         let names = listingNames()
         return service.accessories
             .filter { !held.contains($0.registryID) }
@@ -92,30 +92,21 @@ extension VMCommandCore {
             throw CommandError.itemNotFoundOnHost(
                 item: "USB accessory with the identifier \(registryID)")
         }
-        // A guest captures an accessory exclusively, so a second attach could
-        // only fail inside VZ. Refusing here is what makes the listings' filter
-        // a presentation detail rather than the only thing standing between two
-        // guests and the same device.
-        guard !heldAccessoryIDs().contains(registryID) else {
-            throw CommandError.operationFailed(
-                verb: .editUSBAccessory,
-                message: "That USB accessory is already attached to a virtual machine.")
-        }
         do {
-            let attached = try await lifecycle.attachUSBAccessory(
-                registryID, to: instance, for: sessionID)
             // Placing a device *is* the answer to "which VM", whichever surface
             // asked — the menu, the CLI, or the prompt an arrival raises. A
             // rule created only by the prompt would leave a user who plugs a
             // drive in with nothing running, and attaches it from the menu,
             // re-placing it every time.
-            rememberAccessoryEdit(
-                on: instance,
-                failure:
-                    "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
-            ) {
-                try edit(.pairingRules, on: instance, verb: .editUSBAccessory) { permit in
-                    try onUserAttachedAccessory?(permit, attached.accessory)
+            let attached = try await lifecycle.attachUSBAccessory(
+                registryID, to: instance, for: sessionID
+            ) { permit, attached in
+                self.rememberAccessoryEdit(
+                    on: instance,
+                    failure:
+                        "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
+                ) {
+                    try self.onUserAttachedAccessory?(permit, attached.accessory)
                 }
             }
             #log(
@@ -141,19 +132,18 @@ extension VMCommandCore {
         }
         onUserDetachingAccessory?(instance, held.accessory)
         do {
+            // Taking a device back by hand is how a user ends a pairing
+            // without opening settings, and it is the only way the returning
+            // device stays with the Mac.
             try await lifecycle.detachUSBAccessory(
-                deviceID: deviceID, from: instance, for: sessionID)
-            // Read before the detach, which clears the record: taking a device
-            // back by hand is how a user ends a pairing without opening
-            // settings, and it is the only way the returning device stays with
-            // the Mac.
-            rememberAccessoryEdit(
-                on: instance,
-                failure:
-                    "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
-            ) {
-                try edit(.pairingRules, on: instance, verb: .editUSBAccessory) { permit in
-                    try onUserReleasedAccessory?(permit, held.accessory)
+                deviceID: deviceID, from: instance, for: sessionID
+            ) { permit in
+                self.rememberAccessoryEdit(
+                    on: instance,
+                    failure:
+                        "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
+                ) {
+                    try self.onUserReleasedAccessory?(permit, held.accessory)
                 }
             }
             #log(
@@ -166,7 +156,8 @@ extension VMCommandCore {
     }
 
     /// Records what an attach or detach means for the accessories `instance`
-    /// takes back, reporting `failure` when the pairing write fails.
+    /// takes back, reporting `failure` when the pairing write fails or another
+    /// VM refuses the move (``failure(_:verb:on:)``).
     ///
     /// Reported rather than thrown: the device change the verb made stands,
     /// and only its remembering did not land.
@@ -176,9 +167,10 @@ extension VMCommandCore {
         do {
             try record()
         } catch {
+            let cause = self.failure(error, verb: .editUSBAccessory, on: instance)
             report(
                 .operationFailed(
-                    verb: .editUSBAccessory, message: "\(failure) \(error.localizedDescription)"),
+                    verb: .editUSBAccessory, message: "\(failure) \(cause.localizedDescription)"),
                 on: instance)
         }
     }
@@ -217,15 +209,6 @@ extension VMCommandCore {
         return service
     }
 
-    /// Every accessory identifier some guest in the library is holding.
-    ///
-    /// The one derivation both listings and the attach gate read, so what
-    /// `availableUSBAccessories()` offers and what an attach accepts cannot
-    /// drift apart.
-    private func heldAccessoryIDs() -> Set<UInt64> {
-        Set(library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory.registryID) })
-    }
-
     /// What to call each accessory Kernova knows about, over every one of them
     /// at once.
     ///
@@ -238,11 +221,11 @@ extension VMCommandCore {
     /// captured, but not always before the guest's own listing is read, and one
     /// counted twice would look like two of a kind and qualify itself.
     private func listingNames() -> [UInt64: String] {
-        let attached = library.instances.flatMap { $0.liveUSBAccessories.map(\.accessory) }
-        let held = heldAccessoryIDs()
-        let free = (lifecycle.usbAccessoryService?.accessories ?? [])
-            .filter { !held.contains($0.registryID) }
-        return USBAccessoryInfo.listingNames(for: attached + free)
+        let attached = library.accessoryHolders.attachedEntries.map(\.attached.accessory)
+        let attachedIDs = Set(attached.map(\.registryID))
+        let assigned = (lifecycle.usbAccessoryService?.accessories ?? [])
+            .filter { !attachedIDs.contains($0.registryID) }
+        return USBAccessoryInfo.listingNames(for: attached + assigned)
     }
 
     /// One accessory as a caller names it, carrying the attachment identifier a
