@@ -90,15 +90,24 @@ enum VMLifecyclePhase: Sendable, Equatable {
     /// that declares ``VMOperationDeclaration/Status/base`` status, which
     /// presents the phase it started from — so a USB attach or a media
     /// reconcile never changes what the user sees.
+    ///
+    /// Once that operation's session has ended it presents the at-rest phase
+    /// the end names. Whether a suspend slot outlived the session is a bundle
+    /// fact no phase holds, so the ending commit is what settles on it.
     var presented: VMLifecyclePhase {
         guard case .operating(let operation) = self,
             operation.kind.declaration.status == .base
         else { return self }
-        guard operation.sessionEnd == nil else { return .stopped }
-        guard let session = operation.session else { return operation.startedFrom }
-        switch session.guest {
-        case .running: return .running(sessionID: session.id)
-        case .paused: return .livePaused(sessionID: session.id)
+        switch operation.sessionState {
+        case .none:
+            return operation.startedFrom
+        case .live(let session):
+            switch session.guest {
+            case .running: return .running(sessionID: session.id)
+            case .paused: return .livePaused(sessionID: session.id)
+            }
+        case .ended(let end):
+            return end.rest.phase(slotOnDisk: false)
         }
     }
 
@@ -164,6 +173,30 @@ enum VMLifecyclePhase: Sendable, Equatable {
     }
 }
 
+// MARK: - Rest
+
+/// A phase a VM rests at with nothing live — the only kind of phase an
+/// operation's ending names.
+///
+/// Suspension is not among them: a VM rests suspended exactly while its
+/// bundle's suspend slot is on disk, which ``phase(slotOnDisk:)`` reads.
+enum VMRestPhase: Sendable, Equatable {
+    case stopped
+    case initialBoot
+    case failed(message: String)
+
+    /// Where the VM rests: suspended while the slot is on disk, this phase
+    /// otherwise.
+    func phase(slotOnDisk: Bool) -> VMLifecyclePhase {
+        guard !slotOnDisk else { return .suspended }
+        switch self {
+        case .stopped: return .stopped
+        case .initialBoot: return .initialBoot
+        case .failed(let message): return .failed(message: message)
+        }
+    }
+}
+
 // MARK: - Operation
 
 /// The one long operation holding a VM.
@@ -171,24 +204,59 @@ struct VMOperation: Sendable, Equatable {
     let kind: VMOperationKind
 
     /// The settled phase the operation was admitted from — what its base
-    /// status presents, and what a request during it is classified against.
+    /// status presents before any session end.
     let startedFrom: VMLifecyclePhase
 
-    /// The session the operation holds, or `nil` while it has none — before a
-    /// bring-up creates one, or once the session ended mid-operation.
-    var session: VMOperationSession?
-
-    /// How the operation's session ended, once it has.
-    var sessionEnd: VMSessionEnd?
+    var sessionState: VMOperationSessionState
 
     /// What a caller joining the operation awaits.
     let outcome: VMOutcome
+
+    /// The session the operation holds, or `nil` while it has none — before a
+    /// bring-up creates one, or once the session ended mid-operation.
+    var session: VMOperationSession? {
+        guard case .live(let session) = sessionState else { return nil }
+        return session
+    }
+
+    /// How the operation's session ended, once it has.
+    var sessionEnd: VMSessionEnd? {
+        guard case .ended(let end) = sessionState else { return nil }
+        return end
+    }
+
+    /// The settled phase a request during the operation is classified against:
+    /// where the VM rests once its session has ended — or once the Force Stop
+    /// in flight on it lands — and the phase it started from otherwise.
+    func settledBasis(slotOnDisk: Bool) -> VMLifecyclePhase {
+        switch sessionState {
+        case .ended(let end):
+            return end.rest.phase(slotOnDisk: slotOnDisk)
+        case .live(let session) where session.stopping != nil:
+            return VMSessionEnd.poweredOff.rest.phase(slotOnDisk: slotOnDisk)
+        case .live, .none:
+            return startedFrom
+        }
+    }
+}
+
+/// The session an operation holds.
+enum VMOperationSessionState: Sendable, Equatable {
+    /// None yet: an operation admitted at rest, or a bring-up that has not
+    /// created one.
+    case none
+    case live(VMOperationSession)
+    /// The session ended mid-operation, and how.
+    case ended(VMSessionEnd)
 }
 
 /// A session an operation holds, and whether its guest is executing.
 struct VMOperationSession: Sendable, Equatable {
     let id: UUID
     var guest: VMGuestRunState
+    /// The outcome of the Force Stop terminating this session, while one is
+    /// in flight; admission refuses new work on the session meanwhile.
+    var stopping: VMOutcome? = nil
 }
 
 /// Whether a live guest is executing.
@@ -205,6 +273,12 @@ enum VMSessionEnd: Sendable, Equatable {
     case stoppedWithError(message: String)
     /// The operation ended the session itself: a save, a revert.
     case endedByOperation
+
+    /// Where a VM rests once a session that ended this way is gone.
+    var rest: VMRestPhase {
+        guard case .stoppedWithError(let message) = self else { return .stopped }
+        return .failed(message: message)
+    }
 }
 
 /// How an operation ended, for every caller that joined it.
@@ -258,7 +332,9 @@ enum VMOperationKind: Sendable, Equatable {
     case attachingUSB(registryID: UInt64)
     case detachingUSB(deviceID: UUID)
     case reconcilingMedia
-    /// Force Stop of a settled live VM.
+    /// A Force Stop in flight on a session nothing else holds: admitted on a
+    /// settled live VM, or handed the VM by an operation that ended on a
+    /// stopping session. It has no body; the session's end is its end.
     case forceStopping
     case discardingSavedState
     case deleting
@@ -394,10 +470,12 @@ struct VMOperationDeclaration: Sendable, Equatable {
     }
 
     /// A request that joins the operation instead of being refused as busy.
+    ///
+    /// A Force Stop joins the one in flight through the session's
+    /// ``VMOperationSession/stopping`` mark, whatever operation holds it.
     enum Join: Sendable, Equatable {
         case start
         case resume
-        case forceStop
     }
 
     let status: Status
@@ -461,8 +539,7 @@ extension VMOperationKind {
         case .forceStopping:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
-                toleratedSessionActions: [], edits: .only(.presentationAndMetadata),
-                joinedBy: [.forceStop])
+                toleratedSessionActions: [], edits: .only([]), joinedBy: [])
         case .discardingSavedState:
             return .init(
                 status: .base, holdsIdentity: .never, quit: .notApplicable, display: .base,

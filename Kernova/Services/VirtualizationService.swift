@@ -281,7 +281,7 @@ final class VirtualizationService {
             // save did not produce.
             let rest: VMOperationRest =
                 context.sessionEnd == nil
-                ? .at(.failed(message: error.localizedDescription)) : .afterSessionEnd
+                ? .atRest(.failed(message: error.localizedDescription)) : .afterSessionEnd
             return .failed(rest, error)
         }
         guard context.sessionEnd == nil else {
@@ -299,7 +299,7 @@ final class VirtualizationService {
         // in `config`, and VZ matches both on restore.
         context.endSession()
         #log(Self.logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
-        return .rest(.slotOr(.stopped), ())
+        return .rest(.atRest(.stopped), ())
     }
 
     // MARK: - Snapshots
@@ -635,7 +635,7 @@ final class VirtualizationService {
                 Self.logger, .error,
                 "Failed to revert VM '\(instance.name, privacy: .public)' to '\(snapshot.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            return .failed(.slotOr(.stopped), error)
+            return .failed(.atRest(.stopped), error)
         }
         #log(
             Self.logger, .notice,
@@ -646,11 +646,11 @@ final class VirtualizationService {
         // cold one leaves none, so the write that just landed is what says
         // where the VM rests — unless the revert goes back to being live at
         // the captured state, which only a warm snapshot captured.
-        guard resumesAfter, plan.kind == .warm else { return .rest(.slotOr(.stopped), ()) }
+        guard resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
         do {
             try await restoreFromSaveFile(instance, context)
         } catch {
-            return .failed(.slotOr(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
+            return .failed(.atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
         return .rest(.live(.running), ())
     }

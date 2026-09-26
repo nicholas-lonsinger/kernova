@@ -2874,17 +2874,22 @@ struct VMLibraryViewModelTests {
         #expect(instance.activity.admits(.sessionAction(.forceStop)))
     }
 
-    @Test("resume presents error on service failure")
+    @Test("resume presents error on service failure, leaving the guest live-paused")
     func resumePresentsError() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = VMInstanceFixture.make()
+        let session = UUID()
+        instance.activity.placeForTesting(.livePaused(sessionID: session))
+        viewModel.library.admitForTesting(instance)
 
         await viewModel.resume(instance)
 
+        #expect(virtService.resumeCallCount == 1)
         #expect(presenter.showError == true)
         #expect(presenter.errorMessage != nil)
+        #expect(instance.phase == .livePaused(sessionID: session))
     }
 
     @Test("save presents error on service failure")

@@ -511,7 +511,7 @@ final class VMInstance: VMActivityOwner {
         set { activity.onSessionBecameAttachable = newValue }
     }
 
-    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
+    func restingPhase(withoutSlot fallback: VMRestPhase) -> VMLifecyclePhase {
         activity.restingPhase(withoutSlot: fallback)
     }
 

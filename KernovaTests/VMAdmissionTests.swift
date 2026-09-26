@@ -176,25 +176,18 @@ struct VMAdmissionTests {
         HeldRow(
             kind: .reconcilingMedia, startedFrom: live, slot: false, pendingSetup: false,
             expected: "IIIBBBBBI" + "IAAAAAA" + "AAII"),
+        // Answered as the powered-off VM will answer, with a second Force Stop
+        // joining the first.
         HeldRow(
             kind: .forceStopping, startedFrom: live, slot: false, pendingSetup: false,
-            expected: "IIIBBBBBI" + "IBBBAAA" + "BJII"),
+            expected: "BBIIIIBBB" + "BBBBBBB" + "IJIB"),
         HeldRow(
             kind: .deleting, startedFrom: .stopped, slot: false, pendingSetup: false,
             expected: "BBIIIIBBB" + "BBBBBBB" + "IIIB"),
     ]
 
     private static func holding(_ row: HeldRow) -> VMLifecyclePhase {
-        let session: VMOperationSession? =
-            switch row.startedFrom {
-            case .running(let id): VMOperationSession(id: id, guest: .running)
-            case .livePaused(let id): VMOperationSession(id: id, guest: .paused)
-            default: nil
-            }
-        return .operating(
-            VMOperation(
-                kind: row.kind, startedFrom: row.startedFrom, session: session, sessionEnd: nil,
-                outcome: VMOutcome()))
+        .operating(row.kind, from: row.startedFrom)
     }
 
     @Test(
@@ -218,8 +211,8 @@ struct VMAdmissionTests {
         let outcome = VMOutcome()
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped, session: nil,
-                sessionEnd: nil, outcome: outcome))
+                kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped,
+                sessionState: .none, outcome: outcome))
         #expect(
             VMAdmission.decide(
                 .start(recovery: false), posture: .commit, phase: phase, facts: Self.facts())
@@ -249,8 +242,8 @@ struct VMAdmissionTests {
     func joinIsCommitOnly() {
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .bringUp(.restoringSavedState), startedFrom: .suspended, session: nil,
-                sessionEnd: nil, outcome: VMOutcome()))
+                kind: .bringUp(.restoringSavedState), startedFrom: .suspended,
+                sessionState: .none, outcome: VMOutcome()))
         let facts = Self.facts(slot: true)
         #expect(
             VMAdmission.decide(.resume, posture: .offer, phase: phase, facts: facts)
@@ -345,8 +338,8 @@ struct VMAdmissionTests {
     func endedSessionIsClassifiedAtRest() {
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .reconcilingMedia, startedFrom: Self.live, session: nil,
-                sessionEnd: .poweredOff, outcome: VMOutcome()))
+                kind: .reconcilingMedia, startedFrom: Self.live, sessionState: .ended(.poweredOff),
+                outcome: VMOutcome()))
         let facts = Self.facts()
         // Taken once the pass ends at rest, so busy rather than invalid.
         #expect(
@@ -362,6 +355,58 @@ struct VMAdmissionTests {
                 == .refuse(.invalidState))
     }
 
+    @Test("A session a Force Stop is terminating takes nothing new, and a second Force Stop joins it")
+    func stoppingSessionTakesNothingNew() {
+        let stop = VMOutcome()
+        let phase = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: .pausing, startedFrom: Self.live,
+                sessionState: .live(
+                    VMOperationSession(id: Self.session, guest: .running, stopping: stop)),
+                outcome: VMOutcome()))
+        let facts = Self.facts()
+        func decide(_ request: VMAdmission.Request, _ posture: VMAdmission.Posture = .commit)
+            -> VMAdmission.Decision
+        {
+            VMAdmission.decide(request, posture: posture, phase: phase, facts: facts)
+        }
+        #expect(decide(.sessionAction(.forceStop)) == .join(stop))
+        #expect(decide(.sessionAction(.forceStop), .offer) == .refuse(.busy(.forceStopping)))
+        // What the powered-off VM refuses is refused; what it takes waits.
+        for request: VMAdmission.Request in [
+            .operation(.saving), .resume, .operation(.pausing), .sessionAction(.requestStop),
+        ] {
+            #expect(decide(request) == .refuse(.invalidState), "\(request)")
+        }
+        for request: VMAdmission.Request in [
+            .start(recovery: false), .edit(.hostPresentation), .edit(.machineKeys),
+            .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
+        ] {
+            #expect(decide(request) == .refuse(.busy(.forceStopping)), "\(request)")
+        }
+        // A slot that survives the session is what the VM will rest on.
+        #expect(
+            VMAdmission.decide(.resume, posture: .commit, phase: phase, facts: Self.facts(slot: true))
+                == .refuse(.busy(.forceStopping)))
+    }
+
+    @Test("A capture is offered in the mode of where an operation's ended session rests the VM")
+    func captureModeReadsTheSessionEnd() {
+        let live = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: .deletingSnapshot, startedFrom: Self.live,
+                sessionState: .live(VMOperationSession(id: Self.session, guest: .running)),
+                outcome: VMOutcome()))
+        let ended = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: .deletingSnapshot, startedFrom: Self.live, sessionState: .ended(.poweredOff),
+                outcome: VMOutcome()))
+        #expect(VMAdmission.settledCaptureMode(phase: live, facts: Self.facts()) == .live)
+        #expect(VMAdmission.settledCaptureMode(phase: ended, facts: Self.facts()) == .stopped)
+        #expect(
+            VMAdmission.settledCaptureMode(phase: ended, facts: Self.facts(slot: true)) == .suspended)
+    }
+
     // MARK: - Projections
 
     @Test("An operation that presents its base changes nothing a surface reads")
@@ -369,7 +414,7 @@ struct VMAdmissionTests {
         let phase = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .attachingUSB(registryID: 1), startedFrom: Self.live,
-                session: VMOperationSession(id: Self.session, guest: .running), sessionEnd: nil,
+                sessionState: .live(VMOperationSession(id: Self.session, guest: .running)),
                 outcome: VMOutcome()))
         #expect(phase.status == .running)
         #expect(phase.hasLiveSession)
@@ -382,7 +427,7 @@ struct VMAdmissionTests {
     func endedSessionPresentsStopped() {
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .pausing, startedFrom: Self.live, session: nil, sessionEnd: .poweredOff,
+                kind: .pausing, startedFrom: Self.live, sessionState: .ended(.poweredOff),
                 outcome: VMOutcome()))
         #expect(phase.status == .stopped)
         #expect(!phase.hasLiveSession)
@@ -395,7 +440,7 @@ struct VMAdmissionTests {
         let saving = VMLifecyclePhase.operating(
             VMOperation(
                 kind: .saving, startedFrom: Self.live,
-                session: VMOperationSession(id: Self.session, guest: .running), sessionEnd: nil,
+                sessionState: .live(VMOperationSession(id: Self.session, guest: .running)),
                 outcome: VMOutcome()))
         #expect(saving.status == .saving)
         #expect(!saving.hasLiveSession)

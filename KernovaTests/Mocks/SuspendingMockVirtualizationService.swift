@@ -158,7 +158,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
         context.endSession()
-        return .rest(.slotOr(.stopped), ())
+        return .rest(.atRest(.stopped), ())
     }
 
     func takeSnapshot(
@@ -194,6 +194,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)
-        return .rest(.slotOr(.stopped), ())
+        return .rest(.atRest(.stopped), ())
     }
 }

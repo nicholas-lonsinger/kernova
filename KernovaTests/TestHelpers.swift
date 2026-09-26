@@ -248,28 +248,34 @@ extension VMLifecyclePhase {
     ///
     /// The operation holds the settled live session `startedFrom` names, or the
     /// running session `boundSession` names once a bring-up bound one; none once
-    /// `sessionEnd` says the session ended.
+    /// `sessionEnd` says the session ended. A ``VMOperationKind/forceStopping``
+    /// session is stopping under the operation's own outcome, as every one
+    /// ``VMActivity`` commits is.
     @MainActor
     static func operating(
         _ kind: VMOperationKind, from startedFrom: VMLifecyclePhase,
         boundSession: UUID? = nil, sessionEnd: VMSessionEnd? = nil
     ) -> VMLifecyclePhase {
-        let session: VMOperationSession?
-        if sessionEnd != nil {
-            session = nil
+        let outcome = VMOutcome()
+        let stopping = kind == .forceStopping ? outcome : nil
+        let sessionState: VMOperationSessionState
+        if let sessionEnd {
+            sessionState = .ended(sessionEnd)
         } else if let boundSession {
-            session = VMOperationSession(id: boundSession, guest: .running)
+            sessionState = .live(VMOperationSession(id: boundSession, guest: .running))
         } else {
             switch startedFrom {
-            case .running(let id): session = VMOperationSession(id: id, guest: .running)
-            case .livePaused(let id): session = VMOperationSession(id: id, guest: .paused)
-            default: session = nil
+            case .running(let id):
+                sessionState = .live(VMOperationSession(id: id, guest: .running, stopping: stopping))
+            case .livePaused(let id):
+                sessionState = .live(VMOperationSession(id: id, guest: .paused, stopping: stopping))
+            default:
+                sessionState = .none
             }
         }
         return .operating(
             VMOperation(
-                kind: kind, startedFrom: startedFrom, session: session, sessionEnd: sessionEnd,
-                outcome: VMOutcome()))
+                kind: kind, startedFrom: startedFrom, sessionState: sessionState, outcome: outcome))
     }
 }
 

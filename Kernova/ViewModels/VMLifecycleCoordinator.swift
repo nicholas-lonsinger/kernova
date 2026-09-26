@@ -118,7 +118,7 @@ final class VMLifecycleCoordinator {
             #log(
                 Self.logger, .notice,
                 "Discarded saved state for VM '\(instance.name, privacy: .public)'")
-            return .rest(.at(.stopped), ())
+            return .rest(.atRest(.stopped), ())
         }
     }
 
@@ -339,8 +339,6 @@ final class VMLifecycleCoordinator {
                 // left nothing behind.
                 guard case VirtualizationError.revertResumeFailed = error else { break }
                 do { try landed() } catch { return .failed(rest, error) }
-            case .removed:
-                break
             }
             return ending
         }
@@ -464,7 +462,7 @@ final class VMLifecycleCoordinator {
                 if Task.isCancelled || error is CancellationError { throw CancellationError() }
                 throw error
             }
-            return .rest(.at(.stopped), ())
+            return .rest(.atRest(.stopped), ())
         }
     }
 

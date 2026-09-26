@@ -140,14 +140,14 @@ final class MockVirtualizationService: VirtualizationProviding {
             instance.bundle.removeSaveFile(context)
             let rest: VMOperationRest =
                 context.sessionEnd == nil
-                ? .at(.failed(message: error.localizedDescription)) : .afterSessionEnd
+                ? .atRest(.failed(message: error.localizedDescription)) : .afterSessionEnd
             return .failed(rest, error)
         }
         // The suspend slot is what makes the VM resumable, so the mock writes a
         // real one: every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
         context.endSession()
-        return .rest(.slotOr(.stopped), ())
+        return .rest(.atRest(.stopped), ())
     }
 
     /// Captures in the mode the capture operation was admitted in, and leaves
@@ -202,7 +202,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             return .failed(.asStarted, error)
         }
         context.operation.endSession()
-        if let error = revertToSnapshotError { return .failed(.slotOr(.stopped), error) }
+        if let error = revertToSnapshotError { return .failed(.atRest(.stopped), error) }
         // Staged, committed, installed, in the real service's order.
         do {
             try await instance.bundle.stageRestore(context.operation, fromSnapshot: snapshot.id, plan: plan)
@@ -214,7 +214,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             }
             try await instance.bundle.installRestore(context.operation, plan)
         } catch {
-            return .failed(.slotOr(.stopped), error)
+            return .failed(.atRest(.stopped), error)
         }
         revertedSnapshots.append(snapshot)
         // A warm snapshot's own saved state is what the VM comes back on, and a
@@ -225,11 +225,11 @@ final class MockVirtualizationService: VirtualizationProviding {
         } else {
             instance.bundle.removeSaveFile(context.operation)
         }
-        guard resumesAfter, plan.kind == .warm else { return .rest(.slotOr(.stopped), ()) }
+        guard resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
         // The restore of that saved state, inside the same operation.
         if let error = resumeError {
             return .failed(
-                .slotOr(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
+                .atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
         instance.bundle.removeSaveFile(context.operation)
         context.bindSessionForTesting(UUID())

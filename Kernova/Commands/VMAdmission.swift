@@ -143,13 +143,14 @@ enum VMAdmission {
     }
 
     /// The mode a capture is offered in: ``captureMode(phase:facts:)`` over the
-    /// settled phase the VM rests at, or the one an operation holding it
-    /// started from — so an operation in flight dims Take Snapshot rather than
-    /// hiding it.
+    /// settled phase the VM rests at, or an operation's
+    /// ``VMOperation/settledBasis(slotOnDisk:)`` — so an operation in flight
+    /// dims Take Snapshot rather than hiding it.
     static func settledCaptureMode(
         phase: VMLifecyclePhase, facts: Facts
     ) -> VMSnapshotCaptureMode? {
-        captureMode(phase: phase.operation?.startedFrom ?? phase, facts: facts)
+        let settled = phase.operation?.settledBasis(slotOnDisk: facts.hasSaveFile) ?? phase
+        return captureMode(phase: settled, facts: facts)
     }
 
     /// The edit classes a settled phase admits.
@@ -279,6 +280,16 @@ enum VMAdmission {
     private static func decideDuring(
         _ operation: VMOperation, _ request: Request, posture: Posture, facts: Facts
     ) -> Decision {
+        let basis = operation.settledBasis(slotOnDisk: facts.hasSaveFile)
+        // A session a Force Stop is terminating takes nothing new: a second
+        // Force Stop joins the first — offered, it reads as busy, like every
+        // join — and the rest is answered as the powered-off VM will answer.
+        if let stop = operation.session?.stopping {
+            if request == .sessionAction(.forceStop) {
+                return posture == .commit ? .join(stop) : .refuse(.busy(.forceStopping))
+            }
+            return classified(request, posture: posture, against: basis, facts: facts, busy: .forceStopping)
+        }
         let declaration = operation.kind.declaration
         if posture == .commit, let join = join(for: request),
             declaration.joinedBy.contains(join)
@@ -292,9 +303,7 @@ enum VMAdmission {
             if classes.contains(.pairingRules), !facts.usbSupported {
                 return .refuse(.unsupportedByBuild)
             }
-            if tolerated(declaration.edits, from: settledBasis(of: operation, facts: facts), facts: facts)
-                .isSuperset(of: classes)
-            {
+            if tolerated(declaration.edits, from: basis, facts: facts).isSuperset(of: classes) {
                 return .admit
             }
         case .sessionAction(let action):
@@ -304,16 +313,21 @@ enum VMAdmission {
         case .start, .resume, .operation, .evict, .affordance:
             break
         }
-        // What the VM would answer once the operation ends: a request it
-        // would take is busy, one it would refuse anyway is refused as such.
+        return classified(request, posture: posture, against: basis, facts: facts, busy: operation.kind)
+    }
+
+    /// What the VM would answer once the operation holding it ends, settled
+    /// at `basis`: a request it would take is busy with `holder`, one it
+    /// would refuse anyway is refused as such.
+    private static func classified(
+        _ request: Request, posture: Posture, against basis: VMLifecyclePhase, facts: Facts,
+        busy holder: VMOperationKind
+    ) -> Decision {
         var settledFacts = facts
         settledFacts.identityConflict = nil
-        switch decideSettled(
-            request, posture: posture, phase: settledBasis(of: operation, facts: facts),
-            facts: settledFacts)
-        {
+        switch decideSettled(request, posture: posture, phase: basis, facts: settledFacts) {
         case .admit, .join:
-            return .refuse(.busy(operation.kind))
+            return .refuse(.busy(holder))
         case .refuse(.busy(let other)):
             return .refuse(.busy(other))
         case .refuse:
@@ -321,23 +335,10 @@ enum VMAdmission {
         }
     }
 
-    /// The settled phase a request during `operation` is classified against:
-    /// the phase it started from, or — once a live session it started from has
-    /// ended — the phase that end rests the VM at.
-    private static func settledBasis(of operation: VMOperation, facts: Facts) -> VMLifecyclePhase {
-        guard let end = operation.sessionEnd, operation.startedFrom.isSettledLive else {
-            return operation.startedFrom
-        }
-        if facts.hasSaveFile { return .suspended }
-        if case .stoppedWithError(let message) = end { return .failed(message: message) }
-        return .stopped
-    }
-
     private static func join(for request: Request) -> VMOperationDeclaration.Join? {
         switch request {
         case .start(recovery: false): .start
         case .resume: .resume
-        case .sessionAction(.forceStop): .forceStop
         default: nil
         }
     }

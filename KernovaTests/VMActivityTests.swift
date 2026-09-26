@@ -33,6 +33,7 @@ struct VMActivityTests {
         var hookSawResolved: Bool?
         var hookProbe: Task<Void, Never>?
         var whenEndedResult: Result<Void, any Error>?
+        var waitCancelled: Bool?
     }
 
     private func makeInstance(
@@ -111,16 +112,31 @@ struct VMActivityTests {
         // is checked against the rule and not against itself.
         let cases: [(VMOperationKind, VMLifecyclePhase, VMLifecyclePhase)] = [
             (.pausing, .running(sessionID: session), .running(sessionID: session)),
+            // A failed hot resume leaves the guest where it was, still in memory.
+            (.resuming, .livePaused(sessionID: session), .livePaused(sessionID: session)),
             (.saving, .running(sessionID: session), .failed(message: message)),
             (.deletingSnapshot, .stopped, .stopped),
             (.capturingSnapshot(.stopped), .stopped, .stopped),
+            (
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)),
+                .running(sessionID: session), .stopped
+            ),
         ]
         for (kind, startedFrom, rest) in cases {
             let (instance, _) = makeInstance(startedFrom)
+            instance.seedSnapshotManifest(
+                VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
             await #expect(throws: Probe.self, "\(kind)") {
-                try await instance.activity.perform(kind) {
-                    (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
-                    throw Probe()
+                if case .bringUp(let bringUp) = kind {
+                    try await instance.activity.bringUp(bringUp) {
+                        (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }
+                } else {
+                    try await instance.activity.perform(kind) {
+                        (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }
                 }
             }
             #expect(instance.phase == rest, "\(kind)")
@@ -186,7 +202,7 @@ struct VMActivityTests {
         try instance.activity.performNow(.discardingSavedState) { context in
             recorder.operation = instance.phase.operation
             instance.bundle.removeSaveFile(context)
-            return .rest(.at(.stopped), ())
+            return .rest(.atRest(.stopped), ())
         }
         #expect(recorder.operation?.kind == .discardingSavedState)
         #expect(recorder.operation?.startedFrom == .suspended)
@@ -194,7 +210,7 @@ struct VMActivityTests {
 
         // Nothing left to discard.
         #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try instance.activity.performNow(.discardingSavedState) { _ in .rest(.at(.stopped), ()) }
+            try instance.activity.performNow(.discardingSavedState) { _ in .rest(.atRest(.stopped), ()) }
         }
     }
 
@@ -461,6 +477,58 @@ struct VMActivityTests {
         }
     }
 
+    @Test("A body waiting for its session to end is answered how it ended")
+    func sessionEndedAnswersTheEnd() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContext()
+        let entered = GatedStep()
+        entered.release()
+
+        let outcome = try instance.activity.launch(.deletingSnapshot) { context in
+            // Runs on to its wait before the test resumes.
+            try await entered.pass()
+            recorder.sessionEnd = try await context.sessionEnded()
+            return .rest(.asStarted, ())
+        }
+        try await entered.waitUntilEntered()
+        #expect(recorder.sessionEnd == nil)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await outcome.value()
+        #expect(recorder.sessionEnd == .poweredOff)
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("Cancelling a guest setup wakes a body waiting for its session to end")
+    func sessionEndedThrowsOnCancel() async throws {
+        let (instance, recorder) = makeInstance(.initialBoot) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+        let entered = GatedStep()
+        entered.release()
+
+        let outcome = try instance.activity.launchBringUp(.settingUp(.macOSInstall)) { context in
+            context.bindSessionForTesting(UUID())
+            try await entered.pass()
+            do {
+                recorder.sessionEnd = try await context.operation.sessionEnded()
+            } catch {
+                recorder.waitCancelled = error is CancellationError
+                throw error
+            }
+            return .rest(.live(.running), ())
+        }
+        try await entered.waitUntilEntered()
+
+        try instance.activity.cancel(.guestSetup)
+        await #expect(throws: CancellationError.self) { try await outcome.value() }
+        #expect(recorder.waitCancelled == true)
+        #expect(recorder.sessionEnd == nil)
+        #expect(instance.phase == .initialBoot)
+        #expect(!instance.hasLiveVirtualMachine)
+    }
+
     // MARK: - Force Stop
 
     @Test("Force Stop of a settled live VM is its own short operation ending in a power-off")
@@ -562,6 +630,104 @@ struct VMActivityTests {
             try await outcome.value()
             #expect(instance.phase == .stopped, "\(kind)")
             #expect(recorder.poweredOff == 1, "\(kind)")
+            withExtendedLifetime(library) {}
+        }
+    }
+
+    @Test("An operation that ends before its Force Stop lands hands the VM to that Force Stop")
+    func operationEndingOnAStoppingSessionHandsOver() async throws {
+        let session = UUID()
+        let tolerating = liveOperations(session: session).filter {
+            $0.0.declaration.toleratedSessionActions.contains(.forceStop)
+        }
+        #expect(!tolerating.isEmpty)
+        for (kind, startedFrom) in tolerating {
+            for slot in [false, true] {
+                let (instance, recorder, library) = makeWiredInstance(startedFrom)
+                defer { VMInstanceFixture.removeBundle(of: instance) }
+                let body = GatedStep()
+                let terminate = GatedStep()
+                let outcome = try launchGated(kind, on: instance, gate: body)
+                try await body.waitUntilEntered()
+
+                let first = Task { @MainActor in
+                    try await instance.activity.forceStop {
+                        recorder.terminations += 1
+                        try await terminate.pass()
+                    }
+                }
+                try await terminate.waitUntilEntered()
+                #expect(instance.phase.operation?.kind == kind, "\(kind)")
+                #expect(instance.phase.operation?.session?.stopping != nil, "\(kind)")
+                // Entered synchronously, so it is parked on the stop before
+                // anything below can land it.
+                let second = Task.immediate { @MainActor in
+                    try await instance.activity.forceStop { recorder.terminations += 1 }
+                }
+
+                if slot { try VMInstanceFixture.writeSaveFile(for: instance) }
+                body.release()
+                try await outcome.value()
+
+                let handed = try #require(instance.phase.operation, "\(kind)")
+                #expect(handed.kind == .forceStopping, "\(kind)")
+                #expect(handed.session?.id == session, "\(kind)")
+                #expect(!instance.phase.isSettledLive, "\(kind)")
+                for request: VMAdmission.Request in [.operation(.saving), .resume] {
+                    guard case .refuse = instance.activity.decide(request, posture: .commit) else {
+                        Issue.record("\(request) admitted on a stopping session after \(kind)")
+                        continue
+                    }
+                }
+                #expect(recorder.poweredOff == 0, "\(kind)")
+
+                terminate.release()
+                try await first.value
+                try await second.value
+                #expect(recorder.terminations == 1, "\(kind)")
+                #expect(instance.phase == (slot ? .suspended : .stopped), "\(kind)")
+                #expect(recorder.poweredOff == 1, "\(kind)")
+                withExtendedLifetime(library) {}
+            }
+        }
+    }
+
+    @Test("A Force Stop whose termination fails ends the stop for every caller and leaves the VM live")
+    func failedTerminationEndsTheStop() async throws {
+        let session = UUID()
+        // Once the operation has handed the VM over, and while it still holds it.
+        for handsOver in [true, false] {
+            let (instance, recorder, library) = makeWiredInstance(.running(sessionID: session))
+            let body = GatedStep()
+            let terminate = GatedStep()
+            let outcome = try launchGated(.deletingSnapshot, on: instance, gate: body)
+            try await body.waitUntilEntered()
+
+            let first = Task { @MainActor in
+                try await instance.activity.forceStop { try await terminate.pass() }
+            }
+            try await terminate.waitUntilEntered()
+            let second = Task.immediate { @MainActor in
+                try await instance.activity.forceStop { recorder.terminations += 1 }
+            }
+            if handsOver {
+                body.release()
+                try await outcome.value()
+                #expect(instance.phase.operation?.kind == .forceStopping)
+            }
+
+            terminate.release(throwing: Probe())
+            await #expect(throws: Probe.self) { try await first.value }
+            await #expect(throws: Probe.self) { try await second.value }
+            #expect(recorder.terminations == 0)
+            if !handsOver {
+                #expect(instance.phase.operation?.kind == .deletingSnapshot)
+                #expect(instance.phase.operation?.session?.stopping == nil)
+                body.release()
+                try await outcome.value()
+            }
+            #expect(instance.phase == .running(sessionID: session), "\(handsOver)")
+            #expect(recorder.poweredOff == 0)
             withExtendedLifetime(library) {}
         }
     }

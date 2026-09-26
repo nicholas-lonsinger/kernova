@@ -36,9 +36,10 @@ protocol VMActivityOwner: AnyObject {
 /// place any request on it is admitted and committed.
 ///
 /// The only writer of ``phase`` and ``sessionContext``. The phase moves only at
-/// an operation's admission commit, at its ending, and on a session event;
-/// each of those is one synchronous step, so no decision can read a phase
-/// another request is about to replace.
+/// an operation's admission commit, at its ending, at a Force Stop's admission
+/// and its completion, and on a session event; each of those is one
+/// synchronous step, so no decision can read a phase another request is about
+/// to replace.
 @MainActor
 @Observable
 final class VMActivity {
@@ -117,8 +118,8 @@ final class VMActivity {
 
     /// Where this VM rests once nothing is live: suspended while its suspend
     /// slot is on disk, `fallback` once it is not.
-    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
-        owner?.hasSaveFile == true ? .suspended : fallback
+    func restingPhase(withoutSlot fallback: VMRestPhase) -> VMLifecyclePhase {
+        fallback.phase(slotOnDisk: owner?.hasSaveFile == true)
     }
 
     // MARK: - Admission
@@ -288,35 +289,56 @@ final class VMActivity {
         return try finish(ending, outcome: outcome).get()
     }
 
+    /// Deletes the VM: admits and commits ``VMOperationKind/deleting``, runs
+    /// `body` under its context, and moves the VM to
+    /// ``VMLifecyclePhase/removed`` once the body returns — the only ending
+    /// that removes a VM.
+    ///
+    /// A body that throws rests the VM where the kind's
+    /// ``VMOperationKind/restAfterFailure(_:)`` says.
+    func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
+        try requireAdmitted(.operation(.deleting))
+        let outcome = commitOperation(.deleting)
+        let context = VMOperationContext(activity: self, kind: .deleting)
+        do {
+            try await body(context)
+        } catch {
+            let ending = VMOperationEnding<Void>.failed(
+                VMOperationKind.deleting.restAfterFailure(error), error)
+            return try finish(ending, outcome: outcome).get()
+        }
+        guard endingOperation(outcome) != nil else { return }
+        if sessionContext != nil { releaseSession() }
+        setPhase(.removed)
+        outcome.resolve(.success(()))
+    }
+
     /// The admission commit: the operation holds the VM from here until
     /// ``finish(_:outcome:whenEnded:)``.
-    private func commitOperation(_ kind: VMOperationKind) -> VMOutcome {
-        let outcome = VMOutcome()
-        let session: VMOperationSession? =
+    @discardableResult
+    private func commitOperation(
+        _ kind: VMOperationKind, outcome: VMOutcome = VMOutcome(),
+        stopping stop: VMOutcome? = nil
+    ) -> VMOutcome {
+        let sessionState: VMOperationSessionState =
             switch phase {
-            case .running(let id): VMOperationSession(id: id, guest: .running)
-            case .livePaused(let id): VMOperationSession(id: id, guest: .paused)
-            default: nil
+            case .running(let id): .live(VMOperationSession(id: id, guest: .running, stopping: stop))
+            case .livePaused(let id): .live(VMOperationSession(id: id, guest: .paused, stopping: stop))
+            default: .none
             }
         setPhase(
             .operating(
                 VMOperation(
-                    kind: kind, startedFrom: phase, session: session, sessionEnd: nil,
-                    outcome: outcome)))
+                    kind: kind, startedFrom: phase, sessionState: sessionState, outcome: outcome)))
         #if DEBUG
         runningBody = outcome
         #endif
         return outcome
     }
 
-    /// The one ending commit — the only place a VM leaves an operation.
-    ///
-    /// Resolves the outcome for every joined caller, and fires ``onPoweredOff``
-    /// after the rest commit when the operation's guest powered off.
-    private func finish<T>(
-        _ ending: VMOperationEnding<T>, outcome: VMOutcome,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
-    ) -> Result<T, any Error> {
+    /// The operation holding the VM, which ends here, when `outcome` is its
+    /// own.
+    private func endingOperation(_ outcome: VMOutcome) -> VMOperation? {
         #if DEBUG
         runningBody = nil
         #endif
@@ -326,6 +348,24 @@ final class VMActivity {
                 "Operation on '\(self.name, privacy: .public)' ended while the VM was \(self.status.rawValue, privacy: .public)"
             )
             assertionFailure("An operation ended without holding its VM")
+            return nil
+        }
+        return operation
+    }
+
+    /// The one ending commit — the only place a VM leaves an operation for a
+    /// settled phase.
+    ///
+    /// Resolves the outcome for every joined caller, and fires ``onPoweredOff``
+    /// after the rest commit when the operation's guest powered off. An
+    /// operation that ends on a session a Force Stop is terminating hands the
+    /// VM to ``VMOperationKind/forceStopping`` instead, which rests it once
+    /// that session ends.
+    private func finish<T>(
+        _ ending: VMOperationEnding<T>, outcome: VMOutcome,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
+    ) -> Result<T, any Error> {
+        guard let operation = endingOperation(outcome) else {
             return .failure(VMAdmissionRefusal(refusal: .invalidState))
         }
         let result: Result<T, any Error>
@@ -337,14 +377,21 @@ final class VMActivity {
         case .failed(let target, let error):
             rest = target
             result = .failure(error)
-        case .removed(let value):
-            if sessionContext != nil { releaseSession() }
-            setPhase(.removed)
-            whenEnded?(.success(()))
-            outcome.resolve(.success(()))
-            return .success(value)
         }
         let resting = resolve(rest, for: operation)
+        if let session = operation.session, let stop = session.stopping {
+            setPhase(
+                .operating(
+                    VMOperation(
+                        kind: .forceStopping, startedFrom: resting, sessionState: .live(session),
+                        outcome: stop)))
+            #if DEBUG
+            runningBody = stop
+            #endif
+            whenEnded?(result.map { _ in () })
+            outcome.resolve(result.map { _ in () })
+            return result
+        }
         // A bring-up that failed before it bound a session still holds the
         // context it opened, with that context's pipes and security scopes.
         if !resting.isSettledLive, sessionContext != nil { releaseSession() }
@@ -363,36 +410,32 @@ final class VMActivity {
     private func resolve(_ rest: VMOperationRest, for operation: VMOperation) -> VMLifecyclePhase {
         switch rest {
         case .live(let guest):
-            guard let session = operation.session, operation.sessionEnd == nil else {
-                return restAfterSessionEnd(operation.sessionEnd)
-            }
+            guard let session = operation.session else { return restAfterSessionEnd(of: operation) }
             switch guest {
             case .running: return .running(sessionID: session.id)
             case .paused: return .livePaused(sessionID: session.id)
             }
-        case .at(let phase):
-            return phase
-        case .slotOr(let fallback):
+        case .atRest(let fallback):
             return restingPhase(withoutSlot: fallback)
         case .asStarted:
             switch operation.startedFrom {
             case .running: return resolve(.live(.running), for: operation)
             case .livePaused: return resolve(.live(.paused), for: operation)
-            case .suspended: return restingPhase(withoutSlot: .stopped)
-            default: return restingPhase(withoutSlot: operation.startedFrom)
+            case .initialBoot: return restingPhase(withoutSlot: .initialBoot)
+            case .failed(let message): return restingPhase(withoutSlot: .failed(message: message))
+            case .stopped, .suspended, .operating, .removed: return restingPhase(withoutSlot: .stopped)
             }
         case .afterSessionEnd:
-            return restAfterSessionEnd(operation.sessionEnd)
+            return restAfterSessionEnd(of: operation)
         case .poweredOff:
             return restingPhase(withoutSlot: .stopped)
         }
     }
 
-    private func restAfterSessionEnd(_ end: VMSessionEnd?) -> VMLifecyclePhase {
-        guard case .stoppedWithError(let message) = end else {
-            return restingPhase(withoutSlot: .stopped)
-        }
-        return restingPhase(withoutSlot: .failed(message: message))
+    /// Where `operation`'s session end rests the VM, read against the slot as
+    /// the operation leaves it.
+    private func restAfterSessionEnd(of operation: VMOperation) -> VMLifecyclePhase {
+        restingPhase(withoutSlot: operation.sessionEnd?.rest ?? .stopped)
     }
 
     // MARK: - Session Actions
@@ -407,36 +450,66 @@ final class VMActivity {
         try await send()
     }
 
-    /// Force Stop: on a settled live VM, the `.forceStopping` operation; during
-    /// an operation that tolerates it, the end of that operation's session,
-    /// which it keeps holding until its body ends; a second Force Stop joins
-    /// the first.
+    /// Force Stop: marks the live session *stopping* at admission — on a
+    /// settled live VM by committing ``VMOperationKind/forceStopping``, during
+    /// an operation that tolerates it on that operation's session — then
+    /// delivers `terminate`'s completion as the session's end, to whichever
+    /// phase holds the session by then. A second Force Stop joins the first.
     ///
-    /// `terminate` is what stops the `VZVirtualMachine`.
+    /// `terminate` is what stops the `VZVirtualMachine`. Returns once the
+    /// session has ended; an operation that tolerated the stop keeps holding
+    /// the VM until its body ends.
     func forceStop(_ terminate: () async throws -> Void) async throws {
+        let stop = VMOutcome()
+        let sessionID: UUID
         switch decide(.sessionAction(.forceStop), posture: .commit) {
         case .join(let outcome):
-            try await outcome.value()
+            return try await outcome.value()
         case .refuse(let reason):
             throw refusal(reason, for: .sessionAction(.forceStop))
         case .admit:
-            // Admitted during an operation only while it holds a live session
-            // it tolerates the stop on; admitted settled only when live.
-            if let session = phase.operation?.session {
-                try await terminate()
-                endOperationSession(session.id, .poweredOff)
-                return
+            // Admitted only on a settled live VM, or on the live session of an
+            // operation that tolerates the stop.
+            switch phase {
+            case .running(let id), .livePaused(let id):
+                sessionID = id
+                commitOperation(.forceStopping, outcome: stop, stopping: stop)
+            case .operating(var operation):
+                guard var session = operation.session else {
+                    throw refusal(.invalidState, for: .sessionAction(.forceStop))
+                }
+                sessionID = session.id
+                session.stopping = stop
+                operation.sessionState = .live(session)
+                setPhase(.operating(operation))
+            case .stopped, .initialBoot, .failed, .suspended, .removed:
+                throw refusal(.invalidState, for: .sessionAction(.forceStop))
             }
-            let outcome = commitOperation(.forceStopping)
-            let ending: VMOperationEnding<Void>
-            do {
-                try await terminate()
-                ending = .rest(.poweredOff, ())
-            } catch {
-                ending = .failed(VMOperationKind.forceStopping.restAfterFailure(error), error)
-            }
-            try finish(ending, outcome: outcome).get()
         }
+        do {
+            try await terminate()
+        } catch {
+            forceStopFailed(on: sessionID, error)
+            stop.resolve(.failure(error))
+            return try await stop.value()
+        }
+        sessionEnded(.poweredOff, from: sessionID)
+        stop.resolve(.success(()))
+        try await stop.value()
+    }
+
+    /// `terminate` threw: the session `sessionID` is live and no longer
+    /// stopping. A ``VMOperationKind/forceStopping`` holding it ends back
+    /// where it started, with the error.
+    private func forceStopFailed(on sessionID: UUID, _ error: any Error) {
+        guard case .operating(var operation) = phase, var session = operation.session,
+            session.id == sessionID, session.stopping != nil
+        else { return }
+        session.stopping = nil
+        operation.sessionState = .live(session)
+        setPhase(.operating(operation))
+        guard operation.kind == .forceStopping else { return }
+        _ = finish(VMOperationEnding<Void>.failed(.asStarted, error), outcome: operation.outcome)
     }
 
     /// Cancels the operation of `family` holding the VM, whose own task
@@ -509,10 +582,12 @@ final class VMActivity {
     func handleSessionEvent(_ event: VMSessionEvent) {
         switch event {
         case .guestDidStop:
-            sessionEnded(.poweredOff)
+            if let sessionID = liveSessionID { sessionEnded(.poweredOff, from: sessionID) }
             #log(Self.logger, .notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
-            sessionEnded(.stoppedWithError(message: error.localizedDescription))
+            if let sessionID = liveSessionID {
+                sessionEnded(.stoppedWithError(message: error.localizedDescription), from: sessionID)
+            }
             #log(
                 Self.logger, .error,
                 "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
@@ -534,34 +609,46 @@ final class VMActivity {
         }
     }
 
-    /// The live session ended. A settled VM rests; an operation keeps holding
-    /// the VM and learns its session is gone.
-    private func sessionEnded(_ end: VMSessionEnd) {
+    /// The one session-ended path: the session `sessionID` ended, whatever
+    /// phase holds it. A settled VM rests; a
+    /// ``VMOperationKind/forceStopping`` ends with it; any other operation
+    /// keeps holding the VM and learns its session is gone. Dropped when no
+    /// phase holds the session any longer.
+    private func sessionEnded(_ end: VMSessionEnd, from sessionID: UUID) {
         switch phase {
-        case .running, .livePaused:
+        case .running(let id), .livePaused(let id):
+            guard id == sessionID else { return }
             releaseSession()
-            setPhase(restAfterSessionEnd(end))
+            setPhase(restingPhase(withoutSlot: end.rest))
             if end == .poweredOff {
                 owner?.guestDidPowerOff()
                 onPoweredOff?()
             }
         case .operating(let operation):
-            guard let session = operation.session else { return }
-            endOperationSession(session.id, end)
+            guard let ended = endOperationSession(sessionID, end) else { return }
+            if operation.kind == .forceStopping {
+                _ = finish(VMOperationEnding<Void>.rest(.afterSessionEnd, ()), outcome: operation.outcome)
+            } else {
+                ended.stopping?.resolve(.success(()))
+            }
         case .stopped, .initialBoot, .failed, .suspended, .removed:
             return
         }
     }
 
-    /// Marks the operation's session `sessionID` ended, keeping the operation.
-    fileprivate func endOperationSession(_ sessionID: UUID, _ end: VMSessionEnd) {
-        guard case .operating(var operation) = phase, operation.session?.id == sessionID else {
-            return
-        }
-        operation.session = nil
-        operation.sessionEnd = end
+    /// Marks the operation's session `sessionID` ended, keeping the operation,
+    /// and answers the session as it stood — `nil` when the operation holds no
+    /// such session.
+    private func endOperationSession(
+        _ sessionID: UUID, _ end: VMSessionEnd
+    ) -> VMOperationSession? {
+        guard case .operating(var operation) = phase, let session = operation.session,
+            session.id == sessionID
+        else { return nil }
+        operation.sessionState = .ended(end)
         releaseSession()
         setPhase(.operating(operation))
+        return session
     }
 
     /// Releases the session context, if one is open.
@@ -628,8 +715,7 @@ final class VMActivity {
             return nil
         }
         sessionContext.session = session
-        operation.session = VMOperationSession(id: session.id, guest: .running)
-        operation.sessionEnd = nil
+        operation.sessionState = .live(VMOperationSession(id: session.id, guest: .running))
         setPhase(.operating(operation))
         return (session, sessionContext)
     }
@@ -640,8 +726,7 @@ final class VMActivity {
     /// does.
     fileprivate func bindSession(withoutMachine sessionID: UUID) {
         guard case .operating(var operation) = phase else { return }
-        operation.session = VMOperationSession(id: sessionID, guest: .running)
-        operation.sessionEnd = nil
+        operation.sessionState = .live(VMOperationSession(id: sessionID, guest: .running))
         setPhase(.operating(operation))
     }
     #endif
@@ -656,7 +741,7 @@ final class VMActivity {
     /// releases the context it opened.
     fileprivate func endOperationSessionItself() {
         if let sessionID = operationSessionID {
-            endOperationSession(sessionID, .endedByOperation)
+            endOperationSession(sessionID, .endedByOperation)?.stopping?.resolve(.success(()))
         } else if sessionContext != nil {
             releaseSession()
         }
@@ -733,15 +818,14 @@ extension VMOperationContext {
 }
 #endif
 
-/// Where an operation leaves the VM.
+/// Where an operation leaves the VM — a live phase or an at-rest one, never
+/// another operation or removal.
 enum VMOperationRest: Sendable, Equatable {
     /// Live with the operation's session — or, once that session ended, where
     /// its end rests the VM.
     case live(VMGuestRunState)
-    /// Exactly this at-rest phase.
-    case at(VMLifecyclePhase)
-    /// Suspended while the slot is on disk, `fallback` otherwise.
-    case slotOr(VMLifecyclePhase)
+    /// At rest: suspended while the slot is on disk, this phase otherwise.
+    case atRest(VMRestPhase)
     /// Back where the operation started.
     case asStarted
     /// Where the operation's session ending rests the VM.
@@ -751,12 +835,11 @@ enum VMOperationRest: Sendable, Equatable {
     case poweredOff
 }
 
-/// How an operation's body ended.
+/// How an operation's body ended. Only ``VMActivity/delete(_:)`` removes a
+/// VM.
 enum VMOperationEnding<T> {
     case rest(VMOperationRest, T)
     case failed(VMOperationRest, any Error)
-    /// The VM is gone from the library.
-    case removed(T)
 }
 
 extension VMOperationKind {
@@ -765,14 +848,14 @@ extension VMOperationKind {
         let transient = VirtualizationService.isTransientStartError(error)
         switch self {
         case .bringUp(.starting), .bringUp(.restoringSavedState):
-            return .slotOr(transient ? .stopped : .failed(message: error.localizedDescription))
+            return .atRest(transient ? .stopped : .failed(message: error.localizedDescription))
         case .bringUp(.settingUp):
-            if error is CancellationError || transient { return .at(.initialBoot) }
-            return .at(.failed(message: error.localizedDescription))
+            if error is CancellationError || transient { return .atRest(.initialBoot) }
+            return .atRest(.failed(message: error.localizedDescription))
         case .bringUp(.reverting):
-            return .slotOr(.stopped)
+            return .atRest(.stopped)
         case .saving:
-            return .at(.failed(message: error.localizedDescription))
+            return .atRest(.failed(message: error.localizedDescription))
         case .pausing, .resuming, .capturingSnapshot, .deletingSnapshot, .attachingUSB,
             .detachingUSB, .reconcilingMedia, .forceStopping, .discardingSavedState, .deleting,
             .copyingOut:
