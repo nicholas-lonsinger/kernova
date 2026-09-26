@@ -51,6 +51,48 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
         set { lock.withLock { state.removeError = newValue } }
     }
 
+    // MARK: - Trash Hold
+
+    /// Guards ``holdsTrash`` and ``isTrashParked``; a parked trash waits on it.
+    private let trashHold = NSCondition()
+    private var holdsTrash = false
+    private var trashIsParked = false
+
+    /// Fires once a `trashItem` call has parked, so a test can observe what
+    /// holds while the trash is in flight.
+    let trashParked = AsyncGate()
+
+    var isTrashParked: Bool { trashHold.withLock { trashIsParked } }
+
+    /// Parks the next `trashItem` call until ``resumeTrash()``.
+    ///
+    /// The call blocks the thread it arrives on — production trashes from a
+    /// detached task, never from the main actor a test runs on.
+    func holdTrash() { trashHold.withLock { holdsTrash = true } }
+
+    /// Releases a parked `trashItem` call.
+    func resumeTrash() {
+        trashHold.withLock {
+            holdsTrash = false
+            trashHold.broadcast()
+        }
+    }
+
+    private func waitOutTrashHold() {
+        trashHold.lock()
+        guard holdsTrash else {
+            trashHold.unlock()
+            return
+        }
+        trashIsParked = true
+        trashHold.unlock()
+        trashParked.notify()
+        trashHold.lock()
+        while holdsTrash { trashHold.wait() }
+        trashIsParked = false
+        trashHold.unlock()
+    }
+
     // MARK: - FileSystemOperating
 
     func fileExists(atPath _: String) -> Bool {
@@ -58,6 +100,7 @@ final class MockFileSystem: FileSystemOperating, @unchecked Sendable {
     }
 
     func trashItem(at url: URL) throws {
+        waitOutTrashHold()
         try lock.withLock {
             if let error = state.trashError { throw error }
             state.trashedURLs.append(url)

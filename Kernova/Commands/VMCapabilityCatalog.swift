@@ -35,7 +35,8 @@ enum VMCapability: CaseIterable, Hashable {
     case editStorageDisks
     /// Write a new disk image into the bundle and add it to the storage disks.
     case createStorageDisk
-    /// Drop a storage disk and move the file behind it to the Trash.
+    /// Drop a storage disk's entry and move the file behind it to the Trash —
+    /// unless another VM still references the file, which keeps it.
     case trashStorageDisk
     case editRemovableMedia
     /// Write a new disk image where the user chose and attach it as

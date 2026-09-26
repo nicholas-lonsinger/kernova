@@ -370,6 +370,41 @@ struct VMCommandCoreAttachmentTests {
                 == [instance.bundleURL.appendingPathComponent("AdditionalDisks/x.asif")])
     }
 
+    @Test(
+        "A trashing removal holds the VM through the trash, so a Start meanwhile is refused busy",
+        arguments: [true, false])
+    func removeStorageDiskHoldsTheVMThroughTheTrash(isInternal: Bool) async throws {
+        let harness = makeHarness()
+        let disk =
+            isInternal
+            ? StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+            : StorageDisk(path: externalPath("external.img"), label: "External", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, keeper] }
+        harness.fileSystem.holdTrash()
+
+        let removal = Task { @MainActor in
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+        }
+        try await harness.fileSystem.trashParked.wait { harness.fileSystem.isTrashParked }
+        #expect(instance.phase.operation?.kind == .removingStorageDisk)
+        // The entry went first; the file is what is still in flight.
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
+        let start = await commandError { try await harness.core.start(.id(instance.id), recovery: false) }
+        #expect(start?.isBusy == true)
+
+        harness.fileSystem.resumeTrash()
+        try await removal.value
+
+        #expect(instance.phase == .stopped)
+        let trashed =
+            isInternal
+            ? instance.bundleURL.appendingPathComponent(disk.path) : URL(fileURLWithPath: disk.path)
+        #expect(harness.fileSystem.trashedURLs == [trashed])
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
     @Test("A file another VM still references is kept, however the removal is asked for")
     func removeStorageDiskKeepsASharedFile() async throws {
         let harness = makeHarness()

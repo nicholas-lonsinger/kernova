@@ -348,7 +348,8 @@ enum VMOperationKind: Sendable, Equatable {
     /// Writing a new disk image inside the bundle and adding it to the VM's
     /// storage disks.
     case creatingStorageDisk
-    /// Dropping a storage disk and moving the file behind it to the Trash.
+    /// Dropping a storage disk's entry and moving the file behind it to the
+    /// Trash — unless another VM still references the file, which keeps it.
     case removingStorageDisk
     /// Writing a new disk image where the user chose and attaching it as
     /// removable media — hot-plugged into a live guest before the operation
