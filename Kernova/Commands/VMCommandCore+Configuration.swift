@@ -6,9 +6,10 @@ import KernovaLogging
 /// two list edits a caller names by path rather than by id, and the reads that
 /// answer those two lists.
 ///
-/// Every write lands as one ``VMLibrary/updateSettings(of:configuration:hostState:)``:
-/// the gates and the values are all checked before either file is written, so
-/// a batch that names one bad key writes nothing at all.
+/// Every write lands as one ``VMLibrary/updateSettings(_:configuration:hostState:)``,
+/// under a permit for the edit classes its keys' gates name: the gates and the
+/// values are all checked before either file is written, so a batch that names
+/// one bad key writes nothing at all.
 extension VMCommandCore {
     // MARK: - Keys
 
@@ -42,7 +43,9 @@ extension VMCommandCore {
     /// An assignment that leaves the VM's settings where they are is no edit:
     /// no gate applies to it and nothing is written for it, so `get` output is
     /// `set` input in any state. A gate that refuses names every assignment it
-    /// refused.
+    /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:)``);
+    /// the write holds a permit for the classes of the named keys the VM takes,
+    /// and an assignment that moves the file outside them is refused.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read
@@ -75,29 +78,40 @@ extension VMCommandCore {
         }
         // Before either file is touched: host state commits after the
         // configuration, where nothing may refuse.
-        try requireGates(for: hostStateWrites.map { ($0.key, $0.value) }, on: instance)
+        let hostStateEdits = hostStateWrites.map { (key: $0.key, value: $0.value) }
+        try requireGates(for: hostStateEdits, on: instance)
         let hostStateChanges = try hostStateWrites.map { write in
             HostStateChange(
                 key: write.key, field: write.field, change: try write.field.change(write.value, context))
         }
+        // The configuration's gates are judged on what `config.json` holds,
+        // inside the write: the permit covers every key the VM takes now, and
+        // one that moves the file outside it is refused there.
+        let admittedConfigurationEdits = configurationWrites.map { (key: $0.key, value: $0.value) }
+            .filter { capabilities.accepts($0.key.capability(writing: $0.value), on: instance) }
+        let classes = (hostStateEdits + admittedConfigurationEdits).reduce(into: VMEditClasses()) {
+            $0.formUnion($1.key.editClasses(writing: $1.value))
+        }
 
         var moved: [VMConfigurationKey] = []
-        try requireSaved(
-            library.updateSettings(
-                of: instance,
-                configuration: { config in
-                    moved = try apply(
-                        configurationWrites, to: &config, on: instance, context: context,
-                        confirmed: confirmed)
-                },
-                hostState: { hostState in
-                    for change in hostStateChanges {
-                        let before = change.field.read(hostState)
-                        change.change(&hostState)
-                        if change.field.read(hostState) != before { moved.append(change.key) }
-                    }
-                }),
-            of: instance, verb: .setConfiguration)
+        try edit(classes, on: instance, verb: .setConfiguration) { permit in
+            try requireSaved(
+                library.updateSettings(
+                    permit,
+                    configuration: { config in
+                        moved = try apply(
+                            configurationWrites, to: &config, on: instance, within: permit.authority,
+                            context: context, confirmed: confirmed)
+                    },
+                    hostState: { hostState in
+                        for change in hostStateChanges {
+                            let before = change.field.read(hostState)
+                            change.change(&hostState)
+                            if change.field.read(hostState) != before { moved.append(change.key) }
+                        }
+                    }),
+                of: instance, verb: .setConfiguration)
+        }
         if !moved.isEmpty {
             #log(
                 Self.logger, .notice,
@@ -129,16 +143,13 @@ extension VMCommandCore {
         let change: (inout VMHostState) -> Void
     }
 
-    /// Lands `writes` on `config` — what `config.json` holds — refusing unless
-    /// `instance` takes every one that moves it, answering the keys that moved.
-    ///
-    /// The gate answers an assignment whose value this key refuses too, so a
-    /// VM whose state pins the key says so rather than naming the value.
-    private func apply(
-        _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
-        context: VMConfigurationWriteContext, confirmed: Bool
-    ) throws -> [VMConfigurationKey] {
-        let held = config
+    /// Lands `writes` on `config`, answering the assignments that moved it —
+    /// one whose value its key refuses counts as moving it, so its gate is
+    /// asked before its value is — and the first value refusal.
+    private static func moved(
+        _ writes: [ConfigurationWrite], applyingTo config: inout VMConfiguration,
+        context: VMConfigurationWriteContext
+    ) -> (edits: [(key: VMConfigurationKey, value: String)], valueRefusal: (any Error)?) {
         var moved: [(key: VMConfigurationKey, value: String)] = []
         var valueRefusal: (any Error)?
         for write in writes {
@@ -152,7 +163,25 @@ extension VMCommandCore {
             }
             if config != before { moved.append((write.key, write.value)) }
         }
-        try requireGates(for: moved, on: instance)
+        return (moved, valueRefusal)
+    }
+
+    /// Lands `writes` on `config` — what `config.json` holds — refusing unless
+    /// `authority` covers every one that moves it, answering the keys that
+    /// moved.
+    ///
+    /// The gate answers an assignment whose value this key refuses too, so a
+    /// VM whose state pins the key says so rather than naming the value.
+    private func apply(
+        _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
+        within authority: VMEditPermit.Authority, context: VMConfigurationWriteContext,
+        confirmed: Bool
+    ) throws -> [VMConfigurationKey] {
+        let held = config
+        let (moved, valueRefusal) = Self.moved(writes, applyingTo: &config, context: context)
+        try requireGates(
+            refusing: moved.filter { !authority.covers($0.key.editClasses(writing: $0.value)) },
+            on: instance)
         if let valueRefusal { throw valueRefusal }
         for write in writes where write.field.read(config) != write.field.read(held) {
             // Only a key this call actually moved is judged: writing back what
@@ -177,9 +206,18 @@ extension VMCommandCore {
     private func requireGates(
         for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
     ) throws {
-        let refused = edits.filter {
-            !capabilities.accepts($0.key.capability(writing: $0.value), on: instance)
-        }
+        try requireGates(
+            refusing: edits.filter {
+                !capabilities.accepts($0.key.capability(writing: $0.value), on: instance)
+            },
+            on: instance)
+    }
+
+    /// Refuses `refused` unless it is empty, naming each assignment and why
+    /// the VM's state turned its gate away.
+    private func requireGates(
+        refusing refused: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
+    ) throws {
         guard !refused.isEmpty else { return }
         let error = refusal(for: refused.map { $0.key.capability(writing: $0.value) }, on: instance)
         guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
@@ -264,7 +302,7 @@ extension VMCommandCore {
         // this VM already shares even when the named one was not.
         guard !shares(instance, file.path) else { return }
 
-        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
+        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             directories.append(
                 SharedDirectory(path: file.path, readOnly: readOnly, bookmark: file.bookmark))

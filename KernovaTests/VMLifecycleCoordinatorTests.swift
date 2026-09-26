@@ -306,7 +306,7 @@ struct VMLifecycleCoordinatorTests {
 
         // A revert reads the very directory this would move to the Trash.
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(.guestStart(Self.coldBoot))))) {
-            try await coordinator.discardSnapshot(instance, snapshotID: UUID()) {}
+            try await coordinator.discardSnapshot(instance, snapshotID: UUID()) { _ in }
         }
         #expect(store.discardedIDs.isEmpty)
 
@@ -1474,9 +1474,9 @@ struct VMLifecycleCoordinatorTests {
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { permit, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? .refused(.noLibrary)
+            return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.launchGuestSetup(on: instance).value()
@@ -1693,9 +1693,9 @@ struct VMLifecycleCoordinatorTests {
         // runs, and the ISO is attached once Verify has finished.
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { permit, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? .refused(.noLibrary)
+            return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.launchGuestSetup(on: instance).value()
@@ -1752,9 +1752,9 @@ struct VMLifecycleCoordinatorTests {
 
         var observedSteps: [Int] = []
         let persist = instance.onUpdateConfiguration
-        instance.onUpdateConfiguration = { mutate in
+        instance.onUpdateConfiguration = { permit, mutate in
             if let index = instance.setupState?.currentStepIndex { observedSteps.append(index) }
-            return persist?(mutate) ?? .refused(.noLibrary)
+            return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
         try await fixture.coordinator.launchGuestSetup(on: instance).value()

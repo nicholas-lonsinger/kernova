@@ -100,6 +100,30 @@ enum VMCapability: CaseIterable, Hashable {
         }
     }
 
+    /// What a write this capability makes to the VM's state files touches —
+    /// the classes its permit is minted for — or `nil` for a capability that
+    /// is not an edit.
+    ///
+    /// The guest-agent disk is decided as an affordance, and writes as the
+    /// hot-plug edit it is.
+    var editClasses: VMEditClasses? {
+        switch self {
+        case .renameSnapshot, .setSnapshotNotes: .snapshotMetadata
+        case .editStorageDisks, .editSharedDirectories, .editConfiguration: .machineKeys
+        case .editRemovableMedia, .toggleGuestAgentDisk: .hotPlugMedia
+        case .forgetUSBPairing: .pairingRules
+        case .editLiveConfiguration: .liveKeys
+        case .switchNetworkMode: .networkAttachment
+        case .rename: .rename
+        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
+            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
+            .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
+            .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleSettingsPane:
+            nil
+        }
+    }
+
     /// The request admission decides for this capability on `instance`, or
     /// `nil` when the VM's state names none — a capture from a phase no mode
     /// is taken from.
@@ -141,31 +165,21 @@ enum VMCapability: CaseIterable, Hashable {
             return .operation(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)))
         case .deleteSnapshot:
             return .operation(.deletingSnapshot)
-        case .renameSnapshot, .setSnapshotNotes:
-            return .edit(.snapshotMetadata)
-        case .editStorageDisks, .editSharedDirectories, .editConfiguration:
-            return .edit(.machineKeys)
+        case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
+            .editConfiguration, .editRemovableMedia, .forgetUSBPairing, .editLiveConfiguration,
+            .switchNetworkMode, .rename:
+            return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)
         case .trashStorageDisk:
             return .operation(.removingStorageDisk)
-        case .editRemovableMedia:
-            return .edit(.hotPlugMedia)
         case .createRemovableMedia:
             return .operation(.creatingRemovableMedia)
         case .editUSBAccessories:
             // Which accessory does not change the decision.
             return .operation(.attachingUSB(registryID: 0))
-        case .forgetUSBPairing:
-            return .edit(.pairingRules)
-        case .editLiveConfiguration:
-            return .edit(.liveKeys)
-        case .switchNetworkMode:
-            return .edit(.networkAttachment)
         case .clone:
             return .operation(.copyingOut)
-        case .rename:
-            return .edit(.rename)
         case .delete:
             return .operation(.deleting)
         case .togglePopOut, .toggleFullscreen:

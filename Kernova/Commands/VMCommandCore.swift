@@ -95,12 +95,13 @@ final class VMCommandCore: VMCommanding {
     var requestQuit: (() -> Void)?
 
     /// Reports an accessory the user has just placed on a guest, so that guest
-    /// takes it back on its own from now on.
+    /// takes it back on its own from now on — a pairing edit, under the permit
+    /// for the guest's VM.
     ///
     /// A hook rather than a call: what an attach *means* for the future is the
     /// accessory coordinator's policy, and a build that cannot pass accessories
     /// through has no coordinator to hold it.
-    var onUserAttachedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
+    var onUserAttachedAccessory: ((borrowing VMEditPermit, USBAccessoryInfo) throws -> Void)?
 
     /// Reports an accessory the user is about to take back by hand, before the
     /// detach runs: the detach re-enumerates the device, and the return it
@@ -114,7 +115,7 @@ final class VMCommandCore: VMCommanding {
 
     /// Reports an accessory the user has just taken back by hand, which ends
     /// that pairing.
-    var onUserReleasedAccessory: ((VMInstance, USBAccessoryInfo) throws -> Void)?
+    var onUserReleasedAccessory: ((borrowing VMEditPermit, USBAccessoryInfo) throws -> Void)?
 
     /// Measures the window or screen a starting VM's display is about to occupy,
     /// for `displaySizesToWindow` — `nil` when nothing can measure one.
@@ -414,25 +415,60 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    /// Applies `mutate` to what the VM's `config.json` holds, throwing unless
-    /// it landed (``requireSaved(_:of:verb:)``).
-    func writeConfiguration(
-        of instance: VMInstance, verb: VMVerb, _ mutate: (inout VMConfiguration) -> Void
-    ) throws {
-        try requireSaved(
-            library.updateConfiguration(of: instance, mutate: mutate), of: instance, verb: verb)
+    /// Admits a write of `classes` on `instance` and runs `write` with its
+    /// permit, answering a refusal in the command vocabulary under `verb`.
+    @discardableResult
+    func edit<T>(
+        _ classes: VMEditClasses, on instance: VMInstance, verb: VMVerb,
+        _ write: (borrowing VMEditPermit) throws -> T
+    ) throws -> T {
+        do {
+            return try instance.activity.edit(classes, write)
+        } catch {
+            throw failure(error, verb: verb, on: instance)
+        }
     }
 
-    /// ``writeConfiguration(of:verb:_:)`` as a step of the operation `context`
-    /// holds `instance` for, returning once a removable-media change it makes
-    /// is live in that operation's session
-    /// (``VMLibrary/updateConfiguration(of:in:mutate:)``).
+    /// The edit of what `capability` touches
+    /// (``VMCapability/editClasses``).
+    @discardableResult
+    func edit<T>(
+        _ capability: VMCapability, on instance: VMInstance, verb: VMVerb,
+        _ write: (borrowing VMEditPermit) throws -> T
+    ) throws -> T {
+        guard let classes = capability.editClasses else {
+            #log(
+                Self.logger, .fault,
+                "\(String(describing: capability), privacy: .public) names no edit class")
+            assertionFailure("\(capability) names no edit class")
+            throw invalidState(instance)
+        }
+        return try edit(classes, on: instance, verb: verb, write)
+    }
+
+    /// Applies `mutate` to what the VM's `config.json` holds as the edit
+    /// `capability` makes, throwing unless it was admitted and landed
+    /// (``requireSaved(_:of:verb:)``).
     func writeConfiguration(
-        of instance: VMInstance, in context: borrowing VMOperationContext, verb: VMVerb,
+        of instance: VMInstance, as capability: VMCapability, verb: VMVerb,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) throws {
+        try edit(capability, on: instance, verb: verb) { permit in
+            try requireSaved(
+                library.updateConfiguration(permit, mutate: mutate), of: instance, verb: verb)
+        }
+    }
+
+    /// ``writeConfiguration(of:as:verb:_:)`` as a write of the operation
+    /// `context` holds the VM for, returning once a removable-media change it
+    /// makes is live in that operation's session
+    /// (``VMLibrary/updateConfiguration(in:mutate:)``).
+    func writeConfiguration(
+        in context: borrowing VMOperationContext, verb: VMVerb,
         _ mutate: (inout VMConfiguration) -> Void
     ) async throws {
-        let write = await library.updateConfiguration(of: instance, in: context, mutate: mutate)
-        try requireSaved(write, of: instance, verb: verb)
+        let write = await library.updateConfiguration(in: context, mutate: mutate)
+        try requireSaved(write, of: context.instance, verb: verb)
     }
 
     /// Runs `body` as the operation `kind` on `instance`, which rests where it
@@ -460,8 +496,6 @@ final class VMCommandCore: VMCommanding {
         switch refusal {
         case .macAddressInUse(let conflict):
             .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-        case .sessionNotAttachable:
-            invalidState(instance)
         case .noLibrary:
             .notFound(.id(instance.id))
         }

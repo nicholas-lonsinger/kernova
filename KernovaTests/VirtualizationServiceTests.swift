@@ -497,7 +497,7 @@ struct VirtualizationServiceTests {
             .write(to: snapshotLayout.configURL)
 
         // The VM as it stands now: more memory, and the second disk removed.
-        try instance.bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
+        try instance.editSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         return RevertFixture(
             instance: instance, snapshot: snapshot,
             capturedConfiguration: capturedConfiguration,
@@ -509,12 +509,12 @@ struct VirtualizationServiceTests {
     /// configuration to `commitConfiguration`, or to the fixture's library.
     private func revert(
         _ fixture: RevertFixture, to snapshot: VMSnapshot? = nil,
-        commitConfiguration: (@MainActor (VMSnapshotRestorePlan) throws -> Void)? = nil
+        commitConfiguration: (@MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void)? = nil
     ) async throws {
         let target = snapshot ?? fixture.snapshot
         let commit =
-            commitConfiguration ?? { plan in
-                try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+            commitConfiguration ?? { permit, plan in
+                try fixture.library.commitRevertedConfiguration(plan, permit)
             }
         try await fixture.instance.activity.launchRevert(to: target, resumesAfter: false) {
             context in
@@ -574,14 +574,14 @@ struct VirtualizationServiceTests {
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         var adopted: [VMSnapshotRestorePlan] = []
 
-        try await revert(fixture) { plan in
+        try await revert(fixture) { permit, plan in
             // Anything that brings the VM back up reads its configuration after
             // this, so the commit lands while the VM has not left the revert yet.
             #expect(
                 fixture.instance.phase.operation?.kind
                     == .bringUp(.reverting(snapshotID: fixture.snapshot.id, resumesAfter: false)))
             adopted.append(plan)
-            try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+            try fixture.library.commitRevertedConfiguration(plan, permit)
             let onDisk = try? VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
             #expect(onDisk?.macAddress == plan.configuration.macAddress)
             #expect(onDisk?.memorySizeInGB == plan.configuration.memorySizeInGB)
@@ -669,7 +669,7 @@ struct VirtualizationServiceTests {
         struct CommitFailed: Error {}
 
         await #expect(throws: CommitFailed.self) {
-            try await revert(fixture) { _ in throw CommitFailed() }
+            try await revert(fixture) { _, _ in throw CommitFailed() }
         }
 
         #expect(contents(of: layout.diskImageURL) == "live-disk")
@@ -688,10 +688,10 @@ struct VirtualizationServiceTests {
         var diskAtCommit: String?
         var slotAtCommit: String?
 
-        try await revert(fixture) { plan in
+        try await revert(fixture) { permit, plan in
             diskAtCommit = contents(of: layout.diskImageURL)
             slotAtCommit = contents(of: layout.saveFileURL)
-            try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+            try fixture.library.commitRevertedConfiguration(plan, permit)
         }
 
         #expect(diskAtCommit == "live-disk")
@@ -714,8 +714,8 @@ struct VirtualizationServiceTests {
         let stagedSlot = VMBundleLayout(bundleURL: layout.restoreStagingURL).saveFileURL
 
         await #expect(throws: (any Error).self) {
-            try await revert(fixture) { plan in
-                try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
+            try await revert(fixture) { permit, plan in
+                try fixture.library.commitRevertedConfiguration(plan, permit)
                 // The install's last swap, the saved state's, finds nothing to
                 // move.
                 try FileManager.default.removeItem(at: stagedSlot)
@@ -823,7 +823,7 @@ struct VirtualizationServiceTests {
         try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         let checkpoint = try await capture(
             fixture.instance, VMSnapshotCaptureRequest(name: "Suspended checkpoint"))
-        try fixture.instance.bundle.commitSnapshotManifest { $0.insert(checkpoint) }
+        try fixture.instance.editSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 
         try await revert(fixture, to: checkpoint)

@@ -1715,7 +1715,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a live mode switch onto a MAC address twin's network is refused, changing nothing")
-    func liveModeSwitchOntoAMACAddressTwinIsRefused() {
+    func liveModeSwitchOntoAMACAddressTwinIsRefused() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
             to: viewModel, mode: .hostOnly, otherMode: .shared)
@@ -1723,7 +1723,9 @@ struct VMLibraryViewModelTests {
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let accepted = viewModel.library.updateConfiguration(of: switching) {
+        let accepted = try viewModel.library.updateConfiguration(
+            of: switching, as: .networkAttachment
+        ) {
             $0.networkMode = .shared
         }
 
@@ -1733,14 +1735,14 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a stopped VM may take the mode a live MAC address twin is on — its start is the guard")
-    func stoppedVMMayTakeALiveMACAddressTwinsMode() {
+    func stoppedVMMayTakeALiveMACAddressTwinsMode() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
             to: viewModel, mode: .hostOnly, otherMode: .shared)
         switching.activity.placeForTesting(.stopped)
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let accepted = viewModel.library.updateConfiguration(of: switching) {
+        let accepted = try viewModel.library.updateConfiguration(of: switching, as: .machineKeys) {
             $0.networkMode = .shared
         }
 
@@ -1750,18 +1752,18 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a live VM already sharing a network with its twin stays editable")
-    func aVMAlreadyInAMACAddressCollisionStaysEditable() {
+    func aVMAlreadyInAMACAddressCollisionStaysEditable() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(to: viewModel)
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let accepted = viewModel.library.updateConfiguration(of: switching) {
-            $0.memorySizeInGB = 6
+        let accepted = try viewModel.library.updateConfiguration(of: switching, as: .rename) {
+            $0.name = "Renamed"
         }
 
         #expect(accepted.landed)
-        #expect(switching.configuration.memorySizeInGB == 6)
+        #expect(switching.configuration.name == "Renamed")
         #expect(presenter.showError == false)
     }
 
@@ -1868,11 +1870,12 @@ struct VMLibraryViewModelTests {
         let instance = appendVMWithMedia(
             to: viewModel, storage: storage, in: .operating(.saving, from: .running(sessionID: UUID())))
 
-        let accepted = viewModel.library.updateConfiguration(of: instance) {
-            $0.removableMedia = nil
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.saving))) {
+            try viewModel.library.updateConfiguration(of: instance, as: .hotPlugMedia) {
+                $0.removableMedia = nil
+            }
         }
 
-        #expect(accepted.refusedForSession)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(presenter.showError == false)
@@ -1885,42 +1888,43 @@ struct VMLibraryViewModelTests {
             to: viewModel, storage: storage,
             in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
-        let accepted = viewModel.library.updateConfiguration(of: instance) {
-            $0.removableMedia = nil
-            $0.memorySizeInGB = 6
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.capturingSnapshot(.live)))) {
+            try viewModel.library.updateConfiguration(of: instance, as: [.hotPlugMedia, .rename]) {
+                $0.removableMedia = nil
+                $0.name = "Renamed"
+            }
         }
 
-        #expect(accepted.refusedForSession)
         #expect(instance.configuration.removableMedia?.count == 1)
-        #expect(instance.configuration.memorySizeInGB != 6)
+        #expect(instance.configuration.name != "Renamed")
         #expect(storage.saveConfigurationCallCount == 0)
         #expect(presenter.showError == false)
     }
 
     @Test("an edit leaving the media list alone is accepted while capturing a live snapshot")
-    func nonMediaEditIsAcceptedWhileCapturingLive() {
+    func nonMediaEditIsAcceptedWhileCapturingLive() throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = appendVMWithMedia(
             to: viewModel, storage: storage,
             in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
-        let accepted = viewModel.library.updateConfiguration(of: instance) {
-            $0.memorySizeInGB = 6
+        let accepted = try viewModel.library.updateConfiguration(of: instance, as: .rename) {
+            $0.name = "Renamed"
         }
 
         #expect(accepted.landed)
-        #expect(instance.configuration.memorySizeInGB == 6)
+        #expect(instance.configuration.name == "Renamed")
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(storage.saveConfigurationCallCount == 1)
     }
 
     @Test("a VM with no session takes a media edit — it persists for the next start")
-    func mediaEditIsAcceptedWithoutASession() {
+    func mediaEditIsAcceptedWithoutASession() throws {
         for phase in [VMLifecyclePhase.stopped, .suspended] {
             let (viewModel, storage, _, _, _) = makeViewModel()
             let instance = appendVMWithMedia(to: viewModel, storage: storage, in: phase)
 
-            let accepted = viewModel.library.updateConfiguration(of: instance) {
+            let accepted = try viewModel.library.updateConfiguration(of: instance, as: .hotPlugMedia) {
                 $0.removableMedia = nil
             }
 
@@ -2003,6 +2007,8 @@ struct VMLibraryViewModelTests {
     private final class FakeDisplayBootGeometryProvider: DisplayBootGeometryProviding {
         var surface: DisplayBootSurface?
         private(set) var callCount = 0
+        /// The operation holding the VM when its surface was measured.
+        private(set) var operationAtMeasure: VMOperationKind?
 
         init(surface: DisplayBootSurface?) {
             self.surface = surface
@@ -2010,6 +2016,7 @@ struct VMLibraryViewModelTests {
 
         func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
             callCount += 1
+            operationAtMeasure = instance.phase.operation?.kind
             return surface
         }
     }
@@ -2037,6 +2044,8 @@ struct VMLibraryViewModelTests {
         await viewModel.start(instance)
 
         #expect(provider.callCount == 1)
+        // Measured and written as the start's own write, once it holds the VM.
+        #expect(provider.operationAtMeasure == .bringUp(.guestStart(.starting(recovery: false))))
         // The VZ configuration is built inside `start`, so the values must
         // already be on the instance when the service is called.
         #expect(virtService.configurationAtStart?.displayWidth == 2800)
@@ -2960,14 +2969,14 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("A MAC address another VM holds is refused, changing nothing")
-    func duplicateMACAddressIsRefused() {
+    func duplicateMACAddressIsRefused() throws {
         let vmnet = MockVmnetNetworkProvider()
         let storage = MockVMStorageService()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
             storage: storage)
 
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2980,12 +2989,12 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("The refusal matches the held address regardless of case")
-    func duplicateMACAddressRefusalIgnoresCase() {
+    func duplicateMACAddressRefusalIgnoresCase() throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "AA:BB:CC:DD:EE:0F", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -2994,13 +3003,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("A VM with networking off still holds its address")
-    func aVMWithNetworkingOffStillHoldsItsAddress() {
+    func aVMWithNetworkingOffStillHoldsItsAddress() throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
-        viewModel.library.editConfiguration(of: holder) { $0.networkEnabled = false }
+        viewModel.library.editConfiguration(of: holder, as: .machineKeys) { $0.networkEnabled = false }
 
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -3009,12 +3018,14 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("A refused mutation drops the fields it also set")
-    func aRefusedMutationDropsItsOtherFields() {
+    func aRefusedMutationDropsItsOtherFields() throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(
+            of: editor, as: [.rename, .machineKeys]
+        ) {
             $0.name = "Renamed"
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
@@ -3025,14 +3036,14 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("A VM keeping an address that arrived shared still accepts other edits")
-    func aVMSharingAnAddressFromDiskStillAcceptsEdits() {
+    func aVMSharingAnAddressFromDiskStillAcceptsEdits() throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, _, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:0f")
 
         // Only a change of address is refused, so a pair that arrived from disk
         // sharing one stays editable in every other respect.
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .rename) {
             $0.name = "Renamed"
         }
 
@@ -3042,15 +3053,15 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("Moving the holder off an address frees it for another VM")
-    func editingTheHolderFreesItsAddress() {
+    func editingTheHolderFreesItsAddress() throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
-        viewModel.library.updateConfiguration(of: holder) {
+        try viewModel.library.updateConfiguration(of: holder, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:11"
         }
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -3060,13 +3071,13 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("Deleting the holder frees its address for another VM")
-    func deletingTheHolderFreesItsAddress() async {
+    func deletingTheHolderFreesItsAddress() async throws {
         let vmnet = MockVmnetNetworkProvider()
         let (viewModel, holder, editor) = makeLibrarySharingNoAddress(
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10")
 
         await viewModel.delete(holder)
-        let accepted = viewModel.library.updateConfiguration(of: editor) {
+        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:0f"
         }
 
@@ -5763,7 +5774,7 @@ struct VMLibraryViewModelTests {
             RemovableMediaDeviceInfo(id: idB, path: "/tmp/b.iso", readOnly: true), for: sessionID)
         viewModel.library.admitForTesting(instance)
 
-        viewModel.library.editConfiguration(of: instance) {
+        viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [
                 // Swapped order; identical items.
                 RemovableMediaItem(id: idB, path: "/tmp/b.iso", readOnly: true),
@@ -5798,7 +5809,7 @@ struct VMLibraryViewModelTests {
 
         // The user's removal intent persists — config says "no media", live
         // still has it.
-        viewModel.library.editConfiguration(of: instance) { $0.removableMedia = nil }
+        viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
         while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
@@ -5824,7 +5835,7 @@ struct VMLibraryViewModelTests {
 
         // The user added a removable item; it persists before the live
         // attach runs.
-        viewModel.library.editConfiguration(of: instance) {
+        viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [
                 RemovableMediaItem(id: id, path: "/tmp/missing.iso", readOnly: true)
             ]
@@ -5857,7 +5868,7 @@ struct VMLibraryViewModelTests {
         // the label and note forward since only the path/readOnly changed.
         var newItem = oldItem
         newItem.path = "/tmp/new.iso"
-        viewModel.library.editConfiguration(of: instance) { $0.removableMedia = [newItem] }
+        viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = [newItem] }
         while !presenter.showError { await Task.yield() }
         for _ in 0..<5 { await Task.yield() }
 
@@ -5886,7 +5897,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
 
         // Same id, different path (path swap) — the target persists.
-        viewModel.library.editConfiguration(of: instance) {
+        viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/new.iso", readOnly: true)]
         }
         while !presenter.showError { await Task.yield() }

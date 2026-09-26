@@ -250,8 +250,8 @@ struct VMLibraryViewModelSnapshotTests {
         let baseline = try #require(ephemeral.snapshotManifest.snapshots.first)
         // The VM itself may leave the address, which its baseline still holds.
         #expect(
-            harness.viewModel.library.updateSettings(
-                of: ephemeral,
+            try harness.viewModel.library.updateSettings(
+                of: ephemeral, as: [.machineKeys, .liveKeys],
                 configuration: { $0.macAddress = "aa:bb:cc:dd:ee:06" },
                 hostState: { $0.applyEphemeralMode(enabled: true, baseline: baseline.id) }
             ).landed)
@@ -260,7 +260,7 @@ struct VMLibraryViewModelSnapshotTests {
             $0.macAddress = "aa:bb:cc:dd:ee:07"
         }
 
-        let took = harness.viewModel.library.updateConfiguration(of: other) {
+        let took = try harness.viewModel.library.updateConfiguration(of: other, as: .machineKeys) {
             $0.macAddress = "aa:bb:cc:dd:ee:05"
         }
 
@@ -355,8 +355,8 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let held = instance.configuration
         harness.storage.saveConfigurationError = NSError(domain: "test", code: 1)
-        let write = harness.viewModel.library.updateConfiguration(of: instance) {
-            $0.memorySizeInGB = held.memorySizeInGB + 2
+        let write = try harness.viewModel.library.updateConfiguration(of: instance, as: .rename) {
+            $0.name = "Renamed"
         }
         #expect(write.failedToSave)
         harness.storage.saveConfigurationError = nil

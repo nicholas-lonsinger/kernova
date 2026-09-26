@@ -11,10 +11,6 @@ extension VMLibrary.SettingsWrite {
         if case .refused(.macAddressInUse) = self { true } else { false }
     }
 
-    var refusedForSession: Bool {
-        if case .refused(.sessionNotAttachable) = self { true } else { false }
-    }
-
     var refusedForNoLibrary: Bool {
         if case .refused(.noLibrary) = self { true } else { false }
     }

@@ -3,39 +3,6 @@ import KernovaKit
 import KernovaLogging
 import Virtualization
 
-/// What a VM's ``VMActivity`` reads from, and tells, the VM it belongs to.
-@MainActor
-protocol VMActivityOwner: AnyObject {
-    /// The name the activity's log lines identify the VM by.
-    var name: String { get }
-
-    /// Whether the bundle holds a suspend slot — what
-    /// ``VMActivity/restingPhase(withoutSlot:)`` reads.
-    var hasSaveFile: Bool { get }
-
-    /// The bundle the VM lives in now — what an operation's context runs
-    /// machine-file work on, read at each call.
-    var bundle: VMBundle { get }
-
-    /// The VM's own facts and the library's that admission reads, without the
-    /// identity term.
-    var admissionFacts: VMAdmission.Facts { get }
-
-    /// The live VM whose identity bringing this one up by `kind` would
-    /// duplicate, or `nil` when nothing collides.
-    func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict?
-
-    /// Called once the session is released.
-    func sessionDidEnd()
-
-    /// Called once a power-off has rested the VM, before
-    /// ``VMActivity/onPoweredOff`` fires.
-    func guestDidPowerOff()
-
-    /// Called once an operation of `kind` has ended with the guest running.
-    func operationDidSettleRunning(_ kind: VMOperationKind)
-}
-
 /// Where a VM is in its lifecycle, the live session it holds, and the one
 /// place any request on it is admitted and committed.
 ///
@@ -47,10 +14,11 @@ protocol VMActivityOwner: AnyObject {
 @MainActor
 @Observable
 final class VMActivity {
-    /// The VM this activity belongs to.
+    /// The VM this activity belongs to, which every context and permit it
+    /// mints names.
     ///
     /// Set by the owner as it is created.
-    @ObservationIgnored weak var owner: (any VMActivityOwner)?
+    @ObservationIgnored weak var owner: VMInstance?
 
     private(set) var phase: VMLifecyclePhase
 
@@ -166,7 +134,7 @@ final class VMActivity {
     @discardableResult
     private func requireAdmitted(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork
-    ) throws -> any VMActivityOwner {
+    ) throws -> VMInstance {
         guard let owner else { throw refusal(.invalidState, for: request) }
         switch decide(request, origin: origin, posture: .commit) {
         case .admit:
@@ -186,6 +154,21 @@ final class VMActivity {
             "Refused \(String(describing: request), privacy: .public) for '\(self.name, privacy: .public)': \(String(describing: reason), privacy: .public)"
         )
         return VMAdmissionRefusal(refusal: reason)
+    }
+
+    // MARK: - Edits
+
+    /// Admits a write of `classes` to the VM's state files and runs `write`
+    /// with the permit admission minted for it.
+    ///
+    /// `write` is synchronous, so the phase that admitted it is the phase it
+    /// writes under.
+    @discardableResult
+    func edit<T>(
+        _ classes: VMEditClasses, _ write: (borrowing VMEditPermit) throws -> T
+    ) throws -> T {
+        let owner = try requireAdmitted(.edit(classes))
+        return try write(VMEditPermit(instance: owner, authority: .edit(classes)))
     }
 
     // MARK: - Operations
@@ -823,6 +806,10 @@ struct VMOperationContext: ~Copyable, Sendable {
     /// holds — the only way to reach them.
     let bundle: VMBundle.MachineFiles
 
+    /// The permit the operation's own writes to the VM's state files act
+    /// with.
+    let permit: VMEditPermit
+
     /// What ``VMBundle/MachineFiles/init(of:_:)`` asks for, so only a context
     /// can reach a VM's machine files: the initializer is `fileprivate`, which
     /// `@testable import` does not open.
@@ -831,11 +818,15 @@ struct VMOperationContext: ~Copyable, Sendable {
     }
 
     @MainActor
-    fileprivate init(activity: VMActivity, kind: VMOperationKind, owner: any VMActivityOwner) {
+    fileprivate init(activity: VMActivity, kind: VMOperationKind, owner: VMInstance) {
         self.activity = activity
         self.kind = kind
         self.bundle = VMBundle.MachineFiles(of: owner, MachineFilesKey())
+        self.permit = VMEditPermit(instance: owner, authority: .operation(kind))
     }
+
+    /// The VM this operation holds.
+    var instance: VMInstance { permit.instance }
 
     /// The operation's live session, or `nil` once it ended or before a
     /// bring-up created one.
@@ -914,6 +905,70 @@ struct VMRevertContext: ~Copyable, Sendable {
         self.bringUp = bringUp
         self.snapshot = snapshot
         self.resumesAfter = resumesAfter
+    }
+}
+
+/// The authority one write to a VM's state files acts with, minted only by
+/// admission: by ``VMActivity/edit(_:_:)`` for the edit classes it admitted,
+/// and on every ``VMOperationContext`` for the operation's own writes.
+///
+/// Non-copyable and passed borrowed, so it cannot be stored or outlive the
+/// admission that minted it.
+struct VMEditPermit: ~Copyable, Sendable {
+    /// What admission minted a permit for.
+    enum Authority: Sendable, Equatable {
+        /// An edit admitted for these classes beside whatever holds the VM.
+        case edit(VMEditClasses)
+        /// The operation holding the VM, whose admission covers its own
+        /// writes whole.
+        case operation(VMOperationKind)
+
+        /// Whether a write of `classes` is within this authority.
+        func covers(_ classes: VMEditClasses) -> Bool {
+            switch self {
+            case .edit(let admitted): admitted.isSuperset(of: classes)
+            case .operation: true
+            }
+        }
+    }
+
+    /// The VM this permit writes.
+    let instance: VMInstance
+    let authority: Authority
+
+    /// The commits to that VM's state files — the only way to reach them.
+    let bundle: VMBundle.StateFiles
+
+    /// What ``VMBundle/StateFiles/init(of:_:)`` asks for, so only a permit can
+    /// reach a VM's state files: the initializer is `fileprivate`, which
+    /// `@testable import` does not open.
+    struct StateFilesKey {
+        fileprivate init() {}
+    }
+
+    @MainActor
+    fileprivate init(instance: VMInstance, authority: Authority) {
+        self.instance = instance
+        self.authority = authority
+        self.bundle = VMBundle.StateFiles(of: instance, StateFilesKey())
+    }
+
+    /// Writes the VM's configuration through the library it belongs to
+    /// (``VMInstance/onUpdateConfiguration``); a VM no library has wired
+    /// changes nothing and is refused as
+    /// ``VMLibrary/SettingsRefusal/noLibrary``.
+    @MainActor @discardableResult
+    func updateConfiguration(_ mutate: (inout VMConfiguration) -> Void) -> VMLibrary.SettingsWrite {
+        instance.onUpdateConfiguration?(self, mutate) ?? .refused(.noLibrary)
+    }
+
+    /// ``updateConfiguration(_:)`` for both halves of the settings
+    /// (``VMInstance/onUpdateSettings``).
+    @MainActor @discardableResult
+    func updateSettings(
+        configuration: (inout VMConfiguration) -> Void, hostState: (inout VMHostState) -> Void
+    ) -> VMLibrary.SettingsWrite {
+        instance.onUpdateSettings?(self, configuration, hostState) ?? .refused(.noLibrary)
     }
 }
 

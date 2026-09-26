@@ -251,6 +251,95 @@ struct VMActivityTests {
         }
     }
 
+    // MARK: - Edits
+
+    /// One class at a time, so a table row names the class admission refused.
+    private static let singleEditClasses: [VMEditClasses] = [
+        .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
+        .snapshotMetadata, .pairingRules, .rename, .observations,
+    ]
+
+    @Test("An edit's permit is minted exactly where admission admits the edit, naming its own VM")
+    func editMintsAPermitWhereAdmissionAdmits() throws {
+        let session = UUID()
+        let live = VMLifecyclePhase.running(sessionID: session)
+        let phases: [VMLifecyclePhase] = [
+            .stopped, live, .livePaused(sessionID: session),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true)), from: live),
+            .operating(.saving, from: live), .operating(.pausing, from: live),
+            .operating(.forceStopping, from: live), .removed,
+        ]
+        for phase in phases {
+            let (instance, _, library) = makeWiredInstance(.stopped)
+            defer { withExtendedLifetime(library) {} }
+            instance.activity.placeForTesting(phase)
+            for classes in Self.singleEditClasses {
+                let decision = instance.activity.decide(.edit(classes), posture: .commit)
+                let permitted = try? instance.activity.edit(classes) { permit in
+                    #expect(permit.instance === instance)
+                    #expect(permit.authority == .edit(classes))
+                    return true
+                }
+                #expect((permitted == true) == (decision == .admit), "\(phase) \(classes)")
+                if case .refuse(let reason) = decision {
+                    #expect(throws: VMAdmissionRefusal(refusal: reason), "\(phase) \(classes)") {
+                        try instance.activity.edit(classes) { _ in }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("A rename and a live-key write are refused at the write during a revert; presentation is not")
+    func revertRefusesRenameAndLiveKeysAtTheWrite() throws {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        let revert = VMOperationKind.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true))
+        let (instance, _, library) = makeWiredInstance(.stopped)
+        defer { withExtendedLifetime(library) {} }
+        instance.activity.placeForTesting(.operating(revert, from: live))
+
+        for classes in [VMEditClasses.rename, .liveKeys] {
+            #expect(throws: VMAdmissionRefusal(refusal: .busy(revert)), "\(classes)") {
+                try instance.activity.edit(classes) { permit in
+                    _ = permit.updateConfiguration { $0.name = "Renamed" }
+                }
+            }
+        }
+        #expect(instance.name != "Renamed")
+        let presented = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.displayPreference = .fullscreen }
+        }
+        #expect(presented.landed)
+        #expect(instance.hostState.displayPreference == .fullscreen)
+    }
+
+    @Test("An operation's own permit writes the VM it holds, where an edit beside it is refused")
+    func anOperationsPermitWritesItsOwnVM() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let (authority, besideRefusal) = try instance.activity.performNow(.deletingSnapshot) {
+            (context: borrowing VMOperationContext)
+                -> VMOperationEnding<(VMEditPermit.Authority, VMAdmissionRefusal?)> in
+            #expect(context.instance === instance)
+            #expect(context.permit.instance === instance)
+            var refusal: VMAdmissionRefusal?
+            do {
+                try instance.activity.edit(.snapshotMetadata) { _ in }
+            } catch let refused as VMAdmissionRefusal {
+                refusal = refused
+            }
+            // A machine key no settled live VM takes, written as the
+            // operation's own.
+            #expect(context.permit.updateConfiguration { $0.memorySizeInGB = 6 }.landed)
+            return .rest(.asStarted, (context.permit.authority, refusal))
+        }
+
+        #expect(authority == .operation(.deletingSnapshot))
+        #expect(besideRefusal == VMAdmissionRefusal(refusal: .busy(.deletingSnapshot)))
+        #expect(instance.configuration.memorySizeInGB == 6)
+    }
+
     // MARK: - launch
 
     @Test("launch returns with the operation committed, and its end hook sees the rest before the outcome resolves")

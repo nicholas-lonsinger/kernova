@@ -49,13 +49,15 @@ extension VMCommandCore {
             return
         }
 
-        // Before the boot geometry is applied: a pop-out VM's window is what
-        // `displayBootSurface` measures, and readying is what opens it.
+        // Before the boot geometry is applied inside the start: a pop-out VM's
+        // window is what `displayBootSurface` measures, and readying is what
+        // opens it.
         readyDisplay?(instance)
-        applyMatchWindowBootResolution(to: instance)
         let route: GuestStartRoute
         do {
-            route = try await lifecycle.start(instance, start, provisioning: provisioning)
+            route = try await lifecycle.start(instance, start, provisioning: provisioning) {
+                self.applyMatchWindowBootResolution($0)
+            }
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
@@ -65,7 +67,10 @@ extension VMCommandCore {
         // does not land is reported with the start that spent it — the VM
         // stays up, and the password is kept with the intent it answers.
         guard route == .coldBoot, instance.configuration.pendingGuestAccount != nil else { return }
-        guard case .saved = library.retractGuestAccount(for: instance) else {
+        let retraction = try? instance.activity.edit(.observations) {
+            library.retractGuestAccount($0)
+        }
+        guard case .saved? = retraction else {
             throw CommandError.operationFailed(
                 verb: .start,
                 message:
@@ -238,7 +243,10 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Skipping the account '\(account.username, privacy: .public)' '\(instance.name, privacy: .public)' was set up with — macOS asks for one in Setup Assistant instead"
         )
-        switch library.retractGuestAccount(for: instance) {
+        let write = try edit(.liveKeys, on: instance, verb: .start) { permit in
+            library.retractGuestAccount(permit)
+        }
+        switch write {
         case .saved:
             return
         case .refused(let refusal):
@@ -269,11 +277,13 @@ extension VMCommandCore {
     // MARK: - Boot Geometry
 
     /// Resizes a cold-booting VM's display to the surface it is about to appear
-    /// on, persisting the result before the VZ configuration is built.
+    /// on, persisting the result as a write of the start `permit` belongs to,
+    /// before the VZ configuration is built.
     ///
     /// Left alone when a save file exists: VZ restores only into a configuration
     /// identical to the saved one, and a mismatch fails the restore.
-    private func applyMatchWindowBootResolution(to instance: VMInstance) {
+    private func applyMatchWindowBootResolution(_ permit: borrowing VMEditPermit) {
+        let instance = permit.instance
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
         guard let surface = displayBootSurface?(instance) else {
             #log(
@@ -288,9 +298,7 @@ extension VMCommandCore {
         let scale = hiDPI ? surface.backingScaleFactor : 1
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: surface.pointSize, backingScaleFactor: scale)
-        switch library.updateConfiguration(
-            of: instance, mutate: { $0.displayResolution = resolution })
-        {
+        switch library.updateConfiguration(permit, mutate: { $0.displayResolution = resolution }) {
         case .saved:
             break
         case .notSaved:
@@ -514,7 +522,7 @@ extension VMCommandCore {
             Self.logger, .warning,
             "Dropping the guest account for '\(instance.name, privacy: .public)': \(image, privacy: .public) does not run the guest provisioning protocol"
         )
-        try library.retractGuestAccount(for: instance).get()
+        try instance.activity.edit(.observations) { try library.retractGuestAccount($0).get() }
     }
 
     /// Cancels the in-progress guest setup — a macOS install, or a Linux

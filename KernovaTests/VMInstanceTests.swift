@@ -1514,10 +1514,10 @@ struct VMInstanceTests {
         #expect(instance.agentStatus == .waiting)
     }
 
-    // MARK: - performConfigurationMutation
+    // MARK: - VMEditPermit.updateConfiguration
 
     @Test("A mutation the persistence pipeline could not write reports that it did not land")
-    func mutationReportsAFailedWrite() {
+    func mutationReportsAFailedWrite() throws {
         let instance = VMInstanceFixture.make()
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(holding: [instance], storage: storage)
@@ -1525,8 +1525,8 @@ struct VMInstanceTests {
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
         let before = instance.configuration
 
-        let outcome = instance.performConfigurationMutation {
-            $0.displayHiDPI.toggle()
+        let outcome = try instance.activity.edit(.machineKeys) {
+            $0.updateConfiguration { $0.displayHiDPI.toggle() }
         }
 
         // Memory stays what the bundle holds, and the caller is told the save
@@ -1537,13 +1537,13 @@ struct VMInstanceTests {
     }
 
     @Test("A mutation on an instance no library has wired changes nothing")
-    func mutationWithoutPersistenceChangesNothing() {
+    func mutationWithoutPersistenceChangesNothing() throws {
         let instance = VMInstanceFixture.make()
         let before = instance.configuration
 
         #expect(
-            instance.performConfigurationMutation {
-                $0.displayHiDPI.toggle()
+            try instance.activity.edit(.machineKeys) {
+                $0.updateConfiguration { $0.displayHiDPI.toggle() }
             }.refusedForNoLibrary)
         #expect(instance.configuration == before)
     }

@@ -99,7 +99,8 @@ struct VMBundleTests {
         let bundle = instance.bundle
         switch file {
         case .configuration:
-            return library.updateConfiguration(of: instance) { $0.name = "Mine" }.landed
+            return (try? library.updateConfiguration(of: instance, as: .rename) { $0.name = "Mine" })?
+                .landed == true
         case .hostState:
             return (try? bundle.commitHostState { $0.displayPreference = .popOut }) != nil
         case .snapshotManifest:
@@ -241,7 +242,9 @@ struct VMBundleTests {
             let corrupt = Data("{ not json".utf8)
             try corrupt.write(to: configURL)
 
-            let write = library.updateConfiguration(of: instance) { $0.name = "Renamed" }
+            let write = try library.updateConfiguration(of: instance, as: .rename) {
+                $0.name = "Renamed"
+            }
 
             #expect(write.failedToSave)
             #expect(instance.configuration == before)
@@ -665,5 +668,31 @@ struct VMBundleTests {
         let diskURL = VMBundleLayout(bundleURL: bundle.url).additionalDiskURL(id: id)
         #expect(diskImages.lastCreatedDiskImageURL == diskURL)
         #expect(fileSystem.trashedURLs == [diskURL])
+    }
+}
+
+extension VMBundle {
+    /// Commits through a permit on a stopped VM over this bundle — what every
+    /// state-file write holds — for the tests that exercise the bundle's files
+    /// rather than a verb.
+    fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
+        let instance = VMInstance(bundle: self, phase: .stopped, preferences: makeTestPreferences())
+        try instance.activity.edit(.observations, commit)
+    }
+
+    fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+        try permitted { try $0.bundle.commitHostState(change) }
+    }
+
+    fileprivate func commitSnapshotManifest(
+        _ change: (inout VMSnapshotManifest) throws -> Void
+    ) throws {
+        try permitted { try $0.bundle.commitSnapshotManifest(change) }
+    }
+
+    fileprivate func commitUSBPairings(
+        _ change: (inout USBAccessoryPairingSet) throws -> Void
+    ) throws {
+        try permitted { try $0.bundle.commitUSBPairings(change) }
     }
 }

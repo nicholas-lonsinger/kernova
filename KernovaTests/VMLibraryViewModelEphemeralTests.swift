@@ -297,10 +297,10 @@ struct VMLibraryViewModelEphemeralTests {
     func revertKeepsTheHostState() async throws {
         let harness = try await makeHarness()
         let instance = harness.instance
-        let capturedCPUs = instance.configuration.cpuCount
-        harness.viewModel.library.updateSettings(
-            of: instance,
-            configuration: { $0.cpuCount = capturedCPUs + 1 },
+        let capturedSharing = instance.configuration.clipboardSharingEnabled
+        try harness.viewModel.library.updateSettings(
+            of: instance, as: [.liveKeys, .hostPresentation, .observations],
+            configuration: { $0.clipboardSharingEnabled = !capturedSharing },
             hostState: {
                 $0.startsAutomaticallyOnLaunch = true
                 $0.displayPreference = .fullscreen
@@ -313,7 +313,7 @@ struct VMLibraryViewModelEphemeralTests {
         await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
-        #expect(instance.configuration.cpuCount == capturedCPUs)
+        #expect(instance.configuration.clipboardSharingEnabled == capturedSharing)
         #expect(instance.hostState == editedHostState)
         #expect(harness.storage.hostStates[instance.bundleURL] == editedHostState)
     }

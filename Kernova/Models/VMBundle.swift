@@ -16,7 +16,8 @@ import KernovaLogging
 /// A commit reads the file, applies its change to what the file holds, replaces
 /// the file, and only then publishes the new value; one that throws leaves the
 /// value as it was. The change runs inside the coordinated write, so it must be
-/// pure — no UI, no suspension, no second access to this bundle.
+/// pure — no UI, no suspension, no second access to this bundle. Commits are
+/// reached only through ``StateFiles``.
 ///
 /// A machine-file operation runs its file work off the main actor, through
 /// ``VMBundleMachineFileWorking``. Every one that changes the bundle is
@@ -93,23 +94,23 @@ final class VMBundle {
 
     // MARK: - State files
 
-    /// Commits `change` to `config.json`; `key` confines the call to
-    /// ``VMLibrary``, which owns the refusals a configuration write passes.
-    func commitConfiguration(
-        key _: VMLibrary.ConfigurationWriteKey, _ change: (inout VMConfiguration) throws -> Void
-    ) throws {
+    fileprivate func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
         publish(try files.update(.configuration, change), to: \.configuration)
     }
 
-    func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+    fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
         publish(try files.update(.hostState, change), to: \.hostState)
     }
 
-    func commitSnapshotManifest(_ change: (inout VMSnapshotManifest) throws -> Void) throws {
+    fileprivate func commitSnapshotManifest(
+        _ change: (inout VMSnapshotManifest) throws -> Void
+    ) throws {
         publish(try files.update(.snapshotManifest, change), to: \.snapshotManifest)
     }
 
-    func commitUSBPairings(_ change: (inout USBAccessoryPairingSet) throws -> Void) throws {
+    fileprivate func commitUSBPairings(
+        _ change: (inout USBAccessoryPairingSet) throws -> Void
+    ) throws {
         publish(try files.update(.usbPairings, change), to: \.usbPairings)
     }
 
@@ -140,6 +141,45 @@ final class VMBundle {
 }
 
 extension VMBundle {
+    /// One VM's state-file commits — reachable only as ``VMEditPermit/bundle``,
+    /// so every write holds a permit admission minted, on that VM's own bundle.
+    ///
+    /// Every call commits to the bundle the VM lives in at that moment, as
+    /// ``MachineFiles`` does.
+    @MainActor
+    struct StateFiles: ~Copyable, Sendable {
+        private let owner: VMInstance
+
+        /// `key` is what only ``VMEditPermit`` mints, over its own VM.
+        init(of owner: VMInstance, _ key: VMEditPermit.StateFilesKey) {
+            self.owner = owner
+        }
+
+        private var bundle: VMBundle { owner.bundle }
+
+        /// Commits `change` to `config.json`; `policy` confines the call to
+        /// ``VMLibrary``, which owns the refusals and the live policy a
+        /// configuration write passes.
+        func commitConfiguration(
+            policy _: VMLibrary.ConfigurationPolicyKey,
+            _ change: (inout VMConfiguration) throws -> Void
+        ) throws {
+            try bundle.commitConfiguration(change)
+        }
+
+        func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+            try bundle.commitHostState(change)
+        }
+
+        func commitSnapshotManifest(_ change: (inout VMSnapshotManifest) throws -> Void) throws {
+            try bundle.commitSnapshotManifest(change)
+        }
+
+        func commitUSBPairings(_ change: (inout USBAccessoryPairingSet) throws -> Void) throws {
+            try bundle.commitUSBPairings(change)
+        }
+    }
+
     /// One VM's machine-file operations — reachable only as
     /// ``VMOperationContext/bundle``, so only an operation holding the VM runs
     /// them, and only on that VM's own bundle.
@@ -151,10 +191,10 @@ extension VMBundle {
     /// operation either.
     @MainActor
     struct MachineFiles: ~Copyable, Sendable {
-        private let owner: any VMActivityOwner
+        private let owner: VMInstance
 
         /// `key` is what only ``VMOperationContext`` mints, over its own VM.
-        init(of owner: any VMActivityOwner, _ key: VMOperationContext.MachineFilesKey) {
+        init(of owner: VMInstance, _ key: VMOperationContext.MachineFilesKey) {
             self.owner = owner
         }
 

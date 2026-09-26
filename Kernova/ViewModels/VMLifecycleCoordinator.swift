@@ -75,13 +75,17 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Lifecycle
 
-    /// Brings `instance` up by the guest start `kind` names.
+    /// Brings `instance` up by the guest start `kind` names, running
+    /// `beforeBoot` first as a write of the start.
     func start(
         _ instance: VMInstance, _ kind: VMGuestStartKind,
-        provisioning: GuestProvisioningCredentials? = nil
+        provisioning: GuestProvisioningCredentials? = nil,
+        beforeBoot: (borrowing VMEditPermit) -> Void = { _ in }
     ) async throws -> GuestStartRoute {
         try await instance.activity.startGuest(kind) { context in
-            try await virtualizationService.start(instance, context, provisioning: provisioning)
+            beforeBoot(context.bringUp.operation.permit)
+            return try await virtualizationService.start(
+                instance, context, provisioning: provisioning)
         }
     }
 
@@ -108,9 +112,15 @@ final class VMLifecycleCoordinator {
     /// behind a file that is not there. A removal the file system turned down
     /// leaves the VM resting on the slot it still holds and throws
     /// ``VirtualizationError/savedStateNotDiscarded``.
-    func discardSavedState(_ instance: VMInstance) throws {
+    ///
+    /// `before` runs first, as a write of the discard: what throws there
+    /// leaves the saved state in place.
+    func discardSavedState(
+        _ instance: VMInstance, before: (borrowing VMEditPermit) throws -> Void = { _ in }
+    ) throws {
         try instance.activity.performNow(.discardingSavedState) {
             (context: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+            try before(context.permit)
             context.bundle.removeSaveFile()
             guard !context.bundle.hasSaveFile else {
                 return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
@@ -160,7 +170,7 @@ final class VMLifecycleCoordinator {
     /// can reach or remove, so the capture is undone.
     func takeSnapshot(
         _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotCaptureRequest,
-        record: @MainActor (VMSnapshot) throws -> Void
+        record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         try await instance.activity.captureSnapshot(mode) { context in
             // Read before the capture, since the capture is what clears them.
@@ -181,7 +191,7 @@ final class VMLifecycleCoordinator {
             }
             guard case .rest(let rest, let captured) = ending else { return ending }
             do {
-                try record(captured)
+                try record(context.operation.permit, captured)
             } catch {
                 await context.operation.bundle.removeSnapshotDirectory(captured.id)
                 return .failed(rest, error)
@@ -316,15 +326,16 @@ final class VMLifecycleCoordinator {
     ///
     /// Admitted and committed before this returns, so whatever asks next —
     /// a Start, a quit, the next power-off — finds the VM held by the revert.
-    /// `landed` runs inside the operation once the snapshot's files are in the
-    /// bundle, including when the resume after them failed; a throw from it
-    /// fails the revert.
+    /// `landed` runs inside the operation, as its write, once the snapshot's
+    /// files are in the bundle, including when the resume after them failed;
+    /// a throw from it fails the revert.
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
         origin: VMRequestOrigin = .newWork,
-        commitConfiguration: @escaping @MainActor (VMSnapshotRestorePlan) throws -> Void,
-        landed: @escaping @MainActor () throws -> Void
+        commitConfiguration:
+            @escaping @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void,
+        landed: @escaping @MainActor (borrowing VMEditPermit) throws -> Void
     ) throws -> VMOutcome {
         try instance.activity.launchRevert(
             to: snapshot, resumesAfter: resumesAfter, origin: origin
@@ -334,13 +345,13 @@ final class VMLifecycleCoordinator {
                 instance, context, commitConfiguration: commitConfiguration)
             switch ending {
             case .rest(let rest, _):
-                do { try landed() } catch { return .failed(rest, error) }
+                do { try landed(context.bringUp.operation.permit) } catch { return .failed(rest, error) }
             case .failed(let rest, let error):
                 // A resume that failed left the reverted files in place, so the
                 // VM's state does descend from this snapshot. Any other failure
                 // left nothing behind.
                 guard case VirtualizationError.revertResumeFailed = error else { break }
-                do { try landed() } catch { return .failed(rest, error) }
+                do { try landed(context.bringUp.operation.permit) } catch { return .failed(rest, error) }
             }
             return ending
         }
@@ -352,10 +363,11 @@ final class VMLifecycleCoordinator {
     /// busy has unlisted nothing. An `unlist` that throws leaves the files in
     /// place.
     func discardSnapshot(
-        _ instance: VMInstance, snapshotID: UUID, unlist: @MainActor () throws -> Void
+        _ instance: VMInstance, snapshotID: UUID,
+        unlist: @MainActor (borrowing VMEditPermit) throws -> Void
     ) async throws {
         try await instance.activity.perform(.deletingSnapshot) { context in
-            try unlist()
+            try unlist(context.permit)
             try await context.bundle.discardSnapshot(snapshotID)
             return .rest(.asStarted, ())
         }
@@ -454,7 +466,7 @@ final class VMLifecycleCoordinator {
                 case .macOSInstall(let context):
                     try await self.installMacOS(on: instance, operation, context: context)
                 case .linuxImageDownload(let context):
-                    try await self.downloadLinuxImage(on: instance, context: context)
+                    try await self.downloadLinuxImage(on: instance, operation, context: context)
                 }
                 // A cancel accepted while the pipeline was drawing to a close
                 // still means the VM must not boot.
@@ -547,7 +559,7 @@ final class VMLifecycleCoordinator {
                         // delete-time cleanup stay keyed to it — a step the
                         // install stops on, since a download no record
                         // points at can be neither resumed nor cleaned up.
-                        try instance.performConfigurationMutation {
+                        try operation.operation.permit.updateConfiguration {
                             $0.installContext?.downloadDestinationPath =
                                 downloadDestination.path(percentEncoded: false)
                             $0.installContext?.requestedFreshDownload = false
@@ -581,7 +593,7 @@ final class VMLifecycleCoordinator {
                     )
                     // Recorded before anything is trashed, or a retry would
                     // trash what this download fetched.
-                    try instance.performConfigurationMutation {
+                    try operation.operation.permit.updateConfiguration {
                         $0.installContext?.requestedFreshDownload = false
                     }.get()
                 }
@@ -614,7 +626,7 @@ final class VMLifecycleCoordinator {
                 // write that fails costs nothing here: it is reported, and
                 // the next attempt resolves the bookmark again.
                 if let reference, let healed = opened?.healedTo {
-                    instance.performConfigurationMutation {
+                    operation.operation.permit.updateConfiguration {
                         $0.healExternalReference(
                             reference, movedTo: healed.path, bookmark: healed.bookmark)
                     }
@@ -639,7 +651,7 @@ final class VMLifecycleCoordinator {
             // interrupting the two must leave the next Start something to ask
             // about. An install whose completion does not land fails: the
             // context stays on disk, so the next Start installs again.
-            try instance.performConfigurationMutation {
+            try operation.operation.permit.updateConfiguration {
                 $0.installContext = nil
                 $0.installedImage = installedImage
             }.get()
@@ -771,6 +783,7 @@ final class VMLifecycleCoordinator {
     /// whatever partial bytes are on disk.
     private func downloadLinuxImage(
         on instance: VMInstance,
+        _ operation: borrowing VMBringUpContext,
         context: LinuxInstallContext
     ) async throws {
         #log(
@@ -823,7 +836,7 @@ final class VMLifecycleCoordinator {
             // Keep the persisted path on the file the download writes, so
             // resume across relaunches and delete-time cleanup stay keyed
             // to it; the download does not start unless it lands.
-            try instance.performConfigurationMutation {
+            try operation.operation.permit.updateConfiguration {
                 $0.linuxInstallContext?.downloadDestinationPath =
                     downloadDestination.path(percentEncoded: false)
             }.get()
@@ -888,7 +901,7 @@ final class VMLifecycleCoordinator {
 
             try attachInstallerImage(
                 at: downloadDestination, named: image.filename,
-                from: InstalledImage(linuxSource: context.source), to: instance)
+                from: InstalledImage(linuxSource: context.source), operation.operation.permit)
             instance.setupState = nil
         } catch is CancellationError {
             #log(
@@ -951,8 +964,9 @@ final class VMLifecycleCoordinator {
     /// track the file if the user later moves it.
     private func attachInstallerImage(
         at destination: URL, named filename: String, from installedImage: InstalledImage?,
-        to instance: VMInstance
+        _ permit: borrowing VMEditPermit
     ) throws {
+        let instance = permit.instance
         let installer = StorageDisk(
             path: destination.path(percentEncoded: false),
             readOnly: true,
@@ -960,7 +974,7 @@ final class VMLifecycleCoordinator {
             bookmark: SecurityScopedBookmark.make(for: destination)
         )
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        try instance.performConfigurationMutation { config in
+        try permit.updateConfiguration { config in
             // Position [0] is what EFI boots first, which is the whole reason
             // the installer is on the list at all.
             config.setStorageDisks([installer] + config.effectiveStorageDisks(layout: layout))

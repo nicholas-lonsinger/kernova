@@ -271,11 +271,13 @@ final class USBAccessoryCoordinator {
 
     // MARK: - The User's Own Edits
 
-    /// Records the pairing an attach the user asked for creates, and takes the
-    /// accessory's key off every other VM; throws when a pairing write fails.
-    func userAttached(_ accessory: USBAccessoryInfo, to instance: VMInstance) throws {
+    /// Records the pairing an attach the user asked for creates on the VM
+    /// `permit` writes, and takes the accessory's key off every other VM;
+    /// throws when a pairing write fails or is refused.
+    func userAttached(_ accessory: USBAccessoryInfo, _ permit: borrowing VMEditPermit) throws {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
-        try pairings.pairUSBAccessory(pairing, with: instance)
+        try pairings.pairUSBAccessory(pairing, permit)
+        let instance = permit.instance
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will take USB accessory \(accessory.displayName, privacy: .public) back automatically"
@@ -293,12 +295,14 @@ final class USBAccessoryCoordinator {
         releasedByUser.insert(identity)
     }
 
-    /// Forgets the pairing a detach the user asked for ends; throws when the
-    /// write fails, and the pairing stays for the device's next arrival after
-    /// the echo ``userDetaching(_:)`` armed for.
-    func userReleased(_ accessory: USBAccessoryInfo, from instance: VMInstance) throws {
+    /// Forgets the pairing a detach the user asked for ends on the VM
+    /// `permit` writes; throws when the write fails, and the pairing stays for
+    /// the device's next arrival after the echo ``userDetaching(_:)`` armed
+    /// for.
+    func userReleased(_ accessory: USBAccessoryInfo, _ permit: borrowing VMEditPermit) throws {
         guard let identity = accessory.identity else { return }
-        try pairings.updateUSBPairings(of: instance) { $0.remove(key: identity.key) }
+        try pairings.updateUSBPairings(permit) { $0.remove(key: identity.key) }
+        let instance = permit.instance
         #log(
             Self.logger, .notice,
             "'\(instance.name, privacy: .public)' will no longer take USB accessory \(accessory.displayName, privacy: .public) back automatically"

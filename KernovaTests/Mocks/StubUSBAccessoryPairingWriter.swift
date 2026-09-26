@@ -19,17 +19,19 @@ final class StubUSBAccessoryPairingWriter: USBAccessoryPairingWriting {
     }
 
     func updateUSBPairings(
-        of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
+        _ permit: borrowing VMEditPermit, mutate: (inout USBAccessoryPairingSet) -> Void
     ) throws {
         if let writeError { throw writeError }
-        try instance.bundle.commitUSBPairings(mutate)
+        try permit.bundle.commitUSBPairings(mutate)
     }
 
-    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws {
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, _ permit: borrowing VMEditPermit) throws {
         for other in roster?.instances ?? []
-        where other !== instance && other.usbPairings.pairing(forKey: pairing.key) != nil {
-            try updateUSBPairings(of: other) { $0.remove(key: pairing.key) }
+        where other !== permit.instance && other.usbPairings.pairing(forKey: pairing.key) != nil {
+            try other.activity.edit(.pairingRules) { otherPermit in
+                try updateUSBPairings(otherPermit) { $0.remove(key: pairing.key) }
+            }
         }
-        try updateUSBPairings(of: instance) { $0.upsert(pairing) }
+        try updateUSBPairings(permit) { $0.upsert(pairing) }
     }
 }

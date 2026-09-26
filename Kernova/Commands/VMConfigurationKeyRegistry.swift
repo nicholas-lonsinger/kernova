@@ -204,6 +204,17 @@ struct VMConfigurationKey: Sendable {
             name: name, summary: summary, editableWhileRunning: gate.editableWhileRunning)
     }
 
+    /// What a write of `value` touches — the edit classes the permit for it is
+    /// minted for, read off ``capability(writing:)``.
+    func editClasses(writing value: String) -> VMEditClasses {
+        let capability = capability(writing: value)
+        guard let classes = capability.editClasses else {
+            assertionFailure("The gate capability \(capability) names no edit class")
+            return .all
+        }
+        return classes
+    }
+
     /// The capability a write of `value` has to pass.
     ///
     /// Only the network mode's gate depends on the value: a device cannot be

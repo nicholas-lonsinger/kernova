@@ -266,8 +266,9 @@ struct VMCommandCoreTests {
     func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
         harness.vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
-        let instance = makeInstance(in: harness, name: "Addressed", phase: .running(sessionID: UUID()))
-        harness.library.updateConfiguration(of: instance) {
+        let instance = makeInstance(
+            in: harness, name: "Addressed", phase: .running(sessionID: UUID())
+        ) {
             $0.networkEnabled = true
             $0.networkMode = .shared
             $0.macAddress = "aa:bb:cc:dd:ee:01"

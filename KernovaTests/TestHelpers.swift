@@ -134,50 +134,87 @@ extension VMLibrary {
     }
 
     /// Applies `mutate` to `instance`'s host state as setup a test relies on,
-    /// recording an issue when the write does not land.
+    /// under a permit admission mints for `classes`, recording an issue when
+    /// the edit is refused or does not land.
     func editHostState(
-        of instance: VMInstance,
+        of instance: VMInstance, as classes: VMEditClasses = .liveKeys,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMHostState) -> Void
     ) {
-        guard
-            case .saved = updateHostState(of: instance, mutate: mutate)
-        else {
+        let write = try? instance.activity.edit(classes) { updateHostState($0, mutate: mutate) }
+        guard case .saved? = write else {
             Issue.record("the host-state edit did not land", sourceLocation: sourceLocation)
             return
         }
     }
 
     /// Applies `mutate` to `instance`'s configuration as setup a test relies
-    /// on, recording an issue when the write is refused or does not land.
+    /// on, under a permit admission mints for `classes`, recording an issue
+    /// when the edit is refused or does not land.
     func editConfiguration(
-        of instance: VMInstance,
+        of instance: VMInstance, as classes: VMEditClasses = .liveKeys,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMConfiguration) -> Void
     ) {
-        guard case .saved = updateConfiguration(of: instance, mutate: mutate)
-        else {
+        let write = try? instance.activity.edit(classes) { updateConfiguration($0, mutate: mutate) }
+        guard case .saved? = write else {
             Issue.record("the configuration edit did not land", sourceLocation: sourceLocation)
             return
         }
     }
+
+    /// ``updateConfiguration(_:mutate:)`` under a permit admission mints on
+    /// `instance` for `classes`; throws the refusal when admission gives one.
+    @discardableResult
+    func updateConfiguration(
+        of instance: VMInstance, as classes: VMEditClasses,
+        mutate: (inout VMConfiguration) -> Void
+    ) throws -> SettingsWrite {
+        try instance.activity.edit(classes) { updateConfiguration($0, mutate: mutate) }
+    }
+
+    /// ``updateSettings(_:configuration:hostState:)`` under a permit admission
+    /// mints on `instance` for `classes`.
+    @discardableResult
+    func updateSettings(
+        of instance: VMInstance, as classes: VMEditClasses,
+        configuration: (inout VMConfiguration) -> Void, hostState: (inout VMHostState) -> Void
+    ) throws -> SettingsWrite {
+        try instance.activity.edit(classes) {
+            updateSettings($0, configuration: configuration, hostState: hostState)
+        }
+    }
+
+    /// ``updateUSBPairings(_:mutate:)`` under a ``VMEditClasses/pairingRules``
+    /// permit on `instance`.
+    func updateUSBPairings(
+        of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
+    ) throws {
+        try instance.activity.edit(.pairingRules) { try updateUSBPairings($0, mutate: mutate) }
+    }
 }
 
 extension VMInstance {
+    /// Commits `change` to this VM's snapshot manifest as setup a test relies
+    /// on, under a ``VMEditClasses/snapshotMetadata`` permit.
+    func editSnapshotManifest(_ change: (inout VMSnapshotManifest) -> Void) throws {
+        try activity.edit(.snapshotMetadata) { try $0.bundle.commitSnapshotManifest(change) }
+    }
+
     /// Puts `manifest` in this fixture VM's bundle as though the bundle already
     /// held it, snapshot MAC stubs included, and has the bundle read it back.
     ///
     /// For a VM built over ``InMemoryVMBundleFiles`` — what every fixture is.
     func seedSnapshotManifest(_ manifest: VMSnapshotManifest) {
         seedBundleFiles { $0.setManifest(manifest, at: bundleURL) }
-        refreshBundle { try $0.commitSnapshotManifest { _ in } }
+        refreshBundle { try $0.bundle.commitSnapshotManifest { _ in } }
     }
 
     /// Puts `pairings` in this fixture VM's bundle as though the bundle
     /// already held them, and has the bundle read them back.
     func seedUSBPairings(_ pairings: USBAccessoryPairingSet) {
         seedBundleFiles { $0.setPairings(pairings, at: bundleURL) }
-        refreshBundle { try $0.commitUSBPairings { _ in } }
+        refreshBundle { try $0.bundle.commitUSBPairings { _ in } }
     }
 
     /// The in-memory store this fixture VM's bundle files live in — the store
@@ -197,10 +234,12 @@ extension VMInstance {
     }
 
     /// A commit that changes nothing reads the file and publishes what it
-    /// holds, which is how a seeded file reaches memory.
-    private func refreshBundle(_ commit: (VMBundle) throws -> Void) {
+    /// holds, which is how a seeded file reaches memory — made under a
+    /// ``VMEditClasses/observations`` permit, which every phase a fixture
+    /// seeds in admits.
+    private func refreshBundle(_ commit: (borrowing VMEditPermit) throws -> Void) {
         do {
-            try commit(bundle)
+            try activity.edit(.observations, commit)
         } catch {
             preconditionFailure("A seeded bundle file could not be read back: \(error)")
         }
@@ -333,8 +372,30 @@ func withOperation<T>(
     on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
 ) async throws -> T {
     let instance = VMInstance(bundle: bundle, phase: .stopped, preferences: makeTestPreferences())
-    return try await instance.activity.perform(.deletingSnapshot) { context in
+    return try await withOperation(on: instance, .deletingSnapshot, body)
+}
+
+/// Runs `body` as the operation `kind` on `instance`, which rests where it
+/// started — what a test needs to act with an operation's context, or with
+/// the permit its own writes hold.
+@MainActor
+func withOperation<T>(
+    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    _ body: (borrowing VMOperationContext) async throws -> T
+) async throws -> T {
+    try await instance.activity.perform(kind) { context in
         .rest(.asStarted, try await body(context))
+    }
+}
+
+/// The synchronous ``withOperation(on:_:_:)``.
+@MainActor
+func withOperationNow<T>(
+    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    _ body: (borrowing VMOperationContext) throws -> T
+) throws -> T {
+    try instance.activity.performNow(kind) { context in
+        .rest(.asStarted, try body(context))
     }
 }
 

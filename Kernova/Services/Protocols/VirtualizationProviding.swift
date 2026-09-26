@@ -95,6 +95,6 @@ protocol VirtualizationProviding: Sendable {
     /// was.
     func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
-        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
+        commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void>
 }

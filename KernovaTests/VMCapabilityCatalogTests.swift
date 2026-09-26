@@ -843,7 +843,7 @@ struct VMCapabilityCatalogTests {
 
     @available(macOS 27.0, *)
     @Test("A retraction leaves nothing owed and nothing held")
-    func retractingEndsBothHalves() {
+    func retractingEndsBothHalves() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
             $0.pendingGuestAccount = GuestAccountIntent(
@@ -853,7 +853,8 @@ struct VMCapabilityCatalogTests {
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
 
-        #expect(harness.library.retractGuestAccount(for: instance).landed)
+        #expect(
+            try instance.activity.edit(.liveKeys) { harness.library.retractGuestAccount($0) }.landed)
 
         // Not "asks again": the window is gone, so the question is gone with it.
         #expect(instance.configuration.pendingGuestAccount == nil)
@@ -863,12 +864,13 @@ struct VMCapabilityCatalogTests {
 
     @available(macOS 27.0, *)
     @Test("Retracting an account a VM never owed writes nothing")
-    func retractingWithoutAnAccountWritesNothing() {
+    func retractingWithoutAnAccountWritesNothing() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
         let writesBefore = harness.storage.saveConfigurationCallCount
 
-        #expect(harness.library.retractGuestAccount(for: instance).landed)
+        #expect(
+            try instance.activity.edit(.liveKeys) { harness.library.retractGuestAccount($0) }.landed)
 
         #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }

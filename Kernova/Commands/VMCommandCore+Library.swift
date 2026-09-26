@@ -47,9 +47,10 @@ extension VMCommandCore {
         #log(
             Self.logger, .debug,
             "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
-        switch library.updateConfiguration(
-            of: instance, mutate: { $0.name = trimmed })
-        {
+        let write = try edit(VMCapability.rename, on: instance, verb: .rename) { permit in
+            library.updateConfiguration(permit) { $0.name = trimmed }
+        }
+        switch write {
         case .saved:
             return
         case .refused(let refusal):

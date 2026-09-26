@@ -28,7 +28,7 @@ enum DetailPaneMode: Sendable {
 /// Runtime wrapper around a VM configuration, its backing virtual machine, and current status.
 @MainActor
 @Observable
-final class VMInstance: VMActivityOwner {
+final class VMInstance {
     // MARK: - Properties
 
     let instanceID: UUID
@@ -151,23 +151,30 @@ final class VMInstance: VMActivityOwner {
     /// whole session, not just at the moment of boot.
     var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
 
-    /// Routes a host-side mutation of this instance's configuration through
-    /// ``VMLibrary/updateConfiguration(of:mutate:)``, answering what that
-    /// answers.
+    /// Routes a configuration write made under a permit for this VM through
+    /// ``VMLibrary/updateConfiguration(_:mutate:)``, answering what that
+    /// answers — ``VMEditPermit/updateConfiguration(_:)``.
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`; `nil` for instances created
     /// outside a library.
     @ObservationIgnored
-    var onUpdateConfiguration: (@MainActor ((inout VMConfiguration) -> Void) -> VMLibrary.SettingsWrite)?
+    var onUpdateConfiguration:
+        (
+            @MainActor (borrowing VMEditPermit, (inout VMConfiguration) -> Void)
+                -> VMLibrary.SettingsWrite
+        )?
 
-    /// Routes a host-side mutation of both halves of this instance's settings
-    /// through ``VMLibrary/updateSettings(of:configuration:hostState:)``,
-    /// answering what that answers; wired alongside ``onUpdateConfiguration``.
+    /// Routes a write of both halves of this VM's settings through
+    /// ``VMLibrary/updateSettings(_:configuration:hostState:)`` —
+    /// ``VMEditPermit/updateSettings(configuration:hostState:)``; wired
+    /// alongside ``onUpdateConfiguration``.
     @ObservationIgnored
     var onUpdateSettings:
         (
-            @MainActor ((inout VMConfiguration) -> Void, (inout VMHostState) -> Void)
-                -> VMLibrary.SettingsWrite
+            @MainActor (
+                borrowing VMEditPermit, (inout VMConfiguration) -> Void,
+                (inout VMHostState) -> Void
+            ) -> VMLibrary.SettingsWrite
         )?
 
     /// Fired when the guest agent handshakes a new version that is current
@@ -176,25 +183,6 @@ final class VMInstance: VMActivityOwner {
     ///
     /// The host uses it to auto-eject the guest-agent installer disk.
     @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
-
-    /// Applies a configuration mutation through ``onUpdateConfiguration``,
-    /// answering how the write ended. An instance no library has wired changes
-    /// nothing and is refused as ``VMLibrary/SettingsRefusal/noLibrary``.
-    @discardableResult
-    func performConfigurationMutation(_ mutate: (inout VMConfiguration) -> Void)
-        -> VMLibrary.SettingsWrite
-    {
-        onUpdateConfiguration?(mutate) ?? .refused(.noLibrary)
-    }
-
-    /// ``performConfigurationMutation(_:)`` for a mutation of both halves of
-    /// the settings, through ``onUpdateSettings``.
-    @discardableResult
-    func performSettingsMutation(
-        configuration: (inout VMConfiguration) -> Void, hostState: (inout VMHostState) -> Void
-    ) -> VMLibrary.SettingsWrite {
-        onUpdateSettings?(configuration, hostState) ?? .refused(.noLibrary)
-    }
 
     // MARK: - Session Projection
 
@@ -550,6 +538,8 @@ final class VMInstance: VMActivityOwner {
             terminating: peers?.isTerminating ?? false)
     }
 
+    /// The live VM whose identity bringing this one up by `kind` would
+    /// duplicate, or `nil` when nothing collides.
     func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
         peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
     }
@@ -651,9 +641,11 @@ final class VMInstance: VMActivityOwner {
     func beginSessionContext(
         _ bringUp: borrowing VMBringUpContext, bootedIntoRecovery: Bool = false
     ) -> VMSessionContext {
-        activity.beginSessionContext(bringUp) {
+        let context = activity.beginSessionContext(bringUp) {
             makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
         }
+        writeHeals(of: context, bringUp.operation.permit)
+        return context
     }
 
     #if DEBUG
@@ -745,20 +737,25 @@ final class VMInstance: VMActivityOwner {
             })
     }
 
-    // MARK: - Activity Owner
+    // MARK: - Activity Callbacks
 
+    /// Called by ``activity`` once the session is released.
     func sessionDidEnd() {
         // A VM with no session has no display to place, and `.hidden`
         // (headless) has no window whose close would say so.
         displayMode = .inline
     }
 
+    /// Called by ``activity`` once a power-off has rested the VM, before
+    /// ``VMActivity/onPoweredOff`` fires.
     func guestDidPowerOff() {
         // Reset so the next start lands on the display rather than inheriting
         // a stuck settings mode from the previous session.
         detailPaneMode = .display
     }
 
+    /// Called by ``activity`` once an operation of `kind` has ended with the
+    /// guest running.
     func operationDidSettleRunning(_ kind: VMOperationKind) {
         switch kind {
         case .bringUp(.guestStart(.starting)), .resuming:
@@ -1065,9 +1062,11 @@ final class VMInstance: VMActivityOwner {
                     self.hostState.agentInstallNudgeDismissed
                         || self.configuration.lastSeenGuestOSVersion != nil
                 {
-                    self.performSettingsMutation(
-                        configuration: { $0.lastSeenGuestOSVersion = nil },
-                        hostState: { $0.agentInstallNudgeDismissed = false })
+                    self.recordObservation("the agent's absence") {
+                        _ = $0.updateSettings(
+                            configuration: { $0.lastSeenGuestOSVersion = nil },
+                            hostState: { $0.agentInstallNudgeDismissed = false })
+                    }
                 }
             }
             armed.agentPostStartTask = nil
@@ -1111,9 +1110,11 @@ final class VMInstance: VMActivityOwner {
         if configuration.lastSeenAgentVersion != info.agentVersion
             || configuration.lastSeenGuestOSVersion != info.osVersion
         {
-            performConfigurationMutation {
-                $0.lastSeenAgentVersion = info.agentVersion
-                $0.lastSeenGuestOSVersion = info.osVersion
+            recordObservation("the agent's Hello") {
+                _ = $0.updateConfiguration {
+                    $0.lastSeenAgentVersion = info.agentVersion
+                    $0.lastSeenGuestOSVersion = info.osVersion
+                }
             }
         }
         // Only on an agent-version change: a same-version reconnect (e.g. while
@@ -1122,6 +1123,23 @@ final class VMInstance: VMActivityOwner {
         guard agentVersionChanged else { return }
         if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
             onAgentBecameCurrent?()
+        }
+    }
+
+    /// Writes what the host observed of the guest under an
+    /// ``VMEditClasses/observations`` permit. A VM whose state admits none
+    /// keeps the observation in its session only, and the next one that
+    /// differs from the committed record writes again.
+    private func recordObservation(
+        _ what: StaticString, _ write: (borrowing VMEditPermit) -> Void
+    ) {
+        do {
+            try activity.edit(.observations, write)
+        } catch {
+            #log(
+                Self.logger, .notice,
+                "Did not record \(String(describing: what), privacy: .public) for '\(self.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
         }
     }
 

@@ -17,34 +17,15 @@ final class VMRemovableMediaReconciler {
     private let lifecycle: VMLifecycleCoordinator
 
     /// Points the configuration's removable-media list at the one a refused
-    /// reconcile left live — ``VMLibrary/settleRemovableMedia(of:toLive:)``.
-    var onSettle: ((VMInstance, [RemovableMediaItem]?) -> Void)?
+    /// reconcile left live, as a write of the operation the reconcile runs in
+    /// — ``VMLibrary/settleRemovableMedia(_:toLive:)``.
+    var onSettle: ((borrowing VMEditPermit, [RemovableMediaItem]?) -> Void)?
 
     /// Receives every failure the reconcile needs a user to see.
     var onFailure: ((any Error) -> Void)?
 
     init(lifecycle: VMLifecycleCoordinator) {
         self.lifecycle = lifecycle
-    }
-
-    /// Refuses a configuration edit that changes `removableMedia` while the VM
-    /// has a live session that takes no removable-media edit — a persisted
-    /// list the live device set does not match would be pinned into the
-    /// in-flight save or snapshot and never re-driven.
-    ///
-    /// - Returns: `true` when the caller must abort.
-    func refuseUnattachableEdit(
-        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
-    ) -> Bool {
-        guard VMConfiguration.removableMediaChanged(old: old, new: new),
-            instance.liveSessionID != nil,
-            instance.activity.decide(.edit(.hotPlugMedia), posture: .commit) != .admit
-        else { return false }
-        #log(
-            Self.logger, .notice,
-            "Refusing removable-media edit for '\(instance.name, privacy: .public)': its live session takes none in \(instance.status.rawValue, privacy: .public)"
-        )
-        return true
     }
 
     /// Starts the reconcile a committed `removableMedia` change asks of a
@@ -60,7 +41,7 @@ final class VMRemovableMediaReconciler {
         else { return }
         do {
             try instance.activity.launch(.reconcilingMedia) { [weak self] context in
-                await self?.reconcile(instance, context)
+                await self?.reconcile(context)
                 return .rest(.asStarted, ())
             }
         } catch {
@@ -73,8 +54,8 @@ final class VMRemovableMediaReconciler {
     }
 
     /// Drives the live list of the session `context`'s operation holds to the
-    /// configuration's until the two match, then answers a refused pass; does
-    /// nothing once that operation holds no live session.
+    /// configuration of the VM it holds until the two match, then answers a
+    /// refused pass; does nothing once that operation holds no live session.
     ///
     /// Edits committed while a pass runs are admitted by the operation and
     /// picked up by the next iteration, so rapid edits converge to the final
@@ -83,7 +64,8 @@ final class VMRemovableMediaReconciler {
     /// what the configuration holds and what the next pass drove the VM to, so
     /// settling the configuration on the live list before then would overwrite
     /// that edit with a list the VM was about to leave.
-    func reconcile(_ instance: VMInstance, _ context: borrowing VMOperationContext) async {
+    func reconcile(_ context: borrowing VMOperationContext) async {
+        let instance = context.instance
         var applied: [RemovableMediaItem]?
         var refused: RefusedPass?
         while let sessionID = context.sessionID {
@@ -94,7 +76,7 @@ final class VMRemovableMediaReconciler {
                 for: instance, target: target, actingFor: sessionID)
         }
         if let refused {
-            failReconcile(for: instance, refused)
+            failReconcile(refused, context.permit)
         }
     }
 
@@ -252,10 +234,11 @@ final class VMRemovableMediaReconciler {
             failure: RemovableMediaReconcileFailure(items: failures))
     }
 
-    /// Settles the configuration on the live list and surfaces the error —
-    /// unless the session `refused` acted for has gone, whose user
-    /// force-stopped the VM the error is about.
-    private func failReconcile(for instance: VMInstance, _ refused: RefusedPass) {
+    /// Settles the configuration on the live list, under `permit`, and
+    /// surfaces the error — unless the session `refused` acted for has gone,
+    /// whose user force-stopped the VM the error is about.
+    private func failReconcile(_ refused: RefusedPass, _ permit: borrowing VMEditPermit) {
+        let instance = permit.instance
         guard instance.liveSessionID == refused.sessionID else {
             #log(
                 Self.logger, .notice,
@@ -264,7 +247,7 @@ final class VMRemovableMediaReconciler {
             return
         }
         let live = instance.liveRemovableMedia.compactMap { refused.lookup[$0.id] }
-        onSettle?(instance, live.isEmpty ? nil : live)
+        onSettle?(permit, live.isEmpty ? nil : live)
         onFailure?(refused.failure)
     }
 }

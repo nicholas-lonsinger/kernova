@@ -64,7 +64,11 @@ extension VMCommandCore {
             throw itemNotFound(instance, item: "remembered USB accessory \u{201C}\(key)\u{201D}")
         }
         do {
-            try library.updateUSBPairings(of: instance, mutate: { $0.remove(key: key) })
+            try instance.activity.edit(.pairingRules) { permit in
+                try library.updateUSBPairings(permit) { $0.remove(key: key) }
+            }
+        } catch let refused as VMAdmissionRefusal {
+            throw admissionRefusal(refused.refusal, on: instance)
         } catch {
             throw CommandError.operationFailed(
                 verb: .forgetUSBPairing,
@@ -110,7 +114,9 @@ extension VMCommandCore {
                 failure:
                     "\(attached.accessory.displayName) is attached to \u{201C}\(instance.name)\u{201D}, but Kernova could not record that it takes the accessory back automatically."
             ) {
-                try onUserAttachedAccessory?(instance, attached.accessory)
+                try edit(.pairingRules, on: instance, verb: .editUSBAccessory) { permit in
+                    try onUserAttachedAccessory?(permit, attached.accessory)
+                }
             }
             #log(
                 Self.logger, .notice,
@@ -146,7 +152,9 @@ extension VMCommandCore {
                 failure:
                     "\(held.accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there."
             ) {
-                try onUserReleasedAccessory?(instance, held.accessory)
+                try edit(.pairingRules, on: instance, verb: .editUSBAccessory) { permit in
+                    try onUserReleasedAccessory?(permit, held.accessory)
+                }
             }
             #log(
                 Self.logger, .notice,

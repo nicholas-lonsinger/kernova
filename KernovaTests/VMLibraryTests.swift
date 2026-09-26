@@ -295,13 +295,13 @@ struct VMLibraryTests {
     }
 
     @Test("A request whose save fails changes nothing, in memory or on the running VM")
-    func discardedWriteLeavesTheOldValue() {
+    func discardedWriteLeavesTheOldValue() throws {
         let (library, storage, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(name: "Before")
         _ = registerRunning(instance, in: library, storage: storage)
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
-        let saved = library.updateConfiguration(of: instance) {
+        let saved = try library.updateConfiguration(of: instance, as: [.rename, .hotPlugMedia]) {
             $0.name = "After"
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/A.iso", readOnly: true)]
         }
@@ -316,49 +316,56 @@ struct VMLibraryTests {
     }
 
     @Test("Settling on the live media list writes that field alone and tells the VM nothing")
-    func settleRemovableMediaWritesOnlyTheList() {
+    func settleRemovableMediaWritesOnlyTheList() async throws {
         let (library, storage, _, _) = makeLibrary()
         let queued = RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)
         let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
         let instance = VMInstanceFixture.make(name: "Mine") { $0.removableMedia = [queued] }
-        let sessionID = registerRunning(instance, in: library, storage: storage)
-        // A phase whose edits the write funnel refuses: the settle is not one.
-        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
+        _ = registerRunning(instance, in: library, storage: storage)
         let before = instance.configuration
 
-        library.settleRemovableMedia(of: instance, toLive: [live])
+        // The reconcile pass whose refusal the settle answers holds the VM.
+        let held = try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+            return instance.phase.operation?.kind
+        }
 
         var expected = before
         expected.removableMedia = [live]
         #expect(instance.configuration == expected)
         #expect(storage.bundles[instance.bundleURL] == expected)
-        // No pass was launched: the save still holds the VM.
-        #expect(instance.phase.operation?.kind == .saving)
+        // No second pass was launched: the reconcile still held the VM.
+        #expect(held == .reconcilingMedia)
+        #expect(instance.phase.operation == nil)
         #expect(!failures.showError)
     }
 
     @Test("Settling on the list the configuration already holds writes nothing")
-    func settleRemovableMediaNoOpsWhenUnchanged() {
+    func settleRemovableMediaNoOpsWhenUnchanged() async throws {
         let (library, storage, _, _) = makeLibrary()
         let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
         let instance = VMInstanceFixture.make { $0.removableMedia = [live] }
         _ = registerRunning(instance, in: library, storage: storage)
         let saves = storage.saveConfigurationCallCount
 
-        library.settleRemovableMedia(of: instance, toLive: [live])
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+        }
 
         #expect(storage.saveConfigurationCallCount == saves)
     }
 
     @Test("A settle whose write fails is reported and memory stays as the bundle holds it")
-    func settleRemovableMediaWhoseWriteFailsKeepsTheBundleList() {
+    func settleRemovableMediaWhoseWriteFailsKeepsTheBundleList() async throws {
         let (library, storage, _, _) = makeLibrary()
         let queued = [RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)]
         let instance = VMInstanceFixture.make { $0.removableMedia = queued }
         _ = registerRunning(instance, in: library, storage: storage)
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
-        library.settleRemovableMedia(of: instance, toLive: nil)
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: nil)
+        }
 
         #expect(instance.configuration.removableMedia == queued)
         #expect(storage.bundles[instance.bundleURL]?.removableMedia == queued)
@@ -383,9 +390,11 @@ struct VMLibraryTests {
         written.memorySizeInGB += 2
         let saves = storage.saveConfigurationCallCount
 
-        try library.commitRevertedConfiguration(
-            VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
-            on: instance)
+        try withOperationNow(on: instance) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
+                context.permit)
+        }
 
         #expect(instance.configuration == written)
         #expect(storage.bundles[instance.bundleURL] == written)
@@ -408,9 +417,11 @@ struct VMLibraryTests {
         captured.memorySizeInGB = onDisk.memorySizeInGB + 2
         captured.genericMachineIdentifierData = Data([0x0A])
 
-        try library.commitRevertedConfiguration(
-            VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
-            on: instance)
+        try withOperationNow(on: instance) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
+                context.permit)
+        }
 
         #expect(instance.configuration.name == "Renamed Elsewhere")
         #expect(instance.configuration.id == onDisk.id)
@@ -423,15 +434,15 @@ struct VMLibraryTests {
     @Test(
         "An updateSettings whose host-state write fails reports that the configuration landed, and memory equals both files"
     )
-    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() {
+    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() throws {
         let (library, storage, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make()
         library.register(instance, storage: storage)
         let memory = instance.configuration.memorySizeInGB
         storage.saveHostStateError = NSError(domain: "test", code: 1)
 
-        let outcome = library.updateSettings(
-            of: instance,
+        let outcome = try library.updateSettings(
+            of: instance, as: [.machineKeys, .liveKeys],
             configuration: { $0.memorySizeInGB = memory + 2 },
             hostState: { $0.startsAutomaticallyOnLaunch = true })
 
@@ -497,7 +508,9 @@ struct VMLibraryTests {
         // Bridged is nothing the table answers for, so nothing is read.
         #expect(library.guestAddresses.readTaskForTesting == nil)
 
-        library.updateConfiguration(of: instance) { $0.networkMode = .shared }
+        try library.updateConfiguration(of: instance, as: .networkAttachment) {
+            $0.networkMode = .shared
+        }
 
         let loop = try #require(library.guestAddresses.readTaskForTesting)
         try await waitForChange {
@@ -1030,8 +1043,11 @@ struct VMLibraryTests {
     /// A library over `storage`, whose bundle files hold every VM's pairings.
     private func makePairingLibrary() -> (VMLibrary, MockVMStorageService) {
         let storage = MockVMStorageService()
+        // A build that passes accessories through, the only one that edits
+        // pairings.
         let library = makeWiredLibrary(
             storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()),
             fileSystem: fileSystem, preferences: preferences)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
@@ -1142,9 +1158,32 @@ struct VMLibraryTests {
         }
         try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
 
-        try library.pairUSBAccessory(pairing(key: "k"), with: second)
+        try second.activity.edit(.pairingRules) {
+            try library.pairUSBAccessory(pairing(key: "k"), $0)
+        }
 
         #expect(first.usbPairings.isEmpty)
         #expect(second.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("A pairing is not moved off a VM that takes no pairing edit, and lands nowhere")
+    func pairUSBAccessoryRefusedByAHeldOtherVM() throws {
+        let (library, storage) = makePairingLibrary()
+        let first = VMInstanceFixture.make(name: "First")
+        let second = VMInstanceFixture.make(name: "Second")
+        for instance in [first, second] {
+            library.register(instance, storage: storage)
+        }
+        try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
+        first.activity.placeForTesting(.operating(.forceStopping, from: .running(sessionID: UUID())))
+
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.forceStopping))) {
+            try second.activity.edit(.pairingRules) {
+                try library.pairUSBAccessory(pairing(key: "k"), $0)
+            }
+        }
+
+        #expect(first.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(second.usbPairings.isEmpty)
     }
 }

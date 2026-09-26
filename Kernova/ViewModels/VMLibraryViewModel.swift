@@ -135,10 +135,20 @@ final class VMLibraryViewModel {
 
     /// Records the screen `instance`'s display was last full screen on.
     ///
-    /// Kernova's own bookkeeping rather than a user's edit, so it takes no key
-    /// and no gate.
+    /// Kernova's own bookkeeping rather than a user's edit, so it takes no key:
+    /// a ``VMEditClasses/hostPresentation`` edit, which a VM whose state admits
+    /// none leaves unrecorded.
     func recordLastFullscreenDisplay(_ displayID: UInt32, for instance: VMInstance) {
-        library.updateHostState(of: instance) { $0.lastFullscreenDisplayID = displayID }
+        do {
+            try instance.activity.edit(.hostPresentation) {
+                library.updateHostState($0) { $0.lastFullscreenDisplayID = displayID }
+            }
+        } catch {
+            #log(
+                Self.logger, .notice,
+                "Did not record the fullscreen display of '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     // MARK: - Command Forwarding
@@ -594,14 +604,14 @@ final class VMLibraryViewModel {
         // What the user's own attach and detach mean for what a guest takes
         // back on its own. Both hang off the verb rather than the surface, so
         // the menu, the CLI and the prompt's answer write the same rule.
-        core.onUserAttachedAccessory = { [weak usbAccessories] instance, accessory in
-            try usbAccessories?.userAttached(accessory, to: instance)
+        core.onUserAttachedAccessory = { [weak usbAccessories] permit, accessory in
+            try usbAccessories?.userAttached(accessory, permit)
         }
         core.onUserDetachingAccessory = { [weak usbAccessories] _, accessory in
             usbAccessories?.userDetaching(accessory)
         }
-        core.onUserReleasedAccessory = { [weak usbAccessories] instance, accessory in
-            try usbAccessories?.userReleased(accessory, from: instance)
+        core.onUserReleasedAccessory = { [weak usbAccessories] permit, accessory in
+            try usbAccessories?.userReleased(accessory, permit)
         }
         library.onSessionBecameAttachable = { [weak usbAccessories] instance in
             usbAccessories?.sessionBecameAttachable(instance)

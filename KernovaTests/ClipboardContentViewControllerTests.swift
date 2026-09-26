@@ -846,7 +846,7 @@ struct ClipboardPassthroughSwitchTests {
         #expect(vc.isPassthroughSwitchOnForTesting == false)
 
         // Another surface's write, landing on the same model.
-        _ = viewModel.library.updateConfiguration(of: instance) {
+        _ = try viewModel.library.updateConfiguration(of: instance, as: .liveKeys) {
             $0.clipboardPassthroughEnabled = true
         }
 

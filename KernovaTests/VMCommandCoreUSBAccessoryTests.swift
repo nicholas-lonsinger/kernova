@@ -56,14 +56,14 @@ struct VMCommandCoreUSBAccessoryTests {
         )
         let pairingCoordinator = USBAccessoryCoordinator(
             lifecycle: lifecycle, roster: library, pairings: library)
-        core.onUserAttachedAccessory = { [weak pairingCoordinator] instance, accessory in
-            try pairingCoordinator?.userAttached(accessory, to: instance)
+        core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
+            try pairingCoordinator?.userAttached(accessory, permit)
         }
         core.onUserDetachingAccessory = { [weak pairingCoordinator] _, accessory in
             pairingCoordinator?.userDetaching(accessory)
         }
-        core.onUserReleasedAccessory = { [weak pairingCoordinator] instance, accessory in
-            try pairingCoordinator?.userReleased(accessory, from: instance)
+        core.onUserReleasedAccessory = { [weak pairingCoordinator] permit, accessory in
+            try pairingCoordinator?.userReleased(accessory, permit)
         }
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
@@ -585,8 +585,10 @@ struct VMCommandCoreUSBAccessoryTests {
         // which an echo that got through has been attached too.
         let marker = MockUSBAccessoryService.accessory(
             registryID: 20, serial: "MARKER", receptacle: "hub/Port-B@1")
-        try harness.library.pairUSBAccessory(
-            try #require(USBAccessoryPairing.make(for: marker)), with: instance)
+        let markerPairing = try #require(USBAccessoryPairing.make(for: marker))
+        try instance.activity.edit(.pairingRules) {
+            try harness.library.pairUSBAccessory(markerPairing, $0)
+        }
         // macOS hands the reset stick back under a new registry ID before the
         // detach has returned, while the pairing it ends is still in place.
         service.duringNextDetach = {

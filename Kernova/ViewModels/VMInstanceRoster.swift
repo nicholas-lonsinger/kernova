@@ -19,17 +19,20 @@ protocol VMInstanceRoster: AnyObject {
 /// write reaches the library's funnel.
 @MainActor
 protocol USBAccessoryPairingWriting: AnyObject {
-    /// Commits `mutate` to `instance`'s pairings file, throwing when the write
-    /// fails and leaving the pairings as the bundle holds them.
+    /// Commits `mutate` to the pairings file of the VM `permit` writes,
+    /// throwing when the write fails and leaving the pairings as the bundle
+    /// holds them.
     func updateUSBPairings(
-        of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
+        _ permit: borrowing VMEditPermit, mutate: (inout USBAccessoryPairingSet) -> Void
     ) throws
 
-    /// Records `pairing` against `instance` and drops its key from every other
-    /// VM, so one key names at most one VM.
+    /// Records `pairing` against the VM `permit` writes and drops its key from
+    /// every other VM, each under a ``VMEditClasses/pairingRules`` edit of its
+    /// own, so one key names at most one VM.
     ///
     /// This is what makes moving a device between guests rewrite the rule: the
     /// rewrite *is* the uniqueness, not a mechanism beside it. The other VMs
-    /// are written first, so a write that fails never leaves the key on two.
-    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws
+    /// are written first, so a write that fails or is refused never leaves the
+    /// key on two.
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, _ permit: borrowing VMEditPermit) throws
 }
