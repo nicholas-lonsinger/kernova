@@ -188,8 +188,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// ``USBAccessorySupport/makeService(entitlements:)``.
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
 
-    /// The live VM whose identity bringing `instance` up under `configuration`
-    /// would duplicate.
+    /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
+    /// bringing `instance` up under `configuration` would duplicate.
     func identityConflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration
     ) -> VMIdentityConflict? {

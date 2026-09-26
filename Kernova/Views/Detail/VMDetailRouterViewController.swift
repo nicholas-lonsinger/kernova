@@ -39,6 +39,17 @@ final class VMDetailRouterViewController: NSViewController {
         fatalError("VMDetailRouterViewController does not support NSCoder")
     }
 
+    #if DEBUG
+    /// What the pane last rendered: its route, and whether it holds a form
+    /// read-only.
+    var renderedForTesting: (route: DetailRoute, isReadOnly: Bool)? {
+        displayed.map { ($0.route, $0.isReadOnly) }
+    }
+
+    /// The settings form every form-bearing route shows.
+    var settingsForTesting: VMSettingsViewController { settingsVC }
+    #endif
+
     /// Rebinds the router to a (possibly different) selected VM.
     func reconfigure(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance

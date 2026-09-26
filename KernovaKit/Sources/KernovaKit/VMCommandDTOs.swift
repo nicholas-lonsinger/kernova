@@ -501,7 +501,9 @@ extension CommandErrorDTO {
         case .unsupportedByBuild(let capability):
             "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
-            Self.conflictMessage(vm: vm.name, other: other.name, reason: reason)
+            Self.conflictMessage(
+                vm: vm.name, other: other.name, otherHeldByAnotherCopy: other.heldByAnotherCopy,
+                reason: reason)
         case .terminating:
             "Kernova is quitting."
         case .timedOut(let vm, let verb, let seconds):
@@ -521,13 +523,24 @@ extension CommandErrorDTO {
     /// What a ``conflict(vm:with:reason:)`` refusal of `vm` over `other` tells
     /// the user — public so a refusal raised before it becomes a command error
     /// words itself identically.
+    ///
+    /// `otherHeldByAnotherCopy` names a claim another running copy of Kernova
+    /// makes, which this copy can neither see into nor stop.
     public static func conflictMessage(
-        vm: String, other: String, reason: ConflictReason
+        vm: String, other: String, otherHeldByAnotherCopy: Bool, reason: ConflictReason
     ) -> String {
         switch reason {
         case .macAddressInUse(let address, let holding, let otherHolders):
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
+        case .machineIdentity where otherHeldByAnotherCopy:
+            "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "To start it anyway, allow this in Settings \u{2192} Advanced."
+        case .macAddress where otherHeldByAnotherCopy:
+            "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
+                + "Two virtual machines with the same MAC address must not run on the same network at once. "
+                + "Give \u{201C}\(vm)\u{201D} a new address in Network settings."
         case .machineIdentity:
             "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which is active. "
                 + "Two virtual machines with the same machine ID must not run at once. "

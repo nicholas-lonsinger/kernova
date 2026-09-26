@@ -521,8 +521,8 @@ final class VMInstance {
             heldByAnotherCopy: heldByAnotherCopy)
     }
 
-    /// The live VM whose identity bringing this one up by `kind` would
-    /// duplicate, or `nil` when nothing collides.
+    /// The VM claiming the identity (``claimsIdentity``) that bringing this
+    /// one up by `kind` would duplicate, or `nil` when nothing collides.
     func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
         peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
     }

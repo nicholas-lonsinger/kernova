@@ -330,6 +330,9 @@ extension VMSettingsViewController {
 
     /// What the cards are currently painted from.
     var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
+
+    /// Whether the panels were last bound read-only.
+    var isReadOnlyForTesting: Bool { panelContext.isReadOnly }
     #endif
 
     private func addPanelContent(_ content: NSView) {

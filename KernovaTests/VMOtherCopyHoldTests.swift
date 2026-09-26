@@ -210,6 +210,53 @@ struct VMOtherCopyHoldTests {
         #expect(!source.activity.heldByAnotherCopy, "\(label)")
     }
 
+    @Test(
+        "A twin's refusal names the other copy for a held source, and a stop step only for one live here",
+        arguments: twins)
+    func twinRefusalWordsWhoClaimsTheIdentity(label: String, reason: VMIdentityConflict.Reason) throws {
+        for held in [false, true] {
+            let harness = makeCore()
+            let preferences = harness.preferences
+            preferences.blockDuplicateMachineIDBoot = true
+            func twin(_ config: inout VMConfiguration) {
+                switch reason {
+                case .macAddress:
+                    config.networkEnabled = true
+                    config.macAddress = Self.sharedMAC
+                case .machineIdentity:
+                    config.genericMachineIdentifierData = Data([4, 2])
+                }
+            }
+            let source = harness.library.registerFixture(
+                name: "Source", phase: held ? .stopped : .running(sessionID: UUID()),
+                preferences: preferences, mutate: twin)
+            let copy = harness.library.registerFixture(
+                name: "Copy", preferences: preferences, mutate: twin)
+            if held { harness.store.holdElsewhere(source.bundleURL) }
+
+            guard
+                case .refuse(let refusal) = copy.activity.decide(.start(recovery: false), posture: .commit),
+                case .identityConflict(let conflict) = refusal
+            else {
+                Issue.record("\(label) held=\(held): not refused as a conflict")
+                continue
+            }
+            let inProcess = try #require(conflict.errorDescription)
+            let overTheWire = harness.core.admissionRefusal(refusal, on: copy).dto.message
+            for message in [inProcess, overTheWire] {
+                #expect(
+                    message.contains("\u{201C}Source\u{201D}, which another copy of Kernova is using") == held,
+                    "\(label) held=\(held): \(message)")
+                #expect(
+                    message.contains("\u{201C}Source\u{201D}, which is active") == !held,
+                    "\(label) held=\(held): \(message)")
+                #expect(
+                    message.contains("Stop \u{201C}Source\u{201D}") == !held,
+                    "\(label) held=\(held): \(message)")
+            }
+        }
+    }
+
     // MARK: - Refreshes
 
     @Test("The launch load marks a VM another copy holds")
@@ -376,17 +423,21 @@ struct VMOtherCopyHoldTests {
         let core: VMCommandCore
         let library: VMLibrary
         let store: InMemoryVMBundleFiles
+        let preferences: AppPreferences
     }
 
     private func makeCore() -> CoreHarness {
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
+        let preferences = makeTestPreferences()
         let lifecycle = makeTestLifecycle(fileSystem: fileSystem)
-        let library = makeWiredLibrary(storage: storage, lifecycle: lifecycle, fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage, lifecycle: lifecycle, fileSystem: fileSystem, preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem,
-            preferences: makeTestPreferences())
-        return CoreHarness(core: core, library: library, store: storage.files)
+            preferences: preferences)
+        return CoreHarness(
+            core: core, library: library, store: storage.files, preferences: preferences)
     }
 }

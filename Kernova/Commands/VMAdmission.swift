@@ -93,8 +93,9 @@ enum VMAdmission {
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
         var usbSupported: Bool
-        /// The live VM whose identity bringing this one up would duplicate —
-        /// supplied only when deciding a bring-up.
+        /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
+        /// bringing this one up would duplicate — supplied only when deciding
+        /// a bring-up.
         var identityConflict: VMIdentityConflict?
         /// The VM holding the accessory an attach names — supplied only when
         /// deciding an attach (``VMAccessoryHolders/holder(of:)``).
@@ -587,8 +588,8 @@ protocol VMAdmissionPeers: AnyObject {
     /// Which VM holds each USB accessory passed through to a guest.
     var accessoryHolders: VMAccessoryHolders { get }
 
-    /// The live VM whose identity bringing `instance` up under `configuration`
-    /// would duplicate.
+    /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
+    /// bringing `instance` up under `configuration` would duplicate.
     func identityConflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration
     ) -> VMIdentityConflict?

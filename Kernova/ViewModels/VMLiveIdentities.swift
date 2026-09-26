@@ -87,8 +87,8 @@ final class VMLiveIdentities {
     }
 }
 
-/// A bring-up refused because another live VM already claims the identity it
-/// would put in front of VZ.
+/// A bring-up refused because another VM already claims the identity it would
+/// put in front of VZ (``VMInstance/claimsIdentity``).
 struct VMIdentityConflict: LocalizedError {
     /// What the two VMs would share.
     enum Reason: Sendable {
@@ -104,11 +104,12 @@ struct VMIdentityConflict: LocalizedError {
         }
     }
 
-    /// The live VM already holding the identity.
+    /// The VM already claiming the identity.
     let other: VMInstance
     let reason: Reason
     /// The sentence every surface words this refusal in, fixed at the refusal
-    /// because the names it carries are read on the main actor.
+    /// because the names it carries — and whether the claim is another copy of
+    /// Kernova's hold — are read on the main actor.
     let errorDescription: String?
 
     @MainActor
@@ -116,6 +117,7 @@ struct VMIdentityConflict: LocalizedError {
         self.other = other
         self.reason = reason
         self.errorDescription = CommandErrorDTO.conflictMessage(
-            vm: vm.name, other: other.name, reason: reason.conflictReason)
+            vm: vm.name, other: other.name, otherHeldByAnotherCopy: other.heldByAnotherCopy,
+            reason: reason.conflictReason)
     }
 }
