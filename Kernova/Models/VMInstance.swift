@@ -523,8 +523,10 @@ final class VMInstance: VMActivityOwner {
         activity.handleSessionEvent(event)
     }
 
-    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
-        activity.adoptBuildResult(result)
+    func adoptBuildResult(
+        _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
+    ) {
+        activity.adoptBuildResult(bringUp, result)
     }
 
     // MARK: - Admission Facts
@@ -637,28 +639,44 @@ final class VMInstance: VMActivityOwner {
 
     // MARK: - Session Lifecycle
 
-    /// Opens the context one boot attempt's session state lives in, replacing
-    /// any prior one, and takes the security scopes its configuration build
-    /// needs.
+    /// Opens the context one boot attempt's session state lives in, and takes
+    /// the security scopes its configuration build needs.
     ///
     /// Called at the top of every bring-up — including an install-time build,
     /// where a pre-install VM can already carry bookmarked external attachments
     /// from settings. The two are one call because a scope with no context to
     /// hold it is a leak, and a context with no scopes cannot build.
     @discardableResult
-    func beginSessionContext(bootedIntoRecovery: Bool = false) -> VMSessionContext {
-        activity.beginSessionContext {
-            let context = VMSessionContext(
-                label: name,
-                bootedIntoRecovery: bootedIntoRecovery,
-                vsock: VsockFeatureCoordinator(
-                    instance: self,
-                    admissionGate: vsockAdmissionGate,
-                    clipboardDataSink: clipboardDataSink,
-                    dropDataSink: dropDataSink))
-            openRuntimeFileAccess(into: context)
-            return context
+    func beginSessionContext(
+        _ bringUp: borrowing VMBringUpContext, bootedIntoRecovery: Bool = false
+    ) -> VMSessionContext {
+        activity.beginSessionContext(bringUp) {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
         }
+    }
+
+    #if DEBUG
+    /// ``beginSessionContext(_:bootedIntoRecovery:)`` with no bring-up behind
+    /// it, replacing and releasing any prior context; tests only.
+    @discardableResult
+    func beginSessionContextForTesting(bootedIntoRecovery: Bool = false) -> VMSessionContext {
+        activity.installSessionContextForTesting {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
+        }
+    }
+    #endif
+
+    private func makeSessionContext(bootedIntoRecovery: Bool) -> VMSessionContext {
+        let context = VMSessionContext(
+            label: name,
+            bootedIntoRecovery: bootedIntoRecovery,
+            vsock: VsockFeatureCoordinator(
+                instance: self,
+                admissionGate: vsockAdmissionGate,
+                clipboardDataSink: clipboardDataSink,
+                dropDataSink: dropDataSink))
+        openRuntimeFileAccess(into: context)
+        return context
     }
 
     /// Brings a built configuration all the way up: adopts its pipes and media,
@@ -674,7 +692,7 @@ final class VMInstance: VMActivityOwner {
     func bringUpSession(
         _ context: borrowing VMBringUpContext, with result: ConfigurationBuilder.BuildResult
     ) async -> VMSession? {
-        adoptBuildResult(result)
+        adoptBuildResult(context, result)
         guard let session = await attachSession(context, from: result) else { return nil }
         startSerialReading()
         startClipboardService()

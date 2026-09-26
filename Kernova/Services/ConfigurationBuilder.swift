@@ -207,7 +207,7 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.platform = platform
 
         // The builder reads the bundle and writes nothing to it: a bring-up
-        // creates the store first, through ``VMBundle/ensureEFIVariableStore(_:)``.
+        // creates the store first, through ``VMBundle/MachineFiles/ensureEFIVariableStore()``.
         let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
         guard FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)) else {
             throw ConfigurationBuilderError.efiVariableStoreMissing

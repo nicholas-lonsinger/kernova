@@ -77,11 +77,11 @@ protocol VirtualizationProviding: Sendable {
     /// bundle's suspend slot, unless the VM is stopped — leaving the VM where
     /// it was found.
     ///
-    /// Answers `snapshot` carrying the ``VMSnapshot/macAddress`` of the
-    /// configuration the capture wrote.
+    /// Answers the snapshot, of the kind the mode takes, carrying the
+    /// ``VMSnapshot/macAddress`` of the configuration the capture wrote.
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
-        snapshot: VMSnapshotRecord
+        snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot>
 
     /// Returns the VM to `snapshot`, discarding whatever session is live and

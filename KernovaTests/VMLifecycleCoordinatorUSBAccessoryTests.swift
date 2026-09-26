@@ -36,7 +36,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let instance = VMInstanceFixture.make(
             name: "USB VM", phase: .running(sessionID: sessionID))
         libraries.keep(makeWiredLibrary(holding: [instance], lifecycle: coordinator))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -170,7 +170,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: 11, serial: "0373")
 
-        let snapshot = VMSnapshotRecord(name: "Snap", kind: .warm)
+        let snapshot = VMSnapshotCaptureRequest(name: "Snap")
         _ = try await coordinator.takeSnapshot(
             instance, mode: .live, snapshot: snapshot
         ) { _ in }
@@ -196,7 +196,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }()
         // Event-driven both ways: the assignment lands only once the put-back
@@ -222,7 +222,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.answersMissingAccessoryImmediately = true
 
         _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
         ) { _ in }
 
         // The snapshot the user asked for is written; the hardware is simply
@@ -243,7 +243,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
         ) { _ in }
 
         #expect(service.awaitedIdentities.isEmpty)
@@ -268,7 +268,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }()
         // Both waits parked at once is the thing under test: a put-back that
@@ -301,7 +301,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
@@ -334,7 +334,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }
 
@@ -366,7 +366,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }
 
@@ -393,7 +393,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
             ) { _ in }
         }()
         await service.attachStarted()

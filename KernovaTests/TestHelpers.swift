@@ -312,8 +312,8 @@ extension VMActivity {
 }
 
 /// Runs `body` inside an operation holding a stopped VM built around `bundle`,
-/// answering what it returns — how a test reaches the ``VMOperationContext`` a
-/// ``VMBundle`` machine-file operation takes.
+/// answering what it returns — how a test reaches `bundle`'s machine-file
+/// operations, as ``VMOperationContext/bundle``.
 @MainActor
 func withOperation<T>(
     on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
@@ -369,7 +369,7 @@ extension VMInstance {
 ///
 /// The phase's session identity stands in for a live `VZVirtualMachine`, not for
 /// the session context the services and their hand-offs live in — hence the
-/// explicit `beginSessionContext()`.
+/// explicit `beginSessionContextForTesting()`.
 @MainActor
 func makeInstanceWithLiveSession(named name: String = "Live Session VM")
     -> (instance: VMInstance, sessionID: UUID)
@@ -381,7 +381,7 @@ func makeInstanceWithLiveSession(named name: String = "Live Session VM")
     }
     let sessionID = UUID()
     instance.activity.placeForTesting(.running(sessionID: sessionID))
-    instance.beginSessionContext()
+    instance.beginSessionContextForTesting()
     instance.vsockAdmissionGate.publish(
         VsockAdmissionGate.State(
             handshakeComplete: true,

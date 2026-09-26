@@ -66,7 +66,7 @@ extension VMInstance {
     /// Opens scoped access for every bookmarked external path in the
     /// configuration, healing stale or moved bookmarks on the way.
     ///
-    /// Called by ``beginSessionContext(bootedIntoRecovery:)`` at the top of each
+    /// Called by ``beginSessionContext(_:bootedIntoRecovery:)`` at the top of each
     /// boot attempt with the freshly opened context, before the configuration
     /// builder resolves any paths. The walk is
     /// ``VMConfiguration/externalFileReferences``, and

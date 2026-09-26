@@ -59,10 +59,9 @@ extension VMCommandCore {
             throw invalidState(instance)
         }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshot = VMSnapshotRecord(
+        let snapshot = VMSnapshotCaptureRequest(
             name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            kind: mode.kind)
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
         do {
             return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
                 captured in

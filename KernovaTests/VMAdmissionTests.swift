@@ -268,12 +268,82 @@ struct VMAdmissionTests {
                 VMAdmission.decide(request, posture: .commit, phase: .stopped, facts: facts)
                     == busy, "\(request)")
         }
+        // Every bring-up writes the bundle's files, whatever Start or Resume
+        // resolved it to.
+        let slot = Self.facts(slot: true, clone: true)
+        for request: VMAdmission.Request in [
+            .start(recovery: false), .resume, .operation(.bringUp(.restoringSavedState)),
+        ] {
+            #expect(
+                VMAdmission.decide(request, posture: .commit, phase: .suspended, facts: slot)
+                    == busy, "\(request)")
+        }
+        let setup = Self.facts(pendingSetup: true, clone: true)
+        for request: VMAdmission.Request in [
+            .start(recovery: false), .operation(.bringUp(.settingUp(.macOSInstall))),
+        ] {
+            #expect(
+                VMAdmission.decide(request, posture: .commit, phase: .initialBoot, facts: setup)
+                    == busy, "\(request)")
+        }
         #expect(
             VMAdmission.decide(.edit(.liveKeys), posture: .commit, phase: .stopped, facts: facts)
                 == .admit)
         #expect(
             VMAdmission.decide(.operation(.copyingOut), posture: .commit, phase: .stopped, facts: facts)
                 == .admit)
+    }
+
+    @Test(
+        "Start and Resume decide as the operation they resolve to, over every settled phase and fact",
+        arguments: [false, true], [false, true])
+    func startAndResumeDecideAsTheirOperation(slot: Bool, pendingSetup: Bool) {
+        for clone in [false, true] {
+            for guestOS in [VMGuestOS.macOS, .linux] {
+                var facts = Self.facts(slot: slot, pendingSetup: pendingSetup, clone: clone)
+                facts.guestOS = guestOS
+                for column in Self.settledColumns where column.phase != .removed {
+                    for request: VMAdmission.Request in [
+                        .start(recovery: false), .start(recovery: true), .resume,
+                    ] {
+                        let decided = VMAdmission.decide(
+                            request, posture: .commit, phase: column.phase, facts: facts)
+                        let kind = VMAdmission.operationKind(
+                            for: request, phase: column.phase, facts: facts)
+                        let expected =
+                            kind.map {
+                                VMAdmission.decide(
+                                    .operation($0), posture: .commit, phase: column.phase,
+                                    facts: facts)
+                            } ?? .refuse(.invalidState)
+                        #expect(
+                            decided == expected,
+                            "\(request) \(column.phase) clone=\(clone) \(guestOS)")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("Start in Recovery is a Recovery boot or nothing: a VM that cannot take one refuses it")
+    func recoveryStartNeverFallsThroughToAnotherBringUp() {
+        for (phase, facts) in [
+            (VMLifecyclePhase.stopped, Self.facts(pendingSetup: true)),
+            (.suspended, Self.facts(slot: true)),
+            (.initialBoot, Self.facts()),
+        ] {
+            #expect(
+                VMAdmission.bringUpKind(for: .start(recovery: true), phase: phase, facts: facts)
+                    == .starting(recovery: true))
+            #expect(
+                VMAdmission.decide(.start(recovery: true), posture: .commit, phase: phase, facts: facts)
+                    == .refuse(.invalidState), "\(phase)")
+        }
+        var linux = Self.facts()
+        linux.guestOS = .linux
+        #expect(
+            VMAdmission.decide(.start(recovery: true), posture: .commit, phase: .stopped, facts: linux)
+                == .refuse(.invalidState))
     }
 
     @Test("A bring-up whose identity another live VM holds is refused with the conflict")

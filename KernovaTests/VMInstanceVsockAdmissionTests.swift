@@ -29,7 +29,7 @@ struct VMInstanceVsockAdmissionTests {
             name: "Admission VM", guestOS: .macOS, mutate: mutate)
         // Every service below is session state, so it needs a session to live
         // in — the boot paths open one before any listener is wired.
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -370,7 +370,7 @@ struct VMInstanceVsockAdmissionTests {
             // assertions below read a live context the guard must still keep
             // the old hand-off out of.
             instance.activity.placeForTesting(.running(sessionID: UUID()))
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
 
             await drainMainQueue()
 

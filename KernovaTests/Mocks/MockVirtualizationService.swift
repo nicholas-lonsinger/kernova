@@ -93,7 +93,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         if derived == .restoredSavedState, let error = restoreError { throw error }
         if let error = startError { throw error }
         // A restore consumes the slot it loaded, as the real one does.
-        if route == .restoredSavedState { instance.bundle.removeSaveFile(context.operation) }
+        if route == .restoredSavedState { context.operation.bundle.removeSaveFile() }
         context.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
@@ -126,7 +126,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         resumeCallCount += 1
         if let error = resumeError { throw error }
-        instance.bundle.removeSaveFile(context)
+        context.bundle.removeSaveFile()
         return .rest(.live(.running), ())
     }
 
@@ -137,7 +137,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         if let error = saveError {
             // A write that threw left a truncated slot, which the real service
             // drops before it rests the VM.
-            instance.bundle.removeSaveFile(context)
+            context.bundle.removeSaveFile()
             let rest: VMOperationRest =
                 context.sessionEnd == nil
                 ? .atRest(.failed(message: error.localizedDescription)) : .afterSessionEnd
@@ -154,12 +154,13 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// the VM where it was found.
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
-        snapshot: VMSnapshotRecord
+        snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        guard case .capturingSnapshot(let mode) = context.kind, mode.kind == snapshot.kind else {
+        guard case .capturingSnapshot(let mode) = context.kind else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
+        let snapshot = request.record(capturedIn: mode)
         // Stands in for what a real warm capture does to the VM mid-flight —
         // notably taking every passthrough accessory off before it writes the
         // guest's state.
@@ -172,11 +173,11 @@ final class MockVirtualizationService: VirtualizationProviding {
         // the capture writes; the VZ saved state has no stand-in, so only the
         // disk copies land.
         let configuration = instance.configuration
-        if let prepared = try? await instance.bundle.prepareSnapshot(
-            context, snapshot.id, configuration: configuration)
+        if let prepared = try? await context.bundle.prepareSnapshot(
+            snapshot.id, configuration: configuration)
         {
-            try? await instance.bundle.captureDisks(
-                context, intoSnapshot: snapshot.id, relativePaths: prepared.relativePaths)
+            try? await context.bundle.captureDisks(
+                intoSnapshot: snapshot.id, relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
         return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
@@ -196,8 +197,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         let plan: VMSnapshotRestorePlan
         do {
-            plan = try await instance.bundle.planRestore(
-                context.operation, fromSnapshot: snapshot.id, kind: snapshot.kind)
+            plan = try await context.operation.bundle.planRestore(fromSnapshot: snapshot.id, kind: snapshot.kind)
         } catch {
             return .failed(.asStarted, error)
         }
@@ -205,14 +205,14 @@ final class MockVirtualizationService: VirtualizationProviding {
         if let error = revertToSnapshotError { return .failed(.atRest(.stopped), error) }
         // Staged, committed, installed, in the real service's order.
         do {
-            try await instance.bundle.stageRestore(context.operation, fromSnapshot: snapshot.id, plan: plan)
+            try await context.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
             do {
                 try commitConfiguration(plan)
             } catch {
-                await instance.bundle.discardRestoreStaging(context.operation)
+                await context.operation.bundle.discardRestoreStaging()
                 throw error
             }
-            try await instance.bundle.installRestore(context.operation, plan)
+            try await context.operation.bundle.installRestore(plan)
         } catch {
             return .failed(.atRest(.stopped), error)
         }
@@ -223,7 +223,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         if plan.kind == .warm {
             try VMInstanceFixture.writeSaveFile(for: instance)
         } else {
-            instance.bundle.removeSaveFile(context.operation)
+            context.operation.bundle.removeSaveFile()
         }
         guard resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
         // The restore of that saved state, inside the same operation.
@@ -231,7 +231,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             return .failed(
                 .atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
-        instance.bundle.removeSaveFile(context.operation)
+        context.operation.bundle.removeSaveFile()
         context.bindSessionForTesting(UUID())
         return .rest(.live(.running), ())
     }

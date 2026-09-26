@@ -545,7 +545,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness(diskImages: diskImages)
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).asif")
 
@@ -612,7 +612,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID)) {
             $0.removableMedia = [item]
         }
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
 
@@ -1085,7 +1085,7 @@ struct VMCommandCoreAttachmentTests {
         ) {
             $0.removableMedia = [RemovableMediaItem(path: installerPath, readOnly: true)]
         }
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
 
         instance.onAgentBecameCurrent?()
 

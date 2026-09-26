@@ -54,7 +54,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.register(instance, storage: harness.storage)
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return (instance, sessionID)
     }
 
@@ -723,7 +723,7 @@ struct VMRemovableMediaReconcilerTests {
         #expect(instance.phase == .stopped)
 
         // The successor starts with nothing held.
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         // A later edit on the successor drives only its own target.

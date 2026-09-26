@@ -13,6 +13,9 @@ protocol VMActivityOwner: AnyObject {
     /// ``VMActivity/restingPhase(withoutSlot:)`` reads.
     var hasSaveFile: Bool { get }
 
+    /// The bundle an operation's context runs machine-file work on.
+    var bundle: VMBundle { get }
+
     /// The VM's own facts and the library's that admission reads, without the
     /// identity term.
     var admissionFacts: VMAdmission.Facts { get }
@@ -155,11 +158,14 @@ final class VMActivity {
             facts: owner.admissionFacts.discardingSavedState())
     }
 
-    /// Throws the refusal unless `request` is admitted outright.
-    private func requireAdmitted(_ request: VMAdmission.Request) throws {
+    /// Throws the refusal unless `request` is admitted outright, answering the
+    /// bundle of the VM it was admitted on.
+    @discardableResult
+    private func requireAdmitted(_ request: VMAdmission.Request) throws -> VMBundle {
+        guard let owner else { throw refusal(.invalidState, for: request) }
         switch decide(request, posture: .commit) {
         case .admit:
-            return
+            return owner.bundle
         case .join:
             throw refusal(phase.operation.map { .busy($0.kind) } ?? .invalidState, for: request)
         case .refuse(let reason):
@@ -188,9 +194,9 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        try requireAdmitted(.operation(kind))
+        let bundle = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
-        let context = VMOperationContext(activity: self, kind: kind)
+        let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
         let ending: VMOperationEnding<T>
         do {
             ending = try await body(context)
@@ -206,10 +212,10 @@ final class VMActivity {
         _ body: (borrowing VMBringUpContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
         let operationKind = VMOperationKind.bringUp(kind)
-        try requireAdmitted(.operation(operationKind))
+        let bundle = try requireAdmitted(.operation(operationKind))
         let outcome = commitOperation(operationKind)
         let context = VMBringUpContext(
-            operation: VMOperationContext(activity: self, kind: operationKind))
+            operation: VMOperationContext(activity: self, kind: operationKind, bundle: bundle))
         let ending: VMOperationEnding<T>
         do {
             ending = try await body(context)
@@ -232,10 +238,10 @@ final class VMActivity {
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        try requireAdmitted(.operation(kind))
+        let bundle = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
         outcome.task = Task { @MainActor in
-            let context = VMOperationContext(activity: self, kind: kind)
+            let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
             let ending: VMOperationEnding<Void>
             do {
                 ending = try await body(context)
@@ -256,11 +262,11 @@ final class VMActivity {
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         let operationKind = VMOperationKind.bringUp(kind)
-        try requireAdmitted(.operation(operationKind))
+        let bundle = try requireAdmitted(.operation(operationKind))
         let outcome = commitOperation(operationKind)
         outcome.task = Task { @MainActor in
             let context = VMBringUpContext(
-                operation: VMOperationContext(activity: self, kind: operationKind))
+                operation: VMOperationContext(activity: self, kind: operationKind, bundle: bundle))
             let ending: VMOperationEnding<Void>
             do {
                 ending = try await body(context)
@@ -277,9 +283,9 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
-        try requireAdmitted(.operation(kind))
+        let bundle = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
-        let context = VMOperationContext(activity: self, kind: kind)
+        let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
         let ending: VMOperationEnding<T>
         do {
             ending = try body(context)
@@ -297,9 +303,9 @@ final class VMActivity {
     /// A body that throws rests the VM where the kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
-        try requireAdmitted(.operation(.deleting))
+        let bundle = try requireAdmitted(.operation(.deleting))
         let outcome = commitOperation(.deleting)
-        let context = VMOperationContext(activity: self, kind: .deleting)
+        let context = VMOperationContext(activity: self, kind: .deleting, bundle: bundle)
         do {
             try await body(context)
         } catch {
@@ -660,21 +666,37 @@ final class VMActivity {
 
     // MARK: - Session Lifecycle
 
-    /// Installs the context `make` opens as this VM's session context,
-    /// releasing any prior one first.
+    /// Installs the context `make` opens as the session context of the
+    /// bring-up holding the VM, ending whatever attempt that bring-up had open
+    /// first — so an attempt's pipes and security scopes are always released
+    /// before the next attempt's are taken.
     @discardableResult
-    func beginSessionContext(_ make: () -> VMSessionContext) -> VMSessionContext {
-        // A displaced context is released rather than dropped: its VZ session,
-        // pipes and security scopes would outlive the last reference to them.
-        sessionContext?.tearDown()
+    func beginSessionContext(
+        _ bringUp: borrowing VMBringUpContext, _ make: () -> VMSessionContext
+    ) -> VMSessionContext {
+        endOperationSessionItself()
         let context = make()
         sessionContext = context
         return context
     }
 
+    #if DEBUG
+    /// Installs the context `make` opens with no bring-up behind it, releasing
+    /// any prior one; tests only.
+    @discardableResult
+    func installSessionContextForTesting(_ make: () -> VMSessionContext) -> VMSessionContext {
+        sessionContext?.tearDown()
+        let context = make()
+        sessionContext = context
+        return context
+    }
+    #endif
+
     /// Takes the pipes and cold-attached removable media a configuration build
-    /// produced into the open session context.
-    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
+    /// produced into the bring-up's open session context.
+    func adoptBuildResult(
+        _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
+    ) {
         guard let sessionContext else {
             #log(
                 Self.logger, .fault,
@@ -759,9 +781,22 @@ struct VMOperationContext: ~Copyable, Sendable {
     private let activity: VMActivity
     let kind: VMOperationKind
 
-    fileprivate init(activity: VMActivity, kind: VMOperationKind) {
+    /// The machine-file operations on the bundle of the VM this operation
+    /// holds — the only way to reach them.
+    let bundle: VMBundle.MachineFiles
+
+    /// What ``VMBundle/machineFiles(_:)`` asks for, so only a context can
+    /// reach a bundle's machine files: the initializer is `fileprivate`, which
+    /// `@testable import` does not open.
+    struct MachineFilesKey {
+        fileprivate init() {}
+    }
+
+    @MainActor
+    fileprivate init(activity: VMActivity, kind: VMOperationKind, bundle: VMBundle) {
         self.activity = activity
         self.kind = kind
+        self.bundle = bundle.machineFiles(MachineFilesKey())
     }
 
     /// The operation's live session, or `nil` once it ended or before a
@@ -794,8 +829,9 @@ struct VMOperationContext: ~Copyable, Sendable {
 }
 
 /// The authority a bring-up's body acts with — the only one
-/// ``VMActivity/beginSession(_:from:)`` takes, so only a bring-up, admitted
-/// past the identity check, can create a session.
+/// ``VMActivity/beginSessionContext(_:_:)``, ``VMActivity/adoptBuildResult(_:_:)``
+/// and ``VMActivity/beginSession(_:from:)`` take, so only a bring-up, admitted
+/// past the identity check, can open and fill a session.
 struct VMBringUpContext: ~Copyable, Sendable {
     let operation: VMOperationContext
 

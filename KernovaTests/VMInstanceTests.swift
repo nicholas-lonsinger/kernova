@@ -126,7 +126,7 @@ struct VMInstanceTests {
     func sessionEndReleasesTheContext() throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         defer { VMInstanceFixture.removeBundle(of: instance) }
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -436,7 +436,7 @@ struct VMInstanceTests {
     @Test("A power-off clears serial pipes")
     func powerOffClearsSerialPipes() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
 
@@ -520,7 +520,7 @@ struct VMInstanceTests {
     func networkPendingShowsWarningTintAndToolTip() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         let library = makeWiredLibrary(holding: [instance])
-        instance.beginSessionContext().networkAttachmentPending = true
+        instance.beginSessionContextForTesting().networkAttachmentPending = true
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
         // The wording names what is actually unavailable: the app-managed
@@ -911,7 +911,7 @@ struct VMInstanceTests {
         // the SPICE service's own `.waiting` (same value, but for the wrong
         // reason — and `.current` if the SPICE service were connected).
         let instance = VMInstanceFixture.make(guestOS: .macOS)
-        instance.beginSessionContext().clipboardService = SpiceClipboardService(
+        instance.beginSessionContextForTesting().clipboardService = SpiceClipboardService(
             inputPipe: Pipe(),
             outputPipe: Pipe()
         )
@@ -923,7 +923,7 @@ struct VMInstanceTests {
     func agentStatusLinuxDispatchesToSpice() {
         let instance = VMInstanceFixture.make(guestOS: .linux)
         let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        instance.beginSessionContext().clipboardService = spice
+        instance.beginSessionContextForTesting().clipboardService = spice
         // Newly-constructed SPICE service is `.waiting` (no handshake yet) —
         // dispatch returns that same value, proving the cast + access path runs.
         #expect(spice.agentStatus == .waiting)
@@ -962,6 +962,89 @@ struct VMInstanceTests {
         #expect(instance.errorMessage == nil)
     }
 
+    // MARK: - Settling running
+
+    /// One operation ending with the guest running, and what that ending
+    /// switches on.
+    struct SettleRunningRow: Sendable, CustomTestStringConvertible {
+        let kind: VMOperationKind
+        let startedFrom: VMLifecyclePhase
+        let slot: Bool
+        let activatesNetwork: Bool
+        let armsWatchdog: Bool
+
+        var testDescription: String { "\(kind)" }
+    }
+
+    nonisolated private static let settleSession = UUID()
+
+    nonisolated private static let settleRunningRows: [SettleRunningRow] = [
+        SettleRunningRow(
+            kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped, slot: false,
+            activatesNetwork: true, armsWatchdog: true),
+        // A restore resumes whatever guest state was frozen, which may be a
+        // Recovery session that never runs the agent — Start of a VM holding a
+        // slot included.
+        SettleRunningRow(
+            kind: .bringUp(.restoringSavedState), startedFrom: .suspended, slot: true,
+            activatesNetwork: true, armsWatchdog: false),
+        SettleRunningRow(
+            kind: .bringUp(.reverting(snapshotID: settleSession, resumesAfter: true)),
+            startedFrom: .running(sessionID: settleSession), slot: false,
+            activatesNetwork: true, armsWatchdog: false),
+        SettleRunningRow(
+            kind: .resuming, startedFrom: .livePaused(sessionID: settleSession), slot: false,
+            activatesNetwork: true, armsWatchdog: true),
+        SettleRunningRow(
+            kind: .deletingSnapshot, startedFrom: .running(sessionID: settleSession), slot: false,
+            activatesNetwork: false, armsWatchdog: false),
+    ]
+
+    @Test(
+        "An operation ending with the guest running activates the network and arms the watchdog as its kind says",
+        arguments: settleRunningRows)
+    func settlingRunningFollowsTheKind(row: SettleRunningRow) async throws {
+        let instance = VMInstanceFixture.make(
+            name: "Settle VM", guestOS: .macOS, phase: row.startedFrom,
+            snapshots: VMSnapshotManifest(
+                snapshots: [VMSnapshot(id: Self.settleSession, name: "Base", macAddress: nil)],
+                currentID: nil)
+        ) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.lastSeenAgentVersion = "0.9.2"
+        }
+        defer {
+            instance.cancelAgentPostStartWatchdog()
+            VMInstanceFixture.removeBundle(of: instance)
+        }
+        if row.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
+        let observer = MockNetworkLinkObserver()
+
+        switch row.kind {
+        case .bringUp(let kind):
+            try await instance.activity.bringUp(kind) { context in
+                // A revert ends the session it started from before it brings
+                // the snapshot up.
+                context.operation.endSession()
+                instance.beginSessionContext(context)
+                attachNetworkCoordinator(
+                    to: instance, device: MockNetworkDeviceControl(), linkObserver: observer)
+                context.bindSessionForTesting(UUID())
+                return .rest(.live(.running), ())
+            }
+        default:
+            instance.beginSessionContextForTesting()
+            attachNetworkCoordinator(
+                to: instance, device: MockNetworkDeviceControl(), linkObserver: observer)
+            try await instance.activity.perform(row.kind) { _ in .rest(.live(.running), ()) }
+        }
+
+        #expect(instance.status == .running)
+        #expect(observer.isObserving == row.activatesNetwork)
+        #expect((instance.agentPostStartTaskForTesting != nil) == row.armsWatchdog)
+    }
+
     // MARK: - Session Events
 
     @Test("a session event whose id matches no live session is dropped")
@@ -976,7 +1059,7 @@ struct VMInstanceTests {
     @Test("guestDidStop resets the instance to stopped")
     func guestDidStopEventResets() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.beginSessionContext().serialInputPipe = Pipe()
+        instance.beginSessionContextForTesting().serialInputPipe = Pipe()
         instance.handleSessionEvent(.guestDidStop)
         #expect(instance.status == .stopped)
         #expect(instance.sessionContext == nil)
@@ -985,7 +1068,7 @@ struct VMInstanceTests {
     @Test("didStopWithError tears the session down and records the error")
     func didStopWithErrorEventRecordsError() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.beginSessionContext().serialInputPipe = Pipe()
+        instance.beginSessionContextForTesting().serialInputPipe = Pipe()
         let failure = NSError(
             domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "boom"])
         instance.handleSessionEvent(.didStopWithError(failure))
@@ -1045,7 +1128,7 @@ struct VMInstanceTests {
             $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         }
         instance.setupState = setupState
-        instance.beginSessionContext(bootedIntoRecovery: bootedIntoRecovery)
+        instance.beginSessionContextForTesting(bootedIntoRecovery: bootedIntoRecovery)
         return instance
     }
 
@@ -1104,7 +1187,7 @@ struct VMInstanceTests {
         // misleading.
         let instance = VMInstanceFixture.make(
             name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
 
         // Wait noticeably past the grace so a broken guard would have a
         // real chance to mis-fire. 3× grace is plenty.
@@ -1120,7 +1203,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(
             name: "Linux VM", phase: .running(sessionID: UUID())
         ) { $0.lastSeenAgentVersion = "should-be-ignored" }
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
 
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         try await Task.sleep(for: Self.testWatchdogGrace * 3)
@@ -1156,10 +1239,10 @@ struct VMInstanceTests {
         instance.handleSessionEvent(.guestDidStop)
         #expect(!instance.bootedIntoRecovery)
 
-        instance.beginSessionContext(bootedIntoRecovery: true)
+        instance.beginSessionContextForTesting(bootedIntoRecovery: true)
         #expect(instance.bootedIntoRecovery)
         // And an ordinary attempt on the same instance is ordinary.
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         #expect(!instance.bootedIntoRecovery)
     }
 
@@ -1375,7 +1458,7 @@ struct VMInstanceTests {
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
@@ -1401,7 +1484,7 @@ struct VMInstanceTests {
         // long enough that it cannot legitimately fire during this test.
         instance.handleSessionEvent(.guestDidStop)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.startAgentPostStartWatchdog(grace: .seconds(60))
         #expect(instance.agentPostStartTaskForTesting != nil)
 

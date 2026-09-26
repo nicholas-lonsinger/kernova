@@ -65,7 +65,7 @@ private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstan
         $0.clipboardPassthroughEnabled = passthroughEnabled
     }
     // The clipboard service is session state, so it needs a session to live in.
-    instance.beginSessionContext()
+    instance.beginSessionContextForTesting()
     return instance
 }
 

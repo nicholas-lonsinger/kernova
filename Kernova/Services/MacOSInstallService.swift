@@ -46,8 +46,8 @@ final class MacOSInstallService {
         }
 
         let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
-        let machineIDData = try await instance.bundle.createMacPlatformFiles(
-            context.operation, hardwareModel: hardwareModelData)
+        let machineIDData = try await context.operation.bundle.createMacPlatformFiles(
+            hardwareModel: hardwareModelData)
         // The install stops unless the identity lands: the build below prefers
         // the configuration's hardware model over the bundle's file, which
         // `createMacPlatformFiles` writes only when absent, so a model an
@@ -57,13 +57,13 @@ final class MacOSInstallService {
             $0.machineIdentifierData = machineIDData
         }.get()
 
-        instance.beginSessionContext()
+        instance.beginSessionContext(context)
         let result = try configBuilder.build(
             from: instance.effectiveConfiguration,
             bundleURL: instance.bundleURL
         )
 
-        instance.adoptBuildResult(result)
+        instance.adoptBuildResult(context, result)
         guard let session = await instance.attachSession(context, from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -81,14 +81,29 @@ final class MacOSInstallService {
             }
         }
 
-        // `VZMacOSInstaller.install` resolves its completion handler before VZ
-        // has finished shutting the installed guest down, and the boot chained
-        // after the setup would race the auxiliary-storage file lock that
-        // session still holds.
-        _ = try await context.operation.sessionEnded()
+        // `VZMacOSInstaller.install`'s completion is documented only as called
+        // after the install succeeds or fails — not that the installer's VM
+        // has stopped. `VZVirtualMachine.stop`'s completion is documented as
+        // called once the VM has stopped or on error, so the session ends on
+        // that rather than on a delegate event.
+        #log(Self.logger, .notice, "Stopping the installer's VM for '\(instance.name, privacy: .public)'")
+        do {
+            let outcome =
+                try await session.stopIfStoppable() ? "stopped" : "was not stoppable; treated as stopped"
+            #log(
+                Self.logger, .notice,
+                "Installer's VM for '\(instance.name, privacy: .public)' \(outcome, privacy: .public)")
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Stopping the installer's VM for '\(instance.name, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+        context.operation.endSession()
 
-        // A cancel landing after the session ended has to be raised here, or the
-        // install returns success and the setup chains a boot.
+        // A cancel landing after the stop has to be raised here, or the install
+        // returns success and the setup chains a boot.
         try Task.checkCancellation()
 
         instance.setupState?.progress = .fraction(1.0)

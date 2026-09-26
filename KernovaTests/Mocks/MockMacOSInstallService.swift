@@ -25,8 +25,8 @@ final class MockMacOSInstallService: MacOSInstallProviding {
         lastRestoreImageURL = restoreImageURL
         onInstall?()
         if let error = installError { throw error }
-        // No installer session is bound, so there is none whose end to await:
-        // the setup operation's ending rests the VM.
+        // No installer session is bound, so there is none to stop: the setup
+        // operation's ending rests the VM.
         return installedImage
     }
 }

@@ -108,7 +108,7 @@ struct RemovableMediaDeviceServiceTests {
     @Test("The session's end clears liveRemovableMedia")
     func tearDownClearsRemovableMedia() {
         let instance = makeInstance()
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
 
         context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
         context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/b.dmg", readOnly: true))

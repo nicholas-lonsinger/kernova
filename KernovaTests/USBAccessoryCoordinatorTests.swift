@@ -34,7 +34,7 @@ struct USBAccessoryCoordinatorTests {
     private func makeInstance(sessionID: UUID, named name: String = "USB VM") -> VMInstance {
         let instance = makeStoppedInstance(named: name)
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -296,7 +296,7 @@ struct USBAccessoryCoordinatorTests {
 
         // The library moves on while the second accessory waits its turn.
         first.handleSessionEvent(.guestDidStop)
-        second.beginSessionContext()
+        second.beginSessionContextForTesting()
         second.activity.placeForTesting(.running(sessionID: UUID()))
         recorder.requests[0].answer(nil)
 
@@ -566,7 +566,7 @@ struct USBAccessoryCoordinatorTests {
         try pair(theirs, with: other)
         service.accessories = [mine, theirs]
 
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
@@ -587,7 +587,7 @@ struct USBAccessoryCoordinatorTests {
         try pair(accessory, with: instance)
         service.accessories = [accessory]
         let sessionID = UUID()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
 

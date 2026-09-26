@@ -1823,7 +1823,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
@@ -1847,7 +1847,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
@@ -1886,7 +1886,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
@@ -1911,7 +1911,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         let info = try await coordinator.attachRemovableMedia(
@@ -1922,7 +1922,7 @@ struct VMLifecycleCoordinatorTests {
         )
         // Force stop and restart: the pass acting for `sessionID` is overtaken.
         instance.handleSessionEvent(.guestDidStop)
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         let attachesBefore = removableMediaService.attachCallCount
 
@@ -1959,7 +1959,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, removableMediaService) = makeCoordinator()
         let sessionID = UUID()
         let instance = VMInstanceFixture.make()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         // A bookmark that tracked a moved file: the resolved location is

@@ -76,7 +76,7 @@ struct VMCommandCoreUSBAccessoryTests {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: .running(sessionID: UUID()), guestOS: .linux,
             library: harness.library, storage: harness.storage, preferences: preferences)
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 

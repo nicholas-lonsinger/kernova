@@ -167,7 +167,7 @@ struct SidebarViewControllerTests {
             $0.lastSeenAgentVersion = "1.2.3"
         }
         let library = makeWiredLibrary(holding: [instance])
-        instance.beginSessionContext().agentExpectedButMissing = true
+        instance.beginSessionContextForTesting().agentExpectedButMissing = true
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -204,7 +204,7 @@ struct SidebarViewControllerTests {
         let missing = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
             $0.lastSeenAgentVersion = "1.2.3"
         }
-        missing.beginSessionContext().agentExpectedButMissing = true
+        missing.beginSessionContextForTesting().agentExpectedButMissing = true
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)
                 == .expectedMissing(expected: "1.2.3"))

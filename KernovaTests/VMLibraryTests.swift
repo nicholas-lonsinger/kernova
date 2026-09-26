@@ -290,7 +290,7 @@ struct VMLibraryTests {
         library.register(instance, storage: storage)
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return sessionID
     }
 

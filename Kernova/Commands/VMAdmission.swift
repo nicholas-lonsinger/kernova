@@ -106,27 +106,43 @@ enum VMAdmission {
         }
     }
 
-    /// The bring-up a Start or Resume request performs from `phase`, or `nil`
-    /// when it performs none — a hot resume, or a request the phase refuses.
+    /// The operation a Start, Resume or operation request performs, or `nil`
+    /// when it names none.
+    ///
+    /// Start resolves from the facts alone, and the operation's own row then
+    /// judges the phase: Start in Recovery is always a Recovery boot, so a VM
+    /// that cannot take one refuses it rather than starting some other way.
+    static func operationKind(
+        for request: Request, phase: VMLifecyclePhase, facts: Facts
+    ) -> VMOperationKind? {
+        switch request {
+        case .start(recovery: true):
+            return .bringUp(.starting(recovery: true))
+        case .start(recovery: false):
+            if facts.hasSaveFile { return .bringUp(.restoringSavedState) }
+            if facts.hasPendingGuestSetup {
+                return .bringUp(
+                    .settingUp(facts.guestOS == .macOS ? .macOSInstall : .linuxImageDownload))
+            }
+            return .bringUp(.starting(recovery: false))
+        case .resume:
+            if case .livePaused = phase { return .resuming }
+            return facts.hasSaveFile ? .bringUp(.restoringSavedState) : nil
+        case .operation(let kind):
+            return kind
+        case .edit, .sessionAction, .cancel, .evict, .affordance:
+            return nil
+        }
+    }
+
+    /// The bring-up ``operationKind(for:phase:facts:)`` names, or `nil` when
+    /// the request performs none — a hot resume among them.
     static func bringUpKind(
         for request: Request, phase: VMLifecyclePhase, facts: Facts
     ) -> VMBringUpKind? {
-        switch request {
-        case .start(let recovery):
-            guard phase.isAtRest else { return nil }
-            if facts.hasSaveFile { return .restoringSavedState }
-            if facts.hasPendingGuestSetup {
-                return .settingUp(facts.guestOS == .macOS ? .macOSInstall : .linuxImageDownload)
-            }
-            return .starting(recovery: recovery)
-        case .resume:
-            guard phase.isAtRest, facts.hasSaveFile else { return nil }
-            return .restoringSavedState
-        case .operation(.bringUp(let kind)):
-            return kind
-        case .operation, .edit, .sessionAction, .cancel, .evict, .affordance:
-            return nil
-        }
+        guard case .bringUp(let kind)? = operationKind(for: request, phase: phase, facts: facts)
+        else { return nil }
+        return kind
     }
 
     /// How a capture taken from `phase` right now is made, or `nil` when the
@@ -176,23 +192,15 @@ enum VMAdmission {
     ) -> Decision {
         let atRest = phase.isAtRest
         let live = phase.isSettledLive
-        let slot = atRest && facts.hasSaveFile
         switch request {
-        case .start(let recovery):
-            guard atRest else { return .refuse(.invalidState) }
-            if recovery {
-                guard phase == .stopped, !facts.hasSaveFile, facts.guestOS == .macOS else {
-                    return .refuse(.invalidState)
-                }
+        case .start, .resume, .operation:
+            guard let kind = operationKind(for: request, phase: phase, facts: facts) else {
+                return .refuse(.invalidState)
             }
-            if slot, posture == .offer { return .refuse(.invalidState) }
-            if facts.cloneInFlight { return .refuse(.busy(.copyingOut)) }
-            return identityChecked(facts)
-        case .resume:
-            if case .livePaused = phase { return .admit }
-            guard slot else { return .refuse(.invalidState) }
-            return identityChecked(facts)
-        case .operation(let kind):
+            // A VM holding a saved state is offered Resume, not Start.
+            if case .start = request, kind == .bringUp(.restoringSavedState), posture == .offer {
+                return .refuse(.invalidState)
+            }
             return decideSettledOperation(kind, phase: phase, facts: facts)
         case .edit(let classes):
             // A pairing rule is a preference about which accessory to pass
@@ -259,7 +267,7 @@ enum VMAdmission {
         }
         guard admitted else { return .refuse(.invalidState) }
         switch kind {
-        case .bringUp(.starting), .bringUp(.reverting), .deleting:
+        case .bringUp, .deleting:
             if facts.cloneInFlight { return .refuse(.busy(.copyingOut)) }
         default:
             break

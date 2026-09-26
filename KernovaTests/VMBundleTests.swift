@@ -509,10 +509,8 @@ struct VMBundleTests {
         let layout = VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: snapshot.id)
 
         let plan = try await withOperation(on: bundle) { context in
-            let plan = try await bundle.prepareSnapshot(
-                context, snapshot.id, configuration: bundle.configuration)
-            try await bundle.captureDisks(
-                context, intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
+            let plan = try await context.bundle.prepareSnapshot(snapshot.id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
             return plan
         }
         try bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
@@ -533,8 +531,8 @@ struct VMBundleTests {
         try Data("slot".utf8).write(to: bundle.saveFileURL)
 
         try await withOperation(on: bundle) { context in
-            _ = try await bundle.prepareSnapshot(context, id, configuration: bundle.configuration)
-            try await bundle.captureSuspendSlot(context, intoSnapshot: id)
+            _ = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureSuspendSlot(intoSnapshot: id)
         }
 
         #expect(text(at: VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: id).saveFileURL) == "slot")
@@ -550,11 +548,11 @@ struct VMBundleTests {
         let listed = UUID()
 
         try await withOperation(on: bundle) { context in
-            _ = try await bundle.prepareSnapshot(context, partial, configuration: bundle.configuration)
-            _ = try await bundle.prepareSnapshot(context, listed, configuration: bundle.configuration)
+            _ = try await context.bundle.prepareSnapshot(partial, configuration: bundle.configuration)
+            _ = try await context.bundle.prepareSnapshot(listed, configuration: bundle.configuration)
 
-            await bundle.removeSnapshotDirectory(context, partial)
-            try await bundle.discardSnapshot(context, listed)
+            await context.bundle.removeSnapshotDirectory(partial)
+            try await context.bundle.discardSnapshot(listed)
         }
 
         #expect(!exists(layout.snapshotDirectoryURL(id: partial)))
@@ -569,14 +567,14 @@ struct VMBundleTests {
         let id = UUID()
 
         try await withOperation(on: bundle) { context in
-            let captured = try await bundle.prepareSnapshot(context, id, configuration: bundle.configuration)
-            try await bundle.captureDisks(context, intoSnapshot: id, relativePaths: captured.relativePaths)
+            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
             try Data("written-since".utf8).write(to: layout.diskImageURL)
 
-            let plan = try await bundle.planRestore(context, fromSnapshot: id, kind: .cold)
-            try await bundle.stageRestore(context, fromSnapshot: id, plan: plan)
+            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
+            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
             #expect(text(at: layout.diskImageURL) == "written-since")
-            try await bundle.installRestore(context, plan)
+            try await context.bundle.installRestore(plan)
         }
 
         #expect(text(at: layout.diskImageURL) == "live-disk")
@@ -591,13 +589,13 @@ struct VMBundleTests {
         let id = UUID()
 
         try await withOperation(on: bundle) { context in
-            let captured = try await bundle.prepareSnapshot(context, id, configuration: bundle.configuration)
-            try await bundle.captureDisks(context, intoSnapshot: id, relativePaths: captured.relativePaths)
-            let plan = try await bundle.planRestore(context, fromSnapshot: id, kind: .cold)
-            try await bundle.stageRestore(context, fromSnapshot: id, plan: plan)
+            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
+            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
+            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
             #expect(exists(layout.restoreStagingURL))
 
-            await bundle.discardRestoreStaging(context)
+            await context.bundle.discardRestoreStaging()
         }
 
         #expect(!exists(layout.restoreStagingURL))
@@ -611,10 +609,10 @@ struct VMBundleTests {
         try Data("slot".utf8).write(to: bundle.saveFileURL)
 
         try await withOperation(on: bundle) { context in
-            bundle.removeSaveFile(context)
+            context.bundle.removeSaveFile()
             #expect(!exists(bundle.saveFileURL))
 
-            bundle.removeSaveFile(context)
+            context.bundle.removeSaveFile()
             #expect(!exists(bundle.saveFileURL))
         }
     }
@@ -626,7 +624,7 @@ struct VMBundleTests {
         let storeURL = VMBundleLayout(bundleURL: bundle.url).efiVariableStoreURL
         #expect(!exists(storeURL))
 
-        try await withOperation(on: bundle) { try await bundle.ensureEFIVariableStore($0) }
+        try await withOperation(on: bundle) { try await $0.bundle.ensureEFIVariableStore() }
 
         #expect(exists(storeURL))
     }
@@ -638,8 +636,7 @@ struct VMBundleTests {
 
         await #expect(throws: ConfigurationBuilderError.self) {
             _ = try await withOperation(on: bundle) { context in
-                try await bundle.createMacPlatformFiles(
-                    context, hardwareModel: Data("not a model".utf8))
+                try await context.bundle.createMacPlatformFiles(hardwareModel: Data("not a model".utf8))
             }
         }
 

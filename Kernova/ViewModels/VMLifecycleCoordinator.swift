@@ -111,7 +111,7 @@ final class VMLifecycleCoordinator {
     func discardSavedState(_ instance: VMInstance) throws {
         try instance.activity.performNow(.discardingSavedState) {
             (context: borrowing VMOperationContext) -> VMOperationEnding<Void> in
-            instance.bundle.removeSaveFile(context)
+            context.bundle.removeSaveFile()
             guard !instance.hasSaveFile else {
                 return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
             }
@@ -159,7 +159,7 @@ final class VMLifecycleCoordinator {
     /// that throws leaves nothing behind: unlisted files are files no surface
     /// can reach or remove, so the capture is undone.
     func takeSnapshot(
-        _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotRecord,
+        _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         try await instance.activity.perform(.capturingSnapshot(mode)) { context in
@@ -183,7 +183,7 @@ final class VMLifecycleCoordinator {
             do {
                 try record(captured)
             } catch {
-                await instance.bundle.removeSnapshotDirectory(context, captured.id)
+                await context.bundle.removeSnapshotDirectory(captured.id)
                 return .failed(rest, error)
             }
             return ending
@@ -354,7 +354,7 @@ final class VMLifecycleCoordinator {
     ) async throws {
         try await instance.activity.perform(.deletingSnapshot) { context in
             try unlist()
-            try await instance.bundle.discardSnapshot(context, snapshotID)
+            try await context.bundle.discardSnapshot(snapshotID)
             return .rest(.asStarted, ())
         }
     }
@@ -429,10 +429,10 @@ final class VMLifecycleCoordinator {
     /// refused as busy, and Cancel Setup (``VMActivity/cancel(_:)``) cancels
     /// the operation's own task. A cancel — or a failure that raced one —
     /// rests the VM at `.initialBoot` for a retry that resumes the download.
-    @discardableResult
     ///
     /// `whenEnded` runs at the setup's ending commit — see
     /// ``VMActivity/launchBringUp(_:whenEnded:_:)``.
+    @discardableResult
     func launchGuestSetup(
         on instance: VMInstance,
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil

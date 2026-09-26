@@ -1856,7 +1856,7 @@ struct VMLibraryViewModelTests {
         }
         instance.activity.placeForTesting(phase)
         if instance.liveSessionID != nil {
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
         }
         viewModel.library.admitForTesting(instance)
         return instance
@@ -5466,7 +5466,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = VMInstanceFixture.make(guestOS: .macOS)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         viewModel.library.admitForTesting(instance)
 
         viewModel.mountGuestAgentInstaller(on: instance)
@@ -5697,7 +5697,7 @@ struct VMLibraryViewModelTests {
         }
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: idA, path: "/tmp/a.iso", readOnly: true), for: sessionID)
         instance.recordAttachedMedia(
@@ -5732,7 +5732,7 @@ struct VMLibraryViewModelTests {
         }
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         viewModel.library.admitForTesting(instance)
@@ -5759,7 +5759,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let id = UUID()
         viewModel.library.admitForTesting(instance)
 
@@ -5789,7 +5789,7 @@ struct VMLibraryViewModelTests {
         let instance = VMInstanceFixture.make { $0.removableMedia = [oldItem] }
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         viewModel.library.admitForTesting(instance)
@@ -5821,7 +5821,7 @@ struct VMLibraryViewModelTests {
         }
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: id, path: "/tmp/old.iso", readOnly: true), for: sessionID)
         viewModel.library.admitForTesting(instance)

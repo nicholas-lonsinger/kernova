@@ -201,7 +201,7 @@ struct VMActivityTests {
 
         try instance.activity.performNow(.discardingSavedState) { context in
             recorder.operation = instance.phase.operation
-            instance.bundle.removeSaveFile(context)
+            context.bundle.removeSaveFile()
             return .rest(.atRest(.stopped), ())
         }
         #expect(recorder.operation?.kind == .discardingSavedState)
@@ -421,7 +421,7 @@ struct VMActivityTests {
         ]
         for (phase, event, rest, powerOffs) in cases {
             let (instance, recorder) = makeInstance(phase)
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
 
             // One raised by a session the VM no longer holds is dropped.
             instance.activity.deliverSessionEvent(event, from: UUID())
@@ -452,7 +452,7 @@ struct VMActivityTests {
         for (event, end) in cases {
             let session = UUID()
             let (instance, recorder) = makeInstance(.running(sessionID: session))
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
             let gate = GatedStep()
             let outcome = try launchGated(.deletingSnapshot, on: instance, gate: gate)
             try await gate.waitUntilEntered()
@@ -481,7 +481,7 @@ struct VMActivityTests {
     func sessionEndedAnswersTheEnd() async throws {
         let session = UUID()
         let (instance, recorder) = makeInstance(.running(sessionID: session))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let entered = GatedStep()
         entered.release()
 
@@ -815,7 +815,7 @@ struct VMActivityTests {
         await #expect(throws: Probe.self) {
             try await instance.activity.bringUp(.starting(recovery: false)) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
-                instance.beginSessionContext()
+                instance.beginSessionContextForTesting()
                 throw Probe()
             }
         }

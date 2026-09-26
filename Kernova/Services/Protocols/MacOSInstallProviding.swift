@@ -7,7 +7,7 @@ protocol MacOSInstallProviding: Sendable {
     /// answers with the restore image it ran from, for the caller to record on
     /// the VM.
     ///
-    /// Returns once the installer's session has ended.
+    /// Returns once the installer's VM has stopped and its session ended.
     func install(
         into instance: VMInstance,
         _ context: borrowing VMBringUpContext,

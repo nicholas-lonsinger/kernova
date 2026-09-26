@@ -29,7 +29,7 @@ struct VMInstanceDisplayDropTests {
             }
             // The services below are session state, so they need a session to
             // live in — the boot paths open one before any listener is wired.
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
         }
 
         /// Installs a started control service and hands back the guest end, so a

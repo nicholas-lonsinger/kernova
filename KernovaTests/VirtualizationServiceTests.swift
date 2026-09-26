@@ -68,7 +68,7 @@ struct VirtualizationServiceTests {
     private func instanceHoldingAccessories(_ count: Int) -> (VMInstance, UUID, [UUID]) {
         let sessionID = UUID()
         let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
         var deviceIDs: [UUID] = []
         for index in 0..<count {
             let deviceID = UUID()
@@ -182,7 +182,7 @@ struct VirtualizationServiceTests {
         await #expect(throws: GuestStopped.self) {
             try await instance.activity.bringUp(.starting(recovery: false)) {
                 (context: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
-                instance.beginSessionContext()
+                instance.beginSessionContextForTesting()
                 context.bindSessionForTesting(UUID())
                 throw GuestStopped()
             }
@@ -190,6 +190,55 @@ struct VirtualizationServiceTests {
 
         #expect(instance.phase == .failed(message: "The guest stopped."))
         #expect(instance.sessionContext == nil)
+    }
+
+    // MARK: - Suspend
+
+    /// Suspends `instance` over `session` inside the save operation the VM
+    /// admits.
+    private func suspend(_ instance: VMInstance, over session: MockSnapshotSession) async throws {
+        try await instance.activity.perform(.saving) { context in
+            try await VirtualizationService.save(instance, context, session: session)
+        }
+    }
+
+    @Test("A suspend whose write throws drops the part-written slot and rests at the failure")
+    func suspendFailureDropsThePartWrittenSlot() async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setSaveError(
+            NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "The disk is full."]))
+        // What VZ wrote in place before the write failed.
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        let error = await #expect(throws: (any Error).self) {
+            try await suspend(instance, over: session)
+        }
+
+        #expect(error?.localizedDescription == "The disk is full.")
+        #expect(!instance.hasSaveFile)
+        #expect(instance.phase == .failed(message: "The disk is full."))
+    }
+
+    @Test("A guest that goes away mid-suspend drops the slot and rests where its end put it")
+    func suspendOverAVanishingGuestDropsTheSlot() async throws {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setAfterSave {
+            await MainActor.run {
+                // However far VZ got before the guest went away.
+                try? VMInstanceFixture.writeSaveFile(for: instance)
+                instance.handleSessionEvent(.guestDidStop)
+            }
+        }
+
+        try await suspend(instance, over: session)
+
+        #expect(!instance.hasSaveFile)
+        // Stopped, not suspended on a slot that cannot restore.
+        #expect(instance.phase == .stopped)
     }
 
     // MARK: - Warm capture over a session that goes away
@@ -204,7 +253,7 @@ struct VirtualizationServiceTests {
     /// operation the VM admits.
     @discardableResult
     private func captureWarm(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord, session: MockSnapshotSession
+        _ instance: VMInstance, snapshot: VMSnapshotCaptureRequest, session: MockSnapshotSession
     ) async throws -> VMSnapshot {
         try await instance.activity.perform(.capturingSnapshot(.live)) { context in
             try await VirtualizationService.captureWarmSnapshot(
@@ -219,7 +268,7 @@ struct VirtualizationServiceTests {
         let instance = VMInstanceFixture.make(
             phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
-        let snapshot = VMSnapshotRecord(name: "Before the update")
+        let snapshot = VMSnapshotCaptureRequest(name: "Before the update")
         let whileCapturing = SessionEndRecord()
         // `didStopWithError` lands while the disks copy, exactly as a guest
         // shutdown or a VZ error does — and `resumeIfPaused` returns rather than
@@ -259,9 +308,10 @@ struct VirtualizationServiceTests {
             phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .running)
 
-        try await captureWarm(
-            instance, snapshot: VMSnapshotRecord(name: "Before the update"), session: session)
+        let captured = try await captureWarm(
+            instance, snapshot: VMSnapshotCaptureRequest(name: "Before the update"), session: session)
 
+        #expect(captured.kind == .warm)
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
@@ -273,7 +323,7 @@ struct VirtualizationServiceTests {
             phase: .livePaused(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
         let session = MockSnapshotSession(guestState: .paused)
 
-        try await captureWarm(instance, snapshot: VMSnapshotRecord(name: "Paused"), session: session)
+        try await captureWarm(instance, snapshot: VMSnapshotCaptureRequest(name: "Paused"), session: session)
 
         #expect(instance.phase == .livePaused(sessionID: sessionID))
     }
@@ -289,7 +339,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await captureWarm(
-                instance, snapshot: VMSnapshotRecord(name: "Doomed"), session: session)
+                instance, snapshot: VMSnapshotCaptureRequest(name: "Doomed"), session: session)
         }
 
         #expect(instance.phase == .running(sessionID: sessionID))
@@ -377,7 +427,7 @@ struct VirtualizationServiceTests {
     /// Captures `snapshot` from `instance` inside the capture operation the VM
     /// admits, in the mode its state offers.
     private func capture(
-        _ instance: VMInstance, _ snapshot: VMSnapshotRecord
+        _ instance: VMInstance, _ snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMSnapshot {
         let mode = try #require(instance.snapshotCaptureMode)
         return try await instance.activity.perform(.capturingSnapshot(mode)) { context in
@@ -449,11 +499,12 @@ struct VirtualizationServiceTests {
     func captureAnswersTheSnapshotWithItsMACAddress() async throws {
         let fixture = try makeRevertFixture(macAddress: "aa:bb:cc:dd:ee:03")
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
-        let snapshot = VMSnapshotRecord(name: "Before first boot", kind: .cold)
+        let snapshot = VMSnapshotCaptureRequest(name: "Before first boot")
 
         let captured = try await capture(fixture.instance, snapshot)
 
         #expect(captured.id == snapshot.id)
+        #expect(captured.kind == .cold)
         #expect(captured.macAddress == "aa:bb:cc:dd:ee:03")
         let written = try VMConfiguration.load(
             fromBundle: fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id).bundleURL)
@@ -585,7 +636,7 @@ struct VirtualizationServiceTests {
     func coldCaptureWritesDisksAndRestsStopped() async throws {
         let fixture = try makeRevertFixture()
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
-        let snapshot = VMSnapshotRecord(name: "Before first boot", kind: .cold)
+        let snapshot = VMSnapshotCaptureRequest(name: "Before first boot")
 
         _ = try await capture(fixture.instance, snapshot)
 
@@ -606,10 +657,11 @@ struct VirtualizationServiceTests {
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         #expect(fixture.instance.isColdPaused)
         try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
-        let snapshot = VMSnapshotRecord(name: "Suspended", kind: .warm)
+        let snapshot = VMSnapshotCaptureRequest(name: "Suspended")
 
-        _ = try await capture(fixture.instance, snapshot)
+        let captured = try await capture(fixture.instance, snapshot)
 
+        #expect(captured.kind == .warm)
         let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
         let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
         #expect(String(decoding: capturedSlot, as: UTF8.self) == "bundle-suspend-slot")
@@ -633,7 +685,7 @@ struct VirtualizationServiceTests {
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         #expect(fixture.instance.snapshotCaptureMode == .suspended)
-        let snapshot = VMSnapshotRecord(name: "Suspended", kind: .warm)
+        let snapshot = VMSnapshotCaptureRequest(name: "Suspended")
 
         _ = try await capture(fixture.instance, snapshot)
 
@@ -658,7 +710,7 @@ struct VirtualizationServiceTests {
             try await fixture.instance.activity.perform(.capturingSnapshot(.suspended)) { context in
                 try await service.takeSnapshot(
                     fixture.instance, context,
-                    snapshot: VMSnapshotRecord(name: "No slot", kind: .warm))
+                    snapshot: VMSnapshotCaptureRequest(name: "No slot"))
             }
         }
         #expect(fixture.instance.phase == .suspended)
@@ -671,7 +723,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.isColdPaused)
         try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         let checkpoint = try await capture(
-            fixture.instance, VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm))
+            fixture.instance, VMSnapshotCaptureRequest(name: "Suspended checkpoint"))
         try fixture.instance.bundle.commitSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 

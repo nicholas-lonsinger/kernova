@@ -186,6 +186,25 @@ actor VMSession {
         }
     }
 
+    /// Stops the VM unless VZ reports it cannot be stopped, answering whether
+    /// `stop` ran to success.
+    ///
+    /// `false` when `canStop` is off, or when `stop`'s completion reports an
+    /// invalid state transition — the VM left a stoppable state between the
+    /// check and the call.
+    func stopIfStoppable() async throws -> Bool {
+        guard vm.canStop else { return false }
+        do {
+            try await stop()
+        } catch let error as NSError
+            where error.domain == VZError.errorDomain
+            && VZError.Code(rawValue: error.code) == .invalidVirtualMachineStateTransition
+        {
+            return false
+        }
+        return true
+    }
+
     /// Requests a graceful ACPI shutdown.
     func requestStop() throws {
         try vm.requestStop()

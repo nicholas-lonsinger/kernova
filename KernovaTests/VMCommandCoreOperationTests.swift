@@ -97,7 +97,7 @@ struct VMCommandCoreOperationTests {
         let harness = makeHarness(virtualization: virtualization, usbAccessories: accessories)
         let session = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: session))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         defer { VMInstanceFixture.removeBundle(of: instance) }
         accessories.accessories.append(MockUSBAccessoryService.accessory(registryID: 42, serial: "A1"))
         accessories.suspendNextAttach = true

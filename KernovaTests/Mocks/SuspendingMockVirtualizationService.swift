@@ -115,7 +115,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
             await suspendIfNeeded()
         }
         if let error = startError { throw error }
-        if route == .restoredSavedState { instance.bundle.removeSaveFile(context.operation) }
+        if route == .restoredSavedState { context.operation.bundle.removeSaveFile() }
         context.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
@@ -147,7 +147,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        instance.bundle.removeSaveFile(context)
+        context.bundle.removeSaveFile()
         return .rest(.live(.running), ())
     }
 
@@ -163,13 +163,15 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     func takeSnapshot(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
-        snapshot: VMSnapshotRecord
+        snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        guard case .capturingSnapshot(let mode) = context.kind, mode.kind == snapshot.kind else {
+        guard case .capturingSnapshot(let mode) = context.kind else {
             throw VirtualizationError.invalidStateTransition(
                 from: instance.status, action: "take a snapshot of")
         }
-        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: instance.configuration.macAddress))
+        return .rest(
+            .asStarted,
+            VMSnapshot(request.record(capturedIn: mode), macAddress: instance.configuration.macAddress))
     }
 
     func revertToSnapshot(
@@ -179,18 +181,17 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendBeforePlanning {
             await suspendIfNeeded()
         }
-        let plan = try await instance.bundle.planRestore(
-            context.operation, fromSnapshot: snapshot.id, kind: snapshot.kind)
+        let plan = try await context.operation.bundle.planRestore(fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
         context.operation.endSession()
-        try await instance.bundle.stageRestore(context.operation, fromSnapshot: snapshot.id, plan: plan)
+        try await context.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
         if shouldSuspendBeforeInstall {
             await suspendIfNeeded()
         }
-        try await instance.bundle.installRestore(context.operation, plan)
+        try await context.operation.bundle.installRestore(plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)
