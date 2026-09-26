@@ -337,9 +337,9 @@ extension VMCommandCore {
     // MARK: - Metadata
 
     /// Renames a snapshot; an empty name, an unchanged one, and one naming a
-    /// snapshot the manifest no longer lists are all no-ops. A metadata-only
-    /// manifest write: no VM operation reads it mid-flight, so it lands whether
-    /// or not the VM is busy.
+    /// snapshot the manifest no longer lists are all no-ops, and a rename that
+    /// would change the name is refused while the VM's state holds its
+    /// snapshot metadata.
     ///
     /// What decides is whether the write would change anything, rather than
     /// whether the snapshot is still there: the inline field commits on
@@ -348,20 +348,26 @@ extension VMCommandCore {
     func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
         let instance = try resolve(selector)
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, let snapshot = instance.snapshotManifest.snapshot(id: id),
+            snapshot.name != trimmed
+        else { return }
+        try require(.renameSnapshot, on: instance)
         try commitSnapshotManifest(of: instance, verb: .renameSnapshot) {
             $0.rename(id: id, to: trimmed)
         }
     }
 
-    /// Replaces a snapshot's note; a metadata-only manifest write, and a write
-    /// that would change nothing is a no-op on the same terms a rename's is.
+    /// Replaces a snapshot's note; a write that would change nothing is a
+    /// no-op, and one that would is refused, on the same terms a rename's are.
     ///
     /// Unlike a name, an empty note is a legitimate value — it clears the note.
     /// Leading and trailing whitespace is trimmed; interior newlines are kept.
     func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
         let instance = try resolve(selector)
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.notes != trimmed
+        else { return }
+        try require(.setSnapshotNotes, on: instance)
         try commitSnapshotManifest(of: instance, verb: .setSnapshotNotes) {
             $0.setNotes(id: id, to: trimmed)
         }

@@ -610,6 +610,14 @@ extension VMCommandCore {
     ) async throws {
         switch disposition {
         case .graceful:
+            // A VM holding a saved state has no guest to send the request to, so
+            // this is not a shutdown at all: it deletes the suspended session
+            // exactly as the force path does, and an Ephemeral VM's rolls the
+            // disks back to the baseline on top of that. It passes the gate
+            // alongside the VMs that do take a shutdown, and asks the same
+            // consent the force path does — which is also what the UI asks at
+            // every suspended Stop.
+            try require(anyOf: [.stop, .discardSavedState], on: instance)
             // VZ rejects `requestStop()` on a paused VM ("Invalid virtual
             // machine state"), so a live-paused guest has to be resumed first
             // or terminated — which is a choice, not a detail.
@@ -620,14 +628,6 @@ extension VMCommandCore {
                 try await resumeThenShutDown(instance)
                 return
             }
-            // A VM holding a saved state has no guest to send the request to, so
-            // this is not a shutdown at all: it deletes the suspended session
-            // exactly as the force path does, and an Ephemeral VM's rolls the
-            // disks back to the baseline on top of that. It passes the gate
-            // alongside the VMs that do take a shutdown, and asks the same
-            // consent the force path does — which is also what the UI asks at
-            // every suspended Stop.
-            try require(anyOf: [.stop, .discardSavedState], on: instance)
             guard confirmed || !instance.holdsSuspendedSession else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }

@@ -423,7 +423,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(name: "Settled", phase: .stopped)
         viewModel.library.admitForTesting(instance)
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let copying = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
@@ -679,7 +679,7 @@ struct SidebarViewControllerTests {
     @Test("An arrival's row shows its name and label, and its menu offers only its Cancel")
     func arrivalRowShowsItsLabelAndOffersOnlyCancel() async throws {
         let viewModel = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
@@ -876,7 +876,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let before = VMInstanceFixture.make(name: "Before")
         viewModel.library.admitForTesting(before)
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()

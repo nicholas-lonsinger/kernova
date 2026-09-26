@@ -413,7 +413,7 @@ struct VMCommandCoreTests {
     @Test("open refuses an arrival whose bundle is still being copied")
     func openRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var surfaced = 0
         harness.core.surfaceDisplay = { _ in surfaced += 1 }
@@ -459,7 +459,7 @@ struct VMCommandCoreTests {
     @Test("reveal of an arrival still being copied lands on its library row")
     func revealOfAnArrivalLandsInTheLibrary() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var surfaced: [UUID] = []
         var revealed: [UUID] = []
@@ -961,7 +961,7 @@ struct VMCommandCoreTests {
     @Test("A verb refuses an arrival whose clone or import is still copying")
     func refusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(.importing, named: "Copying", gate: gate)
 
         let error = try #require(
@@ -980,7 +980,7 @@ struct VMCommandCoreTests {
     @Test("A state-gated verb aimed at an arrival reports busy with its copy, not an invalid state")
     func stateGatedVerbReportsBusyForAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -998,7 +998,7 @@ struct VMCommandCoreTests {
     @Test("resume refuses an arrival whose clone or import is still copying")
     func resumeRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(.importing, named: "Copying", gate: gate)
 
         let error = try #require(await commandError { try await harness.core.resume(.id(arrival.id)) })
@@ -1702,7 +1702,7 @@ struct VMCommandCoreTests {
     @Test("A cancel with no consent refuses, and confirming marks the row cancelling")
     func cancelPreparingAsksForConsent() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -2023,7 +2023,7 @@ struct VMCommandCoreTests {
     @Test("rename refuses an arrival whose clone or import is still copying")
     func renameRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -2078,7 +2078,7 @@ struct VMCommandCoreTests {
     func deleteRefusesASourceBeingCloned() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: instance.id), named: "Source Copy", gate: gate)
 
@@ -2434,7 +2434,7 @@ struct VMCommandCoreTests {
     @Test("An arrival settling reports the wire-status transition")
     func arrivalSettleReportsStatusChanged() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Cloning", gate: gate)
 
@@ -2556,7 +2556,7 @@ struct VMCommandCoreTests {
         #expect(from == "Before")
         #expect(to == "After")
 
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let error = try #require(

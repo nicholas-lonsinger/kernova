@@ -269,7 +269,7 @@ struct VMToolbarManagerTests {
     @Test("Every item is disabled while an arrival is the selected row")
     func selectedArrivalDisablesEveryItem() async throws {
         let library = makeLibrary().library
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Arriving", gate: gate)
         #expect(library.selectedID == arrival.id)
         let manager = makeManager(library: library, selection: { library.selectedInstance })

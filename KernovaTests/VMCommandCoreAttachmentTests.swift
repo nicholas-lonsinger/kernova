@@ -930,7 +930,7 @@ struct VMCommandCoreAttachmentTests {
     @Test("A bundle still being copied refuses every attachment edit as busy")
     func arrivalRefusesEveryEdit() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -956,7 +956,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: source.id), named: "Source Copy", gate: gate)
         defer {
@@ -1354,7 +1354,7 @@ struct VMCommandCoreAttachmentTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A clone reading this VM's files locks a storage-disk edit, and the
         // discard cannot clear that.
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: instance.id), named: "Clone of it", gate: gate)
         defer {

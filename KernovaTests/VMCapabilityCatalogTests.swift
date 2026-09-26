@@ -325,7 +325,7 @@ struct VMCapabilityCatalogTests {
     func cloneIgnoresAnotherVMsCopy() async {
         let harness = makeHarness()
         let settled = makeInstance(in: harness, name: "Settled")
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let copying = harness.library.beginGatedArrival(named: "Copying", gate: gate)
 
         // Bundle destinations are reserved atomically and overlapping copies are
@@ -351,14 +351,14 @@ struct VMCapabilityCatalogTests {
         let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
 
         // A clone of a different VM says nothing about this one.
-        let otherGate = GatedArrivalWrite()
+        let otherGate = GatedStep()
         let otherClone = harness.library.beginGatedArrival(
             .cloning(sourceID: other.id), named: "Other copy", gate: otherGate)
         for capability in locked {
             #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
 
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: source.id), named: "Source copy", gate: gate)
         for capability in locked {
@@ -407,8 +407,12 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isAvailable(.takeSnapshot, on: instance))
         #expect(!harness.catalog.isAvailable(.revertToSnapshot, on: instance))
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
-        // A resume tolerates a stop, so a user can still break in on it.
-        #expect(harness.catalog.isAvailable(.stop, on: instance))
+        // A resume tolerates a Force Stop, so a user can still break in on
+        // it; the graceful Stop of a paused guest resumes it first, so it
+        // waits the resume out.
+        #expect(harness.catalog.isAvailable(.forceStop, on: instance))
+        #expect(harness.catalog.isApplicable(.stop, to: instance))
+        #expect(!harness.catalog.isAvailable(.stop, on: instance))
         // Nor are a snapshot's name and note held: a resume leaves the
         // manifest's metadata open.
         #expect(harness.catalog.accepts(.renameSnapshot, on: instance))

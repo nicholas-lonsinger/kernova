@@ -3902,7 +3902,7 @@ struct VMLibraryViewModelTests {
     @Test("hasUninterruptibleWork covers an arrival still writing its bundle")
     func hasUninterruptibleWorkCoversAnArrival() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -4721,7 +4721,7 @@ struct VMLibraryViewModelTests {
     @Test("importVM proceeds while a clone is preparing (#487 — import/clone can't collide)")
     func importVMProceedsWhileCloning() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
 
@@ -4778,7 +4778,7 @@ struct VMLibraryViewModelTests {
     @Test("A second arrival keeps the selection on the one the user is already watching (#487)")
     func registerPreservesSelectionOfAnArrival() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let preparing = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Already Preparing", gate: gate)
         viewModel.selectedID = preparing.id
@@ -4937,7 +4937,7 @@ struct VMLibraryViewModelTests {
     /// Clones a VM while an arrival of `kind` for another VM is still writing.
     private func cloneProceeds(beside kind: VMArrival.Kind) async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let existing = viewModel.library.beginGatedArrival(kind, named: "In Flight", gate: gate)
         let instance = VMInstanceFixture.make(name: "Source")
         instance.activity.placeForTesting(.stopped)
@@ -5204,7 +5204,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelArrival marks the row Cancelling… and keeps it until the copy settles (#496)")
     func cancelArrivalMarksCancelling() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
         viewModel.selectedID = arrival.id
@@ -5229,7 +5229,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let other = VMInstanceFixture.make(name: "Other VM")
         viewModel.library.admitForTesting(other)
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(named: "Cancel Me", gate: gate)
         #expect(viewModel.selectedID == arrival.id)
 
@@ -5245,7 +5245,7 @@ struct VMLibraryViewModelTests {
     @Test("A cancel confirmed after the copy settled leaves the VM it became")
     func cancelAfterSettleLeavesTheVM() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(named: "Settled Import", gate: gate)
         gate.release()
         let instance = try #require(await arrival.settle())
@@ -5264,7 +5264,7 @@ struct VMLibraryViewModelTests {
     @Test("requestCancelPreparing sets state for alert")
     func requestCancelPreparingSetsState() async {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
 

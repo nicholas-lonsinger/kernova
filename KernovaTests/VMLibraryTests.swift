@@ -135,7 +135,7 @@ struct VMLibraryTests {
 
         // An import or a wizard-created VM registered after the scan started,
         // so the scan cannot know about it.
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Arrived Mid-Read", gate: gate)
 
         await load.value
@@ -1011,7 +1011,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk leaves an arrival in flight in place")
     func reconcilePreservesArrivals() async {
         let (library, _, _, _) = makeLibrary()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Preparing VM", gate: gate)
 
         // Storage lists no bundle — the arrival's is still under the staging
@@ -1063,7 +1063,7 @@ struct VMLibraryTests {
         let (library, storage) = makePairingLibrary()
         let written = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
         let pairings = USBAccessoryPairingSet(pairings: [pairing(key: "k")])
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
 
         let arrival = library.beginArrival(
             kind: .importing, configuration: written,

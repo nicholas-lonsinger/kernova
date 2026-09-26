@@ -185,6 +185,47 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
     }
 
+    @Test("R4: a power-off during an operation reverts only once the operation rests the VM, in that same step")
+    func powerOffDuringAnOperationRevertsAtItsEnd() async throws {
+        let harness = try await makeHarness()
+        let instance = harness.instance
+        let session = try #require(instance.liveSessionID)
+        let gate = GatedStep()
+        let outcome = try instance.activity.launch(.deletingSnapshot) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+
+        // Wrapped, not replaced: the library's own hook is what admits the
+        // revert, and the wrapper sees the VM on either side of it.
+        let observed = PowerOffObservation()
+        let revertOnPowerOff = instance.activity.onPoweredOff
+        instance.activity.onPoweredOff = {
+            observed.before = instance.phase
+            revertOnPowerOff?()
+            observed.after = instance.phase
+            observed.count += 1
+        }
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        // The operation keeps the VM; nothing asks for the revert yet.
+        #expect(instance.phase.operation?.kind == .deletingSnapshot)
+        #expect(observed.count == 0)
+        #expect(!harness.viewModel.hasRevertInFlight)
+
+        gate.release()
+        try await outcome.value()
+
+        #expect(observed.count == 1)
+        #expect(observed.before == .stopped)
+        #expect(
+            observed.after?.operation?.kind
+                == .bringUp(.reverting(snapshotID: harness.baseline.id, resumesAfter: false)))
+        await settleEphemeralRevert(harness)
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+    }
+
     @Test("Two ephemeral VMs powering off together each return to their own baseline")
     func twoVMsRevertToTheirOwnBaselines() async throws {
         let harness = try await makeHarness(secondVM: true)
@@ -388,4 +429,12 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(harness.snapshots.discardedIDs == [harness.later.id])
     }
+}
+
+/// The VM on either side of the power-off hook, and how often it fired.
+@MainActor
+private final class PowerOffObservation {
+    var before: VMLifecyclePhase?
+    var after: VMLifecyclePhase?
+    var count = 0
 }

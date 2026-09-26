@@ -107,7 +107,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .cancelGuestSetup:
             return .cancel(.guestSetup)
         case .stop, .restart:
-            return .sessionAction(.requestStop)
+            // Virtualization refuses the shutdown request to a paused guest, so
+            // the stop a live-paused VM takes resumes it first.
+            return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
         case .forceStop:
             return .sessionAction(.forceStop)
         case .discardSavedState:

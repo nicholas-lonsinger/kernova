@@ -635,6 +635,43 @@ struct VMRemovableMediaReconcilerTests {
         #expect(instance.liveRemovableMedia.count == 1)
     }
 
+    @Test("An edit landing during a pass is applied by that same pass, and a Pause meanwhile is refused busy")
+    func editDuringAPassIsAppliedByItAndPauseIsBusy() async throws {
+        let mock = SuspendingMockRemovableMediaDeviceService()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let (instance, sessionID) = makeRunningInstance(in: harness)
+
+        let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
+        let configB = configWithRemovable(instance.configuration, path: "/tmp/B.iso")
+        harness.library.editConfiguration(of: instance) { $0 = configA }
+        await mock.waitUntilSuspended()
+        let pass = try #require(instance.phase.operation)
+        #expect(pass.kind == .reconcilingMedia)
+
+        harness.library.editConfiguration(of: instance) { $0 = configB }
+        #expect(instance.phase.operation?.outcome === pass.outcome)
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
+            try await harness.lifecycle.pause(instance)
+        }
+        #expect(harness.virtualization.pauseCallCount == 0)
+
+        // A's attach lands; the same pass then detaches it and attaches B.
+        mock.resumeSuspended()
+        await mock.waitUntilSuspended()
+        #expect(mock.lastAttachedPath == "/tmp/B.iso")
+        #expect(instance.phase.operation?.outcome === pass.outcome)
+
+        mock.resumeSuspended()
+        try await pass.outcome.value()
+        #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/B.iso"])
+        #expect(mock.attachCallCount == 2)
+        #expect(mock.detachCallCount == 1)
+        #expect(instance.phase == .running(sessionID: sessionID))
+
+        try await harness.lifecycle.pause(instance)
+        #expect(instance.phase == .livePaused(sessionID: sessionID))
+    }
+
     @Test("A save issued right after an edit is refused as busy until the pass ends")
     func saveIssuedAfterAnEditIsRefusedUntilThePassEnds() async throws {
         // The reported shape: an edit, then Suspend in the same breath. The

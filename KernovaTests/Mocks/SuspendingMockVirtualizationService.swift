@@ -1,8 +1,9 @@
 import Foundation
 @testable import Kernova
 
-/// A mock virtualization service whose `start` and `pause` bodies suspend until
-/// explicitly resumed, while the operation that runs them holds the VM.
+/// A mock virtualization service whose `start` and `pause` bodies — and, on
+/// request, a hot resume and points inside a revert — suspend until explicitly
+/// resumed, while the operation that runs them holds the VM.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
 ///   single `suspendedContinuation` slot; calling `suspendIfNeeded()` while another
@@ -29,6 +30,23 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     ///
     /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnRevert = false
+
+    /// When `true`, `revertToSnapshot` suspends before it reads the snapshot's
+    /// plan — the first thing its body does.
+    var shouldSuspendBeforePlanning = false
+
+    /// When `true`, `revertToSnapshot` suspends once the session is ended and
+    /// the files are staged, before `installRestore` copies them in.
+    var shouldSuspendBeforeInstall = false
+
+    /// Whether the guest ignores the ACPI shutdown `requestStop` sends, as a
+    /// macOS guest resting at its login screen does: the request is delivered
+    /// and the VM keeps running.
+    var guestIgnoresShutdownRequest = false
+
+    /// Number of `requestStop` and `forceStop` calls that reached the mock.
+    private(set) var requestStopCallCount = 0
+    private(set) var forceStopCallCount = 0
 
     /// Error `start` throws once it is let through, resting the VM the way the
     /// real service rests a failed start.
@@ -105,11 +123,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// A guest that honors the request powers off, which reaches the VM as the
     /// session event the real guest raises.
     func requestStop(_ instance: VMInstance) async throws {
-        guard let sessionID = instance.liveSessionID else { return }
+        requestStopCallCount += 1
+        guard !guestIgnoresShutdownRequest, let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
 
-    func forceStop(_ instance: VMInstance) async throws {}
+    func forceStop(_ instance: VMInstance) async throws {
+        forceStopCallCount += 1
+    }
 
     func pause(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
@@ -155,6 +176,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
+        if shouldSuspendBeforePlanning {
+            await suspendIfNeeded()
+        }
         let plan = try await instance.bundle.planRestore(
             context.operation, fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
@@ -163,6 +187,9 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         context.operation.endSession()
         try await instance.bundle.stageRestore(context.operation, fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
+        if shouldSuspendBeforeInstall {
+            await suspendIfNeeded()
+        }
         try await instance.bundle.installRestore(context.operation, plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.

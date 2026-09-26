@@ -125,7 +125,7 @@ struct DetailContainerLibraryLoadTests {
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
         await viewModel.loadVMs()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
 
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
         await drainMainActor()

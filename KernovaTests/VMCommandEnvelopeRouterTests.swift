@@ -914,7 +914,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A Finder reveal of a bundle still being written is refused")
     func showInFinderRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var revealed: [UUID] = []
         harness.core.revealInFinder = { revealed.append($0.id) }
