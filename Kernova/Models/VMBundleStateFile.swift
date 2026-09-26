@@ -188,6 +188,18 @@ struct VMBundleFiles: Sendable {
         }
     }
 
+    /// Takes the run lock on the bundle directory without waiting — `nil` when
+    /// another holder has it (``VMBundleFileAccessing/lockBundle(at:)``).
+    func lockRun() throws -> (any VMBundleLockHolder)? {
+        try access.lockBundle(at: url)
+    }
+
+    /// Whether any holder has the bundle directory's run lock
+    /// (``VMBundleFileAccessing/isBundleLockedElsewhere(at:)``).
+    func isRunLockedElsewhere() throws -> Bool {
+        try access.isBundleLockedElsewhere(at: url)
+    }
+
     /// Reads `config.json` alone.
     func readConfiguration() throws -> VMConfiguration {
         try access.reading(url) { try VMBundleStateFile.configuration.read(from: $0) }

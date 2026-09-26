@@ -3542,7 +3542,7 @@ struct VMLibraryViewModelTests {
         config.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let layout = VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id))
 
-        #expect(VMLibrary.initialPhase(for: config, layout: layout) == .initialBoot)
+        #expect(VMLifecyclePhase.atRest(for: config, layout: layout) == .initialBoot)
     }
 
     @Test("createVM persists a catalog pick's download context for Linux")

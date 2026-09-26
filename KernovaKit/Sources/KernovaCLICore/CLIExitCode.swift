@@ -31,7 +31,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .notFound: "Nothing answers to what was named: a VM, or an item on one or the host."
         case .ambiguous: "More than one VM answers to the selector."
         case .refusedByState: "The VM's state, this build, or a missing consent refused the verb."
-        case .busy: "The VM has work in flight the verb would race."
+        case .busy: "The VM has work in flight, or another copy of Kernova holds it."
         case .timedOut: "A deadline expired before the state arrived."
         case .authorizationRefused: "The app would not accept this process as a peer."
         case .unavailable: "The app is not running, is quitting, or cannot talk to this build."
@@ -53,7 +53,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
             .guestAccountPasswordRequired:
             self = .refusedByState
         case .invalidArgument: self = .usage
-        case .busy: self = .busy
+        case .busy, .heldByAnotherCopy: self = .busy
         case .terminating: self = .unavailable
         case .timedOut: self = .timedOut
         case .operationFailed: self = .operationFailed

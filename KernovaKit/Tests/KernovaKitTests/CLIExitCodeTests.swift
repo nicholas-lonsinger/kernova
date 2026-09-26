@@ -44,6 +44,7 @@ struct CLIExitCodeTests {
             ),
             (.invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."), .usage),
             (.busy(vm: vm, operation: "starting"), .busy),
+            (.heldByAnotherCopy(vm: vm), .busy),
             (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),
             (
                 .operationFailed(verb: .start, title: nil, message: "no disk", recovery: nil),

@@ -49,12 +49,19 @@ enum VMAdmission {
         /// Raised only where the VM would otherwise admit the request, so a
         /// surface reads it as applicable.
         case terminating
+        /// Another running copy of Kernova holds the VM's bundle, and the
+        /// request would begin an operation on it.
+        ///
+        /// Raised only where the VM would otherwise admit the request, so a
+        /// surface reads it as applicable.
+        case heldByAnotherCopy
 
         static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
             case (.busy(let l), .busy(let r)): l == r
             case (.invalidState, .invalidState), (.removed, .removed),
-                (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating):
+                (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating),
+                (.heldByAnotherCopy, .heldByAnotherCopy):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason
@@ -93,6 +100,9 @@ enum VMAdmission {
         var accessoryHolder: VMInstance?
         /// The app's termination has begun.
         var terminating: Bool
+        /// Another running copy of Kernova holds the bundle of this VM, which
+        /// is at rest here.
+        var heldByAnotherCopy: Bool
 
         /// These facts as they will stand once the saved state is discarded.
         func discardingSavedState() -> Facts {
@@ -108,11 +118,11 @@ enum VMAdmission {
         _ request: Request, origin: VMRequestOrigin = .newWork, posture: Posture,
         phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
-        let decision = decideRegardlessOfTermination(request, posture: posture, phase: phase, facts: facts)
-        guard decision == .admit, facts.terminating, !origin.exempts(request),
-            beginsOperation(request, phase: phase)
-        else { return decision }
-        return .refuse(.terminating)
+        let decision = decideOnTheVM(request, posture: posture, phase: phase, facts: facts)
+        guard decision == .admit, beginsOperation(request, phase: phase) else { return decision }
+        if facts.terminating, !origin.exempts(request) { return .refuse(.terminating) }
+        if facts.heldByAnotherCopy, phase.isAtRest { return .refuse(.heldByAnotherCopy) }
+        return decision
     }
 
     /// Whether admitting `request` in `phase` commits an operation: a Start, a
@@ -121,7 +131,7 @@ enum VMAdmission {
     ///
     /// A session action is not one: it is how a user interrupts a guest, and
     /// the Force Stop it may commit is one a quit waits out.
-    private static func beginsOperation(_ request: Request, phase: VMLifecyclePhase) -> Bool {
+    static func beginsOperation(_ request: Request, phase: VMLifecyclePhase) -> Bool {
         switch request {
         case .start, .resume, .operation:
             return true
@@ -134,7 +144,9 @@ enum VMAdmission {
         }
     }
 
-    private static func decideRegardlessOfTermination(
+    /// How the VM's own phase and facts answer `request`, before the app's
+    /// termination or another copy's hold refuses new work.
+    private static func decideOnTheVM(
         _ request: Request, posture: Posture, phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         if case .affordance(let affordance) = request {
@@ -461,7 +473,7 @@ enum VMAdmission {
             guard facts.guestOS == .macOS, phase.hasLiveSession else {
                 return .refuse(.invalidState)
             }
-            return decideRegardlessOfTermination(
+            return decideOnTheVM(
                 .edit(.hotPlugMedia), posture: posture, phase: phase, facts: facts)
         }
         return admitted ? .admit : .refuse(.invalidState)

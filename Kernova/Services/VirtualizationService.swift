@@ -78,11 +78,14 @@ final class VirtualizationService {
     /// Cold-boots `instance`, retrying with bounded backoff when the start fails on
     /// VZ file-lock contention (see ``isFileLockContention(_:)``).
     ///
-    /// A previous `VZVirtualMachine` on the same bundle releases its advisory lock
-    /// on the auxiliary-storage and disk-image files only when fully *deallocated*,
-    /// which lags `vm.state == .stopped` by more the more guest memory there is to
-    /// tear down. No public VZ API observes the release, so gating on state cannot
-    /// be airtight; a bounded retry against the ground-truth failure is.
+    /// The contention it answers is this copy's own: a previous `VZVirtualMachine`
+    /// on the same bundle releases its advisory lock on the auxiliary-storage and
+    /// disk-image files only when fully *deallocated*, which lags
+    /// `vm.state == .stopped` by more the more guest memory there is to tear down.
+    /// No public VZ API observes the release, so gating on state cannot be
+    /// airtight; a bounded retry against the ground-truth failure is. Another
+    /// copy of Kernova running the VM holds the same files, but the bundle's run
+    /// lock refuses that bring-up at admission, before VZ is asked.
     private func coldBootRetryingLockContention(
         _ instance: VMInstance, _ context: borrowing VMBringUpContext, bootIntoRecovery: Bool,
         provisioning: GuestProvisioningCredentials?
@@ -744,7 +747,8 @@ final class VirtualizationService {
     /// retrying with bounded backoff when the attempt fails on VZ file-lock
     /// contention (see ``isFileLockContention(_:)``) — the restore-path
     /// counterpart of
-    /// ``coldBootRetryingLockContention(_:_:bootIntoRecovery:provisioning:)``.
+    /// ``coldBootRetryingLockContention(_:_:bootIntoRecovery:provisioning:)``,
+    /// answering the same teardown lag.
     ///
     /// A restore or resume failure surfaces as
     /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file

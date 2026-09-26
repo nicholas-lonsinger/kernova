@@ -49,14 +49,15 @@ struct VMAdmissionTests {
     }
 
     private static func facts(
-        slot: Bool, _ variant: Variant, terminating: Bool = false
+        slot: Bool, _ variant: Variant, terminating: Bool = false, heldByAnotherCopy: Bool = false
     ) -> VMAdmission.Facts {
         VMAdmission.Facts(
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
-            identityConflict: nil, accessoryHolder: nil, terminating: terminating)
+            identityConflict: nil, accessoryHolder: nil, terminating: terminating,
+            heldByAnotherCopy: heldByAnotherCopy)
     }
 
     private static func facts(slot: Bool = false, pendingSetup: Bool = false) -> VMAdmission.Facts {
@@ -66,7 +67,7 @@ struct VMAdmissionTests {
     /// One cell: `A` admit, `J` join, `B` busy with the held kind, `I`
     /// invalid state, `R` removed, `U` unsupported by this build, `C` an
     /// identity conflict, `H` an accessory another attach holds, `T` refused
-    /// by the app's termination.
+    /// by the app's termination, `O` refused as held by another copy.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -79,6 +80,7 @@ struct VMAdmissionTests {
         case .refuse(.identityConflict): "C"
         case .refuse(.accessoryHeld): "H"
         case .refuse(.terminating): "T"
+        case .refuse(.heldByAnotherCopy): "O"
         }
     }
 
@@ -181,16 +183,82 @@ struct VMAdmissionTests {
 
     private static func settledCells(
         _ request: VMAdmission.Request, _ variant: Variant, terminating: Bool = false,
-        origin: VMRequestOrigin = .newWork
+        heldByAnotherCopy: Bool = false, origin: VMRequestOrigin = .newWork,
+        posture: VMAdmission.Posture = .commit
     ) -> String {
         String(
             settledColumns.map { column in
                 code(
                     VMAdmission.decide(
-                        request, origin: origin, posture: .commit, phase: column.phase,
-                        facts: facts(slot: column.slot, variant, terminating: terminating)),
+                        request, origin: origin, posture: posture, phase: column.phase,
+                        facts: facts(
+                            slot: column.slot, variant, terminating: terminating,
+                            heldByAnotherCopy: heldByAnotherCopy)),
                     held: nil)
             })
+    }
+
+    // MARK: - Another copy's hold
+
+    /// The settled columns while another copy of Kernova holds the bundle: a
+    /// request that would begin an operation on the VM at rest is refused,
+    /// and everything else answers as it did.
+    nonisolated private static let heldElsewhereTable: [(VMAdmission.Request, String)] = [
+        (.start(recovery: false), "OOOOIIR"),
+        (.start(recovery: true), "OIIIIIR"),
+        (.resume, "IIIOIAR"),
+        (.operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "OOOOAAR"),
+        (.operation(.capturingSnapshot(.stopped)), "OIIIIIR"),
+        (.operation(.capturingSnapshot(.live)), "IIIIAAR"),
+        (.operation(.deletingSnapshot), "OOOOAAR"),
+        (.operation(.discardingSavedState), "IIIOIIR"),
+        (.operation(.deleting), "OOOOIIR"),
+        (.operation(.copyingOut), "OOOIIIR"),
+        (.operation(.creatingStorageDisk), "OOOIIIR"),
+        (.operation(.creatingRemovableMedia), "OOOIAAR"),
+        (.operation(.saving), "IIIIAAR"),
+        (.edit(.machineKeys), "AAAIIIR"),
+        (.edit(.hotPlugMedia), "AAAIAAR"),
+        (.evict, "AAAAIIR"),
+        (.sessionAction(.forceStop), "IIIIAAR"),
+        (.affordance(.inspect), "AAAAAAR"),
+    ]
+
+    @Test(
+        "While another copy holds the bundle, an operation on the VM at rest is refused",
+        arguments: heldElsewhereTable.indices)
+    func heldByAnotherCopyRefusesOperationsAtRest(row: Int) {
+        let (request, expected) = Self.heldElsewhereTable[row]
+        #expect(Self.settledCells(request, .plain, heldByAnotherCopy: true) == expected, "\(request)")
+    }
+
+    @Test(
+        "Another copy's hold turns only an at-rest admission of an operation into its refusal",
+        arguments: settledTable.indices)
+    func heldByAnotherCopyRefusesOnlyWhereTheVMWouldAdmit(row: Int) {
+        let (request, _) = Self.settledTable[row]
+        let beginsOperation: Bool =
+            switch request {
+            case .start, .resume, .operation: true
+            case .edit, .sessionAction, .cancel, .evict, .affordance: false
+            }
+        for posture in [VMAdmission.Posture.commit, .offer] {
+            let free = Self.settledCells(request, .plain, posture: posture)
+            let expected = String(
+                zip(Self.settledColumns, free).map { column, cell in
+                    beginsOperation && column.phase.isAtRest && cell == "A" ? "O" : cell
+                })
+            #expect(
+                Self.settledCells(request, .plain, heldByAnotherCopy: true, posture: posture) == expected,
+                "\(request) \(posture)")
+        }
+    }
+
+    @Test("The app's termination outranks another copy's hold")
+    func terminatingOutranksHeldByAnotherCopy() {
+        #expect(
+            Self.settledCells(.start(recovery: false), .plain, terminating: true, heldByAnotherCopy: true)
+                == "TTTTIIR")
     }
 
     // MARK: - Termination

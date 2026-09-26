@@ -22,11 +22,12 @@ extension VMLibrary {
     }
 
     /// Removes the restore staging directory an interrupted revert left in any
-    /// listed bundle.
+    /// listed bundle another copy of Kernova does not hold.
     ///
     /// Finished before the load, so no VM of this run exists yet and no revert
-    /// of its own can be staging there. A bundle that arrives later keeps what
-    /// it holds until its next revert, whose staging discards it first.
+    /// of its own can be staging there. A bundle that arrives later, or that
+    /// another copy held, keeps what it holds until its next revert, whose
+    /// staging discards it first.
     private func reclaimRestoreStaging() async {
         let storage = storageService
         let bundleFactory = bundleFactory
@@ -43,24 +44,9 @@ extension VMLibrary {
                 )
                 return
             }
-            bundleFactory.reclaimRestoreStaging(in: bundles)
+            bundleFactory.reclaimRestoreStaging(
+                in: bundles.map { VMBundleFiles(url: $0, access: storage.bundleFiles) })
         }.value
-    }
-
-    // MARK: - Initial Phase
-
-    /// Phase to assign to a VM when it's first read from disk.
-    ///
-    /// A surviving install context — either guest's — is the canonical signal
-    /// that the VM has never completed its initial boot, so it outranks
-    /// `.suspended`/`.stopped`.
-    nonisolated static func initialPhase(for config: VMConfiguration, layout: VMBundleLayout)
-        -> VMLifecyclePhase
-    {
-        if config.pendingGuestSetup != nil {
-            return .initialBoot
-        }
-        return layout.hasSaveFile ? .suspended : .stopped
     }
 
     // MARK: - Reading Bundles
@@ -84,7 +70,7 @@ extension VMLibrary {
             let read = try read(at: bundleURL)
             return ScannedBundle(
                 read: read,
-                phase: VMLibrary.initialPhase(
+                phase: .atRest(
                     for: read.configuration, layout: VMBundleLayout(bundleURL: bundleURL)))
         }
 

@@ -13,6 +13,10 @@ import Foundation
 /// makes this one a pass-through to it: how a fixture VM built over its own
 /// store is registered with a library whose storage owns another.
 ///
+/// Every bundle's run lock is held in memory, keyed by the bundle URL and
+/// re-keyed by ``moveBundle(from:to:)`` as a rename carries the real one;
+/// ``holdElsewhere(_:)`` stands in for another copy of Kernova holding it.
+///
 /// Lock-based because the protocol is `Sendable` and the library reads bundles
 /// from detached tasks. Recursive, because an access's body reads back through
 /// the same store.
@@ -23,6 +27,9 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     private var replaceErrors: [String: any Error] = [:]
     private var unreadable: Set<BundlePath> = []
     private var target: InMemoryVMBundleFiles?
+    private var lockedElsewhere: Set<URL> = []
+    private var lockedByThisCopy: Set<URL> = []
+    private var lockErrors: [URL: any Error] = [:]
     private let disk = CoordinatedBundleFileAccess()
 
     private struct BundlePath: Hashable {
@@ -89,13 +96,81 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         return lock.withLock { bundles[Self.key(url)] != nil }
     }
 
-    /// Re-keys everything held at `source` to `destination`, as a rename of the
-    /// bundle directory would.
+    /// Re-keys everything held at `source` to `destination`, its run lock
+    /// included, as a rename of the bundle directory would.
     func moveBundle(from source: URL, to destination: URL) {
         if let target { return target.moveBundle(from: source, to: destination) }
         lock.withLock {
+            if lockedByThisCopy.remove(Self.key(source)) != nil {
+                lockedByThisCopy.insert(Self.key(destination))
+                for (id, url) in holders where url == Self.key(source) {
+                    holders[id] = Self.key(destination)
+                }
+            }
+            if lockedElsewhere.remove(Self.key(source)) != nil {
+                lockedElsewhere.insert(Self.key(destination))
+            }
             guard let files = bundles.removeValue(forKey: Self.key(source)) else { return }
             bundles[Self.key(destination)] = files
+        }
+    }
+
+    // MARK: - Run lock
+
+    /// Marks the bundle at `url` as one another copy of Kernova holds: every
+    /// lock attempt on it is refused until ``releaseElsewhere(_:)``.
+    func holdElsewhere(_ url: URL) {
+        if let target { return target.holdElsewhere(url) }
+        lock.withLock { _ = lockedElsewhere.insert(Self.key(url)) }
+    }
+
+    /// Ends the hold ``holdElsewhere(_:)`` stood for.
+    func releaseElsewhere(_ url: URL) {
+        if let target { return target.releaseElsewhere(url) }
+        lock.withLock { _ = lockedElsewhere.remove(Self.key(url)) }
+    }
+
+    /// Thrown by every later lock attempt on the bundle at `url`, as opening a
+    /// directory that has gone would; `nil` clears it.
+    func setLockError(_ error: (any Error)?, at url: URL) {
+        if let target { return target.setLockError(error, at: url) }
+        lock.withLock { lockErrors[Self.key(url)] = error }
+    }
+
+    /// Whether this copy holds the run lock on the bundle at `url` right now.
+    func isLockedByThisCopy(_ url: URL) -> Bool {
+        if let target { return target.isLockedByThisCopy(url) }
+        return lock.withLock { lockedByThisCopy.contains(Self.key(url)) }
+    }
+
+    /// Every bundle this copy holds the run lock on right now.
+    var bundlesLockedByThisCopy: Set<URL> {
+        if let target { return target.bundlesLockedByThisCopy }
+        return lock.withLock { lockedByThisCopy }
+    }
+
+    /// What holds one bundle's run lock, releasing it as it goes — under
+    /// whatever URL a rename has carried it to since.
+    private final class Holder: @unchecked Sendable {
+        let store: InMemoryVMBundleFiles
+        let id = UUID()
+
+        init(store: InMemoryVMBundleFiles) {
+            self.store = store
+        }
+
+        deinit {
+            store.releaseHolder(id)
+        }
+    }
+
+    /// Which bundle each live holder locks, re-keyed with its bundle.
+    private var holders: [UUID: URL] = [:]
+
+    fileprivate func releaseHolder(_ id: UUID) {
+        lock.withLock {
+            guard let url = holders.removeValue(forKey: id) else { return }
+            lockedByThisCopy.remove(url)
         }
     }
 
@@ -195,6 +270,26 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     }
 
     // MARK: - VMBundleFileAccessing
+
+    func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
+        if let target { return try target.lockBundle(at: bundleURL) }
+        let key = Self.key(bundleURL)
+        return try lock.withLock {
+            if let error = lockErrors[key] { throw error }
+            guard !lockedElsewhere.contains(key), lockedByThisCopy.insert(key).inserted else {
+                return nil
+            }
+            let holder = Holder(store: self)
+            holders[holder.id] = key
+            return holder
+        }
+    }
+
+    func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
+        if let target { return try target.isBundleLockedElsewhere(at: bundleURL) }
+        let key = Self.key(bundleURL)
+        return lock.withLock { lockedElsewhere.contains(key) || lockedByThisCopy.contains(key) }
+    }
 
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
         if let target { return try target.reading(bundleURL, body) }

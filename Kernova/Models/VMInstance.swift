@@ -511,7 +511,8 @@ final class VMInstance {
             usbSupported: peers?.supportsUSBAccessories ?? false,
             identityConflict: nil,
             accessoryHolder: nil,
-            terminating: peers?.isTerminating ?? false)
+            terminating: peers?.isTerminating ?? false,
+            heldByAnotherCopy: activity.heldByAnotherCopy)
     }
 
     /// The live VM whose identity bringing this one up by `kind` would

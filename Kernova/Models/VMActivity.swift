@@ -11,6 +11,11 @@ import Virtualization
 /// and its completion, and on a session event; each of those is one
 /// synchronous step, so no decision can read a phase another request is about
 /// to replace.
+///
+/// Also the only holder of the VM's bundle run lock, which it holds exactly
+/// while the VM is neither at rest nor removed: ``admit(_:origin:)`` takes it
+/// as an operation leaves rest, and the tail of every ending lets it go once
+/// the VM rests again, so no other copy of Kernova acts on a VM this one holds.
 @MainActor
 @Observable
 final class VMActivity {
@@ -33,6 +38,22 @@ final class VMActivity {
     var status: VMStatus { phase.status }
 
     var errorMessage: String? { phase.errorMessage }
+
+    /// Whose copy of Kernova holds the VM's bundle run lock, as this copy last
+    /// learned it — written only through ``setHold(_:)``.
+    @ObservationIgnored private var hold: VMRunLockHold = .none
+
+    /// Whether this copy holds the VM's bundle run lock: exactly while the VM
+    /// is neither at rest nor removed.
+    var holdsRunLock: Bool { hold.isThisCopy }
+
+    /// Whether this copy last found another copy of Kernova holding the VM's
+    /// run lock, by a lock attempt or a commit's probe — only ever while the
+    /// VM is at rest here.
+    var heldByAnotherCopy: Bool {
+        access(keyPath: \.heldByAnotherCopy)
+        return hold.isAnotherCopy
+    }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMActivity")
 
@@ -100,12 +121,40 @@ final class VMActivity {
     ///
     /// The catalog's answers and every commit below read this, so an offer and
     /// the commit it leads to agree.
+    ///
+    /// A commit asks the bundle whether another copy holds it rather than
+    /// reading what the last lock attempt found, and records the answer, so a
+    /// hold that has since ended refuses nothing and every offer after it
+    /// reads what the commit found.
     func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
         posture: VMAdmission.Posture
     ) -> VMAdmission.Decision {
+        decide(request, origin: origin, posture: posture, probingOtherCopies: posture == .commit)
+    }
+
+    /// ``decide(_:origin:posture:)``, asking the bundle whether another copy
+    /// holds it — and recording the answer — when `probingOtherCopies`, and
+    /// reading the last recorded answer otherwise.
+    private func decide(
+        _ request: VMAdmission.Request, origin: VMRequestOrigin, posture: VMAdmission.Posture,
+        probingOtherCopies: Bool
+    ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
         var facts = owner.admissionFacts
+        if probingOtherCopies, phase.isAtRest, !hold.isThisCopy,
+            VMAdmission.beginsOperation(request, phase: phase)
+        {
+            let heldElsewhere = owner.bundle.isRunLockedElsewhere()
+            if heldElsewhere {
+                #log(
+                    Self.logger, .notice,
+                    "Found '\(self.name, privacy: .public)' held by another copy of Kernova deciding \(String(describing: request), privacy: .public)"
+                )
+            }
+            setHold(heldElsewhere ? .anotherCopy : .none)
+            facts.heldByAnotherCopy = heldElsewhere
+        }
         if posture == .commit,
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
             kind.checksIdentity
@@ -136,10 +185,13 @@ final class VMActivity {
     /// VM it was admitted on.
     @discardableResult
     private func requireAdmitted(
-        _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork
+        _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
+        probingOtherCopies: Bool = true
     ) throws -> VMInstance {
         guard let owner else { throw refusal(.invalidState, for: request) }
-        switch decide(request, origin: origin, posture: .commit) {
+        switch decide(
+            request, origin: origin, posture: .commit, probingOtherCopies: probingOtherCopies)
+        {
         case .admit:
             return owner
         case .join:
@@ -241,9 +293,7 @@ final class VMActivity {
         _ makeContext: (consuming VMOperationContext) -> Context,
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let owner = try requireAdmitted(.operation(kind), origin: origin)
-        try reserve(for: kind, on: owner)
-        let outcome = commitOperation(kind)
+        let (owner, outcome) = try admit(kind, origin: origin)
         let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
         let ending: VMOperationEnding<T>
         do {
@@ -305,9 +355,7 @@ final class VMActivity {
         _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let owner = try requireAdmitted(.operation(kind), origin: origin)
-        try reserve(for: kind, on: owner)
-        let outcome = commitOperation(kind)
+        let (owner, outcome) = try admit(kind, origin: origin)
         outcome.task = Task { @MainActor in
             let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
             let ending: VMOperationEnding<Void>
@@ -326,9 +374,7 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
-        let owner = try requireAdmitted(.operation(kind))
-        try reserve(for: kind, on: owner)
-        let outcome = commitOperation(kind)
+        let (owner, outcome) = try admit(kind, origin: .newWork)
         let context = VMOperationContext(activity: self, kind: kind, owner: owner)
         let ending: VMOperationEnding<T>
         do {
@@ -347,8 +393,7 @@ final class VMActivity {
     /// A body that throws rests the VM where the kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
-        let owner = try requireAdmitted(.operation(.deleting))
-        let outcome = commitOperation(.deleting)
+        let (owner, outcome) = try admit(.deleting, origin: .newWork)
         let context = VMOperationContext(activity: self, kind: .deleting, owner: owner)
         do {
             try await body(context)
@@ -360,7 +405,75 @@ final class VMActivity {
         guard endingOperation(outcome) != nil else { return }
         if sessionContext != nil { releaseSession() }
         setPhase(.removed)
+        releaseRunLockIfAtRest()
         outcome.resolve(.success(()))
+    }
+
+    /// The one admission step every operation takes, in one synchronous step:
+    /// takes the run lock of a VM at rest and re-reads its bundle, decides
+    /// against what that read found, reserves what `kind` claims beyond this
+    /// VM, and commits.
+    ///
+    /// Throws, committing nothing and letting go of a lock it took, when the
+    /// request is refused — as ``VMAdmission/Refusal/heldByAnotherCopy`` when
+    /// another copy of Kernova holds the lock.
+    private func admit(
+        _ kind: VMOperationKind, origin: VMRequestOrigin
+    ) throws -> (owner: VMInstance, outcome: VMOutcome) {
+        let request = VMAdmission.Request.operation(kind)
+        guard let owner else { throw refusal(.invalidState, for: request) }
+        let tookLock = try takeRunLock(on: owner)
+        do {
+            // The lock attempt just made is read rather than probed again: a
+            // hold that ended since would admit a VM this copy does not hold.
+            try requireAdmitted(request, origin: origin, probingOtherCopies: false)
+            try reserve(for: kind, on: owner)
+        } catch {
+            if tookLock { setHold(.none) }
+            throw error
+        }
+        return (owner, commitOperation(kind))
+    }
+
+    /// Takes the run lock of a VM at rest that holds none, then re-reads its
+    /// bundle and where it rests — what another copy may have changed while
+    /// this one held nothing — answering whether it took one.
+    ///
+    /// A lock another copy holds is recorded as ``VMRunLockHold/anotherCopy``,
+    /// which the decision that follows refuses. A VM already holding the lock
+    /// — an operation an ending's hook begins — keeps it and re-reads nothing:
+    /// no other copy can have written its bundle since.
+    private func takeRunLock(on owner: VMInstance) throws -> Bool {
+        guard phase.isAtRest, !hold.isThisCopy else { return false }
+        guard let lock = try owner.bundle.lockRun() else {
+            setHold(.anotherCopy)
+            return false
+        }
+        setHold(.thisCopy(lock))
+        do {
+            try owner.bundle.refresh()
+        } catch {
+            setHold(.none)
+            throw error
+        }
+        reconcileRest()
+        return true
+    }
+
+    /// Lets go of the run lock once the VM rests or is removed — the other
+    /// half of the rule ``admit(_:origin:)`` keeps.
+    private func releaseRunLockIfAtRest() {
+        guard phase.isAtRest || phase == .removed, hold.isThisCopy else { return }
+        setHold(.none)
+    }
+
+    /// The one write of ``hold``, noticed by observers of
+    /// ``heldByAnotherCopy`` when it moves that.
+    private func setHold(_ new: consuming VMRunLockHold) {
+        let wasHeldByAnotherCopy = hold.isAnotherCopy
+        hold = new
+        guard hold.isAnotherCopy != wasHeldByAnotherCopy else { return }
+        withMutation(keyPath: \.heldByAnotherCopy) {}
     }
 
     /// The reserve stage, between an operation's admission and its commit and
@@ -415,11 +528,10 @@ final class VMActivity {
     /// The one ending commit — the only place a VM leaves an operation for a
     /// settled phase.
     ///
-    /// Resolves the outcome for every joined caller, and fires ``onPoweredOff``
-    /// after the rest commit when the operation's guest powered off. An
-    /// operation that ends on a session a Force Stop is terminating hands the
-    /// VM to ``VMOperationKind/forceStopping`` instead, which rests it once
-    /// that session ends.
+    /// Resolves the outcome for every joined caller, then ends in
+    /// ``settled(poweredOff:)``. An operation that ends on a session a Force
+    /// Stop is terminating hands the VM to ``VMOperationKind/forceStopping``
+    /// instead, which rests it once that session ends.
     private func finish<T>(
         _ ending: VMOperationEnding<T>, outcome: VMOutcome,
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
@@ -461,11 +573,21 @@ final class VMActivity {
         if case .running = resting { owner?.operationDidSettleRunning(operation.kind) }
         whenEnded?(result.map { _ in () })
         outcome.resolve(result.map { _ in () })
-        if operation.sessionEnd == .poweredOff || rest == .poweredOff {
+        settled(poweredOff: operation.sessionEnd == .poweredOff || rest == .poweredOff)
+        return result
+    }
+
+    /// The tail of every step that settles the VM out of an operation or a
+    /// session: fires ``onPoweredOff`` when the guest powered off, then lets
+    /// go of the run lock unless the VM no longer rests — so an operation
+    /// anything before it admitted, the Ephemeral revert among them, runs
+    /// under the lock the ending held.
+    private func settled(poweredOff: Bool) {
+        if poweredOff {
             owner?.guestDidPowerOff()
             onPoweredOff?()
         }
-        return result
+        releaseRunLockIfAtRest()
     }
 
     /// The settled phase `rest` names for `operation`.
@@ -587,10 +709,15 @@ final class VMActivity {
         setPhase(.removed)
     }
 
-    /// Rests a suspended VM whose slot is gone at `.stopped`.
+    /// Re-derives where a VM at rest rests from its bundle as it stands
+    /// (``VMLifecyclePhase/atRest(for:layout:)``), keeping a failure's
+    /// message.
     func reconcileRest() {
-        guard phase == .suspended, owner?.hasSaveFile == false else { return }
-        setPhase(.stopped)
+        guard phase.isAtRest, let owner else { return }
+        if case .failed = phase { return }
+        let derived = VMLifecyclePhase.atRest(for: owner.configuration, layout: owner.bundleLayout)
+        guard derived != phase else { return }
+        setPhase(derived)
     }
 
     #if DEBUG
@@ -599,7 +726,8 @@ final class VMActivity {
     @ObservationIgnored private var runningBody: VMOutcome?
 
     /// Puts the VM straight into `phase`, bypassing every rule a transition
-    /// obeys; tests only, and the one way a test places a phase.
+    /// obeys — the run lock's among them, which it neither takes nor releases;
+    /// tests only, and the one way a test places a phase.
     ///
     /// Refused while an operation's body is running: only that body's ending
     /// may move the VM out of its operation, so a test awaits the outcome first.
@@ -679,10 +807,7 @@ final class VMActivity {
             guard id == sessionID else { return }
             releaseSession()
             setPhase(restingPhase(withoutSlot: end.rest))
-            if end == .poweredOff {
-                owner?.guestDidPowerOff()
-                onPoweredOff?()
-            }
+            settled(poweredOff: end == .poweredOff)
         case .operating(let operation):
             guard let ended = endOperationSession(sessionID, end) else { return }
             if operation.kind == .forceStopping {
@@ -849,6 +974,35 @@ final class VMActivity {
             endOperationSession(sessionID, .endedByOperation)?.stopping?.resolve(.success(()))
         } else if sessionContext != nil {
             releaseSession()
+        }
+    }
+}
+
+// MARK: - Run Lock
+
+/// Whose copy of Kernova holds a VM's bundle run lock, as that VM's
+/// ``VMActivity`` last learned it.
+enum VMRunLockHold: ~Copyable {
+    /// No copy, as far as this one knows.
+    case none
+    /// This copy, holding the lock itself.
+    case thisCopy(VMBundleRunLock)
+    /// Another copy, as this copy's last lock attempt or probe found.
+    case anotherCopy
+
+    var isThisCopy: Bool {
+        switch self {
+        case .thisCopy: true
+        case .none: false
+        case .anotherCopy: false
+        }
+    }
+
+    var isAnotherCopy: Bool {
+        switch self {
+        case .anotherCopy: true
+        case .none: false
+        case .thisCopy: false
         }
     }
 }

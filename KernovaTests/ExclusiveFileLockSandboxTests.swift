@@ -24,6 +24,20 @@ struct ExclusiveFileLockSandboxTests {
         #expect(try ExclusiveFileLock.tryAcquire(at: directory) != nil)
     }
 
+    @Test("isHeld reports a locked directory while the lock is held, and not after")
+    func isHeldFollowsTheLock() throws {
+        let directory = staging.parent.appendingPathComponent("probed", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        #expect(try ExclusiveFileLock.isHeld(at: directory) == false)
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: directory))
+            #expect(try ExclusiveFileLock.isHeld(at: directory))
+            withExtendedLifetime(held) {}
+        }
+        #expect(try ExclusiveFileLock.isHeld(at: directory) == false)
+    }
+
     /// The shape `AppCopyClaim` takes on its lock file.
     @Test("a creating acquire makes and locks an absent file, refusing a second until released")
     func creatingAcquireRefusesSecondUntilReleased() throws {

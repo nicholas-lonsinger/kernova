@@ -82,5 +82,25 @@ struct ExclusiveFileLockTests {
         #expect(throws: Errno.noSuchFileOrDirectory) {
             _ = try ExclusiveFileLock.tryAcquire(at: directory.appendingPathComponent("absent"))
         }
+        #expect(throws: Errno.noSuchFileOrDirectory) {
+            _ = try ExclusiveFileLock.isHeld(at: directory.appendingPathComponent("absent"))
+        }
+    }
+
+    @Test("isHeld reports a directory's lock while it is held, across a rename, and not after")
+    func isHeldFollowsTheLockAcrossARename() throws {
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try makeDirectory()
+        let renamed = directory.appendingPathComponent("renamed", isDirectory: true)
+        #expect(try ExclusiveFileLock.isHeld(at: url) == false)
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
+            #expect(try ExclusiveFileLock.isHeld(at: url))
+            try FileManager.default.moveItem(at: url, to: renamed)
+            #expect(try ExclusiveFileLock.isHeld(at: renamed))
+            #expect(try ExclusiveFileLock.tryAcquire(at: renamed) == nil)
+            withExtendedLifetime(held) {}
+        }
+        #expect(try ExclusiveFileLock.isHeld(at: renamed) == false)
     }
 }

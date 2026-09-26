@@ -48,6 +48,26 @@ public final class ExclusiveFileLock: Sendable {
                 S_IRUSR | S_IWUSR))
     }
 
+    /// Whether any open file description holds a lock on the existing file or
+    /// directory at `url`, this process's own included, without taking one.
+    ///
+    /// `F_GETLK` reports a `flock(2)` lock with `l_pid` set to -1, so it tells
+    /// only that a lock is held, never by whom.
+    ///
+    /// - Throws: the `errno` the open or the query failed with.
+    public static func isHeld(at url: URL) throws(Errno) -> Bool {
+        let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw Errno(rawValue: errno) }
+        defer { Darwin.close(descriptor) }
+        var query = flock()
+        query.l_type = Int16(F_WRLCK)
+        query.l_whence = Int16(SEEK_SET)
+        query.l_start = 0
+        query.l_len = 0
+        guard fcntl(descriptor, F_GETLK, &query) == 0 else { throw Errno(rawValue: errno) }
+        return query.l_type != Int16(F_UNLCK)
+    }
+
     /// Wraps what an `O_EXLOCK | O_NONBLOCK` open returned.
     private static func tryAcquire(_ descriptor: Int32) throws(Errno) -> ExclusiveFileLock? {
         guard descriptor >= 0 else {
