@@ -115,13 +115,6 @@ final class VMBundle {
 
     // MARK: - Machine files
 
-    /// The machine-file operations on this bundle, for the operation whose
-    /// context holds `key` — which only ``VMOperationContext`` mints, over its
-    /// own VM's bundle.
-    func machineFiles(_ key: VMOperationContext.MachineFilesKey) -> MachineFiles {
-        MachineFiles(bundle: self)
-    }
-
     fileprivate func offMainActor<T: Sendable>(
         _ work: @escaping @Sendable (any VMBundleMachineFileWorking, URL) throws -> T
     ) async throws -> T {
@@ -167,19 +160,25 @@ final class VMBundle {
 }
 
 extension VMBundle {
-    /// One bundle's machine-file operations — reachable only as
+    /// One VM's machine-file operations — reachable only as
     /// ``VMOperationContext/bundle``, so only an operation holding the VM runs
     /// them, and only on that VM's own bundle.
+    ///
+    /// Every call acts on the bundle the VM lives in at that moment, so a
+    /// bundle moved in Finder mid-operation is followed to where it now is.
     ///
     /// Non-copyable, and held inside the context, so it cannot outlive the
     /// operation either.
     @MainActor
     struct MachineFiles: ~Copyable, Sendable {
-        private let bundle: VMBundle
+        private let owner: any VMActivityOwner
 
-        fileprivate init(bundle: VMBundle) {
-            self.bundle = bundle
+        /// `key` is what only ``VMOperationContext`` mints, over its own VM.
+        init(of owner: any VMActivityOwner, _ key: VMOperationContext.MachineFilesKey) {
+            self.owner = owner
         }
+
+        private var bundle: VMBundle { owner.bundle }
 
         /// Where the bundle lives — the directory a configuration build for
         /// this operation reads the disks and the firmware and platform files

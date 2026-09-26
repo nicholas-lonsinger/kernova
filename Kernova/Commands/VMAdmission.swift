@@ -106,28 +106,67 @@ enum VMAdmission {
         }
     }
 
+    /// What a Start performs.
+    enum StartWork: Sendable, Equatable {
+        case guestStart(VMGuestStartKind)
+        /// The guest setup the VM still owes, which chains the boot itself.
+        case setup(GuestSetupKind)
+
+        var operationKind: VMOperationKind {
+            switch self {
+            case .guestStart(let kind): .bringUp(.guestStart(kind))
+            case .setup(let kind): .bringUp(.settingUp(kind))
+            }
+        }
+    }
+
+    /// What a Resume performs.
+    enum ResumeWork: Sendable, Equatable {
+        /// A hot resume of a live-paused guest.
+        case hot
+        /// The restore of the bundle's saved state.
+        case restore
+
+        var operationKind: VMOperationKind {
+            switch self {
+            case .hot: .resuming
+            case .restore: .bringUp(.guestStart(.restoringSavedState))
+            }
+        }
+    }
+
+    /// What Start performs on a VM with `facts`.
+    ///
+    /// Resolved from the facts alone, and the operation's own row then judges
+    /// the phase: Start in Recovery is always a Recovery boot, so a VM that
+    /// cannot take one refuses it rather than starting some other way.
+    static func startWork(recovery: Bool, facts: Facts) -> StartWork {
+        if recovery { return .guestStart(.starting(recovery: true)) }
+        if facts.hasSaveFile { return .guestStart(.restoringSavedState) }
+        if facts.hasPendingGuestSetup {
+            return .setup(facts.guestOS == .macOS ? .macOSInstall : .linuxImageDownload)
+        }
+        return .guestStart(.starting(recovery: false))
+    }
+
+    /// What Resume performs on a VM in `phase`: a hot resume only of a
+    /// live-paused guest, and otherwise the restore, whose row judges whether
+    /// there is a saved state to restore.
+    static func resumeWork(phase: VMLifecyclePhase) -> ResumeWork {
+        if case .livePaused = phase { return .hot }
+        return .restore
+    }
+
     /// The operation a Start, Resume or operation request performs, or `nil`
     /// when it names none.
-    ///
-    /// Start resolves from the facts alone, and the operation's own row then
-    /// judges the phase: Start in Recovery is always a Recovery boot, so a VM
-    /// that cannot take one refuses it rather than starting some other way.
     static func operationKind(
         for request: Request, phase: VMLifecyclePhase, facts: Facts
     ) -> VMOperationKind? {
         switch request {
-        case .start(recovery: true):
-            return .bringUp(.guestStart(.starting(recovery: true)))
-        case .start(recovery: false):
-            if facts.hasSaveFile { return .bringUp(.guestStart(.restoringSavedState)) }
-            if facts.hasPendingGuestSetup {
-                return .bringUp(
-                    .settingUp(facts.guestOS == .macOS ? .macOSInstall : .linuxImageDownload))
-            }
-            return .bringUp(.guestStart(.starting(recovery: false)))
+        case .start(let recovery):
+            return startWork(recovery: recovery, facts: facts).operationKind
         case .resume:
-            if case .livePaused = phase { return .resuming }
-            return facts.hasSaveFile ? .bringUp(.guestStart(.restoringSavedState)) : nil
+            return resumeWork(phase: phase).operationKind
         case .operation(let kind):
             return kind
         case .edit, .sessionAction, .cancel, .evict, .affordance:

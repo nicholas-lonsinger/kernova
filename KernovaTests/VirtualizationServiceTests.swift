@@ -245,7 +245,7 @@ struct VirtualizationServiceTests {
 
     /// A VM in `phase` holding a suspend slot, and a second bundle for the same
     /// VM — what the library re-binds it to once its bundle moves — holding
-    /// one too.
+    /// one too, standing in for the slot the move carried along.
     private func vmWithMovedBundle(
         phase: VMLifecyclePhase
     ) throws -> (instance: VMInstance, moved: VMBundle) {
@@ -263,13 +263,13 @@ struct VirtualizationServiceTests {
         return (instance, moved)
     }
 
-    @Test("A save whose VM is re-bound mid-operation writes and drops the admitted bundle's slot")
-    func saveUnderAMovedBundleKeepsToTheAdmittedSlot() async throws {
+    @Test("A save after the VM's bundle moved writes and drops the slot where the bundle now is")
+    func saveAfterAMoveFollowsTheBundle() async throws {
         let (instance, moved) = try vmWithMovedBundle(phase: .running(sessionID: UUID()))
-        let admitted = instance.bundleLayout
+        let original = instance.bundleLayout
         let movedLayout = VMBundleLayout(bundleURL: moved.url)
         defer {
-            try? FileManager.default.removeItem(at: admitted.bundleURL)
+            try? FileManager.default.removeItem(at: original.bundleURL)
             try? FileManager.default.removeItem(at: moved.url)
         }
         let session = MockSnapshotSession(guestState: .running)
@@ -282,33 +282,63 @@ struct VirtualizationServiceTests {
             }
         }
 
-        #expect(await session.savedStateURLs == [admitted.saveFileURL])
-        #expect(!admitted.hasSaveFile)
-        #expect(movedLayout.hasSaveFile)
+        #expect(await session.savedStateURLs == [movedLayout.saveFileURL])
+        #expect(!movedLayout.hasSaveFile)
+        #expect(original.hasSaveFile)
     }
 
-    @Test("A restore whose VM is re-bound mid-operation reads and drops the admitted bundle's slot")
-    func restoreUnderAMovedBundleKeepsToTheAdmittedSlot() async throws {
-        let (instance, moved) = try vmWithMovedBundle(phase: .suspended)
-        let admitted = instance.bundleLayout
+    @Test("A save whose bundle moves mid-write drops the partial slot where the bundle now is")
+    func saveWhoseBundleMovesMidWriteFollowsTheBundle() async throws {
+        let (instance, moved) = try vmWithMovedBundle(phase: .running(sessionID: UUID()))
+        let original = instance.bundleLayout
         let movedLayout = VMBundleLayout(bundleURL: moved.url)
         defer {
-            try? FileManager.default.removeItem(at: admitted.bundleURL)
+            try? FileManager.default.removeItem(at: original.bundleURL)
+            try? FileManager.default.removeItem(at: moved.url)
+        }
+        let session = MockSnapshotSession(guestState: .running)
+        // The bundle moves once VZ holds the slot's URL, and the guest then
+        // goes away, so the partial slot is dropped after the move.
+        await session.setAfterSave {
+            await MainActor.run {
+                instance.rebind(to: moved)
+                instance.handleSessionEvent(.guestDidStop)
+            }
+        }
+
+        try await instance.activity.perform(.saving) { context in
+            try await VirtualizationService.save(instance, context, session: session)
+        }
+
+        #expect(await session.savedStateURLs == [original.saveFileURL])
+        #expect(!movedLayout.hasSaveFile)
+        #expect(original.hasSaveFile)
+    }
+
+    @Test("A restore whose bundle moves mid-restore drops the slot where the bundle now is")
+    func restoreWhoseBundleMovesMidRestoreFollowsTheBundle() async throws {
+        let (instance, moved) = try vmWithMovedBundle(phase: .suspended)
+        let original = instance.bundleLayout
+        let movedLayout = VMBundleLayout(bundleURL: moved.url)
+        defer {
+            try? FileManager.default.removeItem(at: original.bundleURL)
             try? FileManager.default.removeItem(at: moved.url)
         }
         let session = MockSnapshotSession(guestState: .paused)
+        await session.setAfterRestore {
+            await MainActor.run { instance.rebind(to: moved) }
+        }
 
         try await instance.activity.startGuest(.restoringSavedState) { context in
-            instance.rebind(to: moved)
             try await VirtualizationService.restoreSavedState(
                 instance, context.bringUp.operation, session: session)
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
         }
 
-        #expect(await session.restoredStateURLs == [admitted.saveFileURL])
-        #expect(!admitted.hasSaveFile)
-        #expect(movedLayout.hasSaveFile)
+        #expect(await session.restoredStateURLs == [original.saveFileURL])
+        #expect(!movedLayout.hasSaveFile)
+        #expect(original.hasSaveFile)
     }
 
     // MARK: - Warm capture over a session that goes away

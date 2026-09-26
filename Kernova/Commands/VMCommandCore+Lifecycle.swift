@@ -32,26 +32,21 @@ extension VMCommandCore {
         case .admit:
             break
         }
-        guard
-            let kind = VMAdmission.bringUpKind(
-                for: request, phase: instance.phase, facts: instance.admissionFacts)
-        else { throw invalidState(instance) }
+        let work = VMAdmission.startWork(recovery: recovery, facts: instance.admissionFacts)
 
         // Before the setup dispatch, so an install nobody answered for is
         // turned back rather than running and chaining a boot that is.
-        let provisioning = try guestProvisioning(for: instance, kind: kind)
+        let provisioning = try guestProvisioning(for: instance, work: work)
 
         let start: VMGuestStartKind
-        switch kind {
+        switch work {
         case .guestStart(let guestStart):
             start = guestStart
-        case .settingUp:
+        case .setup:
             // The setup pipeline chains the boot that spends the account, and
             // reads the answer where this did.
             try runGuestSetup(on: instance)
             return
-        case .reverting:
-            throw invalidState(instance)
         }
 
         // Before the boot geometry is applied: a pop-out VM's window is what
@@ -139,13 +134,12 @@ extension VMCommandCore {
     /// asks for one, and the question is put to the bring-up the start itself
     /// performs, so what is read here and what the boot does cannot disagree.
     private func guestProvisioning(
-        for instance: VMInstance, kind: VMBringUpKind
+        for instance: VMInstance, work: VMAdmission.StartWork
     ) throws -> GuestProvisioningCredentials? {
         let deliversAccount: Bool =
-            switch kind {
-            case .settingUp: true
+            switch work {
+            case .setup: true
             case .guestStart(let start): GuestStartRoute(start).deliversGuestProvisioning
-            case .reverting: false
             }
         guard deliversAccount else { return nil }
         switch capabilities.guestAccountState(of: instance) {
@@ -834,15 +828,11 @@ extension VMCommandCore {
     /// The Resume `instance`'s state names: the restore of the saved state it
     /// holds, or a hot resume from memory.
     private func resumeOrRestore(_ instance: VMInstance) async throws {
-        switch VMAdmission.bringUpKind(
-            for: .resume, phase: instance.phase, facts: instance.admissionFacts)
-        {
-        case .guestStart(let start):
-            _ = try await lifecycle.start(instance, start)
-        case nil:
+        switch VMAdmission.resumeWork(phase: instance.phase) {
+        case .restore:
+            _ = try await lifecycle.start(instance, .restoringSavedState)
+        case .hot:
             try await lifecycle.resume(instance)
-        case .settingUp, .reverting:
-            throw invalidState(instance)
         }
     }
 

@@ -446,7 +446,12 @@ struct VMAdmissionTests {
                 .resume, .suspended, true, .linux, .bringUp(.guestStart(.restoringSavedState)),
                 .guestStart(.restoringSavedState)
             ),
-            (.resume, .stopped, false, .plain, nil, nil),
+            // Resume outside a live pause is the restore, which its row
+            // refuses without a saved state.
+            (
+                .resume, .stopped, false, .plain,
+                .bringUp(.guestStart(.restoringSavedState)), .guestStart(.restoringSavedState)
+            ),
             (.operation(.pausing), .running(sessionID: session), false, .plain, .pausing, nil),
             (.edit(.rename), .stopped, false, .plain, nil, nil),
         ]

@@ -13,7 +13,8 @@ protocol VMActivityOwner: AnyObject {
     /// ``VMActivity/restingPhase(withoutSlot:)`` reads.
     var hasSaveFile: Bool { get }
 
-    /// The bundle an operation's context runs machine-file work on.
+    /// The bundle the VM lives in now — what an operation's context runs
+    /// machine-file work on, read at each call.
     var bundle: VMBundle { get }
 
     /// The VM's own facts and the library's that admission reads, without the
@@ -159,13 +160,13 @@ final class VMActivity {
     }
 
     /// Throws the refusal unless `request` is admitted outright, answering the
-    /// bundle of the VM it was admitted on.
+    /// VM it was admitted on.
     @discardableResult
-    private func requireAdmitted(_ request: VMAdmission.Request) throws -> VMBundle {
+    private func requireAdmitted(_ request: VMAdmission.Request) throws -> any VMActivityOwner {
         guard let owner else { throw refusal(.invalidState, for: request) }
         switch decide(request, posture: .commit) {
         case .admit:
-            return owner.bundle
+            return owner
         case .join:
             throw refusal(phase.operation.map { .busy($0.kind) } ?? .invalidState, for: request)
         case .refuse(let reason):
@@ -233,9 +234,9 @@ final class VMActivity {
         _ makeContext: (consuming VMOperationContext) -> Context,
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let bundle = try requireAdmitted(.operation(kind))
+        let owner = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
-        let context = makeContext(VMOperationContext(activity: self, kind: kind, bundle: bundle))
+        let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
         let ending: VMOperationEnding<T>
         do {
             ending = try await body(context)
@@ -296,10 +297,10 @@ final class VMActivity {
         _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let bundle = try requireAdmitted(.operation(kind))
+        let owner = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
         outcome.task = Task { @MainActor in
-            let context = makeContext(VMOperationContext(activity: self, kind: kind, bundle: bundle))
+            let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
             let ending: VMOperationEnding<Void>
             do {
                 ending = try await body(context)
@@ -316,9 +317,9 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
-        let bundle = try requireAdmitted(.operation(kind))
+        let owner = try requireAdmitted(.operation(kind))
         let outcome = commitOperation(kind)
-        let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
+        let context = VMOperationContext(activity: self, kind: kind, owner: owner)
         let ending: VMOperationEnding<T>
         do {
             ending = try body(context)
@@ -336,9 +337,9 @@ final class VMActivity {
     /// A body that throws rests the VM where the kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
-        let bundle = try requireAdmitted(.operation(.deleting))
+        let owner = try requireAdmitted(.operation(.deleting))
         let outcome = commitOperation(.deleting)
-        let context = VMOperationContext(activity: self, kind: .deleting, bundle: bundle)
+        let context = VMOperationContext(activity: self, kind: .deleting, owner: owner)
         do {
             try await body(context)
         } catch {
@@ -818,18 +819,18 @@ struct VMOperationContext: ~Copyable, Sendable {
     /// holds — the only way to reach them.
     let bundle: VMBundle.MachineFiles
 
-    /// What ``VMBundle/machineFiles(_:)`` asks for, so only a context can
-    /// reach a bundle's machine files: the initializer is `fileprivate`, which
+    /// What ``VMBundle/MachineFiles/init(of:_:)`` asks for, so only a context
+    /// can reach a VM's machine files: the initializer is `fileprivate`, which
     /// `@testable import` does not open.
     struct MachineFilesKey {
         fileprivate init() {}
     }
 
     @MainActor
-    fileprivate init(activity: VMActivity, kind: VMOperationKind, bundle: VMBundle) {
+    fileprivate init(activity: VMActivity, kind: VMOperationKind, owner: any VMActivityOwner) {
         self.activity = activity
         self.kind = kind
-        self.bundle = bundle.machineFiles(MachineFilesKey())
+        self.bundle = VMBundle.MachineFiles(of: owner, MachineFilesKey())
     }
 
     /// The operation's live session, or `nil` once it ended or before a
