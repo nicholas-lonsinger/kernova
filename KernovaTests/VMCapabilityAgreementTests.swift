@@ -141,7 +141,8 @@ struct VMCapabilityAgreementTests {
         #expect(gated == withVerb)
     }
 
-    @Test("For every held operation, the catalog accepts a capability exactly when its verb is not refused by admission")
+    @Test(
+        "During every held operation, the catalog accepts exactly what admission lets the verb do")
     func catalogAndVerbAgreeDuringEveryOperation() async throws {
         for phase in VMLifecyclePhaseFixtures.operations {
             let operation = try #require(phase.operation)

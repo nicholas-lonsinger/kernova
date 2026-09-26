@@ -118,7 +118,8 @@ struct VMActivityTests {
         for (kind, startedFrom, rest) in cases {
             let (instance, _) = makeInstance(startedFrom)
             await #expect(throws: Probe.self, "\(kind)") {
-                try await instance.activity.perform(kind) { (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+                try await instance.activity.perform(kind) {
+                    (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
                     throw Probe()
                 }
             }
