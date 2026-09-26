@@ -818,7 +818,8 @@ struct VirtualizationServiceTests {
                     snapshot: VMSnapshotCaptureRequest(name: "No slot"))
             }
         }
-        #expect(fixture.instance.phase == .suspended)
+        // The admission re-read the bundle and found no slot to rest on.
+        #expect(fixture.instance.phase == .stopped)
     }
 
     @Test("Reverting to a suspended-state capture restores the cloned suspend slot and disks")
