@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import Kernova
@@ -229,6 +230,23 @@ struct VMRunLockTests {
         try await instance.activity.perform(.saving) { _ in .rest(.atRest(.stopped), ()) }
         expectLockFollowsPhase(instance, store)
 
+        // A re-read that fails after the lock is taken lets it go.
+        let config = VMBundleLayout.configRelativePath
+        store.setUnreadable(true, relativePath: config, at: instance.bundleURL)
+        await #expect(throws: UnreadableBundleFile.self) {
+            try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        }
+        store.setUnreadable(false, relativePath: config, at: instance.bundleURL)
+        expectLockFollowsPhase(instance, store)
+
+        // A lock attempt that throws takes nothing.
+        store.setLockError(Errno.noSuchFileOrDirectory, at: instance.bundleURL)
+        await #expect(throws: Errno.noSuchFileOrDirectory) {
+            try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        }
+        store.setLockError(nil, at: instance.bundleURL)
+        expectLockFollowsPhase(instance, store)
+
         // A body that throws.
         await #expect(throws: Probe.self) {
             try await instance.activity.perform(.creatingStorageDisk) {
@@ -365,29 +383,96 @@ struct VMRunLockTests {
 
     // MARK: - Detection
 
-    @Test("A commit asks the bundle, so a hold that ended refuses nothing; an offer reads the last attempt")
-    func commitProbesWhileOfferReadsTheLastAttempt() async throws {
+    @Test("A commit asks the bundle and records the answer, which every offer after it reads")
+    func commitProbeRecordsWhatOffersRead() async throws {
         let (instance, store) = makeInstance()
         store.holdElsewhere(instance.bundleURL)
-        await #expect(throws: VMAdmissionRefusal(refusal: .heldByAnotherCopy)) {
-            try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
-        }
-        #expect(
-            instance.activity.decide(.start(recovery: false), posture: .offer)
-                == .refuse(.heldByAnotherCopy))
+        #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
+
         #expect(
             instance.activity.decide(.start(recovery: false), posture: .commit)
+                == .refuse(.heldByAnotherCopy))
+        #expect(instance.activity.heldByAnotherCopy)
+        #expect(
+            instance.activity.decide(.start(recovery: false), posture: .offer)
                 == .refuse(.heldByAnotherCopy))
 
         store.releaseElsewhere(instance.bundleURL)
 
+        // The offer reads the recorded answer until a commit asks again.
         #expect(
             instance.activity.decide(.start(recovery: false), posture: .offer)
                 == .refuse(.heldByAnotherCopy))
         #expect(instance.activity.decide(.start(recovery: false), posture: .commit) == .admit)
-        try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
         #expect(!instance.activity.heldByAnotherCopy)
         #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
+        expectLockFollowsPhase(instance, store)
+    }
+
+    @Test("A verb refused because another copy holds the VM dims its control, and one that finds it free un-dims it")
+    func verbRefusalDimsAndAFreeProbeUndims() async throws {
+        let harness = makeCore()
+        let instance = harness.library.registerFixture()
+        let catalog = VMCapabilityCatalog(library: harness.library)
+        #expect(catalog.isAvailable(.start, on: instance))
+        harness.store.holdElsewhere(instance.bundleURL)
+
+        await #expect(throws: CommandError.heldByAnotherCopy(vm: harness.core.summary(instance))) {
+            try await harness.core.start(.id(instance.id), recovery: false)
+        }
+
+        #expect(catalog.isApplicable(.start, to: instance))
+        #expect(!catalog.isAvailable(.start, on: instance))
+
+        harness.store.releaseElsewhere(instance.bundleURL)
+        try harness.core.require(.start, on: instance)
+
+        #expect(!instance.activity.heldByAnotherCopy)
+        #expect(catalog.isAvailable(.start, on: instance))
+        expectLockFollowsPhase(instance, harness.store)
+    }
+
+    // MARK: - Failures while taking the lock
+
+    @Test("A bundle read that fails after the lock is taken lets the lock go and throws the read's failure")
+    func failedReReadReleasesTheLock() async throws {
+        let (instance, store) = makeInstance()
+        store.setUnreadable(true, relativePath: VMBundleLayout.configRelativePath, at: instance.bundleURL)
+        let recorder = Recorder()
+
+        await #expect(throws: UnreadableBundleFile.self) {
+            try await instance.activity.perform(.deletingSnapshot) { _ in
+                recorder.bodyRan = true
+                return .rest(.asStarted, ())
+            }
+        }
+
+        #expect(!recorder.bodyRan)
+        #expect(instance.phase == .stopped)
+        #expect(!instance.activity.heldByAnotherCopy)
+        expectLockFollowsPhase(instance, store)
+
+        store.setUnreadable(false, relativePath: VMBundleLayout.configRelativePath, at: instance.bundleURL)
+        try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
+        expectLockFollowsPhase(instance, store)
+    }
+
+    @Test("A lock attempt that throws propagates its failure and commits nothing")
+    func throwingLockAttemptPropagates() async throws {
+        let (instance, store) = makeInstance()
+        store.setLockError(Errno.noSuchFileOrDirectory, at: instance.bundleURL)
+        let recorder = Recorder()
+
+        await #expect(throws: Errno.noSuchFileOrDirectory) {
+            try await instance.activity.perform(.creatingStorageDisk) { _ in
+                recorder.bodyRan = true
+                return .rest(.asStarted, ())
+            }
+        }
+
+        #expect(!recorder.bodyRan)
+        #expect(instance.phase == .stopped)
+        #expect(!instance.activity.heldByAnotherCopy)
         expectLockFollowsPhase(instance, store)
     }
 
@@ -449,6 +534,7 @@ struct VMRunLockTests {
         }
         #expect(harness.virtualization.startCallCount == 0)
         #expect(instance.phase == .stopped)
+        #expect(instance.activity.heldByAnotherCopy)
         expectLockFollowsPhase(instance, harness.store)
     }
 

@@ -47,8 +47,9 @@ final class VMActivity {
     /// is neither at rest nor removed.
     var holdsRunLock: Bool { hold.isThisCopy }
 
-    /// Whether this copy's last attempt on the VM's run lock found another
-    /// copy of Kernova holding it — only ever while the VM is at rest here.
+    /// Whether this copy last found another copy of Kernova holding the VM's
+    /// run lock, by a lock attempt or a commit's probe — only ever while the
+    /// VM is at rest here.
     var heldByAnotherCopy: Bool {
         access(keyPath: \.heldByAnotherCopy)
         return hold.isAnotherCopy
@@ -122,8 +123,9 @@ final class VMActivity {
     /// the commit it leads to agree.
     ///
     /// A commit asks the bundle whether another copy holds it rather than
-    /// reading what the last lock attempt found, so a hold that has since
-    /// ended refuses nothing.
+    /// reading what the last lock attempt found, and records the answer, so a
+    /// hold that has since ended refuses nothing and every offer after it
+    /// reads what the commit found.
     func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
         posture: VMAdmission.Posture
@@ -131,9 +133,9 @@ final class VMActivity {
         decide(request, origin: origin, posture: posture, probingOtherCopies: posture == .commit)
     }
 
-    /// ``decide(_:origin:posture:)``, reading another copy's hold from the
-    /// bundle when `probingOtherCopies`, and from the last lock attempt
-    /// otherwise.
+    /// ``decide(_:origin:posture:)``, asking the bundle whether another copy
+    /// holds it — and recording the answer — when `probingOtherCopies`, and
+    /// reading the last recorded answer otherwise.
     private func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin, posture: VMAdmission.Posture,
         probingOtherCopies: Bool
@@ -143,7 +145,15 @@ final class VMActivity {
         if probingOtherCopies, phase.isAtRest, !hold.isThisCopy,
             VMAdmission.beginsOperation(request, phase: phase)
         {
-            facts.heldByAnotherCopy = owner.bundle.isRunLockedElsewhere()
+            let heldElsewhere = owner.bundle.isRunLockedElsewhere()
+            if heldElsewhere {
+                #log(
+                    Self.logger, .notice,
+                    "Found '\(self.name, privacy: .public)' held by another copy of Kernova deciding \(String(describing: request), privacy: .public)"
+                )
+            }
+            setHold(heldElsewhere ? .anotherCopy : .none)
+            facts.heldByAnotherCopy = heldElsewhere
         }
         if posture == .commit,
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
@@ -977,7 +987,7 @@ enum VMRunLockHold: ~Copyable {
     case none
     /// This copy, holding the lock itself.
     case thisCopy(VMBundleRunLock)
-    /// Another copy, as this copy's last lock attempt found.
+    /// Another copy, as this copy's last lock attempt or probe found.
     case anotherCopy
 
     var isThisCopy: Bool {

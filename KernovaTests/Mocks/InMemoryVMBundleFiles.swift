@@ -29,6 +29,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     private var target: InMemoryVMBundleFiles?
     private var lockedElsewhere: Set<URL> = []
     private var lockedByThisCopy: Set<URL> = []
+    private var lockErrors: [URL: any Error] = [:]
     private let disk = CoordinatedBundleFileAccess()
 
     private struct BundlePath: Hashable {
@@ -127,6 +128,13 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func releaseElsewhere(_ url: URL) {
         if let target { return target.releaseElsewhere(url) }
         lock.withLock { _ = lockedElsewhere.remove(Self.key(url)) }
+    }
+
+    /// Thrown by every later lock attempt on the bundle at `url`, as opening a
+    /// directory that has gone would; `nil` clears it.
+    func setLockError(_ error: (any Error)?, at url: URL) {
+        if let target { return target.setLockError(error, at: url) }
+        lock.withLock { lockErrors[Self.key(url)] = error }
     }
 
     /// Whether this copy holds the run lock on the bundle at `url` right now.
@@ -266,7 +274,8 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
         if let target { return try target.lockBundle(at: bundleURL) }
         let key = Self.key(bundleURL)
-        return lock.withLock {
+        return try lock.withLock {
+            if let error = lockErrors[key] { throw error }
             guard !lockedElsewhere.contains(key), lockedByThisCopy.insert(key).inserted else {
                 return nil
             }
