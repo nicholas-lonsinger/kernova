@@ -16,7 +16,7 @@ struct VMCommandEnvelopeTests {
     private let diskID = UUID(uuid: (2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6))
 
     private var summary: VMSummary {
-        VMSummary(id: vmID, name: "Alpha", status: "running", ipAddress: .unavailable)
+        VMSummary(id: vmID, name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     private var info: VMInfo {
@@ -26,7 +26,7 @@ struct VMCommandEnvelopeTests {
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
             hasSavedState: true, isEphemeral: false, snapshotCount: 2,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova")
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
 
     private var snapshot: SnapshotSummary {
@@ -341,7 +341,7 @@ struct VMCommandEnvelopeTests {
         _ holding: MACAddressHolding, others: [MACAddressHolder] = []
     ) -> CommandErrorDTO {
         let holder = VMSummary(
-            id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable)
+            id: vmID, name: "Holder", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         return .conflict(
             vm: summary, with: holder,
             reason: .macAddressInUse(

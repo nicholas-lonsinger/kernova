@@ -201,10 +201,10 @@ final class VMMACAddressRegistry {
         }
     }
 
-    /// The first live VM sharing `config`'s MAC address on the network `config`
-    /// joins, if any.
+    /// The first VM claiming `config`'s MAC address
+    /// (``VMInstance/claimsIdentity``) on the network `config` joins, if any.
     ///
-    /// Live is ``VMActivity/holdsLiveIdentity``. The mode names the network, so two holders collide only where both
+    /// The mode names the network, so two holders collide only where both
     /// guests attach: networking off puts no address on a wire, and Shared,
     /// Host Only and Bridged are separate networks. Two bridged VMs compare as
     /// one network whatever interface each names — Automatic resolves at start,
@@ -215,7 +215,7 @@ final class VMMACAddressRegistry {
     ) -> VMInstance? {
         guard config.networkEnabled, let mac = config.macAddress else { return nil }
         return configurationHolders(of: mac, otherThan: instance).first { other in
-            other.holdsLiveIdentity
+            other.claimsIdentity
                 && other.configuration.networkEnabled
                 && other.configuration.networkMode == config.networkMode
         }

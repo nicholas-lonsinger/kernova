@@ -19,6 +19,17 @@ enum VMOverviewToggle: String, Sendable {
         case .dropFiles: "Drag and drop files"
         }
     }
+
+    /// The configuration key the switch writes.
+    var key: VMConfigurationKey {
+        switch self {
+        case .autoStart: VMConfigurationKeyRegistry.autoStart
+        case .ephemeralMode: VMConfigurationKeyRegistry.ephemeral
+        case .clipboardSharing: VMConfigurationKeyRegistry.clipboardSharing
+        case .clipboardPassthrough: VMConfigurationKeyRegistry.clipboardPassthrough
+        case .dropFiles: VMConfigurationKeyRegistry.dropFiles
+        }
+    }
 }
 
 /// A command a card offers at its foot, run through the same view-model gate the
@@ -177,36 +188,35 @@ enum VMOverviewSummary {
         return "\(count) \u{00B7} \(DataFormatters.formatBytes(bytes))"
     }
 
-    /// The live switches `category`'s card carries, in card order.
-    @MainActor
-    static func toggles(for category: VMSettingsCategory, instance: VMInstance) -> [ToggleState] {
-        let config = instance.configuration
+    /// The live switches `category`'s card carries for a `guestOS` guest, in
+    /// card order.
+    static func toggleKinds(
+        for category: VMSettingsCategory, guestOS: VMGuestOS
+    ) -> [VMOverviewToggle] {
         switch category {
         case .general:
-            let hostState = instance.hostState
-            let ephemeralOn = hostState.ephemeralModeEnabled
-            return [
-                ToggleState(
-                    toggle: .autoStart, isOn: hostState.startsAutomaticallyOnLaunch, isEnabled: true),
-                ToggleState(
-                    toggle: .ephemeralMode, isOn: ephemeralOn,
-                    isEnabled: VMConfigurationKeyRegistry.ephemeral.accepts(
-                        String(!ephemeralOn), for: instance)),
-            ]
+            [.autoStart, .ephemeralMode]
         case .sharing:
             // Passthrough is a panel setting: its enable confirms in a sheet,
             // which is more weight than a card switch carries.
-            var states = [
-                ToggleState(
-                    toggle: .clipboardSharing, isOn: config.clipboardSharingEnabled, isEnabled: true)
-            ]
-            if config.guestOS == .macOS {
-                states.append(
-                    ToggleState(toggle: .dropFiles, isOn: config.dropFilesEnabled, isEnabled: true))
-            }
-            return states
+            guestOS == .macOS ? [.clipboardSharing, .dropFiles] : [.clipboardSharing]
         case .system, .storage, .network, .snapshots:
-            return []
+            []
+        }
+    }
+
+    /// The live switches `category`'s card carries, in card order, each enabled
+    /// exactly when `capabilities` takes its flip.
+    @MainActor
+    static func toggles(
+        for category: VMSettingsCategory, instance: VMInstance,
+        capabilities: VMCapabilityCatalog
+    ) -> [ToggleState] {
+        toggleKinds(for: category, guestOS: instance.configuration.guestOS).map { toggle in
+            let isOn = toggle.key.read(instance.settings) == String(true)
+            return ToggleState(
+                toggle: toggle, isOn: isOn,
+                isEnabled: capabilities.isAvailable(toggle.key, writing: String(!isOn), on: instance))
         }
     }
 

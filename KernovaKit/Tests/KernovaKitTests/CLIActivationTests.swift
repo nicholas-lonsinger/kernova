@@ -16,7 +16,7 @@ struct CLIActivationTests {
     }
 
     private let alpha = VMSummary(
-        id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
+        id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
 
     /// Sends `reveal` to a double answering `frames`, recording every activation.
     private func reveal(

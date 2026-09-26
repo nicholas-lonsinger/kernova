@@ -19,7 +19,7 @@ struct VMIntentGatewayTests {
     private func makeSummary(
         name: String = "Wired", status: String = "stopped", id: UUID = UUID()
     ) -> VMSummary {
-        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable)
+        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     /// A gateway whose library read has already landed, over a seeded mock.

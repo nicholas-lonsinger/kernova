@@ -36,6 +36,16 @@ struct VMOverviewSummaryTests {
         VMOverviewSummary.note(for: .sharing, instance: instance)
     }
 
+    /// Answers only through the VM's own activity, so any library serves.
+    private let library = makeWiredLibrary()
+
+    private func toggles(
+        for category: VMSettingsCategory, instance: VMInstance
+    ) -> [VMOverviewSummary.ToggleState] {
+        VMOverviewSummary.toggles(
+            for: category, instance: instance, capabilities: VMCapabilityCatalog(library: library))
+    }
+
     // MARK: - General
 
     @Test("General states nothing the header or its own switches already carry")
@@ -57,7 +67,7 @@ struct VMOverviewSummaryTests {
                         ? VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
                         : VMSnapshotManifest())
                 let state = try #require(
-                    VMOverviewSummary.toggles(for: .general, instance: instance)
+                    toggles(for: .general, instance: instance)
                         .first { $0.toggle == .ephemeralMode })
 
                 #expect(
@@ -327,7 +337,7 @@ struct VMOverviewSummaryTests {
     func togglesBelongToTwoCategories() {
         let instance = makeInstance()
         for category in VMSettingsCategory.allCases {
-            let toggles = VMOverviewSummary.toggles(for: category, instance: instance)
+            let toggles = toggles(for: category, instance: instance)
             #expect(toggles.isEmpty == ![.general, .sharing].contains(category))
         }
     }
@@ -336,7 +346,7 @@ struct VMOverviewSummaryTests {
     func ephemeralToggleNeedsASnapshot() {
         let instance = makeInstance()
         func ephemeral(_ instance: VMInstance) -> VMOverviewSummary.ToggleState? {
-            VMOverviewSummary.toggles(for: .general, instance: instance)
+            toggles(for: .general, instance: instance)
                 .first { $0.toggle == .ephemeralMode }
         }
         #expect(ephemeral(instance)?.isEnabled == false)
@@ -356,15 +366,15 @@ struct VMOverviewSummaryTests {
     @Test("Passthrough is a panel setting, never a card switch")
     func passthroughIsNotACardSwitch() {
         for instance in [makeInstance(), makeInstance { $0.clipboardSharingEnabled = true }] {
-            let toggles = VMOverviewSummary.toggles(for: .sharing, instance: instance)
+            let toggles = toggles(for: .sharing, instance: instance)
             #expect(!toggles.contains { $0.toggle == .clipboardPassthrough })
         }
     }
 
     @Test("Drag and drop is a macOS-guest switch only")
     func dropFilesToggleIsMacOSOnly() {
-        let macOS = VMOverviewSummary.toggles(for: .sharing, instance: makeInstance())
-        let linux = VMOverviewSummary.toggles(
+        let macOS = toggles(for: .sharing, instance: makeInstance())
+        let linux = toggles(
             for: .sharing, instance: makeInstance(guestOS: .linux))
         #expect(macOS.map(\.toggle) == [.clipboardSharing, .dropFiles])
         #expect(linux.map(\.toggle) == [.clipboardSharing])

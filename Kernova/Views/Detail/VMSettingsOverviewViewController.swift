@@ -51,7 +51,8 @@ final class VMSettingsOverviewViewController: NSViewController {
     private func makeCard(for category: VMSettingsCategory, instance: VMInstance)
         -> VMOverviewCardView
     {
-        let toggles = VMOverviewSummary.toggles(for: category, instance: instance).map(\.toggle)
+        let toggles = VMOverviewSummary.toggleKinds(
+            for: category, guestOS: instance.configuration.guestOS)
         let card = VMOverviewCardView(category: category, toggles: toggles)
         card.onShow = { [weak self] in
             guard let self else { return }
@@ -69,22 +70,28 @@ final class VMSettingsOverviewViewController: NSViewController {
         return card
     }
 
-    /// Paints every card from the model.
-    func configure(instance: VMInstance, resolved: VMOverviewResolved) {
+    /// Paints every card from the model, each switch enabled as `capabilities`
+    /// answers.
+    func configure(
+        instance: VMInstance, resolved: VMOverviewResolved, capabilities: VMCapabilityCatalog
+    ) {
         rebuild(instance: instance)
         for category in cards.keys {
-            configureCard(category, instance: instance, resolved: resolved)
+            configureCard(
+                category, instance: instance, resolved: resolved, capabilities: capabilities)
         }
     }
 
     /// Paints one card, for an async read that moved only that category's value.
     func configureCard(
-        _ category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
+        _ category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved,
+        capabilities: VMCapabilityCatalog
     ) {
         guard let card = cards[category] else { return }
         card.configure(
             rows: VMOverviewSummary.rows(for: category, instance: instance, resolved: resolved),
-            toggles: VMOverviewSummary.toggles(for: category, instance: instance),
+            toggles: VMOverviewSummary.toggles(
+                for: category, instance: instance, capabilities: capabilities),
             note: VMOverviewSummary.note(for: category, instance: instance),
             action: VMOverviewSummary.action(for: category, resolved: resolved),
             headerSummary: VMOverviewSummary.headerSummary(

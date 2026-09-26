@@ -22,7 +22,8 @@ struct VMLibraryIntentTests {
     /// A library of one VM, which every verb here addresses.
     @discardableResult
     private func seed(_ commands: MockVMCommanding, vm: UUID) -> VMSummary {
-        let summary = VMSummary(id: vm, name: "Wired", status: "stopped", ipAddress: .unavailable)
+        let summary = VMSummary(
+            id: vm, name: "Wired", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         commands.library = [summary]
         return summary
     }
@@ -92,7 +93,8 @@ struct VMLibraryIntentTests {
         let commands = MockVMCommanding()
         let vm = UUID()
         seed(commands, vm: vm)
-        commands.cloneResult = VMSummary(id: UUID(), name: "Wired 2", status: "preparing", ipAddress: .unavailable)
+        commands.cloneResult = VMSummary(
+            id: UUID(), name: "Wired 2", status: "preparing", ipAddress: .unavailable, heldByAnotherCopy: false)
 
         let copy = try await makeGateway(commands).clone(vm, machineIdentity: .followPreference)
 
@@ -113,9 +115,9 @@ struct VMLibraryIntentTests {
         let imported = UUID()
         commands.importResult = VMSummary(
             id: imported, name: "Imported", status: VMStatus.preparingWireName,
-            ipAddress: .unavailable)
+            ipAddress: .unavailable, heldByAnotherCopy: false)
         commands.outcomeResult = VMSummary(
-            id: imported, name: "Imported", status: "stopped", ipAddress: .unavailable)
+            id: imported, name: "Imported", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         commands.infoByID[imported] = VMIntentFixtures.info(
             id: imported, name: "Imported", status: "stopped")
 

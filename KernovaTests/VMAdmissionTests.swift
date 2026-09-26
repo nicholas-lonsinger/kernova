@@ -201,8 +201,8 @@ struct VMAdmissionTests {
     // MARK: - Another copy's hold
 
     /// The settled columns while another copy of Kernova holds the bundle: a
-    /// request that would begin an operation on the VM at rest is refused,
-    /// and everything else answers as it did.
+    /// request that would begin an operation on the VM at rest, or edit its
+    /// state files, is refused, and everything else answers as it did.
     nonisolated private static let heldElsewhereTable: [(VMAdmission.Request, String)] = [
         (.start(recovery: false), "OOOOIIR"),
         (.start(recovery: true), "OIIIIIR"),
@@ -217,15 +217,15 @@ struct VMAdmissionTests {
         (.operation(.creatingStorageDisk), "OOOIIIR"),
         (.operation(.creatingRemovableMedia), "OOOIAAR"),
         (.operation(.saving), "IIIIAAR"),
-        (.edit(.machineKeys), "AAAIIIR"),
-        (.edit(.hotPlugMedia), "AAAIAAR"),
+        (.edit(.machineKeys), "OOOIIIR"),
+        (.edit(.hotPlugMedia), "OOOIAAR"),
         (.evict, "AAAAIIR"),
         (.sessionAction(.forceStop), "IIIIAAR"),
         (.affordance(.inspect), "AAAAAAR"),
     ]
 
     @Test(
-        "While another copy holds the bundle, an operation on the VM at rest is refused",
+        "While another copy holds the bundle, an operation or edit on the VM at rest is refused",
         arguments: heldElsewhereTable.indices)
     func heldByAnotherCopyRefusesOperationsAtRest(row: Int) {
         let (request, expected) = Self.heldElsewhereTable[row]
@@ -233,20 +233,20 @@ struct VMAdmissionTests {
     }
 
     @Test(
-        "Another copy's hold turns only an at-rest admission of an operation into its refusal",
+        "Another copy's hold turns only an at-rest admission of an operation or edit into its refusal",
         arguments: settledTable.indices)
     func heldByAnotherCopyRefusesOnlyWhereTheVMWouldAdmit(row: Int) {
         let (request, _) = Self.settledTable[row]
-        let beginsOperation: Bool =
+        let writesTheBundle: Bool =
             switch request {
-            case .start, .resume, .operation: true
-            case .edit, .sessionAction, .cancel, .evict, .affordance: false
+            case .start, .resume, .operation, .edit: true
+            case .sessionAction, .cancel, .evict, .affordance: false
             }
         for posture in [VMAdmission.Posture.commit, .offer] {
             let free = Self.settledCells(request, .plain, posture: posture)
             let expected = String(
                 zip(Self.settledColumns, free).map { column, cell in
-                    beginsOperation && column.phase.isAtRest && cell == "A" ? "O" : cell
+                    writesTheBundle && column.phase.isAtRest && cell == "A" ? "O" : cell
                 })
             #expect(
                 Self.settledCells(request, .plain, heldByAnotherCopy: true, posture: posture) == expected,

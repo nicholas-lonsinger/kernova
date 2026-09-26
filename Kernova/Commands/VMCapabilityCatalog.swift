@@ -239,6 +239,16 @@ struct VMCapabilityCatalog {
         decision(capability, on: instance, posture: .offer) == .admit
     }
 
+    /// Whether writing `value` to `key` on `instance` can be invoked right now:
+    /// the capability the configuration verb gates it on, and the key's own
+    /// refusals — what a control writing one key reads for its `isEnabled`.
+    func isAvailable(
+        _ key: VMConfigurationKey, writing value: String, on instance: VMInstance
+    ) -> Bool {
+        isAvailable(key.capability(writing: value), on: instance)
+            && key.accepts(value, for: instance)
+    }
+
     /// Whether one snapshot's delete is offered, and what bars it when it is
     /// not.
     enum SnapshotDeleteOffer: Equatable {

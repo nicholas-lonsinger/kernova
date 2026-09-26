@@ -11,7 +11,7 @@ import Testing
 struct CLIVerbWireTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
 
     private var info: VMInfo {
         VMInfo(
@@ -19,7 +19,7 @@ struct CLIVerbWireTests {
             memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova")
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
 
     /// The answer the verbs that print nothing are given.

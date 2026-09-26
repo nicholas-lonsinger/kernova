@@ -12,7 +12,7 @@ import Testing
 @Suite("CLI exit codes", .admissionGated)
 struct CLIExitCodeTests {
     private let vm = VMSummary(
-        id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
+        id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
 
     @Test("Every verb refusal takes its own code")
     func everyCommandErrorMaps() {

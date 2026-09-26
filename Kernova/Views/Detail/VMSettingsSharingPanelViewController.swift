@@ -341,30 +341,41 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshGuestAgent() {
         guard isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) else { return }
-        logForwardingSwitch.state = instance.configuration.agentLogForwardingEnabled ? .on : .off
-        dropFilesSwitch.state = instance.configuration.dropFilesEnabled ? .on : .off
+        let forwardsLogs = instance.configuration.agentLogForwardingEnabled
+        logForwardingSwitch.state = forwardsLogs ? .on : .off
+        logForwardingSwitch.isEnabled = isAvailable(
+            VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs))
+        let dropsFiles = instance.configuration.dropFilesEnabled
+        dropFilesSwitch.state = dropsFiles ? .on : .off
+        dropFilesSwitch.isEnabled = isAvailable(
+            VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles))
         // The per-VM flag keeps its value while the app-wide preference overrides
         // it, so the switch still shows what this VM reverts to when the
         // preference is turned back on — it just can't be changed from here.
-        installReminderSwitch.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
+        let reminds = !instance.hostState.agentInstallNudgeDismissed
+        installReminderSwitch.state = reminds ? .on : .off
         let overridden = viewModel.agentInstallPromptDisabled
         applyGroupedFormRowEnabled(
-            !overridden, control: installReminderSwitch, label: installReminderLabel)
+            !overridden
+                && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
+            control: installReminderSwitch, label: installReminderLabel)
         installReminderOverrideCaption.isHidden = !overridden
     }
 
     private func refreshClipboard() {
-        clipboardSwitch.state = instance.configuration.clipboardSharingEnabled ? .on : .off
+        let shares = instance.configuration.clipboardSharingEnabled
+        clipboardSwitch.state = shares ? .on : .off
+        clipboardSwitch.isEnabled = isAvailable(
+            VMConfigurationKeyRegistry.clipboardSharing, writing: String(!shares))
         let passthroughOn = instance.configuration.clipboardPassthroughEnabled
         clipboardPassthroughSwitch.state = passthroughOn ? .on : .off
         applyGroupedFormRowEnabled(
-            VMConfigurationKeyRegistry.clipboardPassthrough.accepts(
-                String(!passthroughOn), for: instance),
+            isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
             control: clipboardPassthroughSwitch, label: clipboardPassthroughLabel)
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section, so gate it here.
         guard instance.configuration.guestOS == .linux else { return }
-        clipboardCaption.isHidden = !isReadOnly
+        clipboardCaption.isHidden = !guestHoldsSession
     }
 
     private func refreshSharedList() {

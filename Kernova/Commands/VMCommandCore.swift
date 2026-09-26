@@ -251,7 +251,8 @@ final class VMCommandCore: VMCommanding {
     func summary(_ arrival: VMArrival) -> VMSummary {
         VMSummary(
             id: arrival.id, name: arrival.name, status: VMStatus.preparingWireName,
-            ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration))
+            ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration),
+            heldByAnotherCopy: false)
     }
 
     func summary(_ entry: LibraryEntry) -> VMSummary {
@@ -507,6 +508,8 @@ final class VMCommandCore: VMCommanding {
             .notFound(.id(instance.id))
         case .outsidePermit:
             invalidState(instance)
+        case .heldByAnotherCopy:
+            admissionRefusal(.heldByAnotherCopy, on: instance)
         }
     }
 
@@ -528,14 +531,23 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Reads
 
+    // `list`, `info` and `get` first catch each VM they read up with another
+    // copy of Kernova (``VMActivity/refreshFromBundle()``): the command socket
+    // is how a script sees that copy's work, and it runs without this copy
+    // ever becoming active.
+
     func list() -> [VMSummary] {
-        library.entries.map(summary)
+        library.refreshFromOtherCopies()
+        return library.entries.map(summary)
     }
 
     func info(_ selector: VMSelector) throws -> VMInfo {
         switch try resolveEntry(selector) {
-        case .vm(let instance): info(instance)
-        case .arriving(let arrival): info(arrival)
+        case .vm(let instance):
+            instance.activity.refreshFromBundle()
+            return info(instance)
+        case .arriving(let arrival):
+            return info(arrival)
         }
     }
 
@@ -556,7 +568,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: instance.hasSaveFile,
             isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
-            bundlePath: instance.bundleURL.path(percentEncoded: false)
+            bundlePath: instance.bundleURL.path(percentEncoded: false),
+            heldByAnotherCopy: instance.heldByAnotherCopy
         )
     }
 
@@ -579,7 +592,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: false,
             isEphemeral: false,
             snapshotCount: 0,
-            bundlePath: arrival.destinationURL.path(percentEncoded: false)
+            bundlePath: arrival.destinationURL.path(percentEncoded: false),
+            heldByAnotherCopy: false
         )
     }
 

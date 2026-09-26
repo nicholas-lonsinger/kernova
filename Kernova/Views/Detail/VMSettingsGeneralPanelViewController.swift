@@ -90,6 +90,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     // Startup
     private var autoStartSwitch = NSSwitch()
+    /// The auto-start row's title label, grayed in step with its switch.
+    private var autoStartLabel = NSTextField()
     /// Holds the banner naming how many macOS guests are marked to start at
     /// launch, when that exceeds what macOS runs at once.
     private var autoStartWarningContainer = NSStackView()
@@ -246,7 +248,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                     .body(
                         "Turn on Open at Login in Settings → General to have it running after you log in."
                     ),
-                ]),
+                ],
+                titleLabel: { [weak self] in self?.autoStartLabel = $0 }),
             ephemeralGroup,
         ])
 
@@ -312,7 +315,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshStartup() {
-        autoStartSwitch.state = instance.hostState.startsAutomaticallyOnLaunch ? .on : .off
+        let autoStarts = instance.hostState.startsAutomaticallyOnLaunch
+        autoStartSwitch.state = autoStarts ? .on : .off
+        applyGroupedFormRowEnabled(
+            isAvailable(VMConfigurationKeyRegistry.autoStart, writing: String(!autoStarts)),
+            control: autoStartSwitch, label: autoStartLabel)
         refreshEphemeralMode()
 
         let message = resolved.warnings[.general]
@@ -338,8 +345,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let key = VMConfigurationKeyRegistry.ephemeral
         ephemeralSwitch.state = enabled ? .on : .off
         applyGroupedFormRowEnabled(
-            key.accepts(String(!enabled), for: instance), control: ephemeralSwitch,
+            isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch,
             label: ephemeralLabel)
+        ephemeralBaselinePopUp.isEnabled = isAvailable(
+            VMConfigurationKeyRegistry.ephemeralBaseline,
+            writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? "")
         ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
         ephemeralGroup?.isSubOptionHidden = !enabled
 

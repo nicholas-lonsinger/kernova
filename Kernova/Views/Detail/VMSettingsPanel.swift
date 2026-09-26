@@ -133,16 +133,29 @@ extension VMSettingsPanel {
 
     var instance: VMInstance { context.instance }
     var viewModel: VMLibraryViewModel { context.viewModel }
-    /// Whether the *route* opened this pane read-only, which is the pane's
-    /// chrome: the lock hints, the dimming, the captions.
+    /// Whether the pane opened with configuration edits refused
+    /// (``VMCapability/editConfiguration``), which drives the lock chrome: the
+    /// hints and the dimming of the lockable rows.
     ///
-    /// Not a control's gate. What a control may do is the capability its verb
-    /// refuses on (``VMCapabilityCatalog/isAvailable(_:on:)``) — a second
-    /// surface asking the same question has to get the same answer, and only the
-    /// capability is the answer the verb behind the control will honour.
+    /// A control no lock covers asks the capability its verb refuses on
+    /// (``VMCapabilityCatalog/isAvailable(_:on:)``) — a second surface asking
+    /// the same question has to get the same answer, and only the capability
+    /// is the answer the verb behind the control will honour.
     var isReadOnly: Bool { context.isReadOnly }
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }
+
+    /// Whether the guest holds a session a configuration change waits out —
+    /// live, or suspended to disk — which a "takes effect on next start"
+    /// caption names.
+    var guestHoldsSession: Bool { instance.hasLiveVirtualMachine || instance.isColdPaused }
+
+    /// Whether a control writing `value` to `key` takes a change right now
+    /// (``VMCapabilityCatalog/isAvailable(_:writing:on:)``) — the gate of a
+    /// control no lock covers.
+    func isAvailable(_ key: VMConfigurationKey, writing value: String) -> Bool {
+        viewModel.capabilities.isAvailable(key, writing: value, on: instance)
+    }
 
     /// Writes `assignments` through the configuration verb, the one path a
     /// panel's edit takes.

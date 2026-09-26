@@ -16,13 +16,20 @@ public struct VMSummary: Codable, Sendable, Hashable {
     public let status: String
     /// What the guest's address resolves to on the network its mode joins.
     public let ipAddress: GuestIPAddress
+    /// Whether the app last found another running copy of Kernova holding the
+    /// VM, which is at rest in the copy answering.
+    public let heldByAnotherCopy: Bool
 
     /// Names one VM.
-    public init(id: UUID, name: String, status: String, ipAddress: GuestIPAddress) {
+    public init(
+        id: UUID, name: String, status: String, ipAddress: GuestIPAddress,
+        heldByAnotherCopy: Bool
+    ) {
         self.id = id
         self.name = name
         self.status = status
         self.ipAddress = ipAddress
+        self.heldByAnotherCopy = heldByAnotherCopy
     }
 }
 
@@ -60,6 +67,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let snapshotCount: Int
     /// Where the VM's bundle lives.
     public let bundlePath: String
+    /// Whether the app last found another running copy of Kernova holding the
+    /// VM, which is at rest in the copy answering.
+    public let heldByAnotherCopy: Bool
 
     /// Describes one VM.
     public init(
@@ -77,7 +87,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         hasSavedState: Bool,
         isEphemeral: Bool,
         snapshotCount: Int,
-        bundlePath: String
+        bundlePath: String,
+        heldByAnotherCopy: Bool
     ) {
         self.id = id
         self.name = name
@@ -94,6 +105,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.isEphemeral = isEphemeral
         self.snapshotCount = snapshotCount
         self.bundlePath = bundlePath
+        self.heldByAnotherCopy = heldByAnotherCopy
     }
 }
 

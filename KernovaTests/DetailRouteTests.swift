@@ -12,16 +12,16 @@ struct DetailRouteTests {
     /// can create a `VZVirtualMachine` for.
     private static let session = UUID()
 
-    // MARK: - Editable settings
+    // MARK: - Settings
 
-    @Test("Stopped routes to editable settings")
+    @Test("Stopped routes to settings")
     func stoppedIsEditableSettings() {
         let route = DetailRoute.resolve(
             phase: .stopped,
             hasSetupState: false,
             detailPaneMode: .display
         )
-        #expect(route == .settings(isReadOnly: false))
+        #expect(route == .settings)
     }
 
     @Test("A failure routes to the error banner carrying its own message")
@@ -90,7 +90,7 @@ struct DetailRouteTests {
                 hasSetupState: false,
                 detailPaneMode: .settings
             )
-            #expect(settings == .settings(isReadOnly: true), "\(phase)")
+            #expect(settings == .settings, "\(phase)")
         }
     }
 
@@ -142,12 +142,12 @@ struct DetailRouteTests {
     @Test("A base-status operation routes as the phase it presents")
     func baseStatusOperationsRouteAsTheirPresentedPhase() {
         let live = VMLifecyclePhase.running(sessionID: Self.session)
-        let editable = (DetailRoute.settings(isReadOnly: false), DetailRoute.settings(isReadOnly: false))
-        let displayed = (DetailRoute.display, DetailRoute.settings(isReadOnly: true))
+        let form = (DetailRoute.settings, DetailRoute.settings)
+        let displayed = (DetailRoute.display, DetailRoute.settings)
         let cases: [(VMLifecyclePhase, (display: DetailRoute, settings: DetailRoute))] = [
-            (.operating(.deletingSnapshot, from: .stopped), editable),
-            (.operating(.deleting, from: .stopped), editable),
-            (.operating(.copyingOut, from: .stopped), editable),
+            (.operating(.deletingSnapshot, from: .stopped), form),
+            (.operating(.deleting, from: .stopped), form),
+            (.operating(.copyingOut, from: .stopped), form),
             (
                 .operating(.deletingSnapshot, from: .failed(message: "Boot failed.")),
                 (.error(message: "Boot failed."), .error(message: "Boot failed."))
@@ -159,7 +159,7 @@ struct DetailRouteTests {
             (.operating(.forceStopping, from: live), displayed),
             (.operating(.resuming, from: .livePaused(sessionID: Self.session)), displayed),
             // The session ended under the operation: it presents the rest.
-            (.operating(.pausing, from: live, sessionEnd: .poweredOff), editable),
+            (.operating(.pausing, from: live, sessionEnd: .poweredOff), form),
             (
                 .operating(.pausing, from: live, sessionEnd: .stoppedWithError(message: "Crashed.")),
                 (.error(message: "Crashed."), .error(message: "Crashed."))
@@ -189,6 +189,6 @@ struct DetailRouteTests {
             hasSetupState: false,
             detailPaneMode: .settings
         )
-        #expect(settings == .settings(isReadOnly: true))
+        #expect(settings == .settings)
     }
 }

@@ -462,6 +462,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // differ until the next boot materializes the trio.
         displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
         displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
+        displayAutoResizeSwitch.isEnabled = isAvailable(
+            Keys.displayAutoResize, writing: String(!config.displayAutoResizes))
         displayWidthField.show(String(base.width))
         displayHeightField.show(String(base.height))
 
@@ -487,7 +489,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         displayHeightField.isEnabled = manualEnabled
 
         displayResolutionCaption.stringValue = displayResolutionCaptionText()
-        displayRestartCaption.isHidden = !isReadOnly
+        displayRestartCaption.isHidden = !guestHoldsSession
     }
 
     private func displayResolutionCaptionText() -> String {
@@ -543,7 +545,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     private func refreshInput() {
-        select(instance.configuration.systemKeyForwarding, in: systemKeysPopUp, named: "system keys")
+        let forwarding = instance.configuration.systemKeyForwarding
+        select(forwarding, in: systemKeysPopUp, named: "system keys")
+        systemKeysPopUp.isEnabled = isAvailable(Keys.inputSystemKeys, writing: forwarding.rawValue)
         guard instance.configuration.guestOS == .macOS else { return }
         select(instance.configuration.inputDeviceMode, in: inputDevicesPopUp, named: "input device")
     }
@@ -565,7 +569,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     private func refreshSerialRelay() {
-        serialRelaySwitch.state = instance.configuration.serialSocketRelayEnabled ? .on : .off
+        let relays = instance.configuration.serialSocketRelayEnabled
+        serialRelaySwitch.state = relays ? .on : .off
+        serialRelaySwitch.isEnabled = isAvailable(Keys.serialSocket, writing: String(!relays))
         probeSerialLog()
     }
 

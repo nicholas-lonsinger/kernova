@@ -23,7 +23,9 @@ struct VMSnapshotIntentTests {
     private func seed(
         _ commands: MockVMCommanding, vm: UUID, snapshots: [SnapshotSummary] = []
     ) {
-        commands.library = [VMSummary(id: vm, name: "Wired", status: "stopped", ipAddress: .unavailable)]
+        commands.library = [
+            VMSummary(id: vm, name: "Wired", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+        ]
         commands.snapshotsByVM[vm] = snapshots
     }
 

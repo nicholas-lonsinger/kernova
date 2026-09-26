@@ -55,4 +55,9 @@ public enum VMStatus: String, Sendable {
         if let known = VMStatus(rawValue: wireName) { return known.displayName }
         return wireName == preparingWireName ? "Preparing" : wireName
     }
+
+    /// What a person reads in place of the status of a VM another running
+    /// copy of Kernova holds: the copy answering sees it at rest, and cannot
+    /// see what the other copy is doing with it.
+    public static let heldByAnotherCopyDisplayName = "In use by another copy of Kernova"
 }

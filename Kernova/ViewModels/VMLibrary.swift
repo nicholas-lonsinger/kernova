@@ -590,6 +590,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         case noLibrary
         /// The change moved fields its permit may not write.
         case outsidePermit(VMStateFieldRefusal)
+        /// Another copy of Kernova holds the VM's bundle.
+        case heldByAnotherCopy
 
         var errorDescription: String? {
             switch self {
@@ -597,6 +599,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
             case .outsidePermit:
                 "The virtual machine\u{2019}s current state doesn\u{2019}t allow this change."
+            case .heldByAnotherCopy:
+                "The virtual machine is in use by another copy of Kernova."
             }
         }
     }
@@ -679,6 +683,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             return .stopped(.refused(refusal))
         } catch let refused as VMStateFieldRefusal {
             return .stopped(.refused(outsidePermit(refused, on: instance)))
+        } catch let refused as VMAdmissionRefusal where refused.refusal == .heldByAnotherCopy {
+            return .stopped(.refused(.heldByAnotherCopy))
         } catch {
             if let mutateFailure { throw mutateFailure }
             #log(
@@ -752,6 +758,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             try permit.bundle.commitHostState(mutate)
         } catch let refused as VMStateFieldRefusal {
             return .refused(outsidePermit(refused, on: instance))
+        } catch let refused as VMAdmissionRefusal where refused.refusal == .heldByAnotherCopy {
+            return .refused(.heldByAnotherCopy)
         } catch {
             #log(
                 Self.logger, .error,
@@ -823,6 +831,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let instance = permit.instance
         do {
             try permit.bundle.commitUSBPairings(mutate)
+        } catch let refused as VMAdmissionRefusal {
+            throw refused
         } catch {
             #log(
                 Self.logger, .error,

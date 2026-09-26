@@ -12,7 +12,7 @@ import Testing
 struct CLIArrivalWaitTests {
     private let settled = VMSummary(
         id: UUID(uuidString: "44444444-5555-6666-7777-888888888888") ?? UUID(),
-        name: "Alpha copy", status: "stopped", ipAddress: .unavailable)
+        name: "Alpha copy", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
 
     private func clone(_ arguments: [String]) throws -> KernovaCommand.Clone {
         try #require(try KernovaCommand.parseAsRoot(["clone"] + arguments) as? KernovaCommand.Clone)

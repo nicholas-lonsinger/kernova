@@ -79,7 +79,7 @@ struct VMURLGatewayTests {
     }
 
     private func makeSummary(name: String = "Sonoma", id: UUID = UUID()) -> VMSummary {
-        VMSummary(id: id, name: name, status: "stopped", ipAddress: .unavailable)
+        VMSummary(id: id, name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     // MARK: - Routes

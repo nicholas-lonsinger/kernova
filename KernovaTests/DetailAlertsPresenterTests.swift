@@ -678,7 +678,7 @@ struct DetailAlertsPresenterTests {
         GuestAccountPasswordRequest(
             prompt: GuestAccountPrompt(
                 vm: VMSummary(
-                    id: vmID, name: vmName, status: "stopped", ipAddress: .unavailable),
+                    id: vmID, name: vmName, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false),
                 username: "ada", fullName: "Ada Lovelace",
                 message: "\u{201C}\(vmName)\u{201D} creates the macOS account."),
             answer: { answers.answered.append($0) })

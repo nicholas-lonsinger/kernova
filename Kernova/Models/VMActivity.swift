@@ -55,8 +55,8 @@ final class VMActivity {
     var holdsRunLock: Bool { hold.isThisCopy }
 
     /// Whether this copy last found another copy of Kernova holding the VM's
-    /// run lock, by a lock attempt or a commit's probe — only ever while the
-    /// VM is at rest here.
+    /// run lock — by a lock attempt, a commit's probe, a refused write or a
+    /// ``refreshFromBundle()`` — only ever while the VM is at rest here.
     var heldByAnotherCopy: Bool {
         access(keyPath: \.heldByAnotherCopy)
         return hold.isAnotherCopy
@@ -260,9 +260,8 @@ final class VMActivity {
         probingOtherCopies: Bool
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
-        var facts = owner.admissionFacts
-        if probingOtherCopies, phase.isAtRest, !hold.isThisCopy,
-            VMAdmission.beginsOperation(request, phase: phase)
+        if probingOtherCopies, !hold.isThisCopy,
+            VMAdmission.isRefusedWhileHeldByAnotherCopy(request, phase: phase)
         {
             let heldElsewhere = owner.bundle.isRunLockedElsewhere()
             if heldElsewhere {
@@ -271,9 +270,9 @@ final class VMActivity {
                     "Found '\(self.name, privacy: .public)' held by another copy of Kernova deciding \(String(describing: request), privacy: .public)"
                 )
             }
-            setHold(heldElsewhere ? .anotherCopy : .none)
-            facts.heldByAnotherCopy = heldElsewhere
+            recordOtherCopyHold(heldElsewhere: heldElsewhere)
         }
+        var facts = owner.admissionFacts
         if posture == .commit,
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
             kind.checksIdentity
@@ -613,6 +612,41 @@ final class VMActivity {
     private func releaseRunLockIfAtRest() {
         guard phase.isAtRest || phase == .removed, hold.isThisCopy else { return }
         setHold(.none)
+    }
+
+    /// Records what asking the bundle found about another copy's hold on it —
+    /// only for a VM at rest holding no lock, the one case where a holder the
+    /// bundle reports can only be another copy.
+    func recordOtherCopyHold(heldElsewhere: Bool) {
+        guard phase.isAtRest, !hold.isThisCopy else { return }
+        setHold(heldElsewhere ? .anotherCopy : .none)
+    }
+
+    /// Catches a VM at rest up with what another copy of Kernova may have done
+    /// while this copy held no lock: whether that copy holds the bundle now,
+    /// the four state files it may have written, and where the VM rests.
+    ///
+    /// A VM holding the lock has nothing to catch up with — no other copy can
+    /// have written its bundle — and one that is not at rest holds it.
+    func refreshFromBundle() {
+        guard phase.isAtRest, !hold.isThisCopy, let owner else { return }
+        let bundle = owner.bundle
+        recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
+        do {
+            try bundle.refresh()
+        } catch {
+            #log(
+                Self.logger, .warning,
+                "Could not re-read the bundle of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        let before = phase
+        reconcileRest()
+        guard phase != before else { return }
+        #log(
+            Self.logger, .notice,
+            "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
+        )
     }
 
     /// The one write of ``hold``, noticed by observers of
