@@ -287,10 +287,18 @@ struct VMCommandCoreOperationTests {
             } == notFound)
         #expect(await commandError { try await harness.core.suspend(instance) } == notFound)
         // No capture mode is left to name a request for, so this one refuses
-        // with the state rather than the removal — refused all the same.
-        #expect(
-            await commandError { _ = try await harness.core.takeSnapshot(instance, name: "Late", notes: "") }
-                != nil)
+        // with the state rather than the removal — refused all the same, and
+        // offering nothing.
+        let snapshotRefusal = await commandError {
+            _ = try await harness.core.takeSnapshot(instance, name: "Late", notes: "")
+        }
+        if case .invalidState(let vm, let current, let allowed, _)? = snapshotRefusal {
+            #expect(vm.id == instance.id)
+            #expect(current == .stopped)
+            #expect(allowed.isEmpty)
+        } else {
+            Issue.record("Expected an invalid-state refusal, got \(String(describing: snapshotRefusal))")
+        }
         #expect(commandError { _ = try harness.core.startRevert(instance, to: snapshot) } == notFound)
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
             try await harness.lifecycle.pause(instance)

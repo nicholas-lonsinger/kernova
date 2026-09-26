@@ -619,9 +619,61 @@ struct SidebarViewControllerTests {
 
         let menu = controller.buildContextMenu(for: instance)
 
-        // Busy, not inapplicable: both are taken once the operation ends.
+        // Busy, not inapplicable: each is taken once the operation ends.
         #expect(menuItem("Stop", in: menu)?.isEnabled == false, "\(phase)")
         #expect(menuItem("Force Stop…", in: menu)?.isEnabled == false, "\(phase)")
+        #expect(menuItem("Suspend", in: menu)?.isEnabled == false, "\(phase)")
+    }
+
+    /// The lifecycle items, in the order each expectation lists them.
+    private static let lifecycleItems = [
+        "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Suspend",
+    ]
+
+    /// Each lifecycle item's state in a macOS guest's menu: `E` listed and
+    /// enabled, `D` listed and dimmed, `-` not listed. Dimmed is an item the
+    /// VM takes once the operation holding it ends.
+    @Test(
+        "Each lifecycle item is listed and enabled as the VM's state decides",
+        arguments: [
+            (PhaseFixture.settled(.stopped), "EE-----"),
+            (.settled(.failed(message: "Boot failed.")), "E------"),
+            (.settled(.suspended), "---E---"),
+            (.settled(.running(sessionID: UUID())), "--E-EEE"),
+            (.settled(.livePaused(sessionID: UUID())), "---EEEE"),
+            (.operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()), "DD-----"),
+            // A base-status operation from rest dims what the VM takes once it ends.
+            (.operating(.deletingSnapshot, from: .stopped), "DD-----"),
+            (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDD"),
+            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), "--D-DDD"),
+            // Operations that tolerate a stop leave both stops enabled.
+            (.operating(.pausing, from: .running(sessionID: UUID())), "--D-EED"),
+            (.operating(.attachingUSB(registryID: 1), from: .running(sessionID: UUID())), "--D-EED"),
+            // A live-paused VM's Stop resumes it first, which the resume in
+            // flight holds; its Force Stop is tolerated.
+            (.operating(.resuming, from: .livePaused(sessionID: UUID())), "---DDED"),
+            // A Force Stop in flight answers as the powered-off VM will.
+            (.operating(.forceStopping, from: .running(sessionID: UUID())), "DD-----"),
+        ])
+    func lifecycleItemsFollowTheVMsState(phase: PhaseFixture, expected: String) throws {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        if case .settled(.suspended) = phase {
+            try VMInstanceFixture.writeSaveFile(for: instance)
+        }
+        viewModel.library.admitForTesting(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let actual = String(
+            Self.lifecycleItems.map { title -> Character in
+                guard let item = menuItem(title, in: menu) else { return "-" }
+                return item.isEnabled ? "E" : "D"
+            })
+        #expect(actual == expected, "\(phase)")
     }
 
     @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")

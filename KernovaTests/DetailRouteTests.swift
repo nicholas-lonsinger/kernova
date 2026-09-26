@@ -135,6 +135,46 @@ struct DetailRouteTests {
         }
     }
 
+    // MARK: - Base-status operations
+
+    /// An operation that shows no status of its own routes as the phase it
+    /// presents: the one it started from, or the rest its ended session names.
+    @Test("A base-status operation routes as the phase it presents")
+    func baseStatusOperationsRouteAsTheirPresentedPhase() {
+        let live = VMLifecyclePhase.running(sessionID: Self.session)
+        let editable = (DetailRoute.settings(isReadOnly: false), DetailRoute.settings(isReadOnly: false))
+        let displayed = (DetailRoute.display, DetailRoute.settings(isReadOnly: true))
+        let cases: [(VMLifecyclePhase, (display: DetailRoute, settings: DetailRoute))] = [
+            (.operating(.deletingSnapshot, from: .stopped), editable),
+            (.operating(.deleting, from: .stopped), editable),
+            (.operating(.copyingOut, from: .stopped), editable),
+            (
+                .operating(.deletingSnapshot, from: .failed(message: "Boot failed.")),
+                (.error(message: "Boot failed."), .error(message: "Boot failed."))
+            ),
+            (.operating(.deletingSnapshot, from: .initialBoot), (.initialBoot, .initialBoot)),
+            (.operating(.discardingSavedState, from: .suspended), displayed),
+            (.operating(.attachingUSB(registryID: 1), from: live), displayed),
+            (.operating(.reconcilingMedia, from: live), displayed),
+            (.operating(.forceStopping, from: live), displayed),
+            (.operating(.resuming, from: .livePaused(sessionID: Self.session)), displayed),
+            // The session ended under the operation: it presents the rest.
+            (.operating(.pausing, from: live, sessionEnd: .poweredOff), editable),
+            (
+                .operating(.pausing, from: live, sessionEnd: .stoppedWithError(message: "Crashed.")),
+                (.error(message: "Crashed."), .error(message: "Crashed."))
+            ),
+        ]
+        for (phase, expected) in cases {
+            let display = DetailRoute.resolve(
+                phase: phase, hasSetupState: false, detailPaneMode: .display)
+            let settings = DetailRoute.resolve(
+                phase: phase, hasSetupState: false, detailPaneMode: .settings)
+            #expect(display == expected.display, "\(phase)")
+            #expect(settings == expected.settings, "\(phase)")
+        }
+    }
+
     @Test("A suspended VM keeps the display pane — it is settled, not transitioning")
     func suspendedKeepsTheDisplayPane() {
         let display = DetailRoute.resolve(

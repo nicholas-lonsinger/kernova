@@ -248,13 +248,26 @@ final class USBAccessoryCoordinator {
                 Self.logger, .notice,
                 "Passed USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': it is paired with that virtual machine"
             )
+            #if DEBUG
+            autoAttachEndedForTesting?(registryID, nil)
+            #endif
         } catch {
             #log(
                 Self.logger, .warning,
                 "Could not pass USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
+            #if DEBUG
+            autoAttachEndedForTesting?(registryID, error)
+            #endif
         }
     }
+
+    #if DEBUG
+    /// Told how each automatic attach that reached the attach verb ended — the
+    /// error, or `nil` once the accessory is through — so a test can await a
+    /// refusal that changes nothing else it could observe.
+    var autoAttachEndedForTesting: (@MainActor (UInt64, (any Error)?) -> Void)?
+    #endif
 
     // MARK: - The User's Own Edits
 

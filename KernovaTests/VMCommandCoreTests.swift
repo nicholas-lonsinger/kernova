@@ -781,18 +781,24 @@ struct VMCommandCoreTests {
             (
                 PhaseFixture.operating(
                     .bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
-                false
+                ForceStopRefusal.invalidState(current: .restoring)
             ),
-            (.operating(.saving, from: .running(sessionID: UUID())), true),
+            (
+                .operating(.saving, from: .running(sessionID: UUID())),
+                .busy(status: .saving, operation: "suspending")
+            ),
             (
                 .operating(
                     .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
-                false
+                .invalidState(current: .starting)
             ),
-            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), true),
+            (
+                .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
+                .busy(status: .snapshotting, operation: "taking a snapshot")
+            ),
         ])
     func forceStopRefusesWhereVirtualizationCannotStop(
-        phase: PhaseFixture, busy: Bool
+        phase: PhaseFixture, expected: ForceStopRefusal
     ) async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Busy", phase: phase.phase)
@@ -803,9 +809,28 @@ struct VMCommandCoreTests {
                     .id(instance.id), disposition: .force, confirmed: false)
             })
 
-        #expect(busy ? error.isBusy : error.isInvalidState, "\(error)")
+        switch (expected, error) {
+        case (.busy(let status, let operation), .busy(let vm, let actualOperation)):
+            #expect(vm.id == instance.id)
+            #expect(vm.status == status.rawValue)
+            #expect(actualOperation == operation)
+        case (.invalidState(let current), .invalidState(let vm, let actualCurrent, _, _)):
+            #expect(vm.id == instance.id)
+            #expect(actualCurrent == current)
+        default:
+            Issue.record("Expected \(expected), got \(error)")
+        }
         #expect(error.confirmationPrompt == nil)
         #expect(harness.virtualization.forceStopCallCount == 0)
+    }
+
+    /// The refusal a Force Stop during an operation that tolerates none gets.
+    enum ForceStopRefusal: Sendable {
+        /// Taken once the operation ends: the VM's status, and what it is
+        /// busy doing.
+        case busy(status: VMStatus, operation: String)
+        /// Nothing to terminate: the VM's status.
+        case invalidState(current: VMStatus)
     }
 
     @Test("A force stop of a VM with nothing to terminate refuses instead of prompting")

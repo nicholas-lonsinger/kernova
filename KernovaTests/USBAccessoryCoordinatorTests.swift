@@ -614,6 +614,13 @@ struct USBAccessoryCoordinatorTests {
         service.accessories.append(first)
         try pair(second, with: instance)
 
+        let endings = AutoAttachEndings()
+        let ended = AsyncGate()
+        coordinator.autoAttachEndedForTesting = { registryID, error in
+            endings.entries.append((registryID, error))
+            ended.notify()
+        }
+
         service.suspendNextAttach = true
         let held = Task { try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
         await service.attachStarted()
@@ -621,10 +628,14 @@ struct USBAccessoryCoordinatorTests {
         // The attach in flight holds the VM, so the automatic attach this
         // assignment asks for is refused as busy rather than waiting for it.
         service.assign(second)
+        try await ended.wait { !endings.entries.isEmpty }
         service.resumeAttach()
         _ = try await held.value
 
-        try await Task.sleep(for: .milliseconds(200))
+        #expect(endings.entries.map(\.registryID) == [2])
+        #expect(
+            endings.entries.first?.error as? VMAdmissionRefusal
+                == VMAdmissionRefusal(refusal: .busy(.attachingUSB(registryID: 1))))
         #expect(service.attachedRegistryIDs == [1])
         #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [1])
     }
@@ -656,4 +667,10 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs == [1])
         #expect(!instance.hasLiveVirtualMachine)
     }
+}
+
+/// How each automatic attach that reached the attach verb ended, in order.
+@MainActor
+private final class AutoAttachEndings {
+    var entries: [(registryID: UInt64, error: (any Error)?)] = []
 }

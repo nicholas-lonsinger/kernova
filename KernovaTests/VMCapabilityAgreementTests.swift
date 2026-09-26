@@ -142,8 +142,9 @@ struct VMCapabilityAgreementTests {
     }
 
     @Test(
-        "During every held operation, the catalog accepts exactly what admission lets the verb do")
-    func catalogAndVerbAgreeDuringEveryOperation() async throws {
+        "During every held operation, the catalog accepts exactly what admission lets the verb do",
+        arguments: VMGuestOS.allCases)
+    func catalogAndVerbAgreeDuringEveryOperation(guestOS: VMGuestOS) async throws {
         for phase in VMLifecyclePhaseFixtures.operations {
             let operation = try #require(phase.operation)
             for capability in VMCapability.allCases {
@@ -151,7 +152,7 @@ struct VMCapabilityAgreementTests {
                 let harness = makeHarness()
                 let snapshot = VMSnapshot(name: "Kept", macAddress: nil)
                 let instance = RegisteredVMInstanceFixture.register(
-                    name: "Agreeing", phase: .stopped, guestOS: .linux, snapshots: [snapshot],
+                    name: "Agreeing", phase: .stopped, guestOS: guestOS, snapshots: [snapshot],
                     library: harness.library, storage: harness.storage, preferences: preferences)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 defer { VMInstanceFixture.removeBundle(of: instance) }
@@ -172,11 +173,11 @@ struct VMCapabilityAgreementTests {
                 } catch let error as CommandError {
                     if isAdmissionRefusal(error) { refusal = error }
                 } catch {
-                    Issue.record("\(capability) during \(operation.kind) threw \(error)")
+                    Issue.record("\(capability) during \(operation.kind) on \(guestOS) threw \(error)")
                 }
                 #expect(
                     accepted == (refusal == nil),
-                    "\(capability) during \(operation.kind) from \(operation.startedFrom): accepted \(accepted), refusal \(String(describing: refusal))"
+                    "\(capability) during \(operation.kind) from \(operation.startedFrom) on \(guestOS): accepted \(accepted), refusal \(String(describing: refusal))"
                 )
             }
         }

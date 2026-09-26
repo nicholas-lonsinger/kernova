@@ -308,11 +308,10 @@ enum VMAdmission {
         case .cancel(let family):
             if operation.kind.belongs(to: family) { return .admit }
         case .edit(let classes):
-            if classes.contains(.pairingRules), !facts.usbSupported {
-                return .refuse(.unsupportedByBuild)
-            }
+            // A tolerated edit still answers to every settled rule — the clone
+            // lock and a build without USB among them.
             if tolerated(declaration.edits, from: basis, facts: facts).isSuperset(of: classes) {
-                return .admit
+                return decideSettled(request, posture: posture, phase: basis, facts: facts)
             }
         case .sessionAction(let action):
             if operation.session != nil, declaration.toleratedSessionActions.contains(action) {
@@ -325,8 +324,8 @@ enum VMAdmission {
     }
 
     /// What the VM would answer once the operation holding it ends, settled
-    /// at `basis`: a request it would take is busy with `holder`, one it
-    /// would refuse anyway is refused as such.
+    /// at `basis`: a request it would take is busy with `holder`, and one it
+    /// would refuse anyway is refused for the same reason.
     private static func classified(
         _ request: Request, posture: Posture, against basis: VMLifecyclePhase, facts: Facts,
         busy holder: VMOperationKind
@@ -336,10 +335,8 @@ enum VMAdmission {
         switch decideSettled(request, posture: posture, phase: basis, facts: settledFacts) {
         case .admit, .join:
             return .refuse(.busy(holder))
-        case .refuse(.busy(let other)):
-            return .refuse(.busy(other))
-        case .refuse:
-            return .refuse(.invalidState)
+        case .refuse(let refusal):
+            return .refuse(refusal)
         }
     }
 
