@@ -465,12 +465,12 @@ final class VMInstance {
     var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
     var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
-    var onPoweredOff: (@MainActor () -> Void)? {
+    var onPoweredOff: (@MainActor () -> [VMFollowUp])? {
         get { activity.onPoweredOff }
         set { activity.onPoweredOff = newValue }
     }
 
-    var onSessionBecameAttachable: (@MainActor () -> Void)? {
+    var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])? {
         get { activity.onSessionBecameAttachable }
         set { activity.onSessionBecameAttachable = newValue }
     }

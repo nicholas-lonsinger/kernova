@@ -179,7 +179,7 @@ final class VMCommandCore: VMCommanding {
         // however it got there — so the handler belongs with the revert verb
         // rather than with whichever surface asked for the stop.
         library.onPoweredOff = { [weak self] instance in
-            self?.revertToEphemeralBaselineIfNeeded(instance)
+            self?.ephemeralBaselineRevert(for: instance).map { [$0] } ?? []
         }
         // The installer disk comes out the moment the agent it carries
         // handshakes as current, whichever surface asked for the mount — so the

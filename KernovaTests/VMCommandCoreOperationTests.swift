@@ -338,11 +338,12 @@ struct VMCommandCoreOperationTests {
         let core = harness.core
         let poweredOff = instance.activity.onPoweredOff
         instance.activity.onPoweredOff = {
-            poweredOff?()
+            let owed = poweredOff?() ?? []
             reported.deletion = Task.immediate { @MainActor in
                 try await core.delete(
                     .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
             }
+            return owed
         }
 
         let restart = Task { @MainActor in

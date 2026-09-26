@@ -131,11 +131,49 @@ struct EphemeralModeInstanceTests {
     func powerOffFiresTheHook() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         var poweredOff = 0
-        instance.onPoweredOff = { poweredOff += 1 }
+        instance.onPoweredOff = {
+            poweredOff += 1
+            return []
+        }
 
         instance.handleSessionEvent(.guestDidStop)
 
         #expect(poweredOff == 1)
         #expect(instance.status == .stopped)
+    }
+
+    @Test("The revert a power-off owes takes the VM in the power-off step itself")
+    func powerOffAdmitsItsRevertInTheSameStep() async throws {
+        let baseline = VMSnapshot(name: "Clean", macAddress: nil)
+        let instance = makeInstance(
+            phase: .running(sessionID: UUID()), .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        let gate = GatedStep()
+        var revert: VMFollowUp?
+        instance.onPoweredOff = {
+            let owed = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
+                try instance.activity.launchRevert(
+                    to: baseline, resumesAfter: false, origin: .powerOffRevert, resolving: outcome
+                ) { _ in
+                    try await gate.pass()
+                    return .rest(.asStarted, ())
+                }
+            }
+            revert = owed
+            return [owed]
+        }
+
+        instance.handleSessionEvent(.guestDidStop)
+
+        // No turn has passed: the revert holds the VM, so a Start is refused.
+        #expect(
+            instance.phase.operation?.kind
+                == .bringUp(.reverting(snapshotID: baseline.id, resumesAfter: false)))
+        #expect(
+            instance.activity.decide(.start(recovery: false), posture: .commit)
+                == .refuse(.busy(.bringUp(.reverting(snapshotID: baseline.id, resumesAfter: false)))))
+        gate.release()
+        try await #require(revert).outcome.value()
+        #expect(instance.phase == .stopped)
     }
 }

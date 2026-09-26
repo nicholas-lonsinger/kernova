@@ -79,6 +79,55 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         await first
     }
 
+    // MARK: - The launched attach a follow-up runs
+
+    @Test("A launched attach holds the VM from its admission and resolves the outcome it was handed")
+    func aLaunchedAttachResolvesItsOutcome() async throws {
+        let (coordinator, service) = makeCoordinator()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
+        let outcome = VMOutcome()
+        let held = HeldAccessories()
+
+        try coordinator.launchUSBAccessoryAttach(
+            1, to: instance, for: sessionID, resolving: outcome
+        ) { _, attached in
+            held.registryIDs.append(attached.accessory.registryID)
+        }
+
+        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 1))
+        #expect(instance.phase.operation?.outcome === outcome)
+        try await outcome.value()
+        #expect(held.registryIDs == [1])
+        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [1])
+        #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
+    @Test("A launched attach refused at admission throws, commits nothing, and leaves its outcome to its owner")
+    func aRefusedLaunchedAttachCommitsNothing() async throws {
+        let (coordinator, service) = makeCoordinator()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 2))
+        service.suspendNextAttach = true
+        let first = VMOutcome()
+        try coordinator.launchUSBAccessoryAttach(1, to: instance, for: sessionID, resolving: first)
+        try await service.attachStarted()
+
+        let second = VMOutcome()
+        #expect(throws: VMAdmissionRefusal(refusal: .busy(.attachingUSB(registryID: 1)))) {
+            try coordinator.launchUSBAccessoryAttach(
+                2, to: instance, for: sessionID, resolving: second)
+        }
+        #expect(instance.phase.operation?.outcome === first)
+
+        service.resumeAttach()
+        try await first.value()
+        #expect(service.attachedRegistryIDs == [1])
+    }
+
     // MARK: - One accessory, one holder
 
     /// Two running VMs in one library, so both attach against the same
@@ -502,4 +551,10 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         #expect(service.detachedDeviceIDs == [reattachedDeviceID])
         #expect(instance.liveUSBAccessories.isEmpty)
     }
+}
+
+/// The accessories a launched attach reported holding, in order.
+@MainActor
+private final class HeldAccessories {
+    var registryIDs: [UInt64] = []
 }

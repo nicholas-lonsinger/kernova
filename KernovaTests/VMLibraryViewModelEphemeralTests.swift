@@ -211,15 +211,21 @@ struct VMLibraryViewModelEphemeralTests {
         }
         try await gate.waitUntilEntered()
 
-        // Wrapped, not replaced: the library's own hook is what admits the
-        // revert, and the wrapper sees the VM on either side of it.
+        // Wrapped, not replaced: the library's own hook is what answers the
+        // revert, and the wrapper sees the VM before the hook and right after
+        // the step's drain admits what it answered.
         let observed = PowerOffObservation()
         let revertOnPowerOff = instance.activity.onPoweredOff
         instance.activity.onPoweredOff = {
             observed.before = instance.phase
-            revertOnPowerOff?()
-            observed.after = instance.phase
             observed.count += 1
+            return (revertOnPowerOff?() ?? []).map { owed in
+                observed.ranks.append(owed.rank)
+                return VMFollowUp(scope: owed.scope, rank: owed.rank, outcome: owed.outcome) {
+                    try owed.admit($0)
+                    observed.after = instance.phase
+                }
+            }
         }
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
@@ -233,6 +239,7 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(observed.count == 1)
         #expect(observed.before == .stopped)
+        #expect(observed.ranks == [.restoration])
         #expect(
             observed.after?.operation?.kind
                 == .bringUp(.reverting(snapshotID: harness.baseline.id, resumesAfter: false)))
@@ -445,10 +452,12 @@ struct VMLibraryViewModelEphemeralTests {
     }
 }
 
-/// The VM on either side of the power-off hook, and how often it fired.
+/// The VM before the power-off hook and right after its revert was admitted,
+/// the ranks the hook answered, and how often it fired.
 @MainActor
 private final class PowerOffObservation {
     var before: VMLifecyclePhase?
     var after: VMLifecyclePhase?
+    var ranks: [VMFollowUp.Rank] = []
     var count = 0
 }

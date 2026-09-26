@@ -157,14 +157,14 @@ final class USBAccessoryCoordinator {
             )
             return
         }
-        guard paired.attachableSessionID != nil else {
+        guard let sessionID = paired.attachableSessionID else {
             #log(
                 Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: '\(paired.name, privacy: .public)' is not running"
             )
             return
         }
-        Task { await autoAttach(info.registryID, to: paired) }
+        paired.activity.follow(autoAttach(info, to: paired, for: sessionID))
     }
 
     /// Drops any guest's record of an accessory that has just re-enumerated.
@@ -191,12 +191,13 @@ final class USBAccessoryCoordinator {
 
     // MARK: - VM Start
 
-    /// Hands `instance` every accessory paired with it that is sitting with the
-    /// host, now that it can take one.
+    /// The attaches that hand `instance` every accessory paired with it that is
+    /// sitting with the host, now that it can take one.
     ///
     /// Wired to ``VMActivity/onSessionBecameAttachable``, so it runs once per
     /// session rather than on every arrival at a live phase.
-    func sessionBecameAttachable(_ instance: VMInstance) {
+    func sessionBecameAttachable(_ instance: VMInstance) -> [VMFollowUp] {
+        guard let sessionID = instance.attachableSessionID else { return [] }
         let held = holders.heldRegistryIDs
         let owed = service.accessories.filter { accessory in
             guard !held.contains(accessory.registryID), let identity = accessory.identity else {
@@ -206,65 +207,47 @@ final class USBAccessoryCoordinator {
             guard claimantCount(of: identity) == 1 else { return false }
             return !(identity.form == .receptacle && sharesItsModel(accessory))
         }
-        guard !owed.isEmpty else { return }
-        Task { [weak self] in
-            // One at a time: each attach is an operation holding the VM, and
-            // a second issued under the first would be refused as busy.
-            for accessory in owed {
-                await self?.autoAttach(accessory.registryID, to: instance)
-            }
-        }
+        return owed.map { autoAttach($0, to: instance, for: sessionID) }
     }
 
     // MARK: - The One Automatic Attach
 
-    /// Passes the accessory `registryID` names through to `instance`.
+    /// The follow-up that passes `accessory` through to `instance`, for as
+    /// long as the session `sessionID` names lasts.
     ///
-    /// Waits for nothing: the attachable edge that asks for this fires at the
-    /// commit that frees the VM, and a VM an operation holds refuses the attach
-    /// as busy — a save or a capture ejects every passthrough device, so a
-    /// device re-assigned under one stays with the host.
+    /// Queued behind whatever holds the VM, and decided afresh when it frees
+    /// it: an accessory unplugged meanwhile, or taken by another attach, stays
+    /// where it is.
     ///
     /// Nothing is alerted about: the user did not ask for this attach, so a
     /// failure or a refusal leaves the accessory with the host and says so in
     /// the log.
-    private func autoAttach(_ registryID: UInt64, to instance: VMInstance) async {
-        guard let sessionID = instance.attachableSessionID else {
-            #log(
-                Self.logger, .notice,
-                "Holding USB accessory \(registryID) for the host: '\(instance.name, privacy: .public)' stopped being able to take one"
-            )
-            return
+    private func autoAttach(
+        _ accessory: USBAccessoryInfo, to instance: VMInstance, for sessionID: UUID
+    ) -> VMFollowUp {
+        let registryID = accessory.registryID
+        return VMFollowUp(scope: .session(sessionID), rank: .ordinary) {
+            [lifecycle, service, weak instance] outcome in
+            guard let instance else { throw CancellationError() }
+            guard service.accessories.contains(where: { $0.registryID == registryID }) else {
+                throw USBAccessoryError.accessoryNotFound
+            }
+            try lifecycle.launchUSBAccessoryAttach(
+                registryID, to: instance, for: sessionID, resolving: outcome
+            ) { _, attached in
+                #log(
+                    Self.logger, .notice,
+                    "Passed USB accessory \(attached.accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': it is paired with that virtual machine"
+                )
+            }
         }
-        guard let accessory = service.accessories.first(where: { $0.registryID == registryID })
-        else { return }
-        guard !holders.heldRegistryIDs.contains(registryID) else { return }
-        do {
-            _ = try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
-            #log(
-                Self.logger, .notice,
-                "Passed USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': it is paired with that virtual machine"
-            )
-            #if DEBUG
-            autoAttachEndedForTesting?(registryID, nil)
-            #endif
-        } catch {
+        .reportingFailure { [weak instance] error in
             #log(
                 Self.logger, .warning,
-                "Could not pass USB accessory \(accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Could not pass USB accessory \(accessory.displayName, privacy: .public) through to '\(instance?.name ?? "", privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            #if DEBUG
-            autoAttachEndedForTesting?(registryID, error)
-            #endif
         }
     }
-
-    #if DEBUG
-    /// Told how each automatic attach that reached the attach verb ended — the
-    /// error, or `nil` once the accessory is through — so a test can await a
-    /// refusal that changes nothing else it could observe.
-    var autoAttachEndedForTesting: (@MainActor (UInt64, (any Error)?) -> Void)?
-    #endif
 
     // MARK: - The User's Own Edits
 
