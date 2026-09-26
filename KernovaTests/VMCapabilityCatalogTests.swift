@@ -340,55 +340,6 @@ struct VMCapabilityCatalogTests {
         await copying.settle()
     }
 
-    @Test("A VM whose clone is still copying locks start, machine-key edits, delete and revert, and nothing else")
-    func cloneInFlightLocksSourceButNothingElse() async {
-        let harness = makeHarness()
-        let source = makeInstance(
-            in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
-        let other = makeInstance(in: harness, name: "Other")
-
-        let locked: Set<VMCapability> = [
-            .editStorageDisks, .editSharedDirectories, .editConfiguration, .delete,
-            .revertToSnapshot, .start,
-        ]
-        let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
-
-        // A clone of a different VM says nothing about this one.
-        let otherGate = GatedStep()
-        let otherClone = harness.library.beginGatedArrival(
-            .cloning(sourceID: other.id), named: "Other copy", gate: otherGate)
-        for capability in locked {
-            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-
-        let gate = GatedStep()
-        let clone = harness.library.beginGatedArrival(
-            .cloning(sourceID: source.id), named: "Source copy", gate: gate)
-        for capability in locked {
-            #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-        for capability in unaffected {
-            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-
-        // A cancelled clone still holds the lock until its uninterruptible copy settles.
-        #expect(clone.requestCancel() == .cancelled)
-        for capability in locked {
-            #expect(!harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-
-        // The copy finished and the arrival's row is gone.
-        gate.release()
-        await clone.settle()
-        #expect(!harness.library.entries.contains { $0.id == clone.id })
-        for capability in locked {
-            #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
-        }
-
-        otherGate.release()
-        await otherClone.settle()
-    }
-
     // MARK: - During an operation
 
     @Test("Take Snapshot stays applicable but goes unavailable while an operation holds the VM")

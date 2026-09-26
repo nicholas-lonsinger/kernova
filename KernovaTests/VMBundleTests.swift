@@ -43,7 +43,7 @@ struct VMBundleTests {
             .appendingPathComponent("kernova-bundle-\(UUID().uuidString).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: url) }
-        try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess()).writeInitial(configuration)
+        try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess()).writeInitial(configuration)
         try body(url)
     }
 
@@ -62,6 +62,14 @@ struct VMBundleTests {
         _ url: URL, _ access: any VMBundleFileAccessing = CoordinatedBundleFileAccess()
     ) -> VMBundleFiles {
         VMBundleFiles(url: url, access: access)
+    }
+
+    /// A writer to the bundle's files that no permit governs, as another
+    /// process's is.
+    private func writer(
+        _ url: URL, _ access: any VMBundleFileAccessing = CoordinatedBundleFileAccess()
+    ) -> VMStagedBundle {
+        VMStagedBundle.fixtureForTesting(at: url, access: access)
     }
 
     /// What the bundle's files hold now, read the way the library reads them.
@@ -119,7 +127,7 @@ struct VMBundleTests {
 
     /// Another process's change to `file`, made straight to disk.
     private func changeOnDisk(_ file: StateFile, at url: URL) throws {
-        let other = files(url)
+        let other = writer(url)
         switch file {
         case .configuration: try other.update(.configuration) { $0.memorySizeInGB = 12 }
         case .hostState: try other.update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
@@ -318,7 +326,7 @@ struct VMBundleTests {
     func anUnopenableHostStateThrows() throws {
         try withBundle { url in
             let hostStateURL = VMBundleLayout(bundleURL: url).hostStateURL
-            try files(url).update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
+            try writer(url).update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0], ofItemAtPath: hostStateURL.path(percentEncoded: false))
             defer {
@@ -348,7 +356,7 @@ struct VMBundleTests {
             .appendingPathComponent("kernova-absent-\(UUID().uuidString).kernova", isDirectory: true)
 
         #expect(throws: (any Error).self) {
-            try files(missing).update(.usbPairings) { $0.upsert(pairing("a")) }
+            try writer(missing).update(.usbPairings) { $0.upsert(pairing("a")) }
         }
         #expect(!FileManager.default.fileExists(atPath: missing.path(percentEncoded: false)))
     }
@@ -465,7 +473,7 @@ struct VMBundleTests {
             let unrecorded = snapshot("No settings")
             _ = try VMBundleMachineFiles(fileSystem: MockFileSystem()).prepareSnapshot(
                 bundleURL: url, snapshotID: captured.id, configuration: configuration)
-            try files(url).update(.snapshotManifest) {
+            try writer(url).update(.snapshotManifest) {
                 $0 = VMSnapshotManifest(snapshots: [captured, unrecorded])
             }
 
@@ -488,7 +496,7 @@ struct VMBundleTests {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("kernova-bundle-\(UUID().uuidString).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess()).writeInitial(
+        try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess()).writeInitial(
             VMConfiguration(name: "Machine VM", guestOS: .linux, bootMode: .efi))
         try Data("live-disk".utf8).write(to: VMBundleLayout(bundleURL: url).diskImageURL)
         return makeBundle(try onDisk(url))

@@ -14,11 +14,16 @@ struct VMStorageServiceTests {
         VMBundleFiles(url: bundleURL, access: CoordinatedBundleFileAccess())
     }
 
+    /// A writer to the bundle's files that no permit governs.
+    private func writer(_ bundleURL: URL) -> VMStagedBundle {
+        VMStagedBundle.fixtureForTesting(at: bundleURL, access: CoordinatedBundleFileAccess())
+    }
+
     /// Creates the bundle directory at `url` and writes its first `config.json`,
     /// as a create does.
     private func createBundle(_ configuration: VMConfiguration, at url: URL) throws {
         try service.createVMBundle(at: url)
-        try files(url).writeInitial(configuration)
+        try writer(url).writeInitial(configuration)
     }
 
     /// Creates a bundle at its final URL, the shape publication leaves one in.
@@ -80,7 +85,7 @@ struct VMStorageServiceTests {
         defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         // Update and save
-        try files(bundleURL).update(.configuration) {
+        try writer(bundleURL).update(.configuration) {
             $0.name = "Updated Name"
             $0.cpuCount = 8
         }
@@ -373,7 +378,7 @@ struct VMStorageServiceTests {
             try? FileManager.default.removeItem(at: sourceURL)
             try? FileManager.default.removeItem(at: cloneURL)
         }
-        try files(sourceURL).update(.usbPairings) {
+        try writer(sourceURL).update(.usbPairings) {
             $0 = USBAccessoryPairingSet(pairings: [
                 USBAccessoryPairing(
                     key: "04e8:6300:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
@@ -387,7 +392,7 @@ struct VMStorageServiceTests {
         // The omission is silent by construction — nothing lists the file — so
         // it is asserted here: two VMs expecting one device would race for it.
         // A change that moves nothing answers what the file holds.
-        #expect(try files(cloneURL).update(.usbPairings) { _ in }.isEmpty)
-        #expect(try !files(sourceURL).update(.usbPairings) { _ in }.isEmpty)
+        #expect(try writer(cloneURL).update(.usbPairings) { _ in }.isEmpty)
+        #expect(try !writer(sourceURL).update(.usbPairings) { _ in }.isEmpty)
     }
 }

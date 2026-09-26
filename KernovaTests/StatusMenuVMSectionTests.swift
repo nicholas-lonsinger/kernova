@@ -117,8 +117,10 @@ struct StatusMenuVMSectionTests {
     func rowModelPreparing() {
         let configuration = VMConfiguration(name: "Clone", guestOS: .linux, bootMode: .efi)
         let arrival = VMArrival(
-            id: configuration.id, kind: .cloning(sourceID: UUID()), configuration: configuration,
-            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id)
+            id: configuration.id, kind: .cloning, configuration: configuration,
+            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id),
+            staged: VMStagedBundle.fixtureForTesting(
+                at: VMInstanceFixture.bundleURL(for: UUID()), access: InMemoryVMBundleFiles())
         ) { _ in throw CancellationError() }
 
         let rows = StatusMenuVMSection.rows(for: [.arriving(arrival)])

@@ -422,7 +422,7 @@ struct SidebarViewControllerTests {
         let instance = viewModel.library.admitFixture(name: "Settled", phase: .stopped)
         let gate = GatedStep()
         let copying = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
@@ -720,7 +720,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let cell = SidebarArrivalRowCellView()

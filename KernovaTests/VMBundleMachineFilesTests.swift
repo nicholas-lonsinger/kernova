@@ -506,7 +506,8 @@ struct VMBundleMachineFilesTests {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
-        let files = VMBundleFiles(url: fixture.bundleURL, access: CoordinatedBundleFileAccess())
+        let files = VMStagedBundle.fixtureForTesting(
+            at: fixture.bundleURL, access: CoordinatedBundleFileAccess())
         let snapshotID = UUID()
         try files.update(.hostState) { $0.displayPreference = .fullscreen }
 

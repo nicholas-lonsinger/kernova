@@ -58,7 +58,7 @@ enum LibraryEntry {
 final class VMArrival {
     enum Kind: Sendable, Equatable {
         case creating
-        case cloning(sourceID: UUID)
+        case cloning
         case importing
 
         var displayLabel: String {
@@ -117,10 +117,10 @@ final class VMArrival {
     /// Where publication renames the finished bundle.
     let destinationURL: URL
 
-    private(set) var stage: Stage = .writing
+    /// Where the write's tree sits until publication.
+    let staged: VMStagedBundle
 
-    /// Where the write's tree sits until publication, once one was minted.
-    @ObservationIgnored var stagedURL: URL?
+    private(set) var stage: Stage = .writing
 
     var name: String { configuration.name }
 
@@ -144,12 +144,13 @@ final class VMArrival {
     /// arrival in the same synchronous segment does so before it.
     init(
         id: UUID, kind: Kind, configuration: VMConfiguration, destinationURL: URL,
-        run: @escaping @MainActor (VMArrival) async throws -> VMInstance
+        staged: VMStagedBundle, run: @escaping @MainActor (VMArrival) async throws -> VMInstance
     ) {
         self.id = id
         self.kind = kind
         self.configuration = configuration
         self.destinationURL = destinationURL
+        self.staged = staged
         self.run = run
         _ = settled
     }

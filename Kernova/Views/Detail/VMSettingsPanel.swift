@@ -273,11 +273,10 @@ struct VMSettingsLockRegistry {
     }
 
     /// Section header; any lock hint it creates is registered here and toggled
-    /// by ``apply(isReadOnly:)``. A section whose lock is conditional passes
-    /// `lockHintSink` to keep its own reference — by handoff, not by position.
+    /// by ``apply(isReadOnly:)``.
     mutating func makeHeader(
         _ title: String, lockable: Bool = false, lockHintText: String = groupedFormLockHintText,
-        paragraphs: [InfoPopoverParagraph] = [], lockHintSink: ((NSView) -> Void)? = nil
+        paragraphs: [InfoPopoverParagraph] = []
     ) -> NSView {
         var views: [NSView] = [makeGroupedFormSectionHeader(title)]
         if !paragraphs.isEmpty {
@@ -288,7 +287,7 @@ struct VMSettingsLockRegistry {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         views.append(spacer)
         if lockable {
-            views.append(makeLockHint(text: lockHintText, sink: lockHintSink))
+            views.append(makeLockHint(text: lockHintText))
         }
 
         let header = NSStackView(views: views)

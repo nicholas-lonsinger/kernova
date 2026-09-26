@@ -195,16 +195,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         liveIdentities.conflict(for: instance, bringingUp: configuration)
     }
 
-    /// `true` from the moment a clone of `instance` registers its arrival until
-    /// that arrival leaves the library — a cancelled clone stays until its
-    /// uninterruptible copy settles, so the lock outlives the cancel by exactly
-    /// the copy.
-    func hasCloneInFlight(from instance: VMInstance) -> Bool {
-        arrivals.contains {
-            if case .cloning(let sourceID) = $0.kind { sourceID == instance.id } else { false }
-        }
-    }
-
     var customOrder: [UUID] = []
 
     /// Bundle names whose load failures have already been reported to the user.

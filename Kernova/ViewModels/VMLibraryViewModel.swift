@@ -84,10 +84,6 @@ final class VMLibraryViewModel {
 
     func beginTermination() { library.beginTermination() }
 
-    func hasCloneInFlight(from instance: VMInstance) -> Bool {
-        library.hasCloneInFlight(from: instance)
-    }
-
     func startLibrary() async { await library.startLibrary() }
 
     func loadVMs() async { await library.loadVMs() }

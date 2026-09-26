@@ -5,9 +5,8 @@ import Foundation
 /// A plain instance list in place of ``VMLibrary``, so a collaborator that only
 /// reads the roster can be driven without one.
 ///
-/// Like the library, it is its instances' ``VMAdmissionPeers``: no clone in
-/// flight, no identity conflict, and USB passthrough or a termination only
-/// once a test says so.
+/// Like the library, it is its instances' ``VMAdmissionPeers``: no identity
+/// conflict, and USB passthrough or a termination only once a test says so.
 @MainActor
 final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
     var instances: [VMInstance] {
@@ -24,8 +23,6 @@ final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
         self.instances = instances
         wirePeers()
     }
-
-    func hasCloneInFlight(from instance: VMInstance) -> Bool { false }
 
     func identityConflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration

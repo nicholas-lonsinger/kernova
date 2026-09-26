@@ -8,7 +8,7 @@ import Virtualization
 extension VMCommandCore {
     // MARK: - Bounded Copies
 
-    /// Bounds the blocking bundle copies import and clone run.
+    /// Bounds the blocking bundle copies import runs.
     ///
     /// Uncapped, a large multi-select drop would spawn N concurrent blocking
     /// `FileManager` calls on Swift's cooperative pool and saturate it. The cap is
@@ -112,8 +112,10 @@ extension VMCommandCore {
         guestAccountPassword: String?
     ) throws -> VMSummary {
         let bundleURL: URL
+        let staged: VMStagedBundle
         do {
             bundleURL = try storageService.bundleURL(for: configuration)
+            staged = try VMStagedBundle.mint(in: storageService)
         } catch {
             #log(
                 Self.logger, .error,
@@ -137,19 +139,19 @@ extension VMCommandCore {
         let name = configuration.name
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,
+            staged: staged,
             write: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
-                // multi-gigabyte `copyItem` calls clone and import make: this
-                // write is a `createDirectory` and one small atomic
-                // `config.json`, and queueing it behind two in-flight imports
-                // would hold the new VM at "Creating…" for their copies.
+                // multi-gigabyte `copyItem` calls import makes: this write is
+                // a `createDirectory` and one small atomic `config.json`, and
+                // queueing it behind two in-flight imports would hold the new
+                // VM at "Creating…" for their copies.
                 try await Task.detached {
-                    try storage.createVMBundle(at: staged)
-                    try VMBundleFiles(url: staged, access: storage.bundleFiles)
-                        .writeInitial(configuration)
+                    try storage.createVMBundle(at: staged.url)
+                    try staged.writeInitial(configuration)
                 }.value
                 try await diskImages.createDiskImage(
-                    at: VMBundleLayout(bundleURL: staged).diskImageURL, sizeInGB: diskSizeInGB)
+                    at: staged.layout.diskImageURL, sizeInGB: diskSizeInGB)
             })
         followUnwaited(arrival) { [weak self] instance in
             #log(
@@ -191,13 +193,16 @@ extension VMCommandCore {
         return summary(arrival)
     }
 
-    /// Registers a clone's arrival and starts its copy, with no suspension point
-    /// between the checks and the registration.
+    /// Holds the source for a clone's copy and registers the clone's arrival,
+    /// with no suspension point between the decision and the registration.
+    ///
+    /// ``VMOperationKind/copyingOut`` holds the source only while its files are
+    /// cloned into the staged bundle; the arrival's write then lays down the
+    /// clone's configuration.
     private func registerClone(
         _ selector: VMSelector, machineIdentity: CloneMachineIdentity
     ) throws -> VMArrival {
         let instance = try resolve(selector)
-        try require(.clone, on: instance)
 
         let generateNewID: Bool
         switch machineIdentity {
@@ -279,8 +284,10 @@ extension VMCommandCore {
         }
 
         let bundleURL: URL
+        let staged: VMStagedBundle
         do {
             bundleURL = try storageService.bundleURL(for: clonedConfig)
+            staged = try VMStagedBundle.mint(in: storageService)
         } catch {
             #log(
                 Self.logger, .error,
@@ -289,98 +296,120 @@ extension VMCommandCore {
             throw CommandError.operationFailed(verb: .clone, message: error.localizedDescription)
         }
 
-        let sourceBundleURL = instance.bundleURL
-        let sourceName = instance.name
-        let config = clonedConfig
-        let storage = storageService
-        let diskMapping = internalDiskMapping
-        let bundleFilesToCopy = filesToCopy
-        return library.beginArrival(
-            kind: .cloning(sourceID: instance.id), configuration: clonedConfig,
-            destination: bundleURL,
-            // Everything the clone writes lands in `staged`, the disk remap
-            // included: the remap is what makes the cloned configuration name the
-            // files beside it, so it has to precede publication rather than land
-            // on a bundle the library can already read.
-            write: { staged in
-                let log = Self.logger
-                let skippedDiskIDs: Set<UUID> = try await Self.runBoundedCopy {
-                    try storage.cloneVMBundle(
-                        from: sourceBundleURL, to: staged, filesToCopy: bundleFilesToCopy)
-
-                    if let machineIDData = config.machineIdentifierData, config.guestOS == .macOS {
-                        let layout = VMBundleLayout(bundleURL: staged)
-                        try machineIDData.write(to: layout.machineIdentifierURL, options: .atomic)
-                    }
-
-                    var skipped: Set<UUID> = []
-                    if !diskMapping.isEmpty {
-                        let sourceLayout = VMBundleLayout(bundleURL: sourceBundleURL)
-                        let destLayout = VMBundleLayout(bundleURL: staged)
-                        let fm = FileManager.default
-                        try fm.createDirectory(
-                            at: destLayout.additionalDisksDirectoryURL,
-                            withIntermediateDirectories: true)
-                        for mapping in diskMapping {
-                            let sourceFile = sourceLayout.additionalDiskURL(id: mapping.sourceID)
-                            let destFile = destLayout.additionalDiskURL(id: mapping.clonedDisk.id)
-                            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
-                                try fm.copyItem(at: sourceFile, to: destFile)
-                            } else {
-                                #log(
-                                    log, .warning,
-                                    "Internal disk '\(mapping.clonedDisk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone"
-                                )
-                                skipped.insert(mapping.clonedDisk.id)
-                            }
-                        }
-                    }
-                    return skipped
-                }
-
-                // The one configuration the clone writes: remapped onto the
-                // disks the copy wrote, when it copied any.
-                let stagedFiles = VMBundleFiles(url: staged, access: storage.bundleFiles)
-                // `clonedForNewInstance` gives every disk a fresh `id` but copies its
-                // `path` verbatim, while the copy above wrote each file to
-                // `AdditionalDisks/<new-id>.asif` — without this remap, boot-time
-                // resolution looks for the source bundle's id and fails with
-                // `storageDiskNotFound`.
-                guard !diskMapping.isEmpty else {
-                    try stagedFiles.writeInitial(config)
-                    return
-                }
-                let remappedPaths: [UUID: String] = Dictionary(
-                    uniqueKeysWithValues: diskMapping.map { mapping in
-                        (
-                            mapping.clonedDisk.id,
-                            VMBundleLayout.additionalDiskRelativePath(id: mapping.clonedDisk.id)
-                        )
-                    }
-                )
-                let remapped: [StorageDisk] =
-                    config.storageDisks?
-                    .filter { !skippedDiskIDs.contains($0.id) }
-                    .map { disk in
-                        guard let newPath = remappedPaths[disk.id] else { return disk }
-                        var updated = disk
-                        updated.path = newPath
-                        return updated
-                    } ?? []
-                // An empty list would store `nil`, which re-synthesizes a
-                // `Disk.asif` row for a file the copy never wrote — so a
-                // clone left with no disk fails instead of publishing.
-                guard !remapped.isEmpty else {
-                    throw CommandError.operationFailed(
-                        verb: .clone,
-                        message:
-                            "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
-                    )
-                }
-                var remappedConfig = config
-                remappedConfig.setStorageDisks(remapped)
-                try stagedFiles.writeInitial(remappedConfig)
+        let copy = CloneCopy(
+            files: filesToCopy,
+            machineIdentifier: clonedConfig.guestOS == .macOS ? clonedConfig.machineIdentifierData : nil,
+            disks: internalDiskMapping.map {
+                (source: $0.sourceID, clone: $0.clonedDisk.id, label: $0.clonedDisk.label)
             })
+        let storage = storageService
+        // Run directly rather than on the bounded `copyQueue`: the source is
+        // held for as long as the copy takes, and an APFS clone takes
+        // milliseconds where a queued import copy can take minutes.
+        let copied: VMOutcome
+        do {
+            copied = try instance.activity.launch(.copyingOut) { context in
+                let source = context.bundle.url
+                try await Task.detached {
+                    try Self.copyOut(copy, from: source, into: staged.url, storage: storage)
+                }.value
+                return .rest(.asStarted, ())
+            }
+        } catch {
+            throw failure(error, verb: .clone, on: instance)
+        }
+
+        let config = clonedConfig
+        let sourceName = instance.name
+        let remappedDiskIDs = Set(internalDiskMapping.map(\.clonedDisk.id))
+        return library.beginArrival(
+            kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged
+        ) { staged in
+            // The copy's failure is the clone's.
+            try await copied.value()
+            try await Task.detached {
+                try staged.writeInitial(
+                    Self.configuration(
+                        config, remapping: remappedDiskIDs, onto: staged, sourceName: sourceName))
+            }.value
+        }
+    }
+
+    /// What a clone copies out of its source's bundle.
+    private struct CloneCopy: Sendable {
+        /// Bundle files at fixed paths, each skipped when the source lacks it.
+        let files: [String]
+        /// The macOS machine identifier the clone boots as, written over any
+        /// the copy brought across.
+        let machineIdentifier: Data?
+        /// Each additional in-bundle disk, by the source's id and the clone's.
+        let disks: [(source: UUID, clone: UUID, label: String)]
+    }
+
+    /// Clones what `copy` names out of the bundle at `source` into `staged`,
+    /// skipping an additional disk whose file the source lacks.
+    nonisolated private static func copyOut(
+        _ copy: CloneCopy, from source: URL, into staged: URL, storage: any VMStorageProviding
+    ) throws {
+        try storage.cloneVMBundle(from: source, to: staged, filesToCopy: copy.files)
+        let layout = VMBundleLayout(bundleURL: staged)
+        if let machineIdentifier = copy.machineIdentifier {
+            try machineIdentifier.write(to: layout.machineIdentifierURL, options: .atomic)
+        }
+        guard !copy.disks.isEmpty else { return }
+        let sourceLayout = VMBundleLayout(bundleURL: source)
+        let fm = FileManager.default
+        try fm.createDirectory(
+            at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+        for disk in copy.disks {
+            let sourceFile = sourceLayout.additionalDiskURL(id: disk.source)
+            guard fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) else {
+                #log(
+                    logger, .warning,
+                    "Internal disk '\(disk.label, privacy: .public)' source file missing at '\(sourceFile.lastPathComponent, privacy: .public)' — removing from clone"
+                )
+                continue
+            }
+            try fm.copyItem(at: sourceFile, to: layout.additionalDiskURL(id: disk.clone))
+        }
+    }
+
+    /// `config` with each disk in `remapped` named at the path the copy wrote
+    /// it to, and dropped when `staged` does not hold it.
+    ///
+    /// `clonedForNewInstance` gives every disk a fresh `id` but copies its
+    /// `path` verbatim, while the copy writes each file to
+    /// `AdditionalDisks/<new-id>.asif` — without the remap, boot-time
+    /// resolution looks for the source bundle's id and fails with
+    /// `storageDiskNotFound`.
+    nonisolated private static func configuration(
+        _ config: VMConfiguration, remapping remapped: Set<UUID>, onto staged: VMStagedBundle,
+        sourceName: String
+    ) throws -> VMConfiguration {
+        guard !remapped.isEmpty else { return config }
+        let fm = FileManager.default
+        let disks: [StorageDisk] =
+            config.storageDisks?.compactMap { disk in
+                guard remapped.contains(disk.id) else { return disk }
+                let file = staged.layout.additionalDiskURL(id: disk.id)
+                guard fm.fileExists(atPath: file.path(percentEncoded: false)) else { return nil }
+                var updated = disk
+                updated.path = VMBundleLayout.additionalDiskRelativePath(id: disk.id)
+                return updated
+            } ?? []
+        // An empty list would store `nil`, which re-synthesizes a `Disk.asif`
+        // row for a file the copy never wrote — so a clone left with no disk
+        // fails instead of publishing.
+        guard !disks.isEmpty else {
+            throw CommandError.operationFailed(
+                verb: .clone,
+                message:
+                    "None of the disk files of \u{201C}\(sourceName)\u{201D} could be copied, so the clone would have no storage disk."
+            )
+        }
+        var remappedConfig = config
+        remappedConfig.setStorageDisks(disks)
+        return remappedConfig
     }
 
     // MARK: - Import
@@ -465,22 +494,20 @@ extension VMCommandCore {
                 break
             }
 
-            let storage = storageService
             return .started(
                 library.beginArrival(
                     kind: .importing, configuration: config,
                     destination: library.reserveDestination(for: sourceURL, in: vmsDir),
+                    staged: try VMStagedBundle.mint(in: storageService),
                     write: { staged in
                         try await Self.runBoundedCopy {
-                            try FileManager.default.copyItem(at: sourceURL, to: staged)
+                            try FileManager.default.copyItem(at: sourceURL, to: staged.url)
                             // Auto-start is the one setting that runs a guest with
                             // no user action, so it is local intent rather than
                             // something a bundle carries in: a VM arriving
                             // pre-marked would boot on the next launch without
                             // ever being asked for. The local user marks it.
-                            try VMBundleFiles(url: staged, access: storage.bundleFiles).update(
-                                .hostState
-                            ) {
+                            try staged.update(.hostState) {
                                 $0.startsAutomaticallyOnLaunch = false
                             }
                         }

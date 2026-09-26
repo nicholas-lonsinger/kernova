@@ -68,12 +68,13 @@ enum VMInstanceFixture {
         mutate(&config)
         let url = bundleURL(for: config.id)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        let files = VMBundleFiles(url: url, access: CoordinatedBundleFileAccess())
-        try files.writeInitial(config)
+        let access = CoordinatedBundleFileAccess()
+        let writer = VMStagedBundle.fixtureForTesting(at: url, access: access)
+        try writer.writeInitial(config)
         if !snapshots.snapshots.isEmpty || snapshots.currentID != nil {
-            try files.update(.snapshotManifest) { $0 = snapshots }
+            try writer.update(.snapshotManifest) { $0 = snapshots }
         }
-        return try files.read()
+        return try VMBundleFiles(url: url, access: access).read()
     }
 
     /// What the bundle at `url` holds, read the way the library reads it.

@@ -77,7 +77,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 test_paths='(^|/)[^/]*(Tests|TestSupport)/'
 
 # Seams only test code may call, as the third gate reads them.
-test_only_calls='placeForTesting bindSessionForTesting beginSessionContextForTesting'
+test_only_calls='placeForTesting bindSessionForTesting beginSessionContextForTesting fixtureForTesting'
 
 report() {
     local summary=$1 text=$2

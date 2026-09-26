@@ -13,16 +13,19 @@ extension VMLibrary {
     ) -> VMArrival {
         let storage = storageService
         let destination: URL
+        let staged: VMStagedBundle
         do {
             destination = try storage.bundleURL(for: configuration)
+            staged = try VMStagedBundle.mint(in: storage)
         } catch {
             preconditionFailure("A test arrival's destination could not be derived: \(error)")
         }
-        return beginArrival(kind: kind, configuration: configuration, destination: destination) {
-            staged in
+        return beginArrival(
+            kind: kind, configuration: configuration, destination: destination, staged: staged
+        ) { staged in
             try await gate.pass()
-            try storage.createVMBundle(at: staged)
-            try VMBundleFiles(url: staged, access: storage.bundleFiles).writeInitial(configuration)
+            try storage.createVMBundle(at: staged.url)
+            try staged.writeInitial(configuration)
         }
     }
 

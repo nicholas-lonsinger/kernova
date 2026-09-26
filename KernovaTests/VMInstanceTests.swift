@@ -843,7 +843,7 @@ struct VMInstanceTests {
     @Test("An arrival's label names its operation")
     func arrivalLabelNamesItsOperation() {
         #expect(VMArrival.Kind.creating.displayLabel == "Creating\u{2026}")
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayLabel == "Cloning\u{2026}")
+        #expect(VMArrival.Kind.cloning.displayLabel == "Cloning\u{2026}")
         #expect(VMArrival.Kind.importing.displayLabel == "Importing\u{2026}")
     }
 
@@ -863,15 +863,15 @@ struct VMInstanceTests {
 
     @Test("Arrival kind cancelLabel and cancelAlertTitle")
     func arrivalKindCancelLabels() {
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelLabel == "Cancel Clone")
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelAlertTitle == "Cancel Clone?")
+        #expect(VMArrival.Kind.cloning.cancelLabel == "Cancel Clone")
+        #expect(VMArrival.Kind.cloning.cancelAlertTitle == "Cancel Clone?")
         #expect(VMArrival.Kind.importing.cancelLabel == "Cancel Import")
         #expect(VMArrival.Kind.importing.cancelAlertTitle == "Cancel Import?")
     }
 
     @Test("Arrival kind displayNoun")
     func arrivalKindDisplayNoun() {
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayNoun == "Clone")
+        #expect(VMArrival.Kind.cloning.displayNoun == "Clone")
         #expect(VMArrival.Kind.importing.displayNoun == "Import")
     }
 
