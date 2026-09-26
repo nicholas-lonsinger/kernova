@@ -45,6 +45,8 @@ enum CommandError: Error, Sendable, Equatable {
         vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
     /// The VM has work in flight that this verb would race.
     case busy(vm: VMSummary, operation: String)
+    /// Another running copy of Kernova holds the VM.
+    case heldByAnotherCopy(vm: VMSummary)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(ConfirmationPrompt)
     /// The start would spend the one boot macOS creates a guest account on, and
@@ -123,6 +125,8 @@ extension CommandError {
             .invalidState(vm: vm, current: current.rawValue, allowed: allowed, settings: settings)
         case .busy(let vm, let operation):
             .busy(vm: vm, operation: operation)
+        case .heldByAnotherCopy(let vm):
+            .heldByAnotherCopy(vm: vm)
         case .confirmationRequired(let prompt):
             .confirmationRequired(prompt: prompt)
         case .guestAccountPasswordRequired(let prompt):

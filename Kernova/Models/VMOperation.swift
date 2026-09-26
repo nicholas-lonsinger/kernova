@@ -204,6 +204,18 @@ enum VMRestPhase: Sendable, Equatable {
     }
 }
 
+extension VMLifecyclePhase {
+    /// Where a VM with nothing live rests as its bundle stands: never booted
+    /// while a guest setup — either guest's — survives, which outranks a
+    /// suspend slot, and otherwise suspended while the slot is on disk.
+    nonisolated static func atRest(
+        for configuration: VMConfiguration, layout: VMBundleLayout
+    ) -> VMLifecyclePhase {
+        if configuration.pendingGuestSetup != nil { return .initialBoot }
+        return layout.hasSaveFile ? .suspended : .stopped
+    }
+}
+
 // MARK: - Operation
 
 /// The one long operation holding a VM.

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// ``VMBundleFileAccessing`` over the real files, coordinated with
 /// `NSFileCoordinator` on the bundle directory.
@@ -12,6 +13,14 @@ import Foundation
 /// coordinated access to it wait about half a second, and one that never
 /// answers stalls other processes' writes (same note).
 struct CoordinatedBundleFileAccess: VMBundleFileAccessing {
+    func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
+        try ExclusiveFileLock.tryAcquire(at: bundleURL)
+    }
+
+    func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
+        try ExclusiveFileLock.isHeld(at: bundleURL)
+    }
+
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
         var coordinationError: NSError?
         var result: Result<T, any Error>?

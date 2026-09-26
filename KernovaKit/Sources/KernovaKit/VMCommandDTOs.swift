@@ -363,6 +363,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
         vm: VMSummary, current: String, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
     /// The VM has work in flight that the verb would race.
     case busy(vm: VMSummary, operation: String)
+    /// Another running copy of Kernova holds the VM.
+    case heldByAnotherCopy(vm: VMSummary)
     /// The verb is destructive and no consent was supplied.
     case confirmationRequired(prompt: ConfirmationPrompt)
     /// The start would spend the one boot macOS creates a guest account on, and
@@ -415,8 +417,9 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .unsupported,
-            .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument, .terminating:
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
+            .unsupported, .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument,
+            .terminating:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -473,6 +476,8 @@ extension CommandErrorDTO {
             }()
         case .busy(let vm, let operation):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
+        case .heldByAnotherCopy(let vm):
+            "\u{201C}\(vm.name)\u{201D} is in use by another copy of Kernova."
         case .confirmationRequired(let prompt):
             prompt.message
         case .guestAccountPasswordRequired(let prompt):

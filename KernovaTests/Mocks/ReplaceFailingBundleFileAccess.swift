@@ -31,6 +31,14 @@ final class ReplaceFailingBundleFileAccess: VMBundleFileAccessing, @unchecked Se
         try disk.reading(bundleURL, body)
     }
 
+    func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
+        try disk.lockBundle(at: bundleURL)
+    }
+
+    func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
+        try disk.isBundleLockedElsewhere(at: bundleURL)
+    }
+
     func writing<T>(
         _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
         _ body: (any VMBundleFileWriting) throws -> T

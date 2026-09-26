@@ -25,7 +25,7 @@ import KernovaLogging
 @MainActor
 @Observable
 final class VMBundle {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundle")
+    nonisolated fileprivate static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMBundle")
 
     @ObservationIgnored private let files: VMBundleFiles
     @ObservationIgnored private let fileWorker: any VMBundleMachineFileWorking
@@ -83,15 +83,76 @@ final class VMBundle {
         }
 
         /// Removes the restore staging directory an interrupted revert left in
-        /// each of `bundleURLs`.
+        /// each of `bundles`, holding the bundle's run lock while it does, and
+        /// skips a bundle whose lock another copy of Kernova holds — a revert
+        /// of that copy's may be staging there.
         ///
         /// Blocks on the filesystem. Only for bundles no ``VMBundle`` of this
-        /// run holds yet, so no revert can be staging there.
-        func reclaimRestoreStaging(in bundleURLs: [URL]) {
-            for bundleURL in bundleURLs {
-                machineFiles.sweepRestoreStaging(bundleURL: bundleURL)
+        /// run holds yet, so no revert of this copy's can be staging there.
+        func reclaimRestoreStaging(in bundles: [VMBundleFiles]) {
+            for bundle in bundles {
+                let bundleURL = bundle.url
+                let holder: (any VMBundleLockHolder)?
+                do {
+                    holder = try bundle.lockRun()
+                } catch {
+                    #log(
+                        VMBundle.logger, .warning,
+                        "Could not lock '\(bundleURL.lastPathComponent, privacy: .public)' to reclaim its revert staging: \(error.localizedDescription, privacy: .public)"
+                    )
+                    continue
+                }
+                guard let holder else {
+                    #log(
+                        VMBundle.logger, .notice,
+                        "Left the revert staging of '\(bundleURL.lastPathComponent, privacy: .public)' in place: another copy of Kernova holds it"
+                    )
+                    continue
+                }
+                withExtendedLifetime(holder) {
+                    machineFiles.sweepRestoreStaging(bundleURL: bundleURL)
+                }
             }
         }
+    }
+
+    // MARK: - Run lock
+
+    /// Takes the cross-copy run lock on this bundle's directory without
+    /// waiting — `nil` when another copy of Kernova holds it.
+    ///
+    /// - Throws: why the directory could not be opened.
+    func lockRun() throws -> VMBundleRunLock? {
+        guard let holder = try files.lockRun() else { return nil }
+        return VMBundleRunLock(holder: holder)
+    }
+
+    /// Whether another copy of Kernova holds this bundle's run lock; asked
+    /// only while this copy holds none.
+    ///
+    /// A directory that cannot be opened reads as not held: the lock attempt
+    /// that admits any operation opens it again and throws why.
+    func isRunLockedElsewhere() -> Bool {
+        (try? files.isRunLockedElsewhere()) ?? false
+    }
+
+    /// Reads all four state files in one coordinated read and publishes what
+    /// they hold — for a bundle another copy of Kernova may have written
+    /// while this copy held no run lock.
+    ///
+    /// Throws, publishing nothing, when ``VMBundleFiles/read()`` does.
+    func refresh() throws {
+        let read = try files.read()
+        if let unreadable = read.pairingsUnreadable {
+            #log(
+                Self.logger, .warning,
+                "Re-read '\(read.configuration.name, privacy: .public)' with no pairings: \(unreadable.localizedDescription, privacy: .public)"
+            )
+        }
+        publish(read.configuration, to: \.configuration)
+        publish(read.hostState, to: \.hostState)
+        publish(read.snapshotManifest, to: \.snapshotManifest)
+        publish(read.usbPairings, to: \.usbPairings)
     }
 
     /// Sets a committed value only when it moved, so a no-op write wakes no
@@ -427,5 +488,20 @@ extension VMBundle {
                 "Failed to remove the save file of '\(self.configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+}
+
+/// The cross-copy run lock on one bundle directory, held from its acquire
+/// until it is dropped.
+///
+/// Minted only by ``VMBundle/lockRun()``, and non-copyable, so its one holder
+/// — the ``VMActivity`` of the VM whose bundle it locks — is the only thing
+/// that releases it. It locks the directory's inode, not the ``VMBundle``,
+/// which ``VMInstance/rebind(to:)`` replaces while the VM runs.
+struct VMBundleRunLock: ~Copyable, Sendable {
+    private let holder: any VMBundleLockHolder
+
+    fileprivate init(holder: any VMBundleLockHolder) {
+        self.holder = holder
     }
 }

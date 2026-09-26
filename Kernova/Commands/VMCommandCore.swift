@@ -334,6 +334,8 @@ final class VMCommandCore: VMCommanding {
             .unsupportedByBuild(capability: Self.usbAccessoryCapability)
         case .terminating:
             .terminating
+        case .heldByAnotherCopy:
+            .heldByAnotherCopy(vm: summary(instance))
         }
     }
 

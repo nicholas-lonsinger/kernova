@@ -275,6 +275,7 @@ struct VMCommandEnvelopeTests {
             .ambiguous(selector: selector, candidates: [summary, summary]),
             .invalidState(vm: summary, current: "running", allowed: [.stop, .pause, .suspend]),
             .busy(vm: summary, operation: "taking snapshot"),
+            .heldByAnotherCopy(vm: summary),
             .confirmationRequired(prompt: prompt),
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),

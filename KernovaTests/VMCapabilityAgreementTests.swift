@@ -134,7 +134,9 @@ struct VMCapabilityAgreementTests {
     /// vocabulary ``VMCommandCore/admissionRefusal(_:on:)`` maps it into.
     private func isAdmissionRefusal(_ error: CommandError) -> Bool {
         switch error {
-        case .busy, .invalidState, .notFound, .conflict, .unsupportedByBuild, .terminating: true
+        case .busy, .invalidState, .notFound, .conflict, .unsupportedByBuild, .terminating,
+            .heldByAnotherCopy:
+            true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .unsupported, .timedOut,
             .operationFailed:
