@@ -17,9 +17,9 @@ protocol VMActivityOwner: AnyObject {
     /// identity term.
     var admissionFacts: VMAdmission.Facts { get }
 
-    /// The live VM whose identity bringing this one up would duplicate, or
-    /// `nil` when nothing collides.
-    func identityConflict() -> VMIdentityConflict?
+    /// The live VM whose identity bringing this one up by `kind` would
+    /// duplicate, or `nil` when nothing collides.
+    func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict?
 
     /// Called once the session is released.
     func sessionDidEnd()
@@ -133,9 +133,10 @@ final class VMActivity {
         guard let owner else { return .refuse(.invalidState) }
         var facts = owner.admissionFacts
         if posture == .commit,
-            VMAdmission.bringUpKind(for: request, phase: phase, facts: facts)?.checksIdentity == true
+            let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
+            kind.checksIdentity
         {
-            facts.identityConflict = owner.identityConflict()
+            facts.identityConflict = owner.identityConflict(for: kind)
         }
         return VMAdmission.decide(request, posture: posture, phase: phase, facts: facts)
     }
@@ -461,7 +462,7 @@ final class VMActivity {
     func placeForTesting(_ phase: VMLifecyclePhase) {
         precondition(
             runningBody == nil,
-            "placeForTesting while an operation's body is running; await its outcome first")
+            "A phase placed over an operation's running body; await its outcome first")
         setPhase(phase)
     }
     #endif

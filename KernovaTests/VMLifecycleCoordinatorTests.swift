@@ -223,9 +223,12 @@ struct VMLifecycleCoordinatorTests {
 
         #expect(instance.phase.operation?.kind == .pausing)
         #expect(instance.phase.operation?.sessionEnd == .poweredOff)
-        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.pausing))) {
+        // Refused, and against the rest the power-off implies: no guest is
+        // left to save.
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
             try await coordinator.save(instance)
         }
+        #expect(instance.phase.operation?.kind == .pausing)
 
         suspendingService.resumeSuspended()
         try await pause.value

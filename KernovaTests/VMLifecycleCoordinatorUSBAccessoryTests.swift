@@ -172,8 +172,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         let snapshot = VMSnapshotRecord(name: "Snap", kind: .warm)
         _ = try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: snapshot
-            ) { _ in }
+            instance, mode: .live, snapshot: snapshot
+        ) { _ in }
 
         // The handle it went off under names nothing now; it goes back on under
         // the one macOS assigned it after the reset.
@@ -222,8 +222,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.answersMissingAccessoryImmediately = true
 
         _ = try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
-            ) { _ in }
+            instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+        ) { _ in }
 
         // The snapshot the user asked for is written; the hardware is simply
         // where a surprise unplug would have left it.
@@ -243,8 +243,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         _ = try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
-            ) { _ in }
+            instance, mode: .live, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm)
+        ) { _ in }
 
         #expect(service.awaitedIdentities.isEmpty)
         #expect(service.attachedRegistryIDs == [9])

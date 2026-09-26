@@ -537,7 +537,8 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
 
         // The sheet gathers a name, and the VM starts restoring while it is up.
-        instance.activity.placeForTesting(.operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         await harness.viewModel.takeSnapshot(instance, name: "Too late").value
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
@@ -560,7 +561,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A rename arriving while an operation is unsettled still lands")
     func renameLandsWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
+        let instance = makeInstance(
+            in: harness.viewModel, files: harness.storage.files,
+            phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 
@@ -708,7 +711,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A note arriving while an operation is unsettled still lands")
     func notesLandWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
+        let instance = makeInstance(
+            in: harness.viewModel, files: harness.storage.files,
+            phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 

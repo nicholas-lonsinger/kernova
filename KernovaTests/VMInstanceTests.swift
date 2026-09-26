@@ -483,7 +483,9 @@ struct VMInstanceTests {
         // stopped color on the selection highlight instead of inverting to white.
         #expect(VMInstanceFixture.make(phase: .stopped).statusDisplayNSColor == .systemGray)
         #expect(VMInstanceFixture.make(phase: .running(sessionID: UUID())).statusDisplayNSColor == .systemGreen)
-        #expect(VMInstanceFixture.make(phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped)).statusDisplayNSColor == .systemOrange)
+        #expect(
+            VMInstanceFixture.make(phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+                .statusDisplayNSColor == .systemOrange)
         #expect(VMInstanceFixture.make(phase: .failed(message: "Boot failed.")).statusDisplayNSColor == .systemRed)
     }
 

@@ -32,20 +32,20 @@ final class VMLiveIdentities {
         return roster.instances
     }
 
-    /// The live VM whose identity bringing `instance` up would duplicate, and
-    /// what on — `nil` when nothing collides.
+    /// The live VM whose identity bringing `instance` up under `configuration`
+    /// would duplicate, and what on — `nil` when nothing collides.
     ///
     /// The machine identity is checked only while
     /// ``AppPreferences/blockDuplicateMachineIDBoot`` asks for it.
-    func conflict(for instance: VMInstance) -> VMIdentityConflict? {
+    func conflict(
+        for instance: VMInstance, bringingUp configuration: VMConfiguration
+    ) -> VMIdentityConflict? {
         if preferences.blockDuplicateMachineIDBoot,
             let other = liveMachineIDConflict(for: instance)
         {
             return VMIdentityConflict(vm: instance, other: other, reason: .machineIdentity)
         }
-        if let other = macAddresses.liveMACAddressConflict(
-            for: instance.configuration, excluding: instance)
-        {
+        if let other = macAddresses.liveMACAddressConflict(for: configuration, excluding: instance) {
             return VMIdentityConflict(vm: instance, other: other, reason: .macAddress)
         }
         return nil

@@ -50,6 +50,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
+    /// Thrown by a `start` that restores a saved state, ahead of
+    /// ``startError`` — so one VM's restore can fail while another boots.
+    var restoreError: (any Error)?
     var stopError: (any Error)?
     var forceStopError: (any Error)?
     var pauseError: (any Error)?
@@ -87,6 +90,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         statusAtStart = instance.phase.operation?.startedFrom.status
         let route = startRoute ?? derived
         lastStartRoute = route
+        if derived == .restoredSavedState, let error = restoreError { throw error }
         if let error = startError { throw error }
         // A restore consumes the slot it loaded, as the real one does.
         if route == .restoredSavedState { instance.bundle.removeSaveFile() }

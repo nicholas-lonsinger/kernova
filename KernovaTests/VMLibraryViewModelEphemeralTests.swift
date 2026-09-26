@@ -345,7 +345,10 @@ struct VMLibraryViewModelEphemeralTests {
         await harness.viewModel.forceStop(harness.instance)
 
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(harness.virtualization.forceStopCallCount == 1)
+        // A discard terminates nothing: there is no guest.
+        #expect(harness.virtualization.forceStopCallCount == 0)
+        #expect(!harness.instance.hasSaveFile)
+        #expect(harness.instance.phase == .stopped)
     }
 
     // MARK: - Baseline protection

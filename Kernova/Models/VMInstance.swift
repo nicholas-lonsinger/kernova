@@ -547,8 +547,21 @@ final class VMInstance: VMActivityOwner {
             identityConflict: nil)
     }
 
-    func identityConflict() -> VMIdentityConflict? {
-        peers?.identityConflict(for: self)
+    func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
+        peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
+    }
+
+    /// The configuration `kind` puts in front of VZ: this VM's own, except for
+    /// a revert, which lands the snapshot's address
+    /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
+    /// identity across).
+    private func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
+        guard case .reverting(let snapshotID, _) = kind,
+            let snapshot = snapshotManifest.snapshot(id: snapshotID)
+        else { return configuration }
+        var landing = configuration
+        landing.macAddress = snapshot.macAddress
+        return landing
     }
 
     /// `true` when the bundle holds a saved state and nothing is live — the VM

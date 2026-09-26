@@ -295,11 +295,12 @@ enum VMBringUpKind: Sendable, Equatable {
     /// Whether admission checks this bring-up against the identities other
     /// live VMs hold.
     ///
-    /// A revert that resumes was live, so it already held its identity.
+    /// A revert that resumes puts the snapshot's configuration in front of
+    /// VZ, whose address need not be the one the VM held live.
     var checksIdentity: Bool {
         switch self {
         case .starting, .restoringSavedState, .settingUp: true
-        case .reverting: false
+        case .reverting(_, let resumesAfter): resumesAfter
         }
     }
 }

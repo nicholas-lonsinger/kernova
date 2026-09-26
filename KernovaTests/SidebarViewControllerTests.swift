@@ -585,13 +585,11 @@ struct SidebarViewControllerTests {
     }
 
     @Test(
-        "A VM mid-operation offers neither stop — Virtualization takes a termination from neither",
+        "A VM coming up offers neither stop — Virtualization takes a termination from neither",
         arguments: [
             PhaseFixture.operating(
                 .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
-            .operating(.saving, from: .running(sessionID: UUID())),
             .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
-            .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
         ])
     func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: PhaseFixture) {
         preferences.alwaysShowAdvancedOptions = false
@@ -604,6 +602,26 @@ struct SidebarViewControllerTests {
 
         #expect(!menuTitles.contains("Stop"), "\(phase)")
         #expect(!menuTitles.contains("Force Stop…"), "\(phase)")
+    }
+
+    @Test(
+        "A live VM held by a save or capture lists both stops, dimmed until it ends",
+        arguments: [
+            PhaseFixture.operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
+        ])
+    func contextMenuDimsStopWhileAnOperationHoldsALiveVM(phase: PhaseFixture) {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = VMInstanceFixture.make(phase: phase.phase)
+        viewModel.library.admitForTesting(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // Busy, not inapplicable: both are taken once the operation ends.
+        #expect(menuItem("Stop", in: menu)?.isEnabled == false, "\(phase)")
+        #expect(menuItem("Force Stop…", in: menu)?.isEnabled == false, "\(phase)")
     }
 
     @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")

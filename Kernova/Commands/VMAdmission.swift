@@ -408,6 +408,9 @@ protocol VMAdmissionPeers: AnyObject {
     /// Whether a clone is copying `instance`'s files out of its bundle.
     func hasCloneInFlight(from instance: VMInstance) -> Bool
 
-    /// The live VM whose identity bringing `instance` up would duplicate.
-    func identityConflict(for instance: VMInstance) -> VMIdentityConflict?
+    /// The live VM whose identity bringing `instance` up under `configuration`
+    /// would duplicate.
+    func identityConflict(
+        for instance: VMInstance, bringingUp configuration: VMConfiguration
+    ) -> VMIdentityConflict?
 }

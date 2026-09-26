@@ -59,37 +59,81 @@ struct VMLifecyclePhaseTests {
         let livePaused = VMLifecyclePhase.livePaused(sessionID: s)
         return [
             // Settled.
-            Row(status: .stopped, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: false, isAtRest: true),
-            Row(status: .initialBoot, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: false, isAtRest: true),
-            Row(status: .error, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: false, isAtRest: true),
-            Row(status: .paused, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: true, isAtRest: true),
-            Row(status: .running, presented: nil, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .paused, presented: nil, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .stopped, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .stopped, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: true),
+            Row(
+                status: .initialBoot, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: true),
+            Row(
+                status: .error, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: true),
+            Row(
+                status: .paused, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: true, isAtRest: true),
+            Row(
+                status: .running, presented: nil, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .paused, presented: nil, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .stopped, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: false),
             // Starting, before and after it bound its session.
-            Row(status: .starting, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: false, isAtRest: false),
-            Row(status: .starting, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .starting, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .starting, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: false, isAtRest: false),
             // Restoring a saved state.
-            Row(status: .restoring, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .restoring, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Setting up.
-            Row(status: .installing, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .installing, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: false, isAtRest: false),
             // Reverting a live VM.
-            Row(status: .restoring, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .restoring, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Pausing and resuming present where they started.
-            Row(status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .paused, presented: livePaused, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .paused, presented: livePaused, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Saving.
-            Row(status: .saving, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .saving, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Capturing live, and disks alone.
-            Row(status: .snapshotting, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .snapshotting, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .snapshotting, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .snapshotting, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Snapshot delete, USB attach, media reconcile, Force Stop.
-            Row(status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
-            Row(status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true, hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
             // Deleting a stopped VM.
-            Row(status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false, hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: false),
         ]
     }()
 

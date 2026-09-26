@@ -119,7 +119,8 @@ struct VMCapabilityCatalogTests {
         #expect(Self.requests.count == VMCapability.allCases.count - 2)
     }
 
-    @Test("Take Snapshot asks for the capture the VM's settled phase takes, dimmed rather than lost during an operation")
+    @Test(
+        "Take Snapshot asks for the capture the VM's settled phase takes, dimmed rather than lost during an operation")
     func takeSnapshotRequestFollowsTheSettledPhase() throws {
         let live = VMLifecyclePhase.running(sessionID: UUID())
         let cases: [(VMLifecyclePhase, VMSnapshotCaptureMode?)] = [
@@ -487,15 +488,16 @@ struct VMCapabilityCatalogTests {
     private static let reverting = VMLifecyclePhase.operating(
         .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped)
 
-    @Test("Outside the bring-up joins, a commit is exactly an offer")
+    @Test("Outside the joins, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
-        /// The pairs the two levels disagree on: each bring-up verb during the
-        /// bring-up it joins.
+        /// The pairs the two levels disagree on: each verb during the operation
+        /// it joins.
         func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
             switch (capability, phase.operation?.kind) {
             case (.start, .bringUp(.starting(recovery: false))?),
                 (.start, .bringUp(.restoringSavedState)?),
-                (.resume, .bringUp(.restoringSavedState)?):
+                (.resume, .bringUp(.restoringSavedState)?),
+                (.forceStop, .forceStopping?):
                 true
             default: false
             }

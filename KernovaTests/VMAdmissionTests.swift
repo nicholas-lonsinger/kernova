@@ -297,11 +297,16 @@ struct VMAdmissionTests {
             VMAdmission.decide(
                 .operation(.bringUp(.starting(recovery: false))), posture: .commit,
                 phase: .stopped, facts: facts) == conflict)
-        // A revert that resumes was live, so it held the identity already.
+        // A revert that resumes brings the snapshot's configuration up; one
+        // that rests brings nothing up.
         #expect(
             VMAdmission.decide(
                 .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: true))),
-                posture: .commit, phase: Self.live, facts: facts) == .admit)
+                posture: .commit, phase: Self.live, facts: facts) == conflict)
+        #expect(
+            VMAdmission.decide(
+                .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
+                posture: .commit, phase: .stopped, facts: facts) == .admit)
     }
 
     @Test("A build that cannot pass USB accessories through refuses their operations as unsupported")

@@ -981,7 +981,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(instance)
 
-        #expect(virtService.resumeCallCount == 1)
+        // A cold resume is the restore bring-up, run through `start`.
+        #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(instance.status == .running)
     }
 
@@ -1319,7 +1320,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
     }
@@ -1360,7 +1362,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
     }
@@ -1403,7 +1406,8 @@ struct VMLibraryViewModelTests {
         await viewModel.start(starting)
 
         #expect(starting.configuration.machineIdentifierData == nil)
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
     }
@@ -1422,7 +1426,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(resuming)
 
-        #expect(virtService.resumeCallCount == 1)
+        // Refused at admission: the restore never reached the service.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(resuming.phase == .suspended)
         #expect(resuming.hasSaveFile)
@@ -1441,7 +1446,7 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(resuming)
 
-        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(presenter.showError == false)
     }
 
@@ -1481,7 +1486,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
     }
@@ -1525,7 +1531,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(presenter.errorMessage?.contains("Starting") == true)
         #expect(presenter.errorMessage?.contains("Twin") == true)
@@ -1541,7 +1548,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(starting.status == .stopped)
     }
@@ -1585,7 +1593,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(starting.status == .stopped)
     }
@@ -1642,7 +1651,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.start(starting)
 
-        #expect(virtService.startCallCount == 1)
+        // Refused at admission, before the service was reached.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(starting.status == .stopped)
     }
@@ -1659,7 +1669,8 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resume(resuming)
 
-        #expect(virtService.resumeCallCount == 1)
+        // Refused at admission: the restore never reached the service.
+        #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(resuming.phase == .suspended)
         #expect(resuming.hasSaveFile)
@@ -1854,7 +1865,8 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is saving, changing nothing")
     func mediaEditIsRefusedWhileSaving() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.saving, from: .running(sessionID: UUID())))
+        let instance = appendVMWithMedia(
+            to: viewModel, storage: storage, in: .operating(.saving, from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
@@ -1869,7 +1881,9 @@ struct VMLibraryViewModelTests {
     @Test("a media edit is refused whole while the VM is capturing a live snapshot")
     func mediaEditIsRefusedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
+        let instance = appendVMWithMedia(
+            to: viewModel, storage: storage,
+            in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.removableMedia = nil
@@ -1886,7 +1900,9 @@ struct VMLibraryViewModelTests {
     @Test("an edit leaving the media list alone is accepted while capturing a live snapshot")
     func nonMediaEditIsAcceptedWhileCapturingLive() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = appendVMWithMedia(to: viewModel, storage: storage, in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
+        let instance = appendVMWithMedia(
+            to: viewModel, storage: storage,
+            in: .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())))
 
         let accepted = viewModel.library.updateConfiguration(of: instance) {
             $0.memorySizeInGB = 6
@@ -2473,7 +2489,7 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
         // A resume restoring a saved state assembles the same configuration a
         // boot does, so it fails over the same entry.
-        virtService.resumeError = way.removableMedia(
+        virtService.restoreError = way.removableMedia(
             id: item.id, path: item.path, label: item.label)
 
         await viewModel.resume(instance)
@@ -2514,7 +2530,7 @@ struct VMLibraryViewModelTests {
             id: mainDisk.id, path: mainDisk.path, label: mainDisk.label)
 
         if verb == .resume {
-            virtService.resumeError = failure
+            virtService.restoreError = failure
             await viewModel.resume(instance)
         } else {
             virtService.startError = failure
@@ -2775,7 +2791,7 @@ struct VMLibraryViewModelTests {
 
         await viewModel.resumeAndStop(instance)
 
-        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(virtService.stopCallCount == 1)
     }
 
@@ -3679,7 +3695,9 @@ struct VMLibraryViewModelTests {
         let instance = makePendingLinuxVM(in: viewModel, storage: storage)
 
         await viewModel.start(instance)
-        await instance.setupOperationTask?.value
+        // The boot is a fresh admission the setup's outcome chains, so it is
+        // waited for by its effect rather than by the setup's own task.
+        try await waitForChange { instance.status == .running }
 
         #expect(instance.configuration.linuxInstallContext == nil)
         #expect(virtService.startCallCount == 1)
@@ -4247,8 +4265,10 @@ struct VMLibraryViewModelTests {
 
         await viewModel.startAutomaticVMsForLaunch()
 
-        #expect(virtService.resumeCallCount == 1)
-        #expect(virtService.startCallCount == 0)
+        // A cold resume is the restore bring-up, run through `start`.
+        #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
+        #expect(virtService.resumeCallCount == 0)
         #expect(saved.status == .running)
     }
 
@@ -4328,7 +4348,7 @@ struct VMLibraryViewModelTests {
     @Test("startAutomaticVMsForLaunch leaves a failed restore cold-paused and carries on")
     func autoStartRestoreFailureRestsColdPausedAndContinues() async throws {
         let virtService = MockVirtualizationService()
-        virtService.resumeError = VirtualizationError.restoreFailed(
+        virtService.restoreError = VirtualizationError.restoreFailed(
             underlying: NSError(domain: "test", code: 1))
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let suspended = makeAutoStartInstance(name: "Suspended")
@@ -4350,8 +4370,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.startAutomaticVMsForLaunch()
 
-        #expect(virtService.resumeCallCount == 1)
-        #expect(virtService.startCallCount == 1)
+        // The failed restore and the following VM's boot, both through `start`.
+        #expect(virtService.startCallCount == 2)
+        #expect(virtService.resumeCallCount == 0)
         #expect(suspended.status == .paused)
         #expect(suspended.errorMessage == nil)
         #expect(presenter.showError == true)
@@ -4442,8 +4463,9 @@ struct VMLibraryViewModelTests {
 
         await viewModel.startAutomaticVMsForLaunch()
 
-        #expect(virtService.startCallCount == 2)
-        #expect(virtService.resumeCallCount == 1)
+        // Two boots and one restore, all through `start`.
+        #expect(virtService.startCallCount == 3)
+        #expect(virtService.resumeCallCount == 0)
         #expect(popOut.status == .running)
         #expect(inline.status == .running)
         #expect(saved.status == .running)

@@ -26,6 +26,7 @@ struct USBAccessoryCoordinatorTests {
     ) throws -> USBAccessoryCoordinator {
         let writer = pairings ?? StubUSBAccessoryPairingWriter(roster: roster)
         writer.roster = roster
+        roster.supportsUSBAccessories = lifecycle.usbAccessoryService != nil
         return try #require(
             USBAccessoryCoordinator(lifecycle: lifecycle, roster: roster, pairings: writer))
     }

@@ -670,7 +670,8 @@ struct VirtualizationServiceTests {
         defer { try? FileManager.default.removeItem(at: fixture.instance.bundleURL) }
         #expect(fixture.instance.isColdPaused)
         try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
-        let checkpoint = try await capture(fixture.instance, VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm))
+        let checkpoint = try await capture(
+            fixture.instance, VMSnapshotRecord(name: "Suspended checkpoint", kind: .warm))
         try fixture.instance.bundle.commitSnapshotManifest { $0.insert(checkpoint) }
         #expect(fixture.instance.phase == .suspended)
 

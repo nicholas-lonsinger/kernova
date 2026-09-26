@@ -604,7 +604,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("A suspend issued right after an eject lands the detach before the save")
+    @Test("A suspend issued right after an eject is refused busy until the detach lands")
     func suspendAfterEjectLandsTheDetachFirst() async throws {
         let harness = makeHarness()
         let sessionID = UUID()
@@ -617,12 +617,15 @@ struct VMCommandCoreAttachmentTests {
             RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
 
         try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
-        try await harness.core.suspend(.id(instance.id))
+        // The eject's reconcile holds the VM, so the save cannot tear the
+        // session down under the detach.
+        let refusal = await commandError { try await harness.core.suspend(.id(instance.id)) }
+        #expect(refusal?.isBusy == true)
 
-        // A save that ran first would have torn the session down under the
-        // queued detach, which would then have been dropped as stale.
+        try await waitForChange { instance.phase.operation == nil }
         #expect(harness.removableMediaDevices.detachCallCount == 1)
         #expect(instance.configuration.removableMedia == nil)
+        try await harness.core.suspend(.id(instance.id))
         #expect(instance.phase == .suspended)
     }
 
@@ -851,10 +854,9 @@ struct VMCommandCoreAttachmentTests {
                 .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
         }
 
-        guard case .invalidState = try #require(refusal) else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
+        // The bring-up holds the VM, and the removal is what the VM takes
+        // once it rests again.
+        #expect(try #require(refusal).isBusy)
         // Neither the entry nor the file moved: the disk is still the VM's.
         #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -878,10 +880,9 @@ struct VMCommandCoreAttachmentTests {
                 .id(instance.id), item: item.id, trashFile: true, confirmed: true)
         }
 
-        guard case .invalidState = try #require(refusal) else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
+        // The bring-up holds the VM, and the removal is what the VM takes
+        // once it rests again.
+        #expect(try #require(refusal).isBusy)
         #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
