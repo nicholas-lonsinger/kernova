@@ -44,7 +44,10 @@ struct VMActivityTests {
     ) -> (VMInstance, Recorder) {
         let instance = VMInstanceFixture.make(guestOS: guestOS, phase: phase, mutate: mutate)
         let recorder = Recorder()
-        instance.activity.onPoweredOff = { recorder.poweredOff += 1 }
+        instance.activity.onPoweredOff = {
+            recorder.poweredOff += 1
+            return []
+        }
         return (instance, recorder)
     }
 
@@ -62,7 +65,10 @@ struct VMActivityTests {
         let recorder = Recorder()
         // Wiring installs the library's own power-off hook; the recorder's
         // stands in for it here.
-        instance.activity.onPoweredOff = { recorder.poweredOff += 1 }
+        instance.activity.onPoweredOff = {
+            recorder.poweredOff += 1
+            return []
+        }
         return (instance, recorder, library)
     }
 
@@ -449,7 +455,7 @@ struct VMActivityTests {
             whenEnded: { result in
                 recorder.phase = instance.phase
                 recorder.whenEndedResult = result
-                guard let outcome = recorder.outcome else { return }
+                guard let outcome = recorder.outcome else { return [] }
                 // Runs synchronously up to its first suspension: an outcome
                 // already resolved answers without one.
                 recorder.resolvedAtWhenEnded = false
@@ -459,6 +465,7 @@ struct VMActivityTests {
                 }
                 recorder.hookSawResolved = recorder.resolvedAtWhenEnded
                 recorder.operation = instance.phase.operation
+                return []
             }
         ) { _ in
             try await gate.pass()
@@ -496,6 +503,7 @@ struct VMActivityTests {
             whenEnded: { result in
                 recorder.phase = instance.phase
                 recorder.whenEndedResult = result
+                return []
             }
         ) { (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
             throw Probe()
@@ -628,6 +636,298 @@ struct VMActivityTests {
         #expect(throws: removed) { try instance.activity.cancel(.guestSetup) }
         #expect(throws: removed) { try instance.activity.remove() }
         #expect(instance.phase == .removed)
+    }
+
+    // MARK: - Follow-ups
+
+    /// A follow-up that launches `kind`, its body parking on `gate` when one
+    /// is given, and records `label` in `order` once it is admitted.
+    private func followUp(
+        _ label: String, _ kind: VMOperationKind, on instance: VMInstance,
+        scope: VMFollowUp.Scope = .vm, rank: VMFollowUp.Rank = .ordinary,
+        gate: GatedStep? = nil, order: FollowUpOrder
+    ) -> VMFollowUp {
+        VMFollowUp(scope: scope, rank: rank) { outcome in
+            try instance.activity.launch(kind, resolving: outcome) { _ in
+                try await gate?.pass()
+                return .rest(.asStarted, ())
+            }
+            order.admitted.append(label)
+        }
+    }
+
+    /// The queue's invariant, outside a commit step: non-empty only while an
+    /// operation holds the VM.
+    private func expectQueueHeldByAnOperation(
+        _ instance: VMInstance, sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        #expect(
+            instance.activity.queuedFollowUpCountForTesting == 0 || instance.phase.operation != nil,
+            "\(instance.activity.queuedFollowUpCountForTesting) queued at \(instance.phase)",
+            sourceLocation: sourceLocation)
+    }
+
+    @Test("A follow-up on a settled VM is admitted at once")
+    func aFollowUpOnASettledVMRunsAtOnce() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+
+        instance.activity.follow(owed)
+
+        #expect(order.admitted == ["copy"])
+        #expect(instance.phase.operation?.outcome === owed.outcome)
+        expectQueueHeldByAnOperation(instance)
+        gate.release()
+        try await owed.outcome.value()
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A follow-up queued under an operation takes the VM in the step that frees it")
+    func aQueuedFollowUpTakesTheFreedVM() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+
+        instance.activity.follow(owed)
+        #expect(order.admitted.isEmpty)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        expectQueueHeldByAnOperation(instance)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["copy"])
+        #expect(instance.phase.operation?.kind == .copyingOut)
+        expectQueueHeldByAnOperation(instance)
+        gate.release()
+        try await owed.outcome.value()
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A user verb arriving while a drained follow-up runs is refused, as during any operation")
+    func aUserVerbDuringADrainedFollowUpIsRefused() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let gate = GatedStep()
+        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+        instance.activity.follow(owed)
+
+        holdGate.release()
+        try await hold.value()
+
+        #expect(
+            instance.activity.decide(.start(recovery: false), posture: .commit)
+                == .refuse(.busy(.copyingOut)))
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut))) {
+            try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+                .rest(.asStarted, ())
+            }
+        }
+        gate.release()
+        try await owed.outcome.value()
+    }
+
+    @Test("Restorations drain before ordinary follow-ups, and each rank in arrival order")
+    func restorationsFirstThenArrivalOrder() async throws {
+        let (instance, _, library) = makeWiredInstance(.stopped)
+        defer { withExtendedLifetime(library) {} }
+        let snapshotID = try #require(instance.snapshotManifest.snapshots.first?.id)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let owed = [
+            followUp("first", .copyingOut, on: instance, order: order),
+            followUp("second", .copyingOut, on: instance, order: order),
+            followUp(
+                "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
+                on: instance, rank: .restoration, order: order),
+            followUp("third", .copyingOut, on: instance, order: order),
+        ]
+
+        for item in owed { instance.activity.follow(item) }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 4)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["revert"])
+        for item in owed { try await item.outcome.value() }
+        #expect(order.admitted == ["revert", "first", "second", "third"])
+        #expect(instance.phase == .stopped)
+        expectQueueHeldByAnOperation(instance)
+    }
+
+    @Test("A refused follow-up ends with its refusal, and the drain moves on to the next")
+    func aRefusedFollowUpEndsAndTheDrainMovesOn() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        // A pause asks for a live guest, which a VM at rest is not.
+        let refused = followUp("pause", .pausing, on: instance, order: order)
+        let admitted = followUp("copy", .copyingOut, on: instance, order: order)
+        instance.activity.follow(refused)
+        instance.activity.follow(admitted)
+
+        holdGate.release()
+        try await hold.value()
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await refused.outcome.value()
+        }
+        try await admitted.outcome.value()
+        #expect(order.admitted == ["copy"])
+    }
+
+    @Test("A session end drops the follow-ups scoped to it, and a follow-up for a gone session is refused")
+    func aSessionEndDropsItsFollowUps() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        try await holdGate.waitUntilEntered()
+        let scoped = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+        let unscoped = followUp("copy", .copyingOut, on: instance, order: order)
+        instance.activity.follow(scoped)
+        instance.activity.follow(unscoped)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await scoped.outcome.value()
+        }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        let late = followUp("late", .pausing, on: instance, scope: .session(session), order: order)
+        instance.activity.follow(late)
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await late.outcome.value()
+        }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        holdGate.release()
+        try await hold.value()
+        try await unscoped.outcome.value()
+        #expect(order.admitted == ["copy"])
+    }
+
+    @Test("A delete ends every follow-up queued on the VM as removed, running none")
+    func aDeleteDropsEveryFollowUp() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let deletion = Task { try await instance.activity.delete { _ in try await gate.pass() } }
+        try await gate.waitUntilEntered()
+        let owed = followUp("copy", .copyingOut, on: instance, order: order)
+        instance.activity.follow(owed)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        gate.release()
+        try await deletion.value
+
+        #expect(instance.phase == .removed)
+        await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
+            try await owed.outcome.value()
+        }
+        let late = followUp("late", .copyingOut, on: instance, order: order)
+        instance.activity.follow(late)
+        await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
+            try await late.outcome.value()
+        }
+        #expect(order.admitted.isEmpty)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+    }
+
+    @Test("A withdrawn follow-up ends cancelled and never runs")
+    func aWithdrawnFollowUpNeverRuns() async throws {
+        let (instance, _) = makeInstance(.stopped)
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let owed = followUp("copy", .copyingOut, on: instance, order: order)
+        instance.activity.follow(owed)
+
+        instance.activity.withdraw(owed)
+
+        await #expect(throws: CancellationError.self) { try await owed.outcome.value() }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted.isEmpty)
+        #expect(instance.phase == .stopped)
+    }
+
+    @Test("A power-off during a USB detach runs the revert after the detach and before a queued follow-up")
+    func powerOffDuringADetachRevertsBeforeTheQueue() async throws {
+        let session = UUID()
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: session))
+        defer { withExtendedLifetime(library) {} }
+        instance.beginSessionContextForTesting()
+        let snapshotID = try #require(instance.snapshotManifest.snapshots.first?.id)
+        let order = FollowUpOrder()
+        let revertGate = GatedStep()
+        let revert = followUp(
+            "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
+            on: instance, rank: .restoration, gate: revertGate, order: order)
+        instance.activity.onPoweredOff = { [revert] in [revert] }
+        let detachGate = GatedStep()
+        let detach = try launchGated(.detachingUSB(deviceID: UUID()), on: instance, gate: detachGate)
+        try await detachGate.waitUntilEntered()
+        let trashGate = GatedStep()
+        let trash = followUp("trash", .deletingSnapshot, on: instance, gate: trashGate, order: order)
+        let pause = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+        instance.activity.follow(trash)
+        instance.activity.follow(pause)
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        // The detach keeps the VM; the session's follow-up ends with it.
+        #expect(instance.phase.operation?.outcome === detach)
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await pause.outcome.value()
+        }
+
+        detachGate.release()
+        try await detach.value()
+        #expect(order.admitted == ["revert"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        expectQueueHeldByAnOperation(instance)
+
+        revertGate.release()
+        try await revert.outcome.value()
+        #expect(order.admitted == ["revert", "trash"])
+        trashGate.release()
+        try await trash.outcome.value()
+        #expect(instance.phase == .stopped)
+        expectQueueHeldByAnOperation(instance)
+    }
+
+    @Test("Only a failure of the work itself is reported")
+    func onlyAFailureOfTheWorkIsReported() {
+        let session = VMFollowUp.Scope.session(UUID())
+        let silent: [(any Error, VMFollowUp.Scope)] = [
+            (VMAdmissionRefusal(refusal: .removed), .vm),
+            (VMAdmissionRefusal(refusal: .terminating), .vm),
+            (CancellationError(), .vm),
+            (VMAdmissionRefusal(refusal: .invalidState), session),
+        ]
+        for (error, scope) in silent {
+            #expect(!VMFollowUp.isReportable(error, scope: scope), "\(error) \(scope)")
+        }
+        let reported: [(any Error, VMFollowUp.Scope)] = [
+            (VMAdmissionRefusal(refusal: .invalidState), .vm),
+            (VMAdmissionRefusal(refusal: .heldByAnotherCopy), .vm),
+            (VMAdmissionRefusal(refusal: .unsupportedByBuild), session),
+            (Probe(), session),
+        ]
+        for (error, scope) in reported {
+            #expect(VMFollowUp.isReportable(error, scope: scope), "\(error) \(scope)")
+        }
     }
 
     // MARK: - Session events
@@ -1019,4 +1319,10 @@ struct VMActivityTests {
         #expect(instance.activity.sessionContext == nil)
         #expect(!instance.hasLiveVirtualMachine)
     }
+}
+
+/// The labels of the follow-ups a test queued, in the order each was admitted.
+@MainActor
+private final class FollowUpOrder {
+    var admitted: [String] = []
 }

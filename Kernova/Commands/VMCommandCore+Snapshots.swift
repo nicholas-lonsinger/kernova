@@ -161,13 +161,24 @@ extension VMCommandCore {
 
     /// Starts the revert of `instance` to `snapshot`, admitted and committed
     /// before this returns — so a termination gate or a Start that reads the
-    /// VM right after a power-off finds the revert that power-off requested —
-    /// and answers its outcome.
+    /// VM next finds the revert — and answers its outcome.
     ///
     /// The manifest's current marker is written inside the revert operation,
     /// once the snapshot's files are in the bundle.
-    func startRevert(
-        _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin = .newWork
+    func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) throws -> VMOutcome {
+        do {
+            return try launchRevert(instance, to: snapshot, origin: .newWork, resolving: VMOutcome())
+        } catch {
+            throw failure(error, verb: .revertToSnapshot, on: instance)
+        }
+    }
+
+    /// ``startRevert(_:to:)`` resolving `outcome`, throwing what refused it as
+    /// it was raised.
+    @discardableResult
+    private func launchRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin,
+        resolving outcome: VMOutcome
     ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
@@ -183,21 +194,16 @@ extension VMCommandCore {
         // A VM that is live goes back to being live once the files are in
         // place; a cold snapshot ends the session for good.
         let resumesAfter = instance.phase.isSettledLive && snapshot.kind == .warm
-        let outcome: VMOutcome
-        do {
-            outcome = try lifecycle.startRevert(
-                instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
-                commitConfiguration: { [library] permit, plan in
-                    try library.commitRevertedConfiguration(plan, permit)
-                },
-                landed: { [weak self] permit in
-                    try self?.commitSnapshotManifest(permit, verb: .revertToSnapshot) {
-                        $0.currentID = snapshot.id
-                    }
-                })
-        } catch {
-            throw failure(error, verb: .revertToSnapshot, on: instance)
-        }
+        try lifecycle.startRevert(
+            instance, to: snapshot, resumesAfter: resumesAfter, origin: origin, resolving: outcome,
+            commitConfiguration: { [library] permit, plan in
+                try library.commitRevertedConfiguration(plan, permit)
+            },
+            landed: { [weak self] permit in
+                try self?.commitSnapshotManifest(permit, verb: .revertToSnapshot) {
+                    $0.currentID = snapshot.id
+                }
+            })
         // The window the VM comes back up in is chosen before the teardown
         // the revert's task begins with.
         if resumesAfter { readyDisplay?(instance) }
@@ -219,32 +225,27 @@ extension VMCommandCore {
 
     // MARK: - Ephemeral Mode
 
-    /// Returns an Ephemeral Mode VM to its baseline after a power-off; a no-op
-    /// for every other VM.
+    /// The revert to its baseline an Ephemeral Mode VM owes a power-off, as a
+    /// follow-up; `nil` for every other VM.
     ///
-    /// Reached from ``VMActivity/onPoweredOff``, which fires in the step that
-    /// rests the VM — so the revert is admitted there, before anything else can
-    /// be decided against the VM, and a failure nobody waits on is reported.
-    func revertToEphemeralBaselineIfNeeded(_ instance: VMInstance) {
-        guard let baseline = instance.ephemeralBaselineSnapshot else { return }
-        #log(
-            Self.logger, .notice,
-            "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
-        )
-        let outcome: VMOutcome
-        do {
-            outcome = try startRevert(instance, to: baseline, origin: .powerOffRevert)
-        } catch {
-            report(failure(error, verb: .revertToSnapshot, on: instance), on: instance)
-            return
+    /// Answered from ``VMActivity/onPoweredOff``, whose step drains it: a
+    /// restoration, it takes the VM before any other follow-up queued there
+    /// and before anything else can be decided against the VM. A failure
+    /// nobody waits on is reported.
+    func ephemeralBaselineRevert(for instance: VMInstance) -> VMFollowUp? {
+        guard let baseline = instance.ephemeralBaselineSnapshot else { return nil }
+        return VMFollowUp(scope: .vm, rank: .restoration) { [weak self, weak instance] outcome in
+            guard let self, let instance else { throw CancellationError() }
+            #log(
+                Self.logger, .notice,
+                "Reverting ephemeral VM '\(instance.name, privacy: .public)' to its baseline '\(baseline.name, privacy: .public)'"
+            )
+            try self.launchRevert(
+                instance, to: baseline, origin: .powerOffRevert, resolving: outcome)
         }
-        Task { [weak self] in
-            do {
-                try await outcome.value()
-            } catch {
-                guard let self else { return }
-                self.report(self.failure(error, verb: .revertToSnapshot, on: instance), on: instance)
-            }
+        .reportingFailure { [weak self] error in
+            guard let self else { return }
+            self.report(self.failure(error, verb: .revertToSnapshot, on: instance), on: instance)
         }
     }
 

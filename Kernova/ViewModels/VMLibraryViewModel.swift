@@ -610,7 +610,7 @@ final class VMLibraryViewModel {
             try usbAccessories?.userReleased(accessory, permit)
         }
         library.onSessionBecameAttachable = { [weak usbAccessories] instance in
-            usbAccessories?.sessionBecameAttachable(instance)
+            usbAccessories?.sessionBecameAttachable(instance) ?? []
         }
         usbAccessories?.onPairingNeeded = { [weak self] request in
             self?.presentUSBAccessoryPairing(request)

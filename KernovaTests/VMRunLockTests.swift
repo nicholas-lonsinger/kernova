@@ -24,6 +24,7 @@ struct VMRunLockTests {
         var pendingSetupInBody: Bool?
         var heldInHook: Bool?
         var phaseInHook: VMLifecyclePhase?
+        var heldAtAdmission: Bool?
         var revert: VMOutcome?
     }
 
@@ -303,7 +304,7 @@ struct VMRunLockTests {
 
     // MARK: - Endings reuse the lock
 
-    @Test("A power-off's hook admits the Ephemeral revert under the lock the ending held")
+    @Test("A power-off's Ephemeral revert follow-up is admitted under the lock the ending held")
     func powerOffRevertReusesTheLock() async throws {
         let (instance, store) = makeInstance()
         let recorder = Recorder()
@@ -311,12 +312,18 @@ struct VMRunLockTests {
         instance.activity.onPoweredOff = {
             recorder.heldInHook = instance.activity.holdsRunLock
             recorder.phaseInHook = instance.phase
-            recorder.revert = try? instance.activity.launchRevert(
-                to: Self.baseline, resumesAfter: false, origin: .powerOffRevert
-            ) { _ in
-                try await gate.pass()
-                return .rest(.asStarted, ())
+            let revert = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
+                recorder.heldAtAdmission = instance.activity.holdsRunLock
+                try instance.activity.launchRevert(
+                    to: Self.baseline, resumesAfter: false, origin: .powerOffRevert,
+                    resolving: outcome
+                ) { _ in
+                    try await gate.pass()
+                    return .rest(.asStarted, ())
+                }
             }
+            recorder.revert = revert.outcome
+            return [revert]
         }
         try await startLive(instance)
 
@@ -327,6 +334,7 @@ struct VMRunLockTests {
         // revert was admitted only because it kept the one the ending held.
         #expect(recorder.phaseInHook == .stopped)
         #expect(recorder.heldInHook == true)
+        #expect(recorder.heldAtAdmission == true)
         let revert = try #require(recorder.revert)
         guard case .bringUp(.reverting)? = instance.phase.operation?.kind else {
             Issue.record("The revert did not take the VM: \(instance.phase)")

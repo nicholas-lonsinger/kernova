@@ -2658,23 +2658,31 @@ struct VMCommandCoreTests {
     func unawaitedRevertFailureLeavesThroughTheHook() async throws {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let reported = ReportedFailures()
+        let reportedGate = AsyncGate()
+        harness.core.onFailure = { failure, _ in
+            reported.failures.append(failure)
+            reportedGate.notify()
+        }
 
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
-            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            in: harness, name: "Ephemeral", phase: .stopped,
             hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
 
         // A power-off revert has no call waiting on it, so its failure has only
         // the hook to leave through.
-        harness.core.revertToEphemeralBaselineIfNeeded(instance)
-        await harness.library.waitForRevertsToSettle()
+        let revert = try #require(harness.core.ephemeralBaselineRevert(for: instance))
+        #expect(revert.rank == .restoration)
+        #expect(revert.scope == .vm)
+        instance.activity.follow(revert)
+        await #expect(throws: VMSnapshotError.self) { try await revert.outcome.value() }
+        try await reportedGate.wait { !reported.failures.isEmpty }
 
-        #expect(reported.count == 1)
-        #expect(reported.first?.isOperationFailure == true)
+        #expect(reported.failures.count == 1)
+        #expect(reported.failures.first?.isOperationFailure == true)
     }
 
     // MARK: - Unattended failures on the event stream
@@ -3846,4 +3854,10 @@ private struct VMLibraryEventReader {
         }
         return pending.removeFirst()
     }
+}
+
+/// The failures the core reported, in order.
+@MainActor
+private final class ReportedFailures {
+    var failures: [CommandError] = []
 }

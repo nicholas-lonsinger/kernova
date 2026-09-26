@@ -13,9 +13,16 @@ import Virtualization
 /// to replace.
 ///
 /// Also the only holder of the VM's bundle run lock, which it holds exactly
-/// while the VM is neither at rest nor removed: ``admit(_:origin:)`` takes it
-/// as an operation leaves rest, and the tail of every ending lets it go once
-/// the VM rests again, so no other copy of Kernova acts on a VM this one holds.
+/// while the VM is neither at rest nor removed: ``admit(_:origin:outcome:)``
+/// takes it as an operation leaves rest, and the tail of every ending lets it
+/// go once the VM rests again, so no other copy of Kernova acts on a VM this
+/// one holds.
+///
+/// And the only holder of the VM's queue of ``VMFollowUp``s, which is non-empty
+/// outside a commit step only while an operation holds the VM: a follow-up on a
+/// settled VM drains at once, and the tail of every step that settles the VM
+/// drains the rest — so a queued follow-up always gets the freed VM before any
+/// other request can be decided against it.
 @MainActor
 @Observable
 final class VMActivity {
@@ -66,19 +73,107 @@ final class VMActivity {
     // MARK: - Hooks
 
     /// Fired when a power-off has rested the VM — immediately for a settled
-    /// VM, and at the ending of the operation that held it otherwise — so a
-    /// request it makes is decided against the phase the VM rests at.
+    /// VM, and at the ending of the operation that held it otherwise —
+    /// answering the follow-ups the power-off owes, which the same step
+    /// drains.
     ///
-    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler reverts an
-    /// Ephemeral Mode VM to its baseline here.
-    @ObservationIgnored var onPoweredOff: (@MainActor () -> Void)?
+    /// Wired by `VMLibrary.wireHooks(for:)`, whose handler answers an
+    /// Ephemeral Mode VM's baseline revert.
+    @ObservationIgnored var onPoweredOff: (@MainActor () -> [VMFollowUp])?
 
     /// Fired on the edge where this VM becomes something a device can be
     /// attached to — ``attachableSessionID`` going from `nil` to naming a
-    /// session — so it fires once per session.
+    /// session — so it fires once per session, answering the follow-ups the
+    /// edge owes.
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`.
-    @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> Void)?
+    @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])?
+
+    /// Runs at an operation's ending commit, after the VM rests and before
+    /// the outcome resolves, answering the follow-ups the ending owes.
+    typealias WhenEnded = @MainActor (Result<Void, any Error>) -> [VMFollowUp]
+
+    // MARK: - Follow-ups
+
+    /// The follow-ups owed to this VM, restorations first and each rank in
+    /// arrival order.
+    @ObservationIgnored private var followUps: [VMFollowUp] = []
+
+    /// Queues `followUp` and, on a settled VM, drains it at once.
+    ///
+    /// One scoped to a session that is no longer live ends refused as
+    /// ``VMAdmission/Refusal/invalidState`` without being queued.
+    func follow(_ followUp: VMFollowUp) {
+        enqueue([followUp])
+        drain()
+    }
+
+    /// Takes `followUp` off the queue, resolving its outcome with
+    /// `CancellationError` — nothing, once it has drained.
+    func withdraw(_ followUp: VMFollowUp) {
+        guard let index = followUps.firstIndex(where: { $0.outcome === followUp.outcome }) else {
+            return
+        }
+        followUps.remove(at: index).outcome.resolve(.failure(CancellationError()))
+    }
+
+    /// Queues `items` behind every follow-up of their rank or better, without
+    /// draining: the step that queues them drains once it has settled.
+    private func enqueue(_ items: [VMFollowUp]) {
+        for item in items {
+            if case .session(let id) = item.scope, id != liveSessionID {
+                item.outcome.resolve(.failure(followUpRefusal(.invalidState, for: item)))
+                continue
+            }
+            let index = followUps.firstIndex { $0.rank > item.rank } ?? followUps.endIndex
+            followUps.insert(item, at: index)
+        }
+    }
+
+    /// Admits the queue's head while the VM stays settled, each decided
+    /// afresh against the phase it meets: an admitted follow-up holds the VM,
+    /// which ends the drain, and a refused one resolves its outcome with the
+    /// refusal. A removed VM refuses every one as
+    /// ``VMAdmission/Refusal/removed``.
+    private func drain() {
+        while phase.isSettled, !followUps.isEmpty {
+            let head = followUps.removeFirst()
+            guard phase != .removed else {
+                head.outcome.resolve(.failure(followUpRefusal(.removed, for: head)))
+                continue
+            }
+            do {
+                try head.admit(head.outcome)
+            } catch {
+                head.outcome.resolve(.failure(error))
+            }
+        }
+    }
+
+    /// Ends every follow-up scoped to a session, as the one live session ends.
+    private func dropSessionFollowUps() {
+        let dropped = followUps.filter { $0.scope != .vm }
+        guard !dropped.isEmpty else { return }
+        followUps.removeAll { $0.scope != .vm }
+        for item in dropped {
+            item.outcome.resolve(.failure(followUpRefusal(.invalidState, for: item)))
+        }
+    }
+
+    private func followUpRefusal(
+        _ reason: VMAdmission.Refusal, for followUp: VMFollowUp
+    ) -> VMAdmissionRefusal {
+        #log(
+            Self.logger, .notice,
+            "Dropped a follow-up scoped to \(String(describing: followUp.scope), privacy: .public) on '\(self.name, privacy: .public)': \(String(describing: reason), privacy: .public)"
+        )
+        return VMAdmissionRefusal(refusal: reason)
+    }
+
+    #if DEBUG
+    /// How many follow-ups are queued; tests only.
+    var queuedFollowUpCountForTesting: Int { followUps.count }
+    #endif
 
     // MARK: - Liveness
 
@@ -277,13 +372,18 @@ final class VMActivity {
         _ body: (borrowing VMUSBAttachContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
         try await run(
-            .attachingUSB(registryID: registryID),
-            {
-                let instance = $0.instance
-                return VMUSBAttachContext(
-                    operation: $0,
-                    reservation: VMAccessoryReservation(registryID: registryID, instance: instance))
-            }, body)
+            .attachingUSB(registryID: registryID), { Self.usbAttachContext(registryID, $0) }, body)
+    }
+
+    /// The attach context for `registryID` over `operation`, whose admission
+    /// reserved the accessory.
+    private static func usbAttachContext(
+        _ registryID: UInt64, _ operation: consuming VMOperationContext
+    ) -> VMUSBAttachContext {
+        let instance = operation.instance
+        return VMUSBAttachContext(
+            operation: operation,
+            reservation: VMAccessoryReservation(registryID: registryID, instance: instance))
     }
 
     /// Admits `kind`, commits it, runs `body` under the context `makeContext`
@@ -293,7 +393,8 @@ final class VMActivity {
         _ makeContext: (consuming VMOperationContext) -> Context,
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let (owner, outcome) = try admit(kind, origin: origin)
+        let outcome = VMOutcome()
+        let owner = try admit(kind, origin: origin, outcome: outcome)
         let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
         let ending: VMOperationEnding<T>
         do {
@@ -308,39 +409,44 @@ final class VMActivity {
     /// committed before this returns, its body run in a task the operation
     /// owns, and its end reported through the outcome.
     ///
+    /// The operation resolves `outcome` — a follow-up's premade one, or a
+    /// fresh one.
+    ///
     /// `whenEnded` runs at the ending commit, after the VM rests and before the
     /// outcome resolves — so it reads the phase the operation left, and whoever
     /// awaits the outcome finds its work done.
     @discardableResult
     func launch(
-        _ kind: VMOperationKind,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
+        _ kind: VMOperationKind, resolving outcome: VMOutcome = VMOutcome(),
+        whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        try launchRun(kind, whenEnded: whenEnded, { $0 }, body)
+        try launchRun(kind, outcome: outcome, whenEnded: whenEnded, { $0 }, body)
     }
 
-    /// ``launch(_:whenEnded:_:)`` for a bring-up — a guest setup.
+    /// ``launch(_:resolving:whenEnded:_:)`` for a bring-up — a guest setup.
     @discardableResult
     func launchBringUp(
         _ kind: VMBringUpKind,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
+        whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        try launchRun(.bringUp(kind), whenEnded: whenEnded, { VMBringUpContext(operation: $0) }, body)
+        try launchRun(
+            .bringUp(kind), outcome: VMOutcome(), whenEnded: whenEnded,
+            { VMBringUpContext(operation: $0) }, body)
     }
 
-    /// ``launch(_:whenEnded:_:)`` for a revert to `snapshot`, resuming the
-    /// guest at its end when `resumesAfter`.
+    /// ``launch(_:resolving:whenEnded:_:)`` for a revert to `snapshot`,
+    /// resuming the guest at its end when `resumesAfter`.
     @discardableResult
     func launchRevert(
         to snapshot: VMSnapshot, resumesAfter: Bool, origin: VMRequestOrigin = .newWork,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
+        resolving outcome: VMOutcome = VMOutcome(),
         _ body: @escaping @MainActor (borrowing VMRevertContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
             .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)),
-            origin: origin, whenEnded: whenEnded,
+            origin: origin, outcome: outcome, whenEnded: nil,
             {
                 VMRevertContext(
                     bringUp: VMBringUpContext(operation: $0), snapshot: snapshot,
@@ -348,14 +454,27 @@ final class VMActivity {
             }, body)
     }
 
+    /// ``launch(_:resolving:whenEnded:_:)`` for the attach of the accessory
+    /// `registryID` names — ``attachUSBAccessory(_:_:)`` in a task the
+    /// operation owns.
+    @discardableResult
+    func launchUSBAccessoryAttach(
+        _ registryID: UInt64, resolving outcome: VMOutcome,
+        _ body: @escaping @MainActor (borrowing VMUSBAttachContext) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        try launchRun(
+            .attachingUSB(registryID: registryID), outcome: outcome, whenEnded: nil,
+            { Self.usbAttachContext(registryID, $0) }, body)
+    }
+
     /// ``run(_:origin:_:_:)`` in a task the operation owns.
     private func launchRun<Context: ~Copyable>(
-        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)?,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork, outcome: VMOutcome,
+        whenEnded: WhenEnded?,
         _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let (owner, outcome) = try admit(kind, origin: origin)
+        let owner = try admit(kind, origin: origin, outcome: outcome)
         outcome.task = Task { @MainActor in
             let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
             let ending: VMOperationEnding<Void>
@@ -374,7 +493,8 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
-        let (owner, outcome) = try admit(kind, origin: .newWork)
+        let outcome = VMOutcome()
+        let owner = try admit(kind, origin: .newWork, outcome: outcome)
         let context = VMOperationContext(activity: self, kind: kind, owner: owner)
         let ending: VMOperationEnding<T>
         do {
@@ -393,7 +513,8 @@ final class VMActivity {
     /// A body that throws rests the VM where the kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
-        let (owner, outcome) = try admit(.deleting, origin: .newWork)
+        let outcome = VMOutcome()
+        let owner = try admit(.deleting, origin: .newWork, outcome: outcome)
         let context = VMOperationContext(activity: self, kind: .deleting, owner: owner)
         do {
             try await body(context)
@@ -405,8 +526,8 @@ final class VMActivity {
         guard endingOperation(outcome) != nil else { return }
         if sessionContext != nil { releaseSession() }
         setPhase(.removed)
-        releaseRunLockIfAtRest()
         outcome.resolve(.success(()))
+        settled(poweredOff: false)
     }
 
     /// The one admission step every operation takes, in one synchronous step:
@@ -414,12 +535,14 @@ final class VMActivity {
     /// against what that read found, reserves what `kind` claims beyond this
     /// VM, and commits.
     ///
+    /// The committed operation resolves `outcome`.
+    ///
     /// Throws, committing nothing and letting go of a lock it took, when the
     /// request is refused — as ``VMAdmission/Refusal/heldByAnotherCopy`` when
     /// another copy of Kernova holds the lock.
     private func admit(
-        _ kind: VMOperationKind, origin: VMRequestOrigin
-    ) throws -> (owner: VMInstance, outcome: VMOutcome) {
+        _ kind: VMOperationKind, origin: VMRequestOrigin, outcome: VMOutcome
+    ) throws -> VMInstance {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw refusal(.invalidState, for: request) }
         let tookLock = try takeRunLock(on: owner)
@@ -432,7 +555,8 @@ final class VMActivity {
             if tookLock { setHold(.none) }
             throw error
         }
-        return (owner, commitOperation(kind))
+        commitOperation(kind, outcome: outcome)
+        return owner
     }
 
     /// Takes the run lock of a VM at rest that holds none, then re-reads its
@@ -461,7 +585,7 @@ final class VMActivity {
     }
 
     /// Lets go of the run lock once the VM rests or is removed — the other
-    /// half of the rule ``admit(_:origin:)`` keeps.
+    /// half of the rule ``admit(_:origin:outcome:)`` keeps.
     private func releaseRunLockIfAtRest() {
         guard phase.isAtRest || phase == .removed, hold.isThisCopy else { return }
         setHold(.none)
@@ -486,12 +610,10 @@ final class VMActivity {
     }
 
     /// The admission commit: the operation holds the VM from here until
-    /// ``finish(_:outcome:whenEnded:)``.
-    @discardableResult
+    /// ``finish(_:outcome:whenEnded:)``, and resolves `outcome` there.
     private func commitOperation(
-        _ kind: VMOperationKind, outcome: VMOutcome = VMOutcome(),
-        stopping stop: VMOutcome? = nil
-    ) -> VMOutcome {
+        _ kind: VMOperationKind, outcome: VMOutcome, stopping stop: VMOutcome? = nil
+    ) {
         let sessionState: VMOperationSessionState =
             switch phase {
             case .running(let id): .live(VMOperationSession(id: id, guest: .running, stopping: stop))
@@ -505,7 +627,6 @@ final class VMActivity {
         #if DEBUG
         runningBody = outcome
         #endif
-        return outcome
     }
 
     /// The operation holding the VM, which ends here, when `outcome` is its
@@ -531,10 +652,10 @@ final class VMActivity {
     /// Resolves the outcome for every joined caller, then ends in
     /// ``settled(poweredOff:)``. An operation that ends on a session a Force
     /// Stop is terminating hands the VM to ``VMOperationKind/forceStopping``
-    /// instead, which rests it once that session ends.
+    /// instead, which rests it once that session ends — and the follow-ups
+    /// `whenEnded` answers wait for that.
     private func finish<T>(
-        _ ending: VMOperationEnding<T>, outcome: VMOutcome,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
+        _ ending: VMOperationEnding<T>, outcome: VMOutcome, whenEnded: WhenEnded? = nil
     ) -> Result<T, any Error> {
         guard let operation = endingOperation(outcome) else {
             return .failure(VMAdmissionRefusal(refusal: .invalidState))
@@ -562,7 +683,7 @@ final class VMActivity {
             #if DEBUG
             runningBody = stop
             #endif
-            whenEnded?(result.map { _ in () })
+            enqueue(whenEnded?(result.map { _ in () }) ?? [])
             outcome.resolve(result.map { _ in () })
             return result
         }
@@ -571,22 +692,23 @@ final class VMActivity {
         if !resting.isSettledLive, sessionContext != nil { releaseSession() }
         setPhase(resting)
         if case .running = resting { owner?.operationDidSettleRunning(operation.kind) }
-        whenEnded?(result.map { _ in () })
+        enqueue(whenEnded?(result.map { _ in () }) ?? [])
         outcome.resolve(result.map { _ in () })
         settled(poweredOff: operation.sessionEnd == .poweredOff || rest == .poweredOff)
         return result
     }
 
-    /// The tail of every step that settles the VM out of an operation or a
-    /// session: fires ``onPoweredOff`` when the guest powered off, then lets
-    /// go of the run lock unless the VM no longer rests — so an operation
-    /// anything before it admitted, the Ephemeral revert among them, runs
-    /// under the lock the ending held.
+    /// The tail of every step that settles the VM — out of an operation or a
+    /// session, or into removal: fires ``onPoweredOff`` when the guest powered
+    /// off, drains the follow-ups, then lets go of the run lock unless the VM
+    /// no longer rests — so an operation the drain admitted, the Ephemeral
+    /// revert among them, runs under the lock the ending held.
     private func settled(poweredOff: Bool) {
         if poweredOff {
             owner?.guestDidPowerOff()
-            onPoweredOff?()
+            enqueue(onPoweredOff?() ?? [])
         }
+        drain()
         releaseRunLockIfAtRest()
     }
 
@@ -707,6 +829,7 @@ final class VMActivity {
     func remove() throws {
         try requireAdmitted(.evict)
         setPhase(.removed)
+        settled(poweredOff: false)
     }
 
     /// Re-derives where a VM at rest rests from its bundle as it stands
@@ -736,16 +859,18 @@ final class VMActivity {
             runningBody == nil,
             "A phase placed over an operation's running body; await its outcome first")
         setPhase(phase)
+        drain()
     }
     #endif
 
     /// The one write of ``phase`` after construction, so the edge onto an
-    /// attachable session is noticed wherever the transition came from.
+    /// attachable session is noticed wherever the transition came from, and
+    /// the follow-ups it owes queued for the step's drain.
     private func setPhase(_ new: VMLifecyclePhase) {
         let wasAttachable = attachableSessionID != nil
         phase = new
         guard !wasAttachable, attachableSessionID != nil else { return }
-        onSessionBecameAttachable?()
+        enqueue(onSessionBecameAttachable?() ?? [])
     }
 
     // MARK: - Session Events
@@ -835,11 +960,12 @@ final class VMActivity {
         return session
     }
 
-    /// Releases the session context, if one is open, and every accessory the
-    /// session held.
+    /// Releases the session context, if one is open, every accessory the
+    /// session held, and every follow-up scoped to it.
     private func releaseSession() {
         sessionContext?.tearDown()
         sessionContext = nil
+        dropSessionFollowUps()
         guard let owner else { return }
         accessoryHolders?.releaseAll(of: owner, AccessoryHoldersKey())
         owner.sessionDidEnd()
@@ -1195,7 +1321,7 @@ struct VMCaptureContext: ~Copyable, Sendable {
 }
 
 /// The authority a revert's body acts with: a bring-up admitted to revert to
-/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:whenEnded:_:)``.
+/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:resolving:_:)``.
 struct VMRevertContext: ~Copyable, Sendable {
     let bringUp: VMBringUpContext
     let snapshot: VMSnapshot

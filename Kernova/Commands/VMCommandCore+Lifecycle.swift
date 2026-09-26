@@ -447,6 +447,7 @@ extension VMCommandCore {
         do {
             try lifecycle.launchGuestSetup(on: instance) { [weak self] result in
                 self?.setupEnded(result, on: instance)
+                return []
             }
         } catch {
             throw failure(error, verb: .start, on: instance)
@@ -719,7 +720,7 @@ extension VMCommandCore {
         // Read without reference to what the VM is resting on: every route out
         // of here ends in a power-off, and `onPoweredOff` runs the baseline
         // revert for a termination exactly as it does for a guest that shut
-        // itself down (``revertToEphemeralBaselineIfNeeded(_:)``).
+        // itself down (``ephemeralBaselineRevert(for:)``).
         let ephemeralBaseline = instance.ephemeralBaselineSnapshot
         // A VM resting on a slot is not terminated at all — this deletes the
         // suspended session, which an Ephemeral VM performs as the revert, so

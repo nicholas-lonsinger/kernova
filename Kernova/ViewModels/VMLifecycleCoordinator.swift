@@ -328,20 +328,20 @@ final class VMLifecycleCoordinator {
     /// has to wait on, answering its outcome.
     ///
     /// Admitted and committed before this returns, so whatever asks next —
-    /// a Start, a quit, the next power-off — finds the VM held by the revert.
-    /// `landed` runs inside the operation, as its write, once the snapshot's
-    /// files are in the bundle, including when the resume after them failed;
-    /// a throw from it fails the revert.
+    /// a Start, a quit, the next power-off — finds the VM held by the revert,
+    /// which resolves `outcome`. `landed` runs inside the operation, as its
+    /// write, once the snapshot's files are in the bundle, including when the
+    /// resume after them failed; a throw from it fails the revert.
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
-        origin: VMRequestOrigin = .newWork,
+        origin: VMRequestOrigin = .newWork, resolving outcome: VMOutcome = VMOutcome(),
         commitConfiguration:
             @escaping @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void,
         landed: @escaping @MainActor (borrowing VMEditPermit) throws -> Void
     ) throws -> VMOutcome {
         try instance.activity.launchRevert(
-            to: snapshot, resumesAfter: resumesAfter, origin: origin
+            to: snapshot, resumesAfter: resumesAfter, origin: origin, resolving: outcome
         ) {
             [virtualizationService] context in
             let ending = try await virtualizationService.revertToSnapshot(
@@ -451,8 +451,7 @@ final class VMLifecycleCoordinator {
     /// ``VMActivity/launchBringUp(_:whenEnded:_:)``.
     @discardableResult
     func launchGuestSetup(
-        on instance: VMInstance,
-        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
+        on instance: VMInstance, whenEnded: VMActivity.WhenEnded? = nil
     ) throws -> VMOutcome {
         guard let setup = instance.configuration.pendingGuestSetup else {
             throw VMAdmissionRefusal(refusal: .invalidState)
@@ -1063,25 +1062,57 @@ final class VMLifecycleCoordinator {
         whileHeld: ((borrowing VMEditPermit, AttachedUSBAccessory) -> Void)? = nil
     ) async throws -> AttachedUSBAccessory {
         try await instance.activity.attachUSBAccessory(registryID) { context in
-            guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
-            guard context.operation.sessionID == sessionID else {
-                throw USBAccessoryError.noVirtualMachine
-            }
-            let attached = try await usbAccessoryService.attach(context.reservation)
-            // VZ captured the device while this was suspended, and a session
-            // that went away under the call released the reservation with it —
-            // leaving the device captured by a VM nothing holds. Hand it back.
-            guard context.reservation.hold(attached) else {
-                try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
-                #log(
-                    Self.logger, .notice,
-                    "Released USB accessory \(attached.accessory.displayName, privacy: .public): '\(instance.name, privacy: .public)' lost its session under the attach"
-                )
-                throw USBAccessoryError.noVirtualMachine
-            }
-            whileHeld?(context.operation.permit, attached)
+            let attached = try await passThrough(
+                context, to: instance, for: sessionID, whileHeld: whileHeld)
             return .rest(.asStarted, attached)
         }
+    }
+
+    /// ``attachUSBAccessory(_:to:for:whileHeld:)`` as an operation no caller
+    /// has to wait on, resolving `outcome` — admitted and committed before
+    /// this returns, and throwing the refusal otherwise.
+    func launchUSBAccessoryAttach(
+        _ registryID: UInt64,
+        to instance: VMInstance,
+        for sessionID: UUID,
+        resolving outcome: VMOutcome,
+        whileHeld: ((borrowing VMEditPermit, AttachedUSBAccessory) -> Void)? = nil
+    ) throws {
+        try instance.activity.launchUSBAccessoryAttach(registryID, resolving: outcome) {
+            context in
+            _ = try await self.passThrough(
+                context, to: instance, for: sessionID, whileHeld: whileHeld)
+            return .rest(.asStarted, ())
+        }
+    }
+
+    /// The body of every attach: passes the accessory `context` reserved
+    /// through to the guest of the session `sessionID` names, and records it
+    /// as that guest's.
+    private func passThrough(
+        _ context: borrowing VMUSBAttachContext,
+        to instance: VMInstance,
+        for sessionID: UUID,
+        whileHeld: ((borrowing VMEditPermit, AttachedUSBAccessory) -> Void)?
+    ) async throws -> AttachedUSBAccessory {
+        guard let usbAccessoryService else { throw USBAccessoryError.noUSBController }
+        guard context.operation.sessionID == sessionID else {
+            throw USBAccessoryError.noVirtualMachine
+        }
+        let attached = try await usbAccessoryService.attach(context.reservation)
+        // VZ captured the device while this was suspended, and a session
+        // that went away under the call released the reservation with it —
+        // leaving the device captured by a VM nothing holds. Hand it back.
+        guard context.reservation.hold(attached) else {
+            try? await usbAccessoryService.detach(deviceID: attached.deviceID, from: instance)
+            #log(
+                Self.logger, .notice,
+                "Released USB accessory \(attached.accessory.displayName, privacy: .public): '\(instance.name, privacy: .public)' lost its session under the attach"
+            )
+            throw USBAccessoryError.noVirtualMachine
+        }
+        whileHeld?(context.operation.permit, attached)
+        return attached
     }
 
     /// Detaches the passthrough device `deviceID` names and releases it from

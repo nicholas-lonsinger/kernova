@@ -551,7 +551,7 @@ struct USBAccessoryCoordinatorTests {
 
     // MARK: - VM Start
 
-    @Test("A guest that becomes attachable takes back the accessories paired with it")
+    @Test("A guest that becomes attachable takes back every accessory paired with it, one attach after another")
     func aStartTakesBackItsAccessories() async throws {
         let service = MockUSBAccessoryService()
         let instance = makeStoppedInstance()
@@ -560,19 +560,24 @@ struct USBAccessoryCoordinatorTests {
             makeLifecycle(service), roster: StubVMInstanceRoster([instance, other]))
         defer { withExtendedLifetime(coordinator) {} }
         instance.onSessionBecameAttachable = { [weak coordinator] in
-            coordinator?.sessionBecameAttachable(instance)
+            coordinator?.sessionBecameAttachable(instance) ?? []
         }
         let mine = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
         let theirs = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
+        let alsoMine = MockUSBAccessoryService.accessory(registryID: 3, serial: "C")
         try pair(mine, with: instance)
         try pair(theirs, with: other)
-        service.accessories = [mine, theirs]
+        try pair(alsoMine, with: instance)
+        service.accessories = [mine, theirs, alsoMine]
 
         instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [1])
+        // The first attach holds the VM; the second waits behind it.
+        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 1))
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        try await waitForChange { instance.liveUSBAccessories.count == 2 }
+        #expect(service.attachedRegistryIDs == [1, 3])
     }
 
     @Test("Resuming a paused guest does not run the take-back again")
@@ -583,7 +588,7 @@ struct USBAccessoryCoordinatorTests {
             makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
         defer { withExtendedLifetime(coordinator) {} }
         instance.onSessionBecameAttachable = { [weak coordinator] in
-            coordinator?.sessionBecameAttachable(instance)
+            coordinator?.sessionBecameAttachable(instance) ?? []
         }
         let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
         try pair(accessory, with: instance)
@@ -603,43 +608,65 @@ struct USBAccessoryCoordinatorTests {
 
     // MARK: - An Operation in Flight
 
-    @Test("An automatic attach during another operation is refused, leaving the accessory with the host")
-    func anAutomaticAttachDuringAnOperationIsRefused() async throws {
+    @Test("An accessory arriving during a snapshot delete attaches in the step the delete ends")
+    func anArrivalDuringAnOperationAttachesAfterIt() async throws {
+        let service = MockUSBAccessoryService()
+        let instance = makeInstance(sessionID: UUID())
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        let accessory = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
+        try pair(accessory, with: instance)
+        let gate = GatedStep()
+        let delete = try instance.activity.launch(.deletingSnapshot) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+
+        // The delete holds the VM, so the attach this assignment asks for
+        // waits behind it rather than being refused.
+        service.assign(accessory)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(service.attachedRegistryIDs.isEmpty)
+
+        service.suspendNextAttach = true
+        gate.release()
+        try await delete.value()
+        // The delete's ending admitted it, so nothing else was decided between.
+        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 2))
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        service.resumeAttach()
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+        #expect(service.attachedRegistryIDs == [2])
+    }
+
+    @Test("Two accessories arriving under one operation both attach once it ends, in arrival order")
+    func twoArrivalsUnderOneOperationBothAttach() async throws {
         let service = MockUSBAccessoryService()
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID)
         let lifecycle = makeLifecycle(service)
         let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
         defer { withExtendedLifetime(coordinator) {} }
-        let first = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
-        let second = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
-        service.accessories.append(first)
+        let holding = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
+        let first = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
+        let second = MockUSBAccessoryService.accessory(registryID: 3, serial: "C")
+        service.accessories.append(holding)
+        try pair(first, with: instance)
         try pair(second, with: instance)
-
-        let endings = AutoAttachEndings()
-        let ended = AsyncGate()
-        coordinator.autoAttachEndedForTesting = { registryID, error in
-            endings.entries.append((registryID, error))
-            ended.notify()
-        }
 
         service.suspendNextAttach = true
         let held = Task { try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
         try await service.attachStarted()
-
-        // The attach in flight holds the VM, so the automatic attach this
-        // assignment asks for is refused as busy rather than waiting for it.
+        service.assign(first)
         service.assign(second)
-        try await ended.wait { !endings.entries.isEmpty }
+        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
+
         service.resumeAttach()
         _ = try await held.value
-
-        #expect(endings.entries.map(\.registryID) == [2])
-        #expect(
-            endings.entries.first?.error as? VMAdmissionRefusal
-                == VMAdmissionRefusal(refusal: .busy(.attachingUSB(registryID: 1))))
-        #expect(service.attachedRegistryIDs == [1])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [1])
+        try await waitForChange { instance.liveUSBAccessories.count == 3 }
+        #expect(service.attachedRegistryIDs == [1, 2, 3])
     }
 
     @Test("A guest that goes away under an attach keeps the next accessory with the host")
@@ -659,9 +686,12 @@ struct USBAccessoryCoordinatorTests {
         let held = Task { try? await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
         try await service.attachStarted()
         service.assign(second)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
-        // The guest powers off while the attach still holds the VM.
+        // The guest powers off while the attach still holds the VM, which
+        // ends the attach the assignment queued for that session.
         instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         service.resumeAttach()
         _ = await held.value
 
@@ -669,10 +699,4 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs == [1])
         #expect(!instance.hasLiveVirtualMachine)
     }
-}
-
-/// How each automatic attach that reached the attach verb ended, in order.
-@MainActor
-private final class AutoAttachEndings {
-    var entries: [(registryID: UInt64, error: (any Error)?)] = []
 }

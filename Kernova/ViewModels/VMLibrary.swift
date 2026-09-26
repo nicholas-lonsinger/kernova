@@ -74,17 +74,18 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// installer auto-eject.
     @ObservationIgnored var onAgentBecameCurrent: ((VMInstance) -> Void)?
 
-    /// Fires when a VM powers off, for the Ephemeral Mode baseline revert.
-    @ObservationIgnored var onPoweredOff: ((VMInstance) -> Void)?
+    /// Fires when a VM powers off, answering the follow-ups the power-off
+    /// owes — the Ephemeral Mode baseline revert.
+    @ObservationIgnored var onPoweredOff: ((VMInstance) -> [VMFollowUp])?
 
     /// Fires when an arrival settles as no VM, in the same main-actor step as
     /// — and just before — its row leaves the library, so anything the hook
     /// emits precedes every observer of the removal.
     @ObservationIgnored var onArrivalFailed: ((VMArrival, any Error) -> Void)?
 
-    /// Fires when a VM reaches a state a device can be attached to, for the
-    /// accessories paired with it.
-    @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> Void)?
+    /// Fires when a VM reaches a state a device can be attached to, answering
+    /// the attaches of the accessories paired with it.
+    @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> [VMFollowUp])?
 
     // MARK: - Capabilities
 
@@ -527,15 +528,15 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
         // An Ephemeral Mode VM goes back to its baseline on every power-off.
         instance.activity.onPoweredOff = { [weak self, weak instance] in
-            guard let self, let instance else { return }
-            self.onPoweredOff?(instance)
+            guard let self, let instance else { return [] }
+            return self.onPoweredOff?(instance) ?? []
         }
         // A guest that has just become attachable takes back the accessories
         // paired with it, and is a running guest whose address can be watched.
         instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in
-            guard let self, let instance else { return }
+            guard let self, let instance else { return [] }
             self.guestAddresses.watch()
-            self.onSessionBecameAttachable?(instance)
+            return self.onSessionBecameAttachable?(instance) ?? []
         }
     }
 
