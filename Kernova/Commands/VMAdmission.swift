@@ -292,7 +292,7 @@ enum VMAdmission {
             if classes.contains(.pairingRules), !facts.usbSupported {
                 return .refuse(.unsupportedByBuild)
             }
-            if tolerated(declaration.edits, from: operation.startedFrom, facts: facts)
+            if tolerated(declaration.edits, from: settledBasis(of: operation, facts: facts), facts: facts)
                 .isSuperset(of: classes)
             {
                 return .admit
@@ -309,7 +309,8 @@ enum VMAdmission {
         var settledFacts = facts
         settledFacts.identityConflict = nil
         switch decideSettled(
-            request, posture: posture, phase: operation.startedFrom, facts: settledFacts)
+            request, posture: posture, phase: settledBasis(of: operation, facts: facts),
+            facts: settledFacts)
         {
         case .admit, .join:
             return .refuse(.busy(operation.kind))
@@ -318,6 +319,18 @@ enum VMAdmission {
         case .refuse:
             return .refuse(.invalidState)
         }
+    }
+
+    /// The settled phase a request during `operation` is classified against:
+    /// the phase it started from, or — once a live session it started from has
+    /// ended — the phase that end rests the VM at.
+    private static func settledBasis(of operation: VMOperation, facts: Facts) -> VMLifecyclePhase {
+        guard let end = operation.sessionEnd, operation.startedFrom.isSettledLive else {
+            return operation.startedFrom
+        }
+        if facts.hasSaveFile { return .suspended }
+        if case .stoppedWithError(let message) = end { return .failed(message: message) }
+        return .stopped
     }
 
     private static func join(for request: Request) -> VMOperationDeclaration.Join? {

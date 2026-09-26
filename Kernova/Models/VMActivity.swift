@@ -296,6 +296,9 @@ final class VMActivity {
                 VMOperation(
                     kind: kind, startedFrom: phase, session: session, sessionEnd: nil,
                     outcome: outcome)))
+        #if DEBUG
+        runningBody = outcome
+        #endif
         return outcome
     }
 
@@ -306,7 +309,10 @@ final class VMActivity {
     private func finish<T>(
         _ ending: VMOperationEnding<T>, outcome: VMOutcome
     ) -> Result<T, any Error> {
-        guard case .operating(let operation) = phase else {
+        #if DEBUG
+        runningBody = nil
+        #endif
+        guard case .operating(let operation) = phase, operation.outcome === outcome else {
             #log(
                 Self.logger, .fault,
                 "Operation on '\(self.name, privacy: .public)' ended while the VM was \(self.status.rawValue, privacy: .public)"
@@ -443,9 +449,19 @@ final class VMActivity {
     }
 
     #if DEBUG
+    /// The outcome of the operation whose body is running, which no test may
+    /// place a phase over.
+    @ObservationIgnored private var runningBody: VMOutcome?
+
     /// Puts the VM straight into `phase`, bypassing every rule a transition
     /// obeys; tests only, and the one way a test places a phase.
+    ///
+    /// Refused while an operation's body is running: only that body's ending
+    /// may move the VM out of its operation, so a test awaits the outcome first.
     func placeForTesting(_ phase: VMLifecyclePhase) {
+        precondition(
+            runningBody == nil,
+            "placeForTesting while an operation's body is running; await its outcome first")
         setPhase(phase)
     }
     #endif

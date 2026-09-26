@@ -336,6 +336,27 @@ struct VMAdmissionTests {
                 facts: facts.discardingSavedState()) == .admit)
     }
 
+    @Test("Once an operation's session ended, a request is classified against where that end rests the VM")
+    func endedSessionIsClassifiedAtRest() {
+        let phase = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: .reconcilingMedia, startedFrom: Self.live, session: nil,
+                sessionEnd: .poweredOff, outcome: VMOutcome()))
+        let facts = Self.facts()
+        // Taken once the pass ends at rest, so busy rather than invalid.
+        #expect(
+            VMAdmission.decide(.start(recovery: false), posture: .commit, phase: phase, facts: facts)
+                == .refuse(.busy(.reconcilingMedia)))
+        #expect(
+            VMAdmission.decide(.operation(.pausing), posture: .commit, phase: phase, facts: facts)
+                == .refuse(.invalidState))
+        // No session left to stop.
+        #expect(
+            VMAdmission.decide(
+                .sessionAction(.requestStop), posture: .commit, phase: phase, facts: facts)
+                == .refuse(.invalidState))
+    }
+
     // MARK: - Projections
 
     @Test("An operation that presents its base changes nothing a surface reads")

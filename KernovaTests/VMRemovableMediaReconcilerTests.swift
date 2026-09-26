@@ -417,20 +417,21 @@ struct VMRemovableMediaReconcilerTests {
 
         harness.library.editConfiguration(of: instance) { $0 = configA }
         await mock.waitUntilSuspended()
-        // Stop the VM before the suspended attach resolves.
+        // The guest powers off before the suspended attach resolves.
         harness.library.editConfiguration(of: instance) { $0 = configB }
-        instance.activity.placeForTesting(.stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         mock.resumeSuspended()
-        for _ in 0..<10 { await Task.yield() }
+        try await waitForChange { instance.phase.operation == nil }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/A.iso")
+        #expect(instance.phase == .stopped)
         #expect(!failures.showError)
     }
 
-    @Test("A pass overtaken by a force stop and restart records nothing on the successor")
-    func liveRemovableOvertakenPassLeavesTheSuccessorAlone() async throws {
+    @Test("A pass whose session ends holds the VM until it drains, and records nothing")
+    func liveRemovableEndedPassHoldsTheVMAndRecordsNothing() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, _) = makeRunningInstance(in: harness)
@@ -439,25 +440,27 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance) { $0 = configA }
         await mock.waitUntilSuspended()
 
-        // Force Stop, then Start: the suspended attach now answers for a
-        // session two transitions old.
+        // A force stop lands under the suspended attach: no successor session
+        // can come up while the pass still holds the VM.
         instance.handleSessionEvent(.guestDidStop)
-        instance.beginSessionContext()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        #expect(
+            instance.activity.decide(.start(recovery: false), posture: .commit)
+                == .refuse(.busy(.reconcilingMedia)))
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
-        for _ in 0..<5 { await Task.yield() }
+        try await waitForChange { instance.phase.operation == nil }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
         #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(instance.phase == .stopped)
         #expect(!failures.showError)
         #expect(instance.configuration == configA)
     }
 
-    @Test("An overtaken pass's failure neither alerts nor rolls the config back")
-    func liveRemovableOvertakenPassFailureIsDropped() async throws {
+    @Test("A pass whose session ends drops its failure: no alert, no rollback")
+    func liveRemovableEndedPassFailureIsDropped() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, _) = makeRunningInstance(in: harness)
@@ -466,17 +469,15 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance) { $0 = configA }
         await mock.waitUntilSuspended()
 
-        // The force stop is what makes the attach fail, so the alert would name
-        // an error the user caused and the rollback would describe the
-        // successor's — here empty — live media.
+        // The force stop is what makes the attach fail, so an alert would name
+        // an error the user caused and a rollback would describe live media
+        // that no longer exists.
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
         instance.handleSessionEvent(.guestDidStop)
-        instance.beginSessionContext()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
-        for _ in 0..<5 { await Task.yield() }
+        try await waitForChange { instance.phase.operation == nil }
 
         #expect(!failures.showError)
         #expect(failures.errorMessage == nil)
@@ -484,8 +485,8 @@ struct VMRemovableMediaReconcilerTests {
         #expect(harness.saved(instance) == configA)
     }
 
-    @Test("A target queued for a session that ends is dropped, not drained onto its successor")
-    func liveRemovableQueuedTargetIsNotDrainedOntoTheSuccessor() async throws {
+    @Test("An edit made after the pass's session ended is kept and never driven onto a guest")
+    func liveRemovableEditAfterTheSessionEndedIsNotDrained() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, _) = makeRunningInstance(in: harness)
@@ -495,33 +496,26 @@ struct VMRemovableMediaReconcilerTests {
         let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
         let configC = configWithRemovable(baseConfig, path: "/tmp/C.iso")
 
-        // The pass for A suspends inside the attach; B queues behind it.
+        // The pass for A suspends inside the attach; B is committed behind it.
         harness.library.editConfiguration(of: instance) { $0 = configA }
         await mock.waitUntilSuspended()
         harness.library.editConfiguration(of: instance) { $0 = configB }
 
-        // Force Stop; an edit to C made while stopped persists but queues
-        // nothing, so B stays queued; then Start, cold-booting C.
+        // Force Stop; an edit to C made while the pass still holds the VM
+        // persists, and the next boot reads it cold.
         instance.handleSessionEvent(.guestDidStop)
         harness.library.editConfiguration(of: instance) { $0 = configC }
-        instance.beginSessionContext()
-        let successorID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: successorID))
-        let coldBooted = RemovableMediaDeviceInfo(
-            id: try #require(configC.removableMedia?.first?.id), path: "/tmp/C.iso", readOnly: true)
-        instance.recordAttachedMedia(coldBooted, for: successorID)
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }
-        for _ in 0..<10 { await Task.yield() }
+        try await waitForChange { instance.phase.operation == nil }
 
-        // Draining B here would detach C's medium and attach B's, leaving the
-        // guest on B while the config says C.
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedPath == "/tmp/A.iso")
         #expect(mock.detachCallCount == 0)
-        #expect(instance.liveRemovableMedia == [coldBooted])
+        #expect(instance.liveRemovableMedia.isEmpty)
         #expect(instance.configuration == configC)
+        #expect(instance.phase == .stopped)
         #expect(!failures.showError)
     }
 
