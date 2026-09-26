@@ -168,6 +168,44 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.storageDisks == nil)
     }
 
+    @Test("R1(b): a configuration edit, a Start or a delete during a disk's image write is refused busy")
+    func createStorageDiskHoldsTheVM() async throws {
+        let diskImages = MockDiskImageService()
+        diskImages.holdCreateDiskImage()
+        let harness = makeHarness(diskImages: diskImages)
+        let instance = makeInstance(in: harness)
+        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
+
+        let creation = Task { @MainActor in
+            try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 8)
+        }
+        try await diskImages.parked.wait { diskImages.isParked }
+        #expect(instance.phase.operation?.kind == .creatingStorageDisk)
+
+        let cpus = instance.configuration.cpuCount
+        let edit = await commandError {
+            try harness.core.setConfiguration(
+                .id(instance.id), assignments: [ConfigurationEntry(key: "cpus", value: String(cpus + 1))],
+                confirmed: true)
+        }
+        #expect(edit?.isBusy == true)
+        let start = await commandError { try await harness.core.start(.id(instance.id), recovery: false) }
+        #expect(start?.isBusy == true)
+        let delete = await commandError {
+            try await harness.core.delete(
+                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+        }
+        #expect(delete?.isBusy == true)
+
+        diskImages.resumeCreateDiskImage()
+        try await creation.value
+
+        #expect(instance.phase == .stopped)
+        #expect(instance.configuration.cpuCount == cpus)
+        #expect(instance.configuration.storageDisks?.last?.isInternal == true)
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
     // MARK: - Storage: label, note, read-only, order
 
     @Test("A rename trims the label, persists it, and saves once")
@@ -330,6 +368,41 @@ struct VMCommandCoreAttachmentTests {
         #expect(
             harness.fileSystem.trashedURLs
                 == [instance.bundleURL.appendingPathComponent("AdditionalDisks/x.asif")])
+    }
+
+    @Test(
+        "A trashing removal holds the VM through the trash, so a Start meanwhile is refused busy",
+        arguments: [true, false])
+    func removeStorageDiskHoldsTheVMThroughTheTrash(isInternal: Bool) async throws {
+        let harness = makeHarness()
+        let disk =
+            isInternal
+            ? StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+            : StorageDisk(path: externalPath("external.img"), label: "External", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, keeper] }
+        harness.fileSystem.holdTrash()
+
+        let removal = Task { @MainActor in
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+        }
+        try await harness.fileSystem.trashParked.wait { harness.fileSystem.isTrashParked }
+        #expect(instance.phase.operation?.kind == .removingStorageDisk)
+        // The entry went first; the file is what is still in flight.
+        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
+        let start = await commandError { try await harness.core.start(.id(instance.id), recovery: false) }
+        #expect(start?.isBusy == true)
+
+        harness.fileSystem.resumeTrash()
+        try await removal.value
+
+        #expect(instance.phase == .stopped)
+        let trashed =
+            isInternal
+            ? instance.bundleURL.appendingPathComponent(disk.path) : URL(fileURLWithPath: disk.path)
+        #expect(harness.fileSystem.trashedURLs == [trashed])
+        #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A file another VM still references is kept, however the removal is asked for")
@@ -538,8 +611,8 @@ struct VMCommandCoreAttachmentTests {
         }
     }
 
-    @Test("A VM that starts saving during the disk write keeps the file and reports the refusal")
-    func createRemovableMediaRefusedWhenTheVMBecomesUnattachable() async throws {
+    @Test("R1(c): a Suspend during a live removable-disk creation is refused; the disk is attached after")
+    func createRemovableMediaHoldsALiveVM() async throws {
         let diskImages = MockDiskImageService()
         diskImages.holdCreateDiskImage()
         let harness = makeHarness(diskImages: diskImages)
@@ -550,27 +623,61 @@ struct VMCommandCoreAttachmentTests {
             .appendingPathComponent("\(UUID().uuidString).asif")
 
         let creation = Task { @MainActor in
-            await commandError {
-                try await harness.core.createRemovableMedia(
-                    .id(instance.id), sizeInGB: 16, destinationURL: destination)
-            }
+            try await harness.core.createRemovableMedia(
+                .id(instance.id), sizeInGB: 16, destinationURL: destination)
         }
         try await diskImages.parked.wait { diskImages.isParked }
-        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
-        diskImages.resumeCreateDiskImage()
-        let refusal = await creation.value
+        #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
+        #expect(instance.status == .running)
+        let suspend = await commandError { try await harness.core.suspend(.id(instance.id)) }
+        #expect(suspend?.isBusy == true)
+        let edit = await commandError {
+            try harness.core.attachRemovableMedia(
+                .id(instance.id), paths: [PickedFile(path: externalPath("other.iso"), bookmark: nil)])
+        }
+        #expect(edit?.isBusy == true)
 
-        #expect(refusal?.isOperationFailure == true)
-        // What is known: where the file is, and the state that turned it away.
+        diskImages.resumeCreateDiskImage()
+        try await creation.value
+
+        let path = destination.path(percentEncoded: false)
+        #expect(instance.configuration.removableMedia?.map(\.path) == [path])
+        // Attached by the creation itself, before it let the VM go.
+        #expect(harness.removableMediaDevices.attachCallCount == 1)
+        #expect(instance.liveRemovableMedia.map(\.path) == [path])
+        #expect(instance.phase == .running(sessionID: sessionID))
+        try await harness.core.suspend(.id(instance.id))
+        #expect(instance.phase == .suspended)
+    }
+
+    @Test("A guest force-stopped during a removable-disk creation rests stopped with the entry saved")
+    func createRemovableMediaOnAGuestForceStoppedMidWrite() async throws {
+        let diskImages = MockDiskImageService()
+        diskImages.holdCreateDiskImage()
+        let harness = makeHarness(diskImages: diskImages)
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString).asif")
+
+        let creation = Task { @MainActor in
+            try await harness.core.createRemovableMedia(
+                .id(instance.id), sizeInGB: 16, destinationURL: destination)
+        }
+        try await diskImages.parked.wait { diskImages.isParked }
+        try await harness.core.stop(
+            .id(instance.id), disposition: .force, confirmed: true, timeout: nil)
+        // The stop is tolerated; the creation still holds the VM.
+        #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
+
+        diskImages.resumeCreateDiskImage()
+        try await creation.value
+
+        #expect(instance.phase == .stopped)
         #expect(
-            refusal?.message
-                == "The disk image was created at \(destination.path(percentEncoded: false)), "
-                + "but it isn\u{2019}t attached: \u{201C}\(instance.name)\u{201D} is suspending, "
-                + "and couldn\u{2019}t take a removable-media change.")
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(harness.storage.saveConfigurationCallCount == 0)
-        // The file at the user's chosen path is theirs to keep.
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
+            instance.configuration.removableMedia?.map(\.path)
+                == [destination.path(percentEncoded: false)])
+        #expect(harness.removableMediaDevices.attachCallCount == 0)
     }
 
     @Test("A label or note edit leaves the mount identity alone")

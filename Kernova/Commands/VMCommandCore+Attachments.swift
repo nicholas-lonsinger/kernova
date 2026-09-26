@@ -45,10 +45,12 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 /// The attachment verbs — a VM's storage disks, its hot-pluggable removable
 /// media, its shared directories, and the bundled guest-agent installer disk.
 ///
-/// Every one resolves through a ``VMSelector``, refuses through
-/// ``VMCommandCore/require(_:on:)``, and writes through
-/// ``VMLibrary/updateConfiguration(of:mutate:)``. Consent is a parameter:
-/// trashing the file behind an attachment refuses without it.
+/// Every one resolves through a ``VMSelector``. An edit refuses through
+/// ``VMCommandCore/require(_:on:)`` and writes through
+/// ``VMLibrary/updateConfiguration(of:mutate:)``; a verb that writes or
+/// trashes a disk image runs as an operation holding the VM, and writes
+/// through ``VMLibrary/updateConfiguration(of:in:mutate:)``. Consent is a
+/// parameter: trashing the file behind an attachment refuses without it.
 extension VMCommandCore {
     // MARK: - Storage Disks
 
@@ -69,44 +71,42 @@ extension VMCommandCore {
         }
     }
 
-    /// Writes a new ASIF sparse image inside the VM's bundle and appends it.
+    /// Writes a new ASIF sparse image inside the VM's bundle and appends it,
+    /// holding the VM from the image write through the configuration write.
     func createStorageDisk(_ selector: VMSelector, sizeInGB: Int) async throws {
         let instance = try resolve(selector)
-        try require(.editStorageDisks, on: instance)
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         let diskID = UUID()
-        let relativePath: String
-        do {
-            relativePath = try await instance.bundle.createInternalDisk(
-                id: diskID, sizeInGB: sizeInGB, using: diskImageService)
-        } catch {
+        try await perform(.creatingStorageDisk, on: instance, verb: .editStorageDisk) { context in
+            let relativePath: String
+            do {
+                relativePath = try await context.bundle.createInternalDisk(
+                    id: diskID, sizeInGB: sizeInGB, using: diskImageService)
+            } catch {
+                #log(
+                    Self.logger, .error,
+                    "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw CommandError.operationFailed(
+                    verb: .editStorageDisk, message: error.localizedDescription)
+            }
+            let layout = VMBundleLayout(bundleURL: context.bundle.url)
+            var createdLabel = "\(sizeInGB) GB Disk"
+            try await writeConfiguration(of: instance, in: context, verb: .editStorageDisk) { config in
+                var disks = config.effectiveStorageDisks(layout: layout)
+                let label = StorageDisk.uniqueLabel(
+                    base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
+                createdLabel = label
+                disks.append(
+                    StorageDisk(
+                        id: diskID, path: relativePath, readOnly: false, label: label,
+                        isInternal: true, kind: .virtio))
+                config.setStorageDisks(disks)
+            }
             #log(
-                Self.logger, .error,
-                "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                Self.logger, .notice,
+                "Created in-bundle storage disk '\(createdLabel, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
             )
-            throw CommandError.operationFailed(
-                verb: .editStorageDisk, message: error.localizedDescription)
         }
-
-        // The unique default label is picked *inside* the mutate closure against
-        // the live config, so two rapid creates can't read the same snapshot and
-        // land on the same "… 2" suffix.
-        var createdLabel = "\(sizeInGB) GB Disk"
-        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
-            var disks = config.effectiveStorageDisks(layout: layout)
-            let label = StorageDisk.uniqueLabel(
-                base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
-            createdLabel = label
-            disks.append(
-                StorageDisk(
-                    id: diskID, path: relativePath, readOnly: false, label: label,
-                    isInternal: true, kind: .virtio))
-            config.setStorageDisks(disks)
-        }
-        #log(
-            Self.logger, .notice,
-            "Created in-bundle storage disk '\(createdLabel, privacy: .public)' (\(sizeInGB, privacy: .public) GB) for VM '\(instance.name, privacy: .public)'"
-        )
     }
 
     /// Drops a storage disk's entry, and with `trashFile` the file behind it.
@@ -121,66 +121,71 @@ extension VMCommandCore {
         _ selector: VMSelector, disk id: UUID, trashFile: Bool, confirmed: Bool
     ) async throws {
         let instance = try resolve(selector)
-        try require(.editStorageDisks, on: instance)
-        guard let disk = storageDisk(id: id, on: instance) else {
-            throw staleAttachment(id, on: instance, verb: .editStorageDisk)
+        try require(trashFile ? .trashStorageDisk : .editStorageDisks, on: instance)
+        let disk = try removableStorageDisk(id, on: instance)
+        guard trashFile else {
+            try detachStorageDisk(id, from: instance)
+            return
         }
-        try refuseSoleStorageDiskRemoval(of: disk, on: instance)
-        // `shared` is read only where a file is trashed, and only an external
-        // disk can be shared — a bundle-relative path is per-VM by
-        // construction. Every other removal is entry-only, and stays free of
-        // the suspension the resolve opens.
+        // Only an external disk can be shared — a bundle-relative path is
+        // per-VM by construction.
         var shared: [String] = []
-        if trashFile, !disk.isInternal {
+        if !disk.isInternal {
             shared = await sharingVMNames(
                 forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
             #if DEBUG
             await afterSharingResolveForTesting?()
             #endif
-            // The resolve suspends and the panel's sheet leaves the menu key
-            // equivalents live, so both the gate and the disk are read again on
-            // the far side of it: a Start that landed in the gap must refuse
-            // rather than detach a disk out from under a guest that is running
-            // or about to be, and a disk detached or re-pointed in the gap is
-            // no longer the one this call resolved sharing for. The sole-disk
-            // rule is re-read for the same reason: the other disk removed in
-            // the gap leaves this one the last, and it must not empty the list.
-            try require(.editStorageDisks, on: instance)
-            guard let current = storageDisk(id: id, on: instance),
-                current.path == disk.path, current.bookmark == disk.bookmark
-            else {
-                throw staleAttachment(id, on: instance, verb: .editStorageDisk)
-            }
-            try refuseSoleStorageDiskRemoval(of: current, on: instance)
         }
-        if trashFile, !confirmed {
+        guard confirmed else {
             throw CommandError.confirmationRequired(
                 Self.attachmentDeletePrompt(
                     label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
                     sharedVMNames: shared))
         }
-        try detachStorageDisk(id, from: instance)
+        // Admitted on the far side of the resolve, so a Start that landed in
+        // it refuses the removal; the disk is read again under the operation,
+        // since one detached, re-pointed or left the VM's last in the gap is
+        // not the removal this call resolved sharing for.
+        try await perform(.removingStorageDisk, on: instance, verb: .editStorageDisk) { context in
+            let current = try removableStorageDisk(id, on: instance)
+            guard current.path == disk.path, current.bookmark == disk.bookmark else {
+                throw staleAttachment(id, on: instance, verb: .editStorageDisk)
+            }
+            let layout = VMBundleLayout(bundleURL: context.bundle.url)
+            try await writeConfiguration(
+                of: instance, in: context, verb: .editStorageDisk,
+                Self.dropStorageDisk(id, layout: layout))
+            guard shared.isEmpty else {
+                #log(
+                    Self.logger, .notice,
+                    "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
+                )
+                return
+            }
+            guard disk.isInternal else {
+                await trashExternalFile(
+                    at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark,
+                    label: disk.label, vmName: instance.name, verb: .editStorageDisk)
+                return
+            }
+            await reportFileRemoval(
+                of: context.bundle.url.appendingPathComponent(disk.path), label: disk.label,
+                vmName: instance.name, verb: .editStorageDisk
+            ) {
+                try await context.bundle.trashInternalDisk(atRelativePath: disk.path)
+            }
+        }
+    }
 
-        guard trashFile else { return }
-        guard shared.isEmpty else {
-            #log(
-                Self.logger, .notice,
-                "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
-            )
-            return
+    /// The storage disk `id` names, refusing when the VM no longer carries it
+    /// or when it is the VM's only disk.
+    private func removableStorageDisk(_ id: UUID, on instance: VMInstance) throws -> StorageDisk {
+        guard let disk = storageDisk(id: id, on: instance) else {
+            throw staleAttachment(id, on: instance, verb: .editStorageDisk)
         }
-        guard disk.isInternal else {
-            await trashExternalFile(
-                at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark,
-                label: disk.label, vmName: instance.name, verb: .editStorageDisk)
-            return
-        }
-        await reportFileRemoval(
-            of: instance.bundleURL.appendingPathComponent(disk.path), label: disk.label,
-            vmName: instance.name, verb: .editStorageDisk
-        ) {
-            try await instance.bundle.trashInternalDisk(atRelativePath: disk.path)
-        }
+        try refuseSoleStorageDiskRemoval(of: disk, on: instance)
+        return disk
     }
 
     private func refuseSoleStorageDiskRemoval(of disk: StorageDisk, on instance: VMInstance) throws {
@@ -270,7 +275,8 @@ extension VMCommandCore {
     }
 
     /// Writes a new ASIF sparse image at `destinationURL` and attaches it as a
-    /// hot-pluggable removable disk.
+    /// hot-pluggable removable disk, holding the VM from the image write until
+    /// a live guest has the disk attached.
     ///
     /// The file is **not** bundle-owned: removing the entry does not trash it,
     /// and cloning the VM references the same path rather than copying it.
@@ -278,78 +284,67 @@ extension VMCommandCore {
         _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
     ) async throws {
         let instance = try resolve(selector)
-        try require(.editRemovableMedia, on: instance)
-        let item: RemovableMediaItem
-        do {
-            try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
-            // Bookmarked after the write succeeds: the file has to exist to be
-            // bookmarked, and the write rides the still-live save-panel grant.
-            item = RemovableMediaItem(
-                path: destinationURL.path(percentEncoded: false),
-                readOnly: false,
-                label: destinationURL.deletingPathExtension().lastPathComponent,
-                bookmark: SecurityScopedBookmark.make(for: destinationURL))
-        } catch {
-            // Only when the write itself failed — the earlier phases throw
-            // before the destination is touched, and the path is user-chosen,
-            // so trashing there could remove an unrelated pre-existing file.
-            if case DiskImageError.writeFailed = error {
-                cleanUpPartialDiskImage(at: destinationURL)
+        try await perform(.creatingRemovableMedia, on: instance, verb: .editRemovableMedia) { context in
+            let item: RemovableMediaItem
+            do {
+                try await diskImageService.createDiskImage(at: destinationURL, sizeInGB: sizeInGB)
+                // Bookmarked after the write succeeds: the file has to exist to
+                // be bookmarked, and the write rides the still-live save-panel
+                // grant.
+                item = RemovableMediaItem(
+                    path: destinationURL.path(percentEncoded: false),
+                    readOnly: false,
+                    label: destinationURL.deletingPathExtension().lastPathComponent,
+                    bookmark: SecurityScopedBookmark.make(for: destinationURL))
+            } catch {
+                // Only when the write itself failed — the earlier phases throw
+                // before the destination is touched, and the path is
+                // user-chosen, so trashing there could remove an unrelated
+                // pre-existing file.
+                if case DiskImageError.writeFailed = error {
+                    cleanUpPartialDiskImage(at: destinationURL)
+                }
+                #log(
+                    Self.logger, .error,
+                    "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                throw CommandError.operationFailed(
+                    verb: .editRemovableMedia, message: error.localizedDescription)
+            }
+            // The file is the user's, and stays whatever becomes of the entry.
+            let created = destinationURL.path(percentEncoded: false)
+            let write = await library.updateConfiguration(of: instance, in: context) { config in
+                config.removableMedia = (config.removableMedia ?? []) + [item]
+            }
+            switch write {
+            case .saved:
+                break
+            case .refused(let refusal):
+                #log(
+                    Self.logger, .notice,
+                    "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
+                )
+                throw CommandError.operationFailed(
+                    verb: .editRemovableMedia,
+                    message:
+                        "The disk image was created at \(created), but it was not attached. \(refusal.localizedDescription)"
+                )
+            case .notSaved:
+                #log(
+                    Self.logger, .notice,
+                    "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the configuration was not saved"
+                )
+                throw CommandError.operationFailed(
+                    verb: .editRemovableMedia,
+                    message:
+                        "The disk image was created at \(created), but the change to \u{201C}\(instance.name)\u{201D} was not saved, so it is not attached."
+                )
             }
             #log(
-                Self.logger, .error,
-                "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw CommandError.operationFailed(
-                verb: .editRemovableMedia, message: error.localizedDescription)
-        }
-        // The write above is a real hop: a suspend or quit landing during it
-        // moves the VM to a phase the entry cannot be attached in, and the
-        // configuration write refuses. The file is the user's and stays.
-        let created = destinationURL.path(percentEncoded: false)
-        switch library.updateConfiguration(
-            of: instance,
-            mutate: { config in
-                config.removableMedia = (config.removableMedia ?? []) + [item]
-            })
-        {
-        case .saved:
-            break
-        case .refused(.sessionNotAttachable):
-            #log(
                 Self.logger, .notice,
-                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the VM is \(instance.status.rawValue, privacy: .public)"
-            )
-            throw CommandError.operationFailed(
-                verb: .editRemovableMedia,
-                message:
-                    "The disk image was created at \(created), but it isn\u{2019}t attached: \u{201C}\(instance.name)\u{201D} is \(instance.status.displayName.lowercased()), and couldn\u{2019}t take a removable-media change."
-            )
-        case .refused(let refusal):
-            #log(
-                Self.logger, .notice,
-                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
-            )
-            throw CommandError.operationFailed(
-                verb: .editRemovableMedia,
-                message:
-                    "The disk image was created at \(created), but it was not attached. \(refusal.localizedDescription)"
-            )
-        case .notSaved:
-            #log(
-                Self.logger, .notice,
-                "Removable disk written at '\(destinationURL.path, privacy: .public)' but not attached to '\(instance.name, privacy: .public)': the configuration was not saved"
-            )
-            throw CommandError.operationFailed(
-                verb: .editRemovableMedia,
-                message:
-                    "The disk image was created at \(created), but the change to \u{201C}\(instance.name)\u{201D} was not saved, so it is not attached."
+                "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
             )
         }
-        #log(
-            Self.logger, .notice,
-            "Created removable disk '\(item.label, privacy: .public)' (\(sizeInGB, privacy: .public) GB) at '\(destinationURL.path, privacy: .public)' for VM '\(instance.name, privacy: .public)'"
-        )
     }
 
     /// Drops a removable medium's entry, and with `trashFile` the file behind
@@ -928,8 +923,16 @@ extension VMCommandCore {
 
     /// Drops one storage disk's entry, leaving its file alone.
     private func detachStorageDisk(_ id: UUID, from instance: VMInstance) throws {
-        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
+        try writeConfiguration(
+            of: instance, verb: .editStorageDisk,
+            Self.dropStorageDisk(id, layout: VMBundleLayout(bundleURL: instance.bundleURL)))
+    }
+
+    /// The configuration change that drops storage disk `id`'s entry.
+    private static func dropStorageDisk(
+        _ id: UUID, layout: VMBundleLayout
+    ) -> (inout VMConfiguration) -> Void {
+        { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             disks.removeAll { $0.id == id }
             config.setStorageDisks(disks)

@@ -339,12 +339,16 @@ enum VMAdmission {
             admitted = slot
         case .deleting:
             admitted = atRest
+        case .creatingStorageDisk, .removingStorageDisk:
+            admitted = editClasses(settledAt: phase, facts: facts).contains(.machineKeys)
+        case .creatingRemovableMedia:
+            admitted = editClasses(settledAt: phase, facts: facts).contains(.hotPlugMedia)
         case .copyingOut:
             admitted = atRest && !facts.hasSaveFile
         }
         guard admitted else { return .refuse(.invalidState) }
         switch kind {
-        case .bringUp, .deleting:
+        case .bringUp, .deleting, .creatingStorageDisk, .removingStorageDisk:
             if facts.cloneInFlight { return .refuse(.busy(.copyingOut)) }
         default:
             break

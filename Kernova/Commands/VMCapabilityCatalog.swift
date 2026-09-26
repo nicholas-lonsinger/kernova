@@ -33,7 +33,15 @@ enum VMCapability: CaseIterable, Hashable {
     case renameSnapshot
     case setSnapshotNotes
     case editStorageDisks
+    /// Write a new disk image into the bundle and add it to the storage disks.
+    case createStorageDisk
+    /// Drop a storage disk's entry and move the file behind it to the Trash —
+    /// unless another VM still references the file, which keeps it.
+    case trashStorageDisk
     case editRemovableMedia
+    /// Write a new disk image where the user chose and attach it as
+    /// removable media.
+    case createRemovableMedia
     case editSharedDirectories
     case editUSBAccessories
     case forgetUSBPairing
@@ -75,8 +83,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .deleteSnapshot: .deleteSnapshot
         case .renameSnapshot: .renameSnapshot
         case .setSnapshotNotes: .setSnapshotNotes
-        case .editStorageDisks: .editStorageDisk
-        case .editRemovableMedia: .editRemovableMedia
+        case .editStorageDisks, .createStorageDisk, .trashStorageDisk: .editStorageDisk
+        case .editRemovableMedia, .createRemovableMedia: .editRemovableMedia
         case .editSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
@@ -137,8 +145,14 @@ enum VMCapability: CaseIterable, Hashable {
             return .edit(.snapshotMetadata)
         case .editStorageDisks, .editSharedDirectories, .editConfiguration:
             return .edit(.machineKeys)
+        case .createStorageDisk:
+            return .operation(.creatingStorageDisk)
+        case .trashStorageDisk:
+            return .operation(.removingStorageDisk)
         case .editRemovableMedia:
             return .edit(.hotPlugMedia)
+        case .createRemovableMedia:
+            return .operation(.creatingRemovableMedia)
         case .editUSBAccessories:
             // Which accessory does not change the decision.
             return .operation(.attachingUSB(registryID: 0))

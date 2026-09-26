@@ -2,8 +2,10 @@ import Foundation
 import KernovaLogging
 
 /// Drives a running VM's XHCI removable-media list to whatever its
-/// configuration asks for, inside a `.reconcilingMedia` operation that holds
-/// the VM, and settles the configuration on the live list when VZ refuses.
+/// configuration asks for, inside the operation that holds the VM — a
+/// `.reconcilingMedia` it launches for an edit, or the operation whose own
+/// write changed the list — and settles the configuration on the live list
+/// when VZ refuses.
 ///
 /// Headless: the configuration write and the alert both leave through hooks,
 /// so every configuration write stays ``VMLibrary``'s.
@@ -58,8 +60,8 @@ final class VMRemovableMediaReconciler {
         else { return }
         do {
             try instance.activity.launch(.reconcilingMedia) { [weak self] context in
-                guard let self else { return .rest(.asStarted, ()) }
-                return await self.reconcile(instance, context)
+                await self?.reconcile(instance, context)
+                return .rest(.asStarted, ())
             }
         } catch {
             #log(
@@ -70,8 +72,9 @@ final class VMRemovableMediaReconciler {
         }
     }
 
-    /// Drives the live list to the configuration's until the two match, then
-    /// answers a refused pass.
+    /// Drives the live list of the session `context`'s operation holds to the
+    /// configuration's until the two match, then answers a refused pass; does
+    /// nothing once that operation holds no live session.
     ///
     /// Edits committed while a pass runs are admitted by the operation and
     /// picked up by the next iteration, so rapid edits converge to the final
@@ -80,9 +83,7 @@ final class VMRemovableMediaReconciler {
     /// what the configuration holds and what the next pass drove the VM to, so
     /// settling the configuration on the live list before then would overwrite
     /// that edit with a list the VM was about to leave.
-    private func reconcile(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext
-    ) async -> VMOperationEnding<Void> {
+    func reconcile(_ instance: VMInstance, _ context: borrowing VMOperationContext) async {
         var applied: [RemovableMediaItem]?
         var refused: RefusedPass?
         while let sessionID = context.sessionID {
@@ -95,7 +96,6 @@ final class VMRemovableMediaReconciler {
         if let refused {
             failReconcile(for: instance, refused)
         }
-        return .rest(.asStarted, ())
     }
 
     /// A pass VZ refused some of.

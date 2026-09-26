@@ -3962,6 +3962,9 @@ struct VMLibraryViewModelTests {
             .operating(.deleting, from: .stopped),
             .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
             .operating(.forceStopping, from: live),
+            .operating(.creatingStorageDisk, from: .stopped),
+            .operating(.removingStorageDisk, from: .stopped),
+            .operating(.creatingRemovableMedia, from: live),
         ] {
             instance.activity.placeForTesting(phase)
             #expect(viewModel.quitMustWaitOut, "\(phase)")

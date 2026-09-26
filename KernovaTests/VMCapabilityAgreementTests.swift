@@ -92,7 +92,15 @@ struct VMCapabilityAgreementTests {
         case .renameSnapshot: try core.renameSnapshot(vm, snapshot: snapshot.id, to: "Renamed")
         case .setSnapshotNotes: try core.setSnapshotNotes(vm, snapshot: snapshot.id, notes: "Noted")
         case .editStorageDisks: try core.renameStorageDisk(vm, disk: UUID(), to: "Label")
+        case .createStorageDisk: try await core.createStorageDisk(vm, sizeInGB: 1)
+        case .trashStorageDisk:
+            try await core.removeStorageDisk(vm, disk: UUID(), trashFile: true, confirmed: false)
         case .editRemovableMedia: try core.ejectRemovableMedia(vm, item: UUID())
+        case .createRemovableMedia:
+            try await core.createRemovableMedia(
+                vm, sizeInGB: 1,
+                destinationURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("\(UUID().uuidString).asif"))
         case .editSharedDirectories: try core.removeSharedDirectory(vm, directory: UUID())
         case .editUSBAccessories: try await core.attachUSBAccessory(vm, accessory: 42)
         case .forgetUSBPairing: try core.forgetUSBPairing(vm, key: "unknown")

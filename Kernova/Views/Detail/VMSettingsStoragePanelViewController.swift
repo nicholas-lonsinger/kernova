@@ -67,6 +67,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     func refresh() {
         lockRegistry.apply(isReadOnly: !canEditStorageDisks)
         removableLockRegistry.apply(isReadOnly: !canEditRemovableMedia)
+        createStorageButton.isEnabled = viewModel.capabilities.isAvailable(.createStorageDisk, on: instance)
+        createRemovableButton?.isEnabled = viewModel.capabilities.isAvailable(
+            .createRemovableMedia, on: instance)
         updateStorageLockHintText()
         refreshStorageList()
         refreshRemovableList()
@@ -215,9 +218,11 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         editBootOrderButton = makeGroupedFormPushButton(
             "Edit Boot Order…", target: self, action: #selector(editBootOrderTapped))
 
+        // Create is its own operation, enabled by ``refresh()`` from its own
+        // capability; the row still dims with the section's lock.
         let buttonRow = lockRegistry.lockable(
             makeGroupedFormButtonRow([attachStorageButton, createStorageButton, editBootOrderButton]),
-            attachStorageButton, createStorageButton, editBootOrderButton)
+            attachStorageButton, editBootOrderButton)
         let card = makeGroupedFormCard(rows: [storageListStack, buttonRow])
 
         let paragraphs: [InfoPopoverParagraph] =
@@ -258,8 +263,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let create = makeGroupedFormPushButton(
             "Create New Disk…", target: self, action: #selector(createRemovableTapped))
         createRemovableButton = create
-        let buttonRow = removableLockRegistry.lockable(
-            makeGroupedFormButtonRow([attach, create]), attach, create)
+        let buttonRow = removableLockRegistry.lockable(makeGroupedFormButtonRow([attach, create]), attach)
         let card = makeGroupedFormCard(rows: [removableListStack, buttonRow])
 
         let firstParagraph: InfoPopoverParagraph =
@@ -592,9 +596,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let readOnly: Bool
         let busText: String
         let notes: String
-        /// Rename / Read Only / Remove gating, read from the capability the
+        /// Rename / Read Only / Eject gating, read from the capability the
         /// verb behind each of them refuses on.
         let editable: Bool
+        /// Remove… gating: a storage disk's removal can trash its file, so it
+        /// reads the trashing removal's capability, which admits only where
+        /// the entry-only removal does too.
+        let removable: Bool
         /// The VM's only storage disk, which the removal verb refuses — so its
         /// row offers no Remove….
         let isSoleStorageDisk: Bool
@@ -609,13 +617,15 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
                 notes: disk.notes, editable: canEditStorageDisks,
+                removable: viewModel.capabilities.isAvailable(.trashStorageDisk, on: instance),
                 isSoleStorageDisk: instance.isSoleStorageDisk(disk))
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
-                editable: canEditRemovableMedia, isSoleStorageDisk: false)
+                editable: canEditRemovableMedia, removable: canEditRemovableMedia,
+                isSoleStorageDisk: false)
         }
     }
 
@@ -676,7 +686,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         // could only raise that refusal is noise.
         if !info.isSoleStorageDisk {
             let remove = attachmentMenuItem("Remove…", #selector(menuAttachmentRemove(_:)), ref)
-            remove.isEnabled = info.editable
+            remove.isEnabled = info.removable
             menu.addItem(remove)
         }
 

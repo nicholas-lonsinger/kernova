@@ -78,7 +78,10 @@ struct VMCapabilityCatalogTests {
         .renameSnapshot: .edit(.snapshotMetadata),
         .setSnapshotNotes: .edit(.snapshotMetadata),
         .editStorageDisks: .edit(.machineKeys),
+        .createStorageDisk: .operation(.creatingStorageDisk),
+        .trashStorageDisk: .operation(.removingStorageDisk),
         .editRemovableMedia: .edit(.hotPlugMedia),
+        .createRemovableMedia: .operation(.creatingRemovableMedia),
         .editSharedDirectories: .edit(.machineKeys),
         .forgetUSBPairing: .edit(.pairingRules),
         .editConfiguration: .edit(.machineKeys),
@@ -670,6 +673,9 @@ struct VMCapabilityCatalogTests {
             window, window, window, window, window,
             // snapshot delete, USB attach, media reconcile, Force Stop, deleting
             window, window, window, window, library,
+            // storage disk on a stopped VM, removable disk on a running one,
+            // snapshot delete on a stopped one
+            library, window, library,
         ]
         let phases = VMLifecyclePhaseFixtures.all
         #expect(detached.count == phases.count)

@@ -963,7 +963,7 @@ extension VMOperationKind {
             return .atRest(.failed(message: error.localizedDescription))
         case .pausing, .resuming, .capturingSnapshot, .deletingSnapshot, .attachingUSB,
             .detachingUSB, .reconcilingMedia, .forceStopping, .discardingSavedState, .deleting,
-            .copyingOut:
+            .creatingStorageDisk, .removingStorageDisk, .creatingRemovableMedia, .copyingOut:
             return .asStarted
         }
     }

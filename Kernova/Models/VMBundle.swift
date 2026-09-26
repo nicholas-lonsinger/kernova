@@ -19,8 +19,8 @@ import KernovaLogging
 /// pure — no UI, no suspension, no second access to this bundle.
 ///
 /// A machine-file operation runs its file work off the main actor, through
-/// ``VMBundleMachineFileWorking``. The snapshot, restore, suspend-slot and
-/// firmware operations are reached only through ``MachineFiles``.
+/// ``VMBundleMachineFileWorking``. Every one that changes the bundle is
+/// reached only through ``MachineFiles``.
 @MainActor
 @Observable
 final class VMBundle {
@@ -137,26 +137,6 @@ final class VMBundle {
         guard !ids.isEmpty else { return [:] }
         return await offMainActorInfallibly { $0.onDiskBytes(bundleURL: $1, snapshotIDs: ids) }
     }
-
-    // MARK: In-bundle disks
-
-    /// Writes a new disk image of `sizeInGB` through `diskImages` at the
-    /// in-bundle path `id` names, answering that path relative to the bundle.
-    func createInternalDisk(
-        id: UUID, sizeInGB: Int, using diskImages: any DiskImageProviding
-    ) async throws -> String {
-        let fileWorker = fileWorker
-        let url = url
-        return try await Task.detached {
-            try await fileWorker.createInternalDisk(
-                bundleURL: url, id: id, sizeInGB: sizeInGB, diskImages: diskImages)
-        }.value
-    }
-
-    /// Moves the in-bundle disk at `relativePath` to the Trash.
-    func trashInternalDisk(atRelativePath relativePath: String) async throws {
-        try await offMainActor { try $0.trashInternalDisk(bundleURL: $1, relativePath: relativePath) }
-    }
 }
 
 extension VMBundle {
@@ -272,6 +252,24 @@ extension VMBundle {
             await bundle.offMainActorInfallibly { $0.sweepRestoreStaging(bundleURL: $1) }
         }
 
+        // MARK: In-bundle disks
+
+        /// Writes a new disk image of `sizeInGB` through `diskImages` at the
+        /// in-bundle path `id` names, answering that path relative to the
+        /// bundle.
+        func createInternalDisk(
+            id: UUID, sizeInGB: Int, using diskImages: any DiskImageProviding
+        ) async throws -> String {
+            try await bundle.createInternalDisk(id: id, sizeInGB: sizeInGB, using: diskImages)
+        }
+
+        /// Moves the in-bundle disk at `relativePath` to the Trash.
+        func trashInternalDisk(atRelativePath relativePath: String) async throws {
+            try await bundle.offMainActor {
+                try $0.trashInternalDisk(bundleURL: $1, relativePath: relativePath)
+            }
+        }
+
         // MARK: Firmware and platform
 
         /// Creates the EFI variable store an EFI boot reads, unless the bundle
@@ -287,6 +285,17 @@ extension VMBundle {
                 try $0.createMacPlatformFiles(bundleURL: $1, hardwareModel: hardwareModel)
             }
         }
+    }
+
+    fileprivate func createInternalDisk(
+        id: UUID, sizeInGB: Int, using diskImages: any DiskImageProviding
+    ) async throws -> String {
+        let fileWorker = fileWorker
+        let url = url
+        return try await Task.detached {
+            try await fileWorker.createInternalDisk(
+                bundleURL: url, id: id, sizeInGB: sizeInGB, diskImages: diskImages)
+        }.value
     }
 
     fileprivate func removeSaveFileLoggingRefusal() {
