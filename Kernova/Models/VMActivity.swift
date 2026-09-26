@@ -221,9 +221,14 @@ final class VMActivity {
     /// ``perform(_:_:)`` for an operation no caller waits on: admitted and
     /// committed before this returns, its body run in a task the operation
     /// owns, and its end reported through the outcome.
+    ///
+    /// `whenEnded` runs at the ending commit, after the VM rests and before the
+    /// outcome resolves — so it reads the phase the operation left, and whoever
+    /// awaits the outcome finds its work done.
     @discardableResult
     func launch(
         _ kind: VMOperationKind,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try requireAdmitted(.operation(kind))
@@ -236,16 +241,17 @@ final class VMActivity {
             } catch {
                 ending = .failed(kind.restAfterFailure(error), error)
             }
-            _ = self.finish(ending, outcome: outcome)
+            _ = self.finish(ending, outcome: outcome, whenEnded: whenEnded)
         }
         return outcome
     }
 
-    /// ``launch(_:_:)`` for a bring-up — a guest setup, or a revert no caller
-    /// waits on.
+    /// ``launch(_:whenEnded:_:)`` for a bring-up — a guest setup, or a revert
+    /// no caller waits on.
     @discardableResult
     func launchBringUp(
         _ kind: VMBringUpKind,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         let operationKind = VMOperationKind.bringUp(kind)
@@ -260,7 +266,7 @@ final class VMActivity {
             } catch {
                 ending = .failed(operationKind.restAfterFailure(error), error)
             }
-            _ = self.finish(ending, outcome: outcome)
+            _ = self.finish(ending, outcome: outcome, whenEnded: whenEnded)
         }
         return outcome
     }
@@ -283,7 +289,7 @@ final class VMActivity {
     }
 
     /// The admission commit: the operation holds the VM from here until
-    /// ``finish(_:outcome:)``.
+    /// ``finish(_:outcome:whenEnded:)``.
     private func commitOperation(_ kind: VMOperationKind) -> VMOutcome {
         let outcome = VMOutcome()
         let session: VMOperationSession? =
@@ -308,7 +314,8 @@ final class VMActivity {
     /// Resolves the outcome for every joined caller, and fires ``onPoweredOff``
     /// after the rest commit when the operation's guest powered off.
     private func finish<T>(
-        _ ending: VMOperationEnding<T>, outcome: VMOutcome
+        _ ending: VMOperationEnding<T>, outcome: VMOutcome,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
     ) -> Result<T, any Error> {
         #if DEBUG
         runningBody = nil
@@ -333,6 +340,7 @@ final class VMActivity {
         case .removed(let value):
             if sessionContext != nil { releaseSession() }
             setPhase(.removed)
+            whenEnded?(.success(()))
             outcome.resolve(.success(()))
             return .success(value)
         }
@@ -341,8 +349,9 @@ final class VMActivity {
         // context it opened, with that context's pipes and security scopes.
         if !resting.isSettledLive, sessionContext != nil { releaseSession() }
         setPhase(resting)
-        outcome.resolve(result.map { _ in () })
         if case .running = resting { owner?.operationDidSettleRunning(operation.kind) }
+        whenEnded?(result.map { _ in () })
+        outcome.resolve(result.map { _ in () })
         if operation.sessionEnd == .poweredOff || rest == .poweredOff {
             owner?.guestDidPowerOff()
             onPoweredOff?()

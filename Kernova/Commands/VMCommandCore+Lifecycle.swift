@@ -436,55 +436,61 @@ extension VMCommandCore {
     /// return it to `.initialBoot` for a retry that resumes the download from
     /// the `.kernovadownload` bundle if present.
     private func runGuestSetup(on instance: VMInstance) throws {
-        let outcome: VMOutcome
         do {
-            outcome = try lifecycle.launchGuestSetup(on: instance)
+            try lifecycle.launchGuestSetup(on: instance) { [weak self] result in
+                self?.setupEnded(result, on: instance)
+            }
         } catch {
             throw failure(error, verb: .start, on: instance)
         }
+    }
+
+    /// Reports how a guest setup ended, at its ending commit, and chains the
+    /// boot a successful one owes.
+    ///
+    /// The boot is a fresh admission: the setup has released the VM by the time
+    /// it is asked for.
+    private func setupEnded(_ result: Result<Void, any Error>, on instance: VMInstance) {
+        switch result {
+        case .failure(is CancellationError):
+            #log(
+                Self.logger, .notice,
+                "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
+            )
+            return
+        case .failure(let error):
+            if let explained = explainedFailure(for: error, verb: .start, on: instance) {
+                reportUnattendedFailure(
+                    .operationFailed(
+                        verb: .start, title: explained.title, message: explained.message),
+                    on: instance)
+            } else {
+                reportUnattendedFailure(failure(error, verb: .start, on: instance), on: instance)
+            }
+            return
+        case .success:
+            break
+        }
+        // Before the boot, which would otherwise ask about an account this is
+        // about to end: the setup that just landed is the first thing to read
+        // the guest's real version. A drop that does not land stops the chain,
+        // since the boot would ask about that account.
+        do {
+            try dropGuestAccountBelowProvisioningFloor(on: instance)
+        } catch {
+            reportUnattendedFailure(
+                .operationFailed(verb: .start, message: error.localizedDescription),
+                on: instance)
+            return
+        }
+        // Its failure is reported the same way a direct one's is — including
+        // the removable-attachment recovery. A VM deleted in between is gone,
+        // not failed.
         Task { [weak self] in
             do {
-                try await outcome.value()
-            } catch is CancellationError {
-                #log(
-                    Self.logger, .notice,
-                    "Setup cancelled for '\(instance.name, privacy: .public)' — VM remains in .initialBoot"
-                )
-                return
+                try await self?.start(instance)
             } catch {
-                guard let self else { return }
-                if let explained = self.explainedFailure(for: error, verb: .start, on: instance) {
-                    self.reportUnattendedFailure(
-                        .operationFailed(
-                            verb: .start, title: explained.title, message: explained.message),
-                        on: instance)
-                } else {
-                    self.reportUnattendedFailure(
-                        self.failure(error, verb: .start, on: instance), on: instance)
-                }
-                return
-            }
-            guard let self else { return }
-            // Before the boot, which would otherwise ask about an account this
-            // is about to end: the setup that just landed is the first thing to
-            // read the guest's real version. A drop that does not land stops
-            // the chain, since the boot would ask about that account.
-            do {
-                try self.dropGuestAccountBelowProvisioningFloor(on: instance)
-            } catch {
-                self.reportUnattendedFailure(
-                    .operationFailed(verb: .start, message: error.localizedDescription),
-                    on: instance)
-                return
-            }
-            // Setup is done; the boot that follows is a fresh admission, and
-            // its failure is reported the same way a direct one's is —
-            // including the removable-attachment recovery. A VM deleted in
-            // between is gone, not failed.
-            do {
-                try await self.start(instance)
-            } catch {
-                guard instance.phase != .removed else { return }
+                guard let self, instance.phase != .removed else { return }
                 self.reportUnattendedFailure(
                     self.failure(error, verb: .start, on: instance), on: instance)
             }

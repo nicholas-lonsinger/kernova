@@ -432,7 +432,13 @@ final class VMLifecycleCoordinator {
     /// the operation's own task. A cancel — or a failure that raced one —
     /// rests the VM at `.initialBoot` for a retry that resumes the download.
     @discardableResult
-    func launchGuestSetup(on instance: VMInstance) throws -> VMOutcome {
+    ///
+    /// `whenEnded` runs at the setup's ending commit — see
+    /// ``VMActivity/launchBringUp(_:whenEnded:_:)``.
+    func launchGuestSetup(
+        on instance: VMInstance,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil
+    ) throws -> VMOutcome {
         guard let setup = instance.configuration.pendingGuestSetup else {
             throw VMAdmissionRefusal(refusal: .invalidState)
         }
@@ -441,7 +447,8 @@ final class VMLifecycleCoordinator {
             case .macOSInstall: .macOSInstall
             case .linuxImageDownload: .linuxImageDownload
             }
-        return try instance.activity.launchBringUp(.settingUp(kind)) { operation in
+        return try instance.activity.launchBringUp(.settingUp(kind), whenEnded: whenEnded) {
+            operation in
             do {
                 switch setup {
                 case .macOSInstall(let context):
@@ -454,7 +461,7 @@ final class VMLifecycleCoordinator {
                 try Task.checkCancellation()
             } catch {
                 instance.setupState = nil
-                if Task.isCancelled { throw CancellationError() }
+                if Task.isCancelled || error is CancellationError { throw CancellationError() }
                 throw error
             }
             return .rest(.at(.stopped), ())

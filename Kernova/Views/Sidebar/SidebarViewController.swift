@@ -783,7 +783,9 @@ extension SidebarViewController {
             menu.addItem(.separator())
         }
         if canSuspend {
-            menu.addItem(item("Suspend", #selector(menuSuspend(_:)), instance))
+            let suspend = item("Suspend", #selector(menuSuspend(_:)), instance)
+            suspend.isEnabled = capabilities.isAvailable(.suspend, on: instance)
+            menu.addItem(suspend)
         }
         if canTakeSnapshot {
             let takeSnapshot = item(
