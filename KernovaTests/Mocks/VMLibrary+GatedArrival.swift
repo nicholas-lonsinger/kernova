@@ -13,16 +13,19 @@ extension VMLibrary {
     ) -> VMArrival {
         let storage = storageService
         let destination: URL
+        let staged: VMStagedBundle
         do {
             destination = try storage.bundleURL(for: configuration)
+            staged = try VMStagedBundle.mint(in: storage)
         } catch {
             preconditionFailure("A test arrival's destination could not be derived: \(error)")
         }
-        return beginArrival(kind: kind, configuration: configuration, destination: destination) {
-            staged in
+        return beginArrival(
+            kind: kind, configuration: configuration, destination: destination, staged: staged
+        ) { staged in
             try await gate.pass()
-            try storage.createVMBundle(at: staged)
-            try VMBundleFiles(url: staged, access: storage.bundleFiles).writeInitial(configuration)
+            try storage.createVMBundle(at: staged.url)
+            try staged.writeInitial(configuration)
         }
     }
 
@@ -41,6 +44,17 @@ extension VMLibrary {
 }
 
 extension VMArrival {
+    /// An arrival of `kind` for `configuration` whose write fails at once,
+    /// for a surface that only reads its row.
+    static func inert(_ kind: Kind, configuration: VMConfiguration) -> VMArrival {
+        VMArrival(
+            id: configuration.id, kind: kind, configuration: configuration,
+            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id),
+            staged: VMStagedBundle.fixtureForTesting(
+                at: VMInstanceFixture.bundleURL(for: UUID()), access: InMemoryVMBundleFiles())
+        ) { _ in throw CancellationError() }
+    }
+
     /// Waits for the arrival to settle — its row already replaced by the VM
     /// or removed — answering the VM it became, or `nil` when it became none.
     @discardableResult

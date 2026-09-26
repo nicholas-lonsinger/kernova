@@ -40,11 +40,11 @@ struct VMLibraryAdoptionTests {
     /// Writes `configuration` as the whole of a staged bundle, as a create does.
     private func writing(
         _ configuration: VMConfiguration
-    ) -> (URL) async throws -> Void {
+    ) -> (VMStagedBundle) async throws -> Void {
         let storage = storage
         return { staged in
-            try storage.createVMBundle(at: staged)
-            try VMBundleFiles(url: staged, access: storage.bundleFiles).writeInitial(configuration)
+            try storage.createVMBundle(at: staged.url)
+            try staged.writeInitial(configuration)
         }
     }
 
@@ -69,7 +69,7 @@ struct VMLibraryAdoptionTests {
 
         let arrival = library.beginArrival(
             kind: .creating, configuration: config, destination: destination,
-            write: writing(config))
+            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
         let instance = try await arrival.settled.value
 
         #expect(instance.name == "Edited on Disk")
@@ -89,7 +89,7 @@ struct VMLibraryAdoptionTests {
 
         let arrival = library.beginArrival(
             kind: .creating, configuration: config, destination: destination,
-            write: writing(config))
+            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
         let instance = try await arrival.settled.value
 
         // Only the arrival's own pipeline turns its row into a VM, since it
@@ -223,7 +223,7 @@ struct VMLibraryAdoptionTests {
         await #expect(throws: (any Error).self) { try await arrival.settled.value }
 
         #expect(storage.publishBundleCallCount == 0)
-        #expect(storage.discardedStagedURLs == [arrival.stagedURL].compactMap { $0 })
+        #expect(storage.discardedStagedURLs == [arrival.staged.url])
         #expect(library.entries.isEmpty)
         library.reconcileWithDisk()
         #expect(library.entries.isEmpty)
@@ -245,7 +245,7 @@ struct VMLibraryAdoptionTests {
 
         let arrival = library.beginArrival(
             kind: .creating, configuration: config, destination: destination,
-            write: writing(config))
+            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
         arrivalRef.value = arrival
         await #expect(throws: CancellationError.self) { try await arrival.settled.value }
 
@@ -262,7 +262,8 @@ struct VMLibraryAdoptionTests {
         let config = configuration("Adopted")
         let arrival = library.beginArrival(
             kind: .creating, configuration: config,
-            destination: try storage.bundleURL(for: config), write: writing(config))
+            destination: try storage.bundleURL(for: config),
+            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
         let instance = try await arrival.settled.value
 
         #expect(arrival.requestCancel() == .adopted)

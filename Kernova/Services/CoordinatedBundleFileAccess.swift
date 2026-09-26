@@ -23,7 +23,10 @@ struct CoordinatedBundleFileAccess: VMBundleFileAccessing {
         return try Self.outcome(result, coordinationError)
     }
 
-    func writing<T>(_ bundleURL: URL, _ body: (any VMBundleFileWriting) throws -> T) throws -> T {
+    func writing<T>(
+        _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
+        _ body: (any VMBundleFileWriting) throws -> T
+    ) throws -> T {
         var coordinationError: NSError?
         var result: Result<T, any Error>?
         NSFileCoordinator(filePresenter: nil).coordinate(

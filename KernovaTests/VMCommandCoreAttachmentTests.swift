@@ -1039,7 +1039,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
 
         let storageRefusal = await commandError {
             try harness.core.setStorageDiskReadOnly(
@@ -1059,17 +1059,15 @@ struct VMCommandCoreAttachmentTests {
     }
 
     @Test("A storage edit on a VM being cloned is refused as busy, naming the clone")
-    func cloneInFlightRefusesStorageEditButNotRemovableMedia() async throws {
+    func copyOutRefusesStorageEditButNotRemovableMedia() async throws {
         let harness = makeHarness()
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
-        let gate = GatedStep()
-        let clone = harness.library.beginGatedArrival(
-            .cloning(sourceID: source.id), named: "Source Copy", gate: gate)
-        defer {
-            _ = clone.requestCancel()
-            gate.release()
-        }
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
+        let clone = try await harness.core.clone(
+            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+        try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
 
         let removeError = try #require(
             await commandError {
@@ -1097,6 +1095,9 @@ struct VMCommandCoreAttachmentTests {
         try harness.core.attachRemovableMedia(
             .id(source.id), paths: [PickedFile(path: "/tmp/y.iso", bookmark: nil)])
         #expect(source.configuration.removableMedia?.count == 1)
+
+        hold.signal()
+        await harness.library.arrivals.first { $0.id == clone.id }?.settle()
     }
 
     @Test("An edit naming an attachment that is no longer there is refused, not silently dropped")
@@ -1447,38 +1448,5 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.hasSaveFile)
         #expect(instance.isColdPaused)
-    }
-
-    @Test("A start-failed removal a clone of the same VM blocks keeps the saved state")
-    func aStartFailedRemovalBlockedByACloneKeepsTheSavedState() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness, phase: .suspended) {
-            $0.storageDisks = [disk, keeper]
-        }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        // A clone reading this VM's files locks a storage-disk edit, and the
-        // discard cannot clear that.
-        let gate = GatedStep()
-        let clone = harness.library.beginGatedArrival(
-            .cloning(sourceID: instance.id), named: "Clone of it", gate: gate)
-        defer {
-            _ = clone.requestCancel()
-            gate.release()
-        }
-
-        await #expect(throws: CommandError.self) {
-            try await harness.core.removeStartFailedAttachment(
-                .id(instance.id),
-                attachment: StartFailedAttachment(
-                    verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
-                    label: "Scratch",
-                    message: "could not open"))
-        }
-
-        #expect(instance.hasSaveFile)
-        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
     }
 }

@@ -45,11 +45,13 @@ the facade and present its refusals in their own idiom:
 `VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
 `VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
 (`usb-accessories.json`) are what persists. `VMBundle` holds their committed
-values and is the one reader and writer of those files, through
+values and is the one writer of a library bundle's files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
 (`CoordinatedBundleFileAccess` in production); every write holds a
 `VMEditPermit` that `VMActivity` mints on admission, and a configuration write
-passes the policy `VMLibrary` builds every bundle with through `VMBundle.Factory`. `VMBundle` is also the one writer
+passes the policy `VMLibrary` builds every bundle with through `VMBundle.Factory`.
+A bundle a create, clone or import is still writing is a `VMStagedBundle`,
+minted only for a fresh path under the staging directory. `VMBundle` is also the one writer
 of the bundle's machine files, through the `VMBundleMachineFileWorking` seam
 (`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds.
 `VMInstance` is the `@MainActor`

@@ -843,17 +843,14 @@ struct VMInstanceTests {
     @Test("An arrival's label names its operation")
     func arrivalLabelNamesItsOperation() {
         #expect(VMArrival.Kind.creating.displayLabel == "Creating\u{2026}")
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayLabel == "Cloning\u{2026}")
+        #expect(VMArrival.Kind.cloning.displayLabel == "Cloning\u{2026}")
         #expect(VMArrival.Kind.importing.displayLabel == "Importing\u{2026}")
     }
 
     @Test("An arrival reads Cancelling… once a cancel is taken")
     func arrivalLabelReadsCancellingOnceCancelled() {
         let configuration = VMConfiguration(name: "Copy", guestOS: .linux, bootMode: .efi)
-        let arrival = VMArrival(
-            id: configuration.id, kind: .importing, configuration: configuration,
-            destinationURL: VMInstanceFixture.bundleURL(for: configuration.id)
-        ) { _ in throw CancellationError() }
+        let arrival = VMArrival.inert(.importing, configuration: configuration)
         #expect(arrival.displayLabel == "Importing\u{2026}")
 
         #expect(arrival.requestCancel() == .cancelled)
@@ -863,15 +860,15 @@ struct VMInstanceTests {
 
     @Test("Arrival kind cancelLabel and cancelAlertTitle")
     func arrivalKindCancelLabels() {
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelLabel == "Cancel Clone")
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).cancelAlertTitle == "Cancel Clone?")
+        #expect(VMArrival.Kind.cloning.cancelLabel == "Cancel Clone")
+        #expect(VMArrival.Kind.cloning.cancelAlertTitle == "Cancel Clone?")
         #expect(VMArrival.Kind.importing.cancelLabel == "Cancel Import")
         #expect(VMArrival.Kind.importing.cancelAlertTitle == "Cancel Import?")
     }
 
     @Test("Arrival kind displayNoun")
     func arrivalKindDisplayNoun() {
-        #expect(VMArrival.Kind.cloning(sourceID: UUID()).displayNoun == "Clone")
+        #expect(VMArrival.Kind.cloning.displayNoun == "Clone")
         #expect(VMArrival.Kind.importing.displayNoun == "Import")
     }
 

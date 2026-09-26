@@ -3836,7 +3836,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
 
         #expect(viewModel.hasUninterruptibleWork)
 
@@ -4442,7 +4442,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         if createOnDisk {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess()).writeInitial(config)
+            try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess()).writeInitial(config)
         } else {
             // Nothing is copied, so the source only has to read.
             storage.bundles[url] = config
@@ -4478,7 +4478,7 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
         // A real file, since the import copies the source directory itself.
-        try VMBundleFiles(url: source.url, access: CoordinatedBundleFileAccess()).update(.hostState) {
+        try VMStagedBundle.fixtureForTesting(at: source.url, access: CoordinatedBundleFileAccess()).update(.hostState) {
             $0 = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut)
         }
 
@@ -4664,7 +4664,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let clone = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
+            .cloning, named: "Cloning VM", gate: gate)
 
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
         defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
@@ -4721,7 +4721,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let preparing = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Already Preparing", gate: gate)
+            .cloning, named: "Already Preparing", gate: gate)
         viewModel.selectedID = preparing.id
 
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
@@ -4753,7 +4753,7 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.entries.count == 2)
         let arrival = viewModel.arrivals.first
-        #expect(arrival?.kind == .cloning(sourceID: instance.id))
+        #expect(arrival?.kind == .cloning)
         #expect(arrival?.name == "Original Copy")
         #expect(viewModel.selectedID == arrival?.id)
 
@@ -4866,7 +4866,7 @@ struct VMLibraryViewModelTests {
 
     @Test("cloneVM proceeds while another clone is preparing (#487 — UUID-named bundles can't collide)")
     func cloneVMProceedsWhileAnotherCloneIsPreparing() async throws {
-        try await cloneProceeds(beside: .cloning(sourceID: UUID()))
+        try await cloneProceeds(beside: .cloning)
     }
 
     /// Clones a VM while an arrival of `kind` for another VM is still writing.
@@ -5137,7 +5137,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
+            .cloning, named: "Cloning VM", gate: gate)
         viewModel.selectedID = arrival.id
 
         viewModel.cancelArrival(arrival)
@@ -5196,7 +5196,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Cloning VM", gate: gate)
+            .cloning, named: "Cloning VM", gate: gate)
 
         viewModel.requestCancelPreparing(arrival)
 

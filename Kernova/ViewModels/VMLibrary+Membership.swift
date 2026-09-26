@@ -376,17 +376,17 @@ extension VMLibrary {
     /// outcome.
     ///
     /// Synchronous up to the registration, so a batch of arrivals each sees the
-    /// ones before it. `write` receives a staged URL under the hidden staging
-    /// directory and must write *only* there: the tree becomes a bundle at one
-    /// instant — the publication rename — so an abnormal exit at any point
-    /// before it leaves nothing to adopt, and the launch reclaim discards it.
+    /// ones before it. `write` receives `staged` and must write *only* there:
+    /// the tree becomes a bundle at one instant — the publication rename — so
+    /// an abnormal exit at any point before it leaves nothing to adopt, and the
+    /// launch reclaim discards it.
     func beginArrival(
         kind: VMArrival.Kind, configuration: VMConfiguration, destination: URL,
-        write: @escaping (URL) async throws -> Void
+        staged: VMStagedBundle, write: @escaping (VMStagedBundle) async throws -> Void
     ) -> VMArrival {
         let arrival = VMArrival(
             id: configuration.id, kind: kind, configuration: configuration,
-            destinationURL: destination
+            destinationURL: destination, staged: staged
         ) { [weak self] arrival in
             guard let self else { throw CancellationError() }
             return try await self.settle(arrival, writtenBy: write)
@@ -398,7 +398,7 @@ extension VMLibrary {
     /// Runs `arrival` to its outcome and removes its row, handing a failure to
     /// ``onArrivalFailed`` first.
     private func settle(
-        _ arrival: VMArrival, writtenBy write: (URL) async throws -> Void
+        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void
     ) async throws -> VMInstance {
         do {
             let instance = try await publish(arrival, writtenBy: write)
@@ -424,14 +424,13 @@ extension VMLibrary {
     ///
     /// Every outcome a cancel produced is thrown as `CancellationError`.
     private func publish(
-        _ arrival: VMArrival, writtenBy write: (URL) async throws -> Void
+        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void
     ) async throws -> VMInstance {
         let storage = storageService
         let reader = bundleReader
-        let staged = try storage.makeStagedBundleURL()
-        arrival.stagedURL = staged
+        let staged = arrival.staged.url
         do {
-            try await write(staged)
+            try await write(arrival.staged)
             try Task.checkCancellation()
             // Read before publication, so a written tree holding a file the
             // library cannot read — an import's, say — never becomes a bundle.
@@ -584,15 +583,13 @@ extension VMLibrary {
                 Self.logger, .notice,
                 "Terminating: abandoning \(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)'"
             )
-            if let staged = arrival.stagedURL {
-                do {
-                    try storageService.discardStagedBundle(at: staged)
-                } catch {
-                    #log(
-                        Self.logger, .warning,
-                        "Failed to discard the staged bundle for '\(arrival.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
-                    )
-                }
+            do {
+                try storageService.discardStagedBundle(at: arrival.staged.url)
+            } catch {
+                #log(
+                    Self.logger, .warning,
+                    "Failed to discard the staged bundle for '\(arrival.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
+                )
             }
             removeArrival(arrival)
         }
