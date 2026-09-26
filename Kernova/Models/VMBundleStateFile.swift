@@ -139,6 +139,10 @@ struct UnreadableBundleFile: LocalizedError {
 /// One bundle's state files, read and written through a
 /// ``VMBundleFileAccessing``.
 ///
+/// Any bundle can be read. A write takes ``VMBundle/CommitKey``, so only a
+/// ``VMBundle`` writes a bundle it holds; a bundle still being staged is
+/// written through ``VMStagedBundle``.
+///
 /// Every write reads the file, applies a change to what the file holds, and
 /// replaces it, all under one coordinated write — so a field another process
 /// changed since this one last read survives, and a write this process makes
@@ -180,15 +184,24 @@ struct VMBundleFiles: Sendable {
     }
 
     /// Applies `change` to what `file` holds on disk and replaces the file with
-    /// the result, answering the value the file now holds.
+    /// the result, answering the value the file now holds — the commit a
+    /// ``VMBundle`` makes, which only it can mint `key` for.
     ///
     /// A change that leaves the value as it was writes nothing. `change` runs
     /// inside the coordinated write, and whatever it throws leaves the file as
     /// it was.
     @discardableResult
-    func update<Value>(_ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void) throws
-        -> Value
-    {
+    func update<Value>(
+        _ file: VMBundleStateFile<Value>, _ key: VMBundle.CommitKey,
+        _ change: (inout Value) throws -> Void
+    ) throws -> Value {
+        try replace(file, change)
+    }
+
+    /// ``update(_:_:_:)``'s write, for the two writers this file admits.
+    fileprivate func replace<Value>(
+        _ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void
+    ) throws -> Value {
         try access.writing(url) { files in
             let current = try file.read(from: files)
             var new = current
@@ -201,15 +214,53 @@ struct VMBundleFiles: Sendable {
             return try file.value(of: encoded, in: files)
         }
     }
+}
 
-    /// Writes the first `config.json` of a bundle still being staged, which no
-    /// ``VMBundle`` can hold yet.
+/// A bundle a create, clone or import is still writing: a path minted fresh
+/// under the hidden staging directory, which no library listing admits, so no
+/// ``VMBundle`` holds it and no permit governs its state files.
+///
+/// Minted only by ``mint(in:)``, so a registered VM's bundle is never one.
+struct VMStagedBundle: Sendable {
+    private let files: VMBundleFiles
+
+    private init(url: URL, access: any VMBundleFileAccessing) {
+        files = VMBundleFiles(url: url, access: access)
+    }
+
+    /// A staged path no write has used, under `storage`'s staging directory.
+    static func mint(in storage: any VMStorageProviding) throws -> VMStagedBundle {
+        VMStagedBundle(url: try storage.makeStagedBundleURL(), access: storage.bundleFiles)
+    }
+
+    var url: URL { files.url }
+
+    var layout: VMBundleLayout { VMBundleLayout(bundleURL: url) }
+
+    /// Writes the bundle's first `config.json`.
     func writeInitial(_ configuration: VMConfiguration) throws {
         let data = try VMBundleStateFile.configuration.encode(configuration)
-        try access.writing(url) {
+        try files.access.writing(url) {
             try $0.replace(atRelativePath: VMBundleStateFile.configuration.relativePath, with: data)
         }
     }
+
+    /// Applies `change` to what `file` holds, as ``VMBundleFiles/update(_:_:_:)``
+    /// does for a held bundle.
+    @discardableResult
+    func update<Value>(_ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void)
+        throws -> Value
+    {
+        try files.replace(file, change)
+    }
+
+    #if DEBUG
+    /// Writes to `url` as a writer no permit governs — a fixture laid down
+    /// before any ``VMBundle`` holds the bundle, or another process's write.
+    static func fixtureForTesting(at url: URL, access: any VMBundleFileAccessing) -> VMStagedBundle {
+        VMStagedBundle(url: url, access: access)
+    }
+    #endif
 }
 
 /// What one ``VMBundleFiles/read()`` found — the only thing a ``VMBundle`` is
