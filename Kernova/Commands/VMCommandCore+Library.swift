@@ -574,12 +574,12 @@ extension VMCommandCore {
         // files go — and a Start that landed while the externals resolved is
         // what refuses it here.
         do {
-            try await instance.activity.delete { _ in
+            try await instance.activity.delete { context in
                 do {
                     if permanently {
-                        try storageService.permanentlyDeleteVMBundle(at: instance.bundleURL)
+                        try storageService.permanentlyDeleteVMBundle(at: context.bundle.url)
                     } else {
-                        try storageService.deleteVMBundle(at: instance.bundleURL)
+                        try storageService.deleteVMBundle(at: context.bundle.url)
                     }
                 } catch {
                     #log(

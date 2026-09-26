@@ -359,10 +359,7 @@ enum VMOperationKind: Sendable, Equatable {
 /// An operation that brings a guest up, or holds the VM across a restore that
 /// may resume one.
 enum VMBringUpKind: Sendable, Equatable {
-    /// A cold boot, into Recovery when `recovery`.
-    case starting(recovery: Bool)
-    /// Start or Resume of a VM holding a saved state.
-    case restoringSavedState
+    case guestStart(VMGuestStartKind)
     case settingUp(GuestSetupKind)
     /// A revert to `snapshotID`, resuming the guest at its end when
     /// `resumesAfter`.
@@ -375,10 +372,19 @@ enum VMBringUpKind: Sendable, Equatable {
     /// VZ, whose address need not be the one the VM held live.
     var checksIdentity: Bool {
         switch self {
-        case .starting, .restoringSavedState, .settingUp: true
+        case .guestStart, .settingUp: true
         case .reverting(_, let resumesAfter): resumesAfter
         }
     }
+}
+
+/// A bring-up that starts the guest from what the bundle holds — its disks,
+/// or its saved state.
+enum VMGuestStartKind: Sendable, Equatable {
+    /// A cold boot, into Recovery when `recovery`.
+    case starting(recovery: Bool)
+    /// Start or Resume of a VM holding a saved state.
+    case restoringSavedState
 }
 
 /// Which guest setup a first start runs.
@@ -492,12 +498,12 @@ extension VMOperationKind {
     var declaration: VMOperationDeclaration {
         let stoppable: [VMSessionAction] = [.requestStop, .forceStop]
         switch self {
-        case .bringUp(.starting):
+        case .bringUp(.guestStart(.starting)):
             return .init(
                 status: .shows(.starting), holdsIdentity: .always, quit: .interrupt,
                 display: .hidden, toleratedSessionActions: [],
                 edits: .only(.presentationAndMetadata), joinedBy: [.start])
-        case .bringUp(.restoringSavedState):
+        case .bringUp(.guestStart(.restoringSavedState)):
             return .init(
                 status: .shows(.restoring), holdsIdentity: .always, quit: .interrupt,
                 display: .shown, toleratedSessionActions: [],

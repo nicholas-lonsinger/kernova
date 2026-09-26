@@ -33,7 +33,9 @@ struct VMActivityTests {
         var hookSawResolved: Bool?
         var hookProbe: Task<Void, Never>?
         var whenEndedResult: Result<Void, any Error>?
-        var waitCancelled: Bool?
+        var guestStart: VMGuestStartKind?
+        var captureMode: VMSnapshotCaptureMode?
+        var revertedTo: (snapshotID: UUID, resumesAfter: Bool)?
     }
 
     private func makeInstance(
@@ -104,6 +106,41 @@ struct VMActivityTests {
         #expect(instance.phase == .livePaused(sessionID: session))
     }
 
+    @Test("Each typed entry point commits its kind and hands the body what it was admitted with")
+    func typedEntryPointsCarryTheirKind() async throws {
+        let (starting, startRecorder) = makeInstance(.stopped)
+        try await starting.activity.startGuest(.starting(recovery: false)) { context in
+            startRecorder.operation = starting.phase.operation
+            startRecorder.guestStart = context.kind
+            return .rest(.asStarted, ())
+        }
+        #expect(startRecorder.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+        #expect(startRecorder.guestStart == .starting(recovery: false))
+
+        let (capturing, captureRecorder) = makeInstance(.stopped)
+        try await capturing.activity.captureSnapshot(.stopped) { context in
+            captureRecorder.operation = capturing.phase.operation
+            captureRecorder.captureMode = context.mode
+            return .rest(.asStarted, ())
+        }
+        #expect(captureRecorder.operation?.kind == .capturingSnapshot(.stopped))
+        #expect(captureRecorder.captureMode == .stopped)
+
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
+        let (reverting, revertRecorder) = makeInstance(.stopped)
+        reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        try await reverting.activity.launchRevert(to: snapshot, resumesAfter: false) { context in
+            revertRecorder.operation = reverting.phase.operation
+            revertRecorder.revertedTo = (context.snapshot.id, context.resumesAfter)
+            return .rest(.asStarted, ())
+        }.value()
+        #expect(
+            revertRecorder.operation?.kind
+                == .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)))
+        #expect(revertRecorder.revertedTo?.snapshotID == snapshot.id)
+        #expect(revertRecorder.revertedTo?.resumesAfter == false)
+    }
+
     @Test("A body that throws rests the VM where its kind's failure rest says, and rethrows")
     func throwingBodyRestsWhereTheKindSays() async throws {
         let session = UUID()
@@ -146,7 +183,7 @@ struct VMActivityTests {
         // message; nothing is live after it.
         let (booting, _) = makeInstance(.stopped)
         await #expect(throws: Probe.self) {
-            try await booting.activity.bringUp(.starting(recovery: false)) {
+            try await booting.activity.bringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 throw Probe()
             }
@@ -290,7 +327,7 @@ struct VMActivityTests {
         for failure in [nil, Probe()] as [Probe?] {
             let (instance, _) = makeInstance(.stopped)
             let gate = GatedStep()
-            let outcome = try instance.activity.launchBringUp(.starting(recovery: false)) { context in
+            let outcome = try instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
                 try await gate.pass()
                 context.bindSessionForTesting(UUID())
                 return .rest(.live(.running), ())
@@ -477,58 +514,6 @@ struct VMActivityTests {
         }
     }
 
-    @Test("A body waiting for its session to end is answered how it ended")
-    func sessionEndedAnswersTheEnd() async throws {
-        let session = UUID()
-        let (instance, recorder) = makeInstance(.running(sessionID: session))
-        instance.beginSessionContextForTesting()
-        let entered = GatedStep()
-        entered.release()
-
-        let outcome = try instance.activity.launch(.deletingSnapshot) { context in
-            // Runs on to its wait before the test resumes.
-            try await entered.pass()
-            recorder.sessionEnd = try await context.sessionEnded()
-            return .rest(.asStarted, ())
-        }
-        try await entered.waitUntilEntered()
-        #expect(recorder.sessionEnd == nil)
-
-        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        try await outcome.value()
-        #expect(recorder.sessionEnd == .poweredOff)
-        #expect(instance.phase == .stopped)
-    }
-
-    @Test("Cancelling a guest setup wakes a body waiting for its session to end")
-    func sessionEndedThrowsOnCancel() async throws {
-        let (instance, recorder) = makeInstance(.initialBoot) {
-            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-        let entered = GatedStep()
-        entered.release()
-
-        let outcome = try instance.activity.launchBringUp(.settingUp(.macOSInstall)) { context in
-            context.bindSessionForTesting(UUID())
-            try await entered.pass()
-            do {
-                recorder.sessionEnd = try await context.operation.sessionEnded()
-            } catch {
-                recorder.waitCancelled = error is CancellationError
-                throw error
-            }
-            return .rest(.live(.running), ())
-        }
-        try await entered.waitUntilEntered()
-
-        try instance.activity.cancel(.guestSetup)
-        await #expect(throws: CancellationError.self) { try await outcome.value() }
-        #expect(recorder.waitCancelled == true)
-        #expect(recorder.sessionEnd == nil)
-        #expect(instance.phase == .initialBoot)
-        #expect(!instance.hasLiveVirtualMachine)
-    }
-
     // MARK: - Force Stop
 
     @Test("Force Stop of a settled live VM is its own short operation ending in a power-off")
@@ -580,6 +565,31 @@ struct VMActivityTests {
         #expect(recorder.terminations == 1)
         #expect(instance.phase == .stopped)
         #expect(recorder.poweredOff == 1)
+    }
+
+    @Test("A Force Stop of a settled VM whose termination fails ends back where it started, for every caller")
+    func failedTerminationOfASettledStopRestsLive() async throws {
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+        let terminate = GatedStep()
+
+        let first = Task { @MainActor in
+            try await instance.activity.forceStop { try await terminate.pass() }
+        }
+        try await terminate.waitUntilEntered()
+        #expect(instance.phase.operation?.kind == .forceStopping)
+        // Entered synchronously, so it is parked on the stop before the
+        // release below can end it.
+        let second = Task.immediate { @MainActor in
+            try await instance.activity.forceStop { recorder.terminations += 1 }
+        }
+
+        terminate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await first.value }
+        await #expect(throws: Probe.self) { try await second.value }
+        #expect(recorder.terminations == 0)
+        #expect(instance.phase == .running(sessionID: session))
+        #expect(recorder.poweredOff == 0)
     }
 
     /// One operation of every kind that holds a live session, admitted from
@@ -794,7 +804,7 @@ struct VMActivityTests {
         let (instance, recorder) = makeInstance(.stopped)
         let session = UUID()
 
-        try await instance.activity.bringUp(.starting(recovery: false)) { context in
+        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
             recorder.sessionID = context.operation.sessionID
             #expect(instance.liveSessionID == nil)
             context.bindSessionForTesting(session)
@@ -813,7 +823,7 @@ struct VMActivityTests {
         let (instance, _) = makeInstance(.stopped)
 
         await #expect(throws: Probe.self) {
-            try await instance.activity.bringUp(.starting(recovery: false)) {
+            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 throw Probe()

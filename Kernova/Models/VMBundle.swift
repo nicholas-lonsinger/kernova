@@ -145,10 +145,6 @@ final class VMBundle {
         return await offMainActorInfallibly { $0.onDiskBytes(bundleURL: $1, snapshotIDs: ids) }
     }
 
-    /// Where the suspend slot lives — the URL VZ writes a save into and
-    /// restores one from.
-    var saveFileURL: URL { VMBundleLayout(bundleURL: url).saveFileURL }
-
     // MARK: In-bundle disks
 
     /// Writes a new disk image of `sizeInGB` through `diskImages` at the
@@ -183,6 +179,29 @@ extension VMBundle {
 
         fileprivate init(bundle: VMBundle) {
             self.bundle = bundle
+        }
+
+        /// Where the bundle lives — the directory a configuration build for
+        /// this operation reads the disks and the firmware and platform files
+        /// from.
+        var url: URL { bundle.url }
+
+        // MARK: Suspend slot
+
+        /// Where the suspend slot lives — the URL VZ writes a save into and
+        /// restores one from.
+        var saveFileURL: URL { VMBundleLayout(bundleURL: bundle.url).saveFileURL }
+
+        /// Whether the bundle holds a suspend slot.
+        var hasSaveFile: Bool { VMBundleLayout(bundleURL: bundle.url).hasSaveFile }
+
+        /// Removes the suspend slot, if the bundle holds one.
+        ///
+        /// Synchronous so a caller resting the VM can do both in one step. A
+        /// removal the file system turned down leaves the slot in place and
+        /// logs it; the caller reads ``hasSaveFile`` to learn which happened.
+        func removeSaveFile() {
+            bundle.removeSaveFileLoggingRefusal()
         }
 
         // MARK: Snapshots
@@ -252,17 +271,6 @@ extension VMBundle {
         /// Removes the restore staging directory, if the bundle holds one.
         func discardRestoreStaging() async {
             await bundle.offMainActorInfallibly { $0.sweepRestoreStaging(bundleURL: $1) }
-        }
-
-        // MARK: Suspend slot
-
-        /// Removes the suspend slot, if the bundle holds one.
-        ///
-        /// Synchronous so a caller resting the VM can do both in one step. A
-        /// removal the file system turned down leaves the slot in place and
-        /// logs it; the caller reads the slot again to learn which happened.
-        func removeSaveFile() {
-            bundle.removeSaveFileLoggingRefusal()
         }
 
         // MARK: Firmware and platform

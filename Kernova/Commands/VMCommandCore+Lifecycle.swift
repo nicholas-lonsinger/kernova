@@ -41,11 +41,17 @@ extension VMCommandCore {
         // turned back rather than running and chaining a boot that is.
         let provisioning = try guestProvisioning(for: instance, kind: kind)
 
-        // The setup pipeline chains the boot that spends the account, and
-        // reads the answer where this did.
-        if case .settingUp = kind {
+        let start: VMGuestStartKind
+        switch kind {
+        case .guestStart(let guestStart):
+            start = guestStart
+        case .settingUp:
+            // The setup pipeline chains the boot that spends the account, and
+            // reads the answer where this did.
             try runGuestSetup(on: instance)
             return
+        case .reverting:
+            throw invalidState(instance)
         }
 
         // Before the boot geometry is applied: a pop-out VM's window is what
@@ -54,7 +60,7 @@ extension VMCommandCore {
         applyMatchWindowBootResolution(to: instance)
         let route: GuestStartRoute
         do {
-            route = try await lifecycle.start(instance, kind, provisioning: provisioning)
+            route = try await lifecycle.start(instance, start, provisioning: provisioning)
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
@@ -138,8 +144,8 @@ extension VMCommandCore {
         let deliversAccount: Bool =
             switch kind {
             case .settingUp: true
-            case .starting, .restoringSavedState, .reverting:
-                GuestStartRoute(kind)?.deliversGuestProvisioning ?? false
+            case .guestStart(let start): GuestStartRoute(start).deliversGuestProvisioning
+            case .reverting: false
             }
         guard deliversAccount else { return nil }
         switch capabilities.guestAccountState(of: instance) {
@@ -828,12 +834,15 @@ extension VMCommandCore {
     /// The Resume `instance`'s state names: the restore of the saved state it
     /// holds, or a hot resume from memory.
     private func resumeOrRestore(_ instance: VMInstance) async throws {
-        if let kind = VMAdmission.bringUpKind(
+        switch VMAdmission.bringUpKind(
             for: .resume, phase: instance.phase, facts: instance.admissionFacts)
         {
-            _ = try await lifecycle.start(instance, kind)
-        } else {
+        case .guestStart(let start):
+            _ = try await lifecycle.start(instance, start)
+        case nil:
             try await lifecycle.resume(instance)
+        case .settingUp, .reverting:
+            throw invalidState(instance)
         }
     }
 

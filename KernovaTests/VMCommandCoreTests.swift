@@ -780,7 +780,7 @@ struct VMCommandCoreTests {
         arguments: [
             (
                 PhaseFixture.operating(
-                    .bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+                    .bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
                 ForceStopRefusal.invalidState(current: .restoring)
             ),
             (
@@ -789,7 +789,7 @@ struct VMCommandCoreTests {
             ),
             (
                 .operating(
-                    .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
                 .invalidState(current: .starting)
             ),
             (
@@ -1613,7 +1613,7 @@ struct VMCommandCoreTests {
                 + "bypassing the Trash. You can't undo this action.")
 
         FileManager.default.createFile(
-            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         let suspended = VMCommandCore.deletePrompt(instance, permanently: true, externals: [])
@@ -3059,7 +3059,7 @@ struct VMCommandCoreTests {
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
-        try Data().write(to: instance.bundle.saveFileURL)
+        try Data().write(to: instance.bundleLayout.saveFileURL)
 
         try await harness.core.start(instance)
 

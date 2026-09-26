@@ -111,7 +111,10 @@ struct VMToolbarManagerTests {
         for (phase, expected) in [
             (VMLifecyclePhase.running(sessionID: UUID()), true),
             (.livePaused(sessionID: UUID()), true), (.stopped, true),
-            (.operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()), false),
+            (
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                false
+            ),
         ] {
             let instance = makeInstance(phase: phase)
             let manager = makeManager(instance: instance)
@@ -508,7 +511,7 @@ struct VMToolbarManagerTests {
     @Test("All lifecycle items disabled during transitioning states")
     func lifecycleDisabledDuringTransition() {
         let instance = makeInstance(
-            phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

@@ -119,7 +119,7 @@ struct GuestAgentDiskEligibilityTests {
         "A stopped macOS guest cannot",
         arguments: [
             PhaseFixture.settled(.stopped),
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
             .settled(.failed(message: "Boot failed.")),
         ])
     func stoppedMacOSIsNotEligible(phase: PhaseFixture) {

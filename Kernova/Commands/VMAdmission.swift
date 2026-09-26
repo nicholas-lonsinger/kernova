@@ -117,17 +117,17 @@ enum VMAdmission {
     ) -> VMOperationKind? {
         switch request {
         case .start(recovery: true):
-            return .bringUp(.starting(recovery: true))
+            return .bringUp(.guestStart(.starting(recovery: true)))
         case .start(recovery: false):
-            if facts.hasSaveFile { return .bringUp(.restoringSavedState) }
+            if facts.hasSaveFile { return .bringUp(.guestStart(.restoringSavedState)) }
             if facts.hasPendingGuestSetup {
                 return .bringUp(
                     .settingUp(facts.guestOS == .macOS ? .macOSInstall : .linuxImageDownload))
             }
-            return .bringUp(.starting(recovery: false))
+            return .bringUp(.guestStart(.starting(recovery: false)))
         case .resume:
             if case .livePaused = phase { return .resuming }
-            return facts.hasSaveFile ? .bringUp(.restoringSavedState) : nil
+            return facts.hasSaveFile ? .bringUp(.guestStart(.restoringSavedState)) : nil
         case .operation(let kind):
             return kind
         case .edit, .sessionAction, .cancel, .evict, .affordance:
@@ -198,7 +198,7 @@ enum VMAdmission {
                 return .refuse(.invalidState)
             }
             // A VM holding a saved state is offered Resume, not Start.
-            if case .start = request, kind == .bringUp(.restoringSavedState), posture == .offer {
+            if case .start = request, kind == .bringUp(.guestStart(.restoringSavedState)), posture == .offer {
                 return .refuse(.invalidState)
             }
             return decideSettledOperation(kind, phase: phase, facts: facts)
@@ -235,11 +235,11 @@ enum VMAdmission {
         let slot = atRest && facts.hasSaveFile
         let admitted: Bool
         switch kind {
-        case .bringUp(.starting(let recovery)):
+        case .bringUp(.guestStart(.starting(let recovery))):
             admitted =
                 atRest && !facts.hasSaveFile && !facts.hasPendingGuestSetup
                 && (!recovery || (phase == .stopped && facts.guestOS == .macOS))
-        case .bringUp(.restoringSavedState):
+        case .bringUp(.guestStart(.restoringSavedState)):
             admitted = slot
         case .bringUp(.settingUp):
             admitted = atRest && !facts.hasSaveFile && facts.hasPendingGuestSetup

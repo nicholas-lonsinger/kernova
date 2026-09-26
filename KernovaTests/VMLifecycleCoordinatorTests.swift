@@ -46,7 +46,7 @@ struct VMLifecycleCoordinatorTests {
 
     // MARK: - Lifecycle Forwarding
 
-    private static let coldBoot = VMBringUpKind.starting(recovery: false)
+    private static let coldBoot = VMGuestStartKind.starting(recovery: false)
 
     @Test("start forwards to virtualization service")
     func startForwards() async throws {
@@ -164,7 +164,7 @@ struct VMLifecycleCoordinatorTests {
         }
         await suspendingService.waitUntilSuspended()
 
-        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
 
         suspendingService.resumeSuspended()
         _ = try await task.value
@@ -248,7 +248,7 @@ struct VMLifecycleCoordinatorTests {
         await #expect(throws: VMAdmissionRefusal.self) {
             try await coordinator.pause(instance)
         }
-        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
 
         suspendingService.resumeSuspended()
         _ = try await task.value
@@ -305,7 +305,7 @@ struct VMLifecycleCoordinatorTests {
         await suspendingService.waitUntilSuspended()
 
         // A revert reads the very directory this would move to the Trash.
-        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(Self.coldBoot)))) {
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(.guestStart(Self.coldBoot))))) {
             try await coordinator.discardSnapshot(instance, snapshotID: UUID()) {}
         }
         #expect(store.discardedIDs.isEmpty)
@@ -382,7 +382,7 @@ struct VMLifecycleCoordinatorTests {
                 try await coordinator.requestStop(instance)
             }
         }
-        #expect(instance.phase.operation?.kind == .bringUp(Self.coldBoot))
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
 
         suspendingService.resumeSuspended()
         _ = try await task.value

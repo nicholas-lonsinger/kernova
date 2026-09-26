@@ -142,7 +142,7 @@ struct VMSleepWakeCoordinatorTests {
         let (coordinator, roster, virtService) = makeCoordinator()
         let starting = VMInstanceFixture.make(name: "Starting")
         starting.activity.placeForTesting(
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         let saving = VMInstanceFixture.make(name: "Saving")
         saving.activity.placeForTesting(.operating(.saving, from: .running(sessionID: UUID())))
         let error = VMInstanceFixture.make(name: "Error")

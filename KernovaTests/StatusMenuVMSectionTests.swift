@@ -61,7 +61,7 @@ struct StatusMenuVMSectionTests {
     func rowModel() {
         let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
         let starting = makeInstance(
-            name: "CI VM", phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            name: "CI VM", phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         let stopped = makeInstance(name: "Idle VM", phase: .stopped)
 
         let rows = StatusMenuVMSection.rows(for: [running, starting, stopped].map(LibraryEntry.vm))

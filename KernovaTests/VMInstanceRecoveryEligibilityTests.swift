@@ -24,7 +24,7 @@ struct VMInstanceRecoveryEligibilityTests {
         "Non-stopped macOS guests are not eligible",
         arguments: [
             PhaseFixture.settled(.running(sessionID: UUID())), .settled(.livePaused(sessionID: UUID())),
-            .settled(.suspended), .operating(.bringUp(.starting(recovery: false)), from: .stopped),
+            .settled(.suspended), .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped),
             .settled(.initialBoot), .settled(.failed(message: "Boot failed.")),
         ])
     func nonStoppedMacOSIsNotEligible(phase: PhaseFixture) {

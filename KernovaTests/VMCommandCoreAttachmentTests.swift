@@ -846,7 +846,7 @@ struct VMCommandCoreAttachmentTests {
         // keystroke, landing there deterministically.
         harness.core.afterSharingResolveForTesting = {
             instance.activity.placeForTesting(
-                .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()))
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
         let refusal = await commandError {
@@ -872,7 +872,7 @@ struct VMCommandCoreAttachmentTests {
         // still coming up: no live session to attach to yet.
         harness.core.afterSharingResolveForTesting = {
             instance.activity.placeForTesting(
-                .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()))
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
         let refusal = await commandError {
@@ -1282,8 +1282,8 @@ struct VMCommandCoreAttachmentTests {
     @Test(
         "A start-failed removal the VM can no longer take keeps both the saved state and the entry",
         arguments: [
-            PhaseFixture.operating(.bringUp(.restoringSavedState), from: .suspended),
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped),
+            PhaseFixture.operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped),
             .settled(.running(sessionID: VMLifecyclePhaseFixtures.session)),
         ])
     func aStartFailedRemovalRefusedByTheVMsStateKeepsEverything(phase: PhaseFixture) async throws {

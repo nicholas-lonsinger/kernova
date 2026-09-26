@@ -60,7 +60,7 @@ final class MacOSInstallService {
         instance.beginSessionContext(context)
         let result = try configBuilder.build(
             from: instance.effectiveConfiguration,
-            bundleURL: instance.bundleURL
+            bundleURL: context.operation.bundle.url
         )
 
         instance.adoptBuildResult(context, result)

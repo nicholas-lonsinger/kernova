@@ -194,16 +194,7 @@ final class VMActivity {
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let bundle = try requireAdmitted(.operation(kind))
-        let outcome = commitOperation(kind)
-        let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
-        let ending: VMOperationEnding<T>
-        do {
-            ending = try await body(context)
-        } catch {
-            ending = .failed(kind.restAfterFailure(error), error)
-        }
-        return try finish(ending, outcome: outcome).get()
+        try await run(kind, { $0 }, body)
     }
 
     /// ``perform(_:_:)`` for a bring-up, whose body alone may create a session.
@@ -211,16 +202,45 @@ final class VMActivity {
         _ kind: VMBringUpKind,
         _ body: (borrowing VMBringUpContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let operationKind = VMOperationKind.bringUp(kind)
-        let bundle = try requireAdmitted(.operation(operationKind))
-        let outcome = commitOperation(operationKind)
-        let context = VMBringUpContext(
-            operation: VMOperationContext(activity: self, kind: operationKind, bundle: bundle))
+        try await run(.bringUp(kind), { VMBringUpContext(operation: $0) }, body)
+    }
+
+    /// ``bringUp(_:_:)`` for a guest start, whose body learns which start it
+    /// was admitted as from its context.
+    func startGuest<T>(
+        _ kind: VMGuestStartKind,
+        _ body: (borrowing VMGuestStartContext) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        try await run(
+            .bringUp(.guestStart(kind)),
+            { VMGuestStartContext(bringUp: VMBringUpContext(operation: $0), kind: kind) }, body)
+    }
+
+    /// ``perform(_:_:)`` for a snapshot capture, whose body learns the mode it
+    /// was admitted in from its context.
+    func captureSnapshot<T>(
+        _ mode: VMSnapshotCaptureMode,
+        _ body: (borrowing VMCaptureContext) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        try await run(
+            .capturingSnapshot(mode), { VMCaptureContext(operation: $0, mode: mode) }, body)
+    }
+
+    /// Admits `kind`, commits it, runs `body` under the context `makeContext`
+    /// builds from the operation's, and commits where the body leaves the VM.
+    private func run<Context: ~Copyable, T>(
+        _ kind: VMOperationKind,
+        _ makeContext: (consuming VMOperationContext) -> Context,
+        _ body: (borrowing Context) async throws -> VMOperationEnding<T>
+    ) async throws -> T {
+        let bundle = try requireAdmitted(.operation(kind))
+        let outcome = commitOperation(kind)
+        let context = makeContext(VMOperationContext(activity: self, kind: kind, bundle: bundle))
         let ending: VMOperationEnding<T>
         do {
             ending = try await body(context)
         } catch {
-            ending = .failed(operationKind.restAfterFailure(error), error)
+            ending = .failed(kind.restAfterFailure(error), error)
         }
         return try finish(ending, outcome: outcome).get()
     }
@@ -238,40 +258,53 @@ final class VMActivity {
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let bundle = try requireAdmitted(.operation(kind))
-        let outcome = commitOperation(kind)
-        outcome.task = Task { @MainActor in
-            let context = VMOperationContext(activity: self, kind: kind, bundle: bundle)
-            let ending: VMOperationEnding<Void>
-            do {
-                ending = try await body(context)
-            } catch {
-                ending = .failed(kind.restAfterFailure(error), error)
-            }
-            _ = self.finish(ending, outcome: outcome, whenEnded: whenEnded)
-        }
-        return outcome
+        try launchRun(kind, whenEnded: whenEnded, { $0 }, body)
     }
 
-    /// ``launch(_:whenEnded:_:)`` for a bring-up — a guest setup, or a revert
-    /// no caller waits on.
+    /// ``launch(_:whenEnded:_:)`` for a bring-up — a guest setup.
     @discardableResult
     func launchBringUp(
         _ kind: VMBringUpKind,
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let operationKind = VMOperationKind.bringUp(kind)
-        let bundle = try requireAdmitted(.operation(operationKind))
-        let outcome = commitOperation(operationKind)
+        try launchRun(.bringUp(kind), whenEnded: whenEnded, { VMBringUpContext(operation: $0) }, body)
+    }
+
+    /// ``launch(_:whenEnded:_:)`` for a revert to `snapshot`, resuming the
+    /// guest at its end when `resumesAfter`.
+    @discardableResult
+    func launchRevert(
+        to snapshot: VMSnapshot, resumesAfter: Bool,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
+        _ body: @escaping @MainActor (borrowing VMRevertContext) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        try launchRun(
+            .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)),
+            whenEnded: whenEnded,
+            {
+                VMRevertContext(
+                    bringUp: VMBringUpContext(operation: $0), snapshot: snapshot,
+                    resumesAfter: resumesAfter)
+            }, body)
+    }
+
+    /// ``run(_:_:_:)`` in a task the operation owns.
+    private func launchRun<Context: ~Copyable>(
+        _ kind: VMOperationKind,
+        whenEnded: (@MainActor (Result<Void, any Error>) -> Void)?,
+        _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
+        _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        let bundle = try requireAdmitted(.operation(kind))
+        let outcome = commitOperation(kind)
         outcome.task = Task { @MainActor in
-            let context = VMBringUpContext(
-                operation: VMOperationContext(activity: self, kind: operationKind, bundle: bundle))
+            let context = makeContext(VMOperationContext(activity: self, kind: kind, bundle: bundle))
             let ending: VMOperationEnding<Void>
             do {
                 ending = try await body(context)
             } catch {
-                ending = .failed(operationKind.restAfterFailure(error), error)
+                ending = .failed(kind.restAfterFailure(error), error)
             }
             _ = self.finish(ending, outcome: outcome, whenEnded: whenEnded)
         }
@@ -817,15 +850,6 @@ struct VMOperationContext: ~Copyable, Sendable {
     @MainActor func endSession() {
         activity.endOperationSessionItself()
     }
-
-    /// Waits for the operation's session to end, and answers how.
-    ///
-    /// - Throws: `CancellationError` once the operation's task is cancelled.
-    @MainActor func sessionEnded() async throws -> VMSessionEnd {
-        let activity = activity
-        try await waitForObservedChangeUnlessCancelled { activity.operationSessionEnd != nil }
-        return activity.operationSessionEnd ?? .endedByOperation
-    }
 }
 
 /// The authority a bring-up's body acts with — the only one
@@ -846,6 +870,46 @@ struct VMBringUpContext: ~Copyable, Sendable {
         operation.activityForTesting.bindSession(withoutMachine: sessionID)
     }
     #endif
+}
+
+/// The authority a guest start's body acts with: a bring-up admitted as
+/// `kind`, minted only by ``VMActivity/startGuest(_:_:)``.
+struct VMGuestStartContext: ~Copyable, Sendable {
+    let bringUp: VMBringUpContext
+    let kind: VMGuestStartKind
+
+    fileprivate init(bringUp: consuming VMBringUpContext, kind: VMGuestStartKind) {
+        self.bringUp = bringUp
+        self.kind = kind
+    }
+}
+
+/// The authority a snapshot capture's body acts with: an operation admitted
+/// to capture in `mode`, minted only by ``VMActivity/captureSnapshot(_:_:)``.
+struct VMCaptureContext: ~Copyable, Sendable {
+    let operation: VMOperationContext
+    let mode: VMSnapshotCaptureMode
+
+    fileprivate init(operation: consuming VMOperationContext, mode: VMSnapshotCaptureMode) {
+        self.operation = operation
+        self.mode = mode
+    }
+}
+
+/// The authority a revert's body acts with: a bring-up admitted to revert to
+/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:whenEnded:_:)``.
+struct VMRevertContext: ~Copyable, Sendable {
+    let bringUp: VMBringUpContext
+    let snapshot: VMSnapshot
+    /// Whether the revert brings the guest back up on the snapshot's saved
+    /// state once the files are in place.
+    let resumesAfter: Bool
+
+    fileprivate init(bringUp: consuming VMBringUpContext, snapshot: VMSnapshot, resumesAfter: Bool) {
+        self.bringUp = bringUp
+        self.snapshot = snapshot
+        self.resumesAfter = resumesAfter
+    }
 }
 
 #if DEBUG
@@ -883,7 +947,7 @@ extension VMOperationKind {
     func restAfterFailure(_ error: any Error) -> VMOperationRest {
         let transient = VirtualizationService.isTransientStartError(error)
         switch self {
-        case .bringUp(.starting), .bringUp(.restoringSavedState):
+        case .bringUp(.guestStart):
             return .atRest(transient ? .stopped : .failed(message: error.localizedDescription))
         case .bringUp(.settingUp):
             if error is CancellationError || transient { return .atRest(.initialBoot) }

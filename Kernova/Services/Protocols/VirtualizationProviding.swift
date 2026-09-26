@@ -16,13 +16,11 @@ enum GuestStartRoute: Equatable, Sendable {
     /// saved there.
     case restoredSavedState
 
-    /// The route `kind` takes, or `nil` for a bring-up that starts no guest of
-    /// its own — a guest setup, or a revert.
-    init?(_ kind: VMBringUpKind) {
+    /// The route `kind` takes.
+    init(_ kind: VMGuestStartKind) {
         switch kind {
         case .starting(let recovery): self = recovery ? .recoveryBoot : .coldBoot
         case .restoringSavedState: self = .restoredSavedState
-        case .settingUp, .reverting: return nil
         }
     }
 
@@ -47,7 +45,7 @@ protocol VirtualizationProviding: Sendable {
     /// `provisioning` is the macOS account a cold boot creates inside the
     /// guest; the other two routes create none and ignore it.
     func start(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
+        _ instance: VMInstance, _ context: borrowing VMGuestStartContext,
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute>
 
@@ -72,32 +70,31 @@ protocol VirtualizationProviding: Sendable {
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void>
 
-    /// Captures `snapshot` in the mode `context`'s kind names — copies of the
-    /// bundle's disks, plus the guest's memory from VZ or cloned from the
-    /// bundle's suspend slot, unless the VM is stopped — leaving the VM where
-    /// it was found.
+    /// Captures `snapshot` in `context`'s mode — copies of the bundle's disks,
+    /// plus the guest's memory from VZ or cloned from the bundle's suspend
+    /// slot, unless the VM is stopped — leaving the VM where it was found.
     ///
     /// Answers the snapshot, of the kind the mode takes, carrying the
     /// ``VMSnapshot/macAddress`` of the configuration the capture wrote.
     func takeSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot>
 
-    /// Returns the VM to `snapshot`, discarding whatever session is live and
-    /// keeping the snapshot itself.
+    /// Returns the VM to `context`'s snapshot, discarding whatever session is
+    /// live and keeping the snapshot itself.
     ///
     /// The VM lands in the state the snapshot captured: suspended on a warm
     /// snapshot's memory image, stopped on a cold snapshot's disks — and a
-    /// revert whose kind `resumesAfter` restores that memory image inside the
-    /// same operation, a failure there arriving as
+    /// revert whose context `resumesAfter` restores that memory image inside
+    /// the same operation, a failure there arriving as
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` with the files
     /// already written. `commitConfiguration` receives the plan once the
     /// snapshot's files are staged and before any of them is swapped into the
     /// bundle; a throw there discards the staging and leaves the bundle as it
     /// was.
     func revertToSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void>
 }

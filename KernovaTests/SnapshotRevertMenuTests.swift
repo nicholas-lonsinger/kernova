@@ -88,7 +88,7 @@ struct SnapshotRevertMenuTests {
     @Test("Items are disabled while the VM is mid-transition")
     func itemsDisabledWhileTransitioning() {
         let instance = makeInstance(
-            phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
 
         #expect(rebuild(for: instance).items.allSatisfy { !$0.isEnabled })

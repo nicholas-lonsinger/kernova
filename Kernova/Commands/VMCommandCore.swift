@@ -333,8 +333,8 @@ final class VMCommandCore: VMCommanding {
     /// reads it out ("is busy \(…)").
     static func busyDescription(_ kind: VMOperationKind) -> String {
         switch kind {
-        case .bringUp(.starting): "starting"
-        case .bringUp(.restoringSavedState): "restoring its saved state"
+        case .bringUp(.guestStart(.starting)): "starting"
+        case .bringUp(.guestStart(.restoringSavedState)): "restoring its saved state"
         case .bringUp(.settingUp(.macOSInstall)): "installing macOS"
         case .bringUp(.settingUp(.linuxImageDownload)): "downloading its installer image"
         case .bringUp(.reverting): "reverting to a snapshot"

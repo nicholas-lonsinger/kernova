@@ -180,7 +180,7 @@ struct VirtualizationServiceTests {
         }
 
         await #expect(throws: GuestStopped.self) {
-            try await instance.activity.bringUp(.starting(recovery: false)) {
+            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
                 (context: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 context.bindSessionForTesting(UUID())
@@ -239,6 +239,76 @@ struct VirtualizationServiceTests {
         #expect(!instance.hasSaveFile)
         // Stopped, not suspended on a slot that cannot restore.
         #expect(instance.phase == .stopped)
+    }
+
+    // MARK: - A bundle that moves under an operation
+
+    /// A VM in `phase` holding a suspend slot, and a second bundle for the same
+    /// VM — what the library re-binds it to once its bundle moves — holding
+    /// one too.
+    private func vmWithMovedBundle(
+        phase: VMLifecyclePhase
+    ) throws -> (instance: VMInstance, moved: VMBundle) {
+        let files = InMemoryVMBundleFiles()
+        let factory = VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files))
+        let instance = VMInstanceFixture.make(phase: phase, files: files, bundleFactory: factory)
+        let movedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
+        files.seed(instance.configuration, at: movedURL)
+        let moved = factory.make(VMInstanceFixture.read(movedURL, from: files))
+        for bundleURL in [instance.bundleURL, movedURL] {
+            try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+            try Data("suspend slot".utf8).write(to: VMBundleLayout(bundleURL: bundleURL).saveFileURL)
+        }
+        return (instance, moved)
+    }
+
+    @Test("A save whose VM is re-bound mid-operation writes and drops the admitted bundle's slot")
+    func saveUnderAMovedBundleKeepsToTheAdmittedSlot() async throws {
+        let (instance, moved) = try vmWithMovedBundle(phase: .running(sessionID: UUID()))
+        let admitted = instance.bundleLayout
+        let movedLayout = VMBundleLayout(bundleURL: moved.url)
+        defer {
+            try? FileManager.default.removeItem(at: admitted.bundleURL)
+            try? FileManager.default.removeItem(at: moved.url)
+        }
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setSaveError(NSError(domain: "test", code: 1))
+
+        await #expect(throws: (any Error).self) {
+            try await instance.activity.perform(.saving) { context in
+                instance.rebind(to: moved)
+                return try await VirtualizationService.save(instance, context, session: session)
+            }
+        }
+
+        #expect(await session.savedStateURLs == [admitted.saveFileURL])
+        #expect(!admitted.hasSaveFile)
+        #expect(movedLayout.hasSaveFile)
+    }
+
+    @Test("A restore whose VM is re-bound mid-operation reads and drops the admitted bundle's slot")
+    func restoreUnderAMovedBundleKeepsToTheAdmittedSlot() async throws {
+        let (instance, moved) = try vmWithMovedBundle(phase: .suspended)
+        let admitted = instance.bundleLayout
+        let movedLayout = VMBundleLayout(bundleURL: moved.url)
+        defer {
+            try? FileManager.default.removeItem(at: admitted.bundleURL)
+            try? FileManager.default.removeItem(at: moved.url)
+        }
+        let session = MockSnapshotSession(guestState: .paused)
+
+        try await instance.activity.startGuest(.restoringSavedState) { context in
+            instance.rebind(to: moved)
+            try await VirtualizationService.restoreSavedState(
+                instance, context.bringUp.operation, session: session)
+            context.bringUp.bindSessionForTesting(UUID())
+            return .rest(.live(.running), ())
+        }
+
+        #expect(await session.restoredStateURLs == [admitted.saveFileURL])
+        #expect(!admitted.hasSaveFile)
+        #expect(movedLayout.hasSaveFile)
     }
 
     // MARK: - Warm capture over a session that goes away
@@ -416,12 +486,11 @@ struct VirtualizationServiceTests {
             commitConfiguration ?? { plan in
                 try fixture.library.commitRevertedConfiguration(plan, on: fixture.instance)
             }
-        try await fixture.instance.activity.bringUp(
-            .reverting(snapshotID: target.id, resumesAfter: false)
-        ) { context in
+        try await fixture.instance.activity.launchRevert(to: target, resumesAfter: false) {
+            context in
             try await service.revertToSnapshot(
-                fixture.instance, context, snapshot: target, commitConfiguration: commit)
-        }
+                fixture.instance, context, commitConfiguration: commit)
+        }.value()
     }
 
     /// Captures `snapshot` from `instance` inside the capture operation the VM
@@ -430,7 +499,7 @@ struct VirtualizationServiceTests {
         _ instance: VMInstance, _ snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMSnapshot {
         let mode = try #require(instance.snapshotCaptureMode)
-        return try await instance.activity.perform(.capturingSnapshot(mode)) { context in
+        return try await instance.activity.captureSnapshot(mode) { context in
             try await service.takeSnapshot(instance, context, snapshot: snapshot)
         }
     }
@@ -707,7 +776,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.snapshotCaptureMode == nil)
 
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await fixture.instance.activity.perform(.capturingSnapshot(.suspended)) { context in
+            try await fixture.instance.activity.captureSnapshot(.suspended) { context in
                 try await service.takeSnapshot(
                     fixture.instance, context,
                     snapshot: VMSnapshotCaptureRequest(name: "No slot"))
@@ -766,9 +835,9 @@ struct VirtualizationServiceTests {
     /// Brings `instance` up by `kind` inside the bring-up the VM admits,
     /// running the real start body.
     private func start(
-        _ instance: VMInstance, _ kind: VMBringUpKind = .starting(recovery: false)
+        _ instance: VMInstance, _ kind: VMGuestStartKind = .starting(recovery: false)
     ) async throws {
-        _ = try await instance.activity.bringUp(kind) { context in
+        _ = try await instance.activity.startGuest(kind) { context in
             try await service.start(instance, context, provisioning: nil)
         }
     }
@@ -1121,7 +1190,7 @@ struct VirtualizationServiceTests {
             try VMInstanceFixture.writeSaveFile(for: instance)
             defer { VMInstanceFixture.removeBundle(of: instance) }
             #expect(
-                await restAfterFailedBringUp(.restoringSavedState, on: instance, with: failure.error)
+                await restAfterFailedBringUp(.guestStart(.restoringSavedState), on: instance, with: failure.error)
                     == .suspended, "\(failure.label)")
         }
     }
@@ -1130,7 +1199,7 @@ struct VirtualizationServiceTests {
     func restingPhaseAfterLifecycleFailureWithoutASlot() async {
         // A permanent start failure rests at `.failed` carrying the message.
         let permanent = await restAfterFailedBringUp(
-            .starting(recovery: false), on: VMInstanceFixture.make(phase: .stopped),
+            .guestStart(.starting(recovery: false)), on: VMInstanceFixture.make(phase: .stopped),
             with: VirtualizationError.noVirtualMachine)
         #expect(permanent.status == .error)
         #expect(permanent.errorMessage != nil)
@@ -1138,7 +1207,7 @@ struct VirtualizationServiceTests {
         // A transient start failure rests stopped with no message.
         #expect(
             await restAfterFailedBringUp(
-                .starting(recovery: false), on: VMInstanceFixture.make(phase: .stopped),
+                .guestStart(.starting(recovery: false)), on: VMInstanceFixture.make(phase: .stopped),
                 with: NSError(
                     domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue))
                 == .stopped)

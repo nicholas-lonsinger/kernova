@@ -102,21 +102,18 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     // MARK: - VirtualizationProviding
 
     func start(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
+        _ instance: VMInstance, _ context: borrowing VMGuestStartContext,
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute> {
         startCallCount += 1
         lastStartProvisioning = provisioning
-        guard case .bringUp(let kind) = context.operation.kind, let route = GuestStartRoute(kind)
-        else {
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
-        }
+        let route = GuestStartRoute(context.kind)
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
         if let error = startError { throw error }
-        if route == .restoredSavedState { context.operation.bundle.removeSaveFile() }
-        context.bindSessionForTesting(UUID())
+        if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
+        context.bringUp.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
 
@@ -162,36 +159,35 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     }
 
     func takeSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        guard case .capturingSnapshot(let mode) = context.kind else {
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
-        return .rest(
+        .rest(
             .asStarted,
-            VMSnapshot(request.record(capturedIn: mode), macAddress: instance.configuration.macAddress))
+            VMSnapshot(
+                request.record(capturedIn: context.mode), macAddress: instance.configuration.macAddress))
     }
 
     func revertToSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
+        let snapshot = context.snapshot
         if shouldSuspendBeforePlanning {
             await suspendIfNeeded()
         }
-        let plan = try await context.operation.bundle.planRestore(fromSnapshot: snapshot.id, kind: snapshot.kind)
+        let plan = try await context.bringUp.operation.bundle.planRestore(
+            fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
-        context.operation.endSession()
-        try await context.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
+        context.bringUp.operation.endSession()
+        try await context.bringUp.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
         if shouldSuspendBeforeInstall {
             await suspendIfNeeded()
         }
-        try await context.operation.bundle.installRestore(plan)
+        try await context.bringUp.operation.bundle.installRestore(plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)

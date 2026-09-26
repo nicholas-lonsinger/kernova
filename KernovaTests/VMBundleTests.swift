@@ -528,7 +528,7 @@ struct VMBundleTests {
         let bundle = try makeOnDiskBundle()
         defer { try? FileManager.default.removeItem(at: bundle.url) }
         let id = UUID()
-        try Data("slot".utf8).write(to: bundle.saveFileURL)
+        try Data("slot".utf8).write(to: VMBundleLayout(bundleURL: bundle.url).saveFileURL)
 
         try await withOperation(on: bundle) { context in
             _ = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
@@ -536,7 +536,7 @@ struct VMBundleTests {
         }
 
         #expect(text(at: VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: id).saveFileURL) == "slot")
-        #expect(text(at: bundle.saveFileURL) == "slot")
+        #expect(text(at: VMBundleLayout(bundleURL: bundle.url).saveFileURL) == "slot")
     }
 
     @Test("A partial capture's directory is removed outright, and a listed one is trashed")
@@ -606,14 +606,20 @@ struct VMBundleTests {
     func removeSaveFileDeletesTheSlot() async throws {
         let bundle = try makeOnDiskBundle()
         defer { try? FileManager.default.removeItem(at: bundle.url) }
-        try Data("slot".utf8).write(to: bundle.saveFileURL)
+        try Data("slot".utf8).write(to: VMBundleLayout(bundleURL: bundle.url).saveFileURL)
 
         try await withOperation(on: bundle) { context in
+            let slotURL = context.bundle.saveFileURL
+            let heldBefore = context.bundle.hasSaveFile
+            #expect(slotURL == VMBundleLayout(bundleURL: bundle.url).saveFileURL)
+            #expect(heldBefore)
             context.bundle.removeSaveFile()
-            #expect(!exists(bundle.saveFileURL))
+            let heldAfter = context.bundle.hasSaveFile
+            #expect(!exists(slotURL))
+            #expect(!heldAfter)
 
             context.bundle.removeSaveFile()
-            #expect(!exists(bundle.saveFileURL))
+            #expect(!exists(VMBundleLayout(bundleURL: bundle.url).saveFileURL))
         }
     }
 

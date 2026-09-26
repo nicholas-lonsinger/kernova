@@ -48,7 +48,7 @@ struct VMInstanceTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         #expect(instance.snapshotCaptureMode == .suspended)
@@ -202,7 +202,7 @@ struct VMInstanceTests {
         let live = VMLifecyclePhase.running(sessionID: UUID())
         for phase: VMLifecyclePhase in [
             live, .operating(.saving, from: live),
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped),
             .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
         ] {
             instance.activity.placeForTesting(phase)
@@ -233,7 +233,7 @@ struct VMInstanceTests {
         let error = NSError(domain: "test", code: 1)
         for phase: VMLifecyclePhase in [
             .operating(.saving, from: live),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: sessionID),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: sessionID),
         ] {
             let instance = VMInstanceFixture.make(phase: phase)
             defer { VMInstanceFixture.removeBundle(of: instance) }
@@ -359,8 +359,8 @@ struct VMInstanceTests {
         "hasLiveSession is false during an operation that shows its own status, even with a live virtual machine",
         arguments: [
             PhaseFixture.operating(.saving, from: .running(sessionID: UUID())),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot, boundSession: UUID()),
             .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
         ])
@@ -428,7 +428,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make()
 
         #expect(instance.diskImageURL.lastPathComponent == "Disk.asif")
-        #expect(instance.bundle.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+        #expect(instance.bundleLayout.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
     }
 
     // MARK: - Serial Console
@@ -484,7 +484,7 @@ struct VMInstanceTests {
         #expect(VMInstanceFixture.make(phase: .stopped).statusDisplayNSColor == .systemGray)
         #expect(VMInstanceFixture.make(phase: .running(sessionID: UUID())).statusDisplayNSColor == .systemGreen)
         #expect(
-            VMInstanceFixture.make(phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            VMInstanceFixture.make(phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
                 .statusDisplayNSColor == .systemOrange)
         #expect(VMInstanceFixture.make(phase: .failed(message: "Boot failed.")).statusDisplayNSColor == .systemRed)
     }
@@ -804,7 +804,7 @@ struct VMInstanceTests {
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
 
-        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
         #expect(instance.isRestingAtEphemeralBaseline)
     }
 
@@ -813,7 +813,7 @@ struct VMInstanceTests {
         let (instance, _, temp) = try makeEphemeralInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: temp) }
 
-        try Data("captured".utf8).write(to: instance.bundle.saveFileURL)
+        try Data("captured".utf8).write(to: instance.bundleLayout.saveFileURL)
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
@@ -822,7 +822,7 @@ struct VMInstanceTests {
         let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
-        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
 
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(!instance.isRestingAtEphemeralBaseline)
@@ -833,7 +833,7 @@ struct VMInstanceTests {
         let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
         defer { try? FileManager.default.removeItem(at: temp) }
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
-        try FileManager.default.copyItem(at: captured, to: instance.bundle.saveFileURL)
+        try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
 
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
@@ -980,13 +980,13 @@ struct VMInstanceTests {
 
     nonisolated private static let settleRunningRows: [SettleRunningRow] = [
         SettleRunningRow(
-            kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped, slot: false,
+            kind: .bringUp(.guestStart(.starting(recovery: false))), startedFrom: .stopped, slot: false,
             activatesNetwork: true, armsWatchdog: true),
         // A restore resumes whatever guest state was frozen, which may be a
         // Recovery session that never runs the agent — Start of a VM holding a
         // slot included.
         SettleRunningRow(
-            kind: .bringUp(.restoringSavedState), startedFrom: .suspended, slot: true,
+            kind: .bringUp(.guestStart(.restoringSavedState)), startedFrom: .suspended, slot: true,
             activatesNetwork: true, armsWatchdog: false),
         SettleRunningRow(
             kind: .bringUp(.reverting(snapshotID: settleSession, resumesAfter: true)),
@@ -1262,7 +1262,7 @@ struct VMInstanceTests {
         arguments: [
             PhaseFixture.settled(.livePaused(sessionID: UUID())),
             .operating(.saving, from: .running(sessionID: UUID())),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
             .settled(.stopped),
         ])
     func watchdogNoopUnlessRunning(phase fixture: PhaseFixture) async throws {

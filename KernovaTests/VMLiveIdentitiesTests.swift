@@ -21,7 +21,7 @@ struct VMLiveIdentitiesTests {
         let library = makeWiredLibrary(holding: [first, second], preferences: preferences)
 
         first.activity.placeForTesting(
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
 
         // No session exists yet on either side: the operation alone is what
         // makes the first live to the second's check.

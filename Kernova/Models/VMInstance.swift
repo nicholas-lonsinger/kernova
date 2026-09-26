@@ -760,10 +760,10 @@ final class VMInstance: VMActivityOwner {
 
     func operationDidSettleRunning(_ kind: VMOperationKind) {
         switch kind {
-        case .bringUp(.starting), .resuming:
+        case .bringUp(.guestStart(.starting)), .resuming:
             activateNetworkAttachment()
             startAgentPostStartWatchdog()
-        case .bringUp(.restoringSavedState), .bringUp(.reverting):
+        case .bringUp(.guestStart(.restoringSavedState)), .bringUp(.reverting):
             // Arms no watchdog: a restore resumes whatever guest state was
             // frozen, which may be a Recovery session that never runs the
             // agent, and no host-side flag survives the save to say which.

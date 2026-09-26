@@ -263,7 +263,7 @@ struct VMCommandCoreUSBAccessoryTests {
     func editNeedsALiveGuest() async throws {
         for phase: VMLifecyclePhase in [
             .stopped, .suspended,
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
         ] {
             let harness = makeHarness()
             let service = try #require(harness.accessories)

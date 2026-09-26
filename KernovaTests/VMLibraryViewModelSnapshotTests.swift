@@ -156,7 +156,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness.viewModel, files: harness.storage.files,
-            phase: .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
 
         harness.viewModel.requestTakeSnapshot(instance)
 
@@ -186,7 +186,7 @@ struct VMLibraryViewModelSnapshotTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         await harness.viewModel.takeSnapshot(instance, name: "Suspended").value

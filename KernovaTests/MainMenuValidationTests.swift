@@ -88,11 +88,11 @@ struct MainMenuValidationTests {
             (.settled(.livePaused(sessionID: UUID())), true),
             (
                 .operating(
-                    .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
                 false
             ),
             (.operating(.saving, from: .running(sessionID: UUID())), false),
-            (.operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()), false),
+            (.operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()), false),
             (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), false),
             (.settled(.stopped), false),
         ])

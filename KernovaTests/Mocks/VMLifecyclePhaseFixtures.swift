@@ -59,9 +59,9 @@ enum VMLifecyclePhaseFixtures {
     static let operations: [VMLifecyclePhase] = {
         let live = VMLifecyclePhase.running(sessionID: session)
         return [
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped),
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: session),
-            .operating(.bringUp(.restoringSavedState), from: .suspended),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: session),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
             .operating(
                 .bringUp(.reverting(snapshotID: session, resumesAfter: true)), from: live),

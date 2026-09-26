@@ -89,7 +89,7 @@ struct SidebarViewControllerTests {
         instance.activity.placeForTesting(.failed(message: "Test failure"))
         #expect(instance.statusDisplayNSColor == .systemRed)
 
-        instance.activity.placeForTesting(.operating(.bringUp(.starting(recovery: false)), from: .stopped))
+        instance.activity.placeForTesting(.operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
@@ -139,9 +139,9 @@ struct SidebarViewControllerTests {
         "Agent indicator suppressed outside a live session",
         arguments: [
             PhaseFixture.operating(
-                .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
             .operating(.saving, from: .running(sessionID: UUID())),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
             .settled(.failed(message: "Boot failed.")),
             .settled(.initialBoot),
         ]
@@ -588,8 +588,8 @@ struct SidebarViewControllerTests {
         "A VM coming up offers neither stop — Virtualization takes a termination from neither",
         arguments: [
             PhaseFixture.operating(
-                .bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
         ])
     func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: PhaseFixture) {
         preferences.alwaysShowAdvancedOptions = false
@@ -641,7 +641,10 @@ struct SidebarViewControllerTests {
             (.settled(.suspended), "---E---"),
             (.settled(.running(sessionID: UUID())), "--E-EEE"),
             (.settled(.livePaused(sessionID: UUID())), "---EEEE"),
-            (.operating(.bringUp(.starting(recovery: false)), from: .stopped, boundSession: UUID()), "DD-----"),
+            (
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                "DD-----"
+            ),
             // A base-status operation from rest dims what the VM takes once it ends.
             (.operating(.deletingSnapshot, from: .stopped), "DD-----"),
             (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDD"),

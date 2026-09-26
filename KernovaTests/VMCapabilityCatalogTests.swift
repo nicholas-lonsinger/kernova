@@ -50,7 +50,7 @@ struct VMCapabilityCatalogTests {
             hostState: hostState, mutate: mutate)
     }
 
-    private static let coldBoot = VMOperationKind.bringUp(.starting(recovery: false))
+    private static let coldBoot = VMOperationKind.bringUp(.guestStart(.starting(recovery: false)))
 
     // MARK: - The request each capability asks for
 
@@ -445,8 +445,8 @@ struct VMCapabilityCatalogTests {
         }
 
         let restoring: [VMLifecyclePhase] = [
-            .operating(.bringUp(.restoringSavedState), from: .suspended),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
         ]
         for phase in restoring {
             let harness = makeHarness()
@@ -498,9 +498,9 @@ struct VMCapabilityCatalogTests {
         /// it joins.
         func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
             switch (capability, phase.operation?.kind) {
-            case (.start, .bringUp(.starting(recovery: false))?),
-                (.start, .bringUp(.restoringSavedState)?),
-                (.resume, .bringUp(.restoringSavedState)?),
+            case (.start, .bringUp(.guestStart(.starting(recovery: false)))?),
+                (.start, .bringUp(.guestStart(.restoringSavedState))?),
+                (.resume, .bringUp(.guestStart(.restoringSavedState))?),
                 (.forceStop, .forceStopping?):
                 true
             default: false
@@ -704,7 +704,7 @@ struct VMCapabilityCatalogTests {
             // nothing to bring up.
             .settled(.livePaused(sessionID: VMLifecyclePhaseFixtures.session)),
             .operating(
-                .bringUp(.starting(recovery: false)), from: .stopped,
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped,
                 boundSession: VMLifecyclePhaseFixtures.session),
             .operating(.saving, from: .running(sessionID: VMLifecyclePhaseFixtures.session)),
             .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),

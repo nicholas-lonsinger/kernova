@@ -76,7 +76,7 @@ struct DetailRouteTests {
         for phase in [
             live, .livePaused(sessionID: Self.session), .operating(.saving, from: live),
             .operating(.capturingSnapshot(.live), from: live),
-            .operating(.bringUp(.restoringSavedState), from: .suspended, boundSession: Self.session),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: Self.session),
         ] {
             let display = DetailRoute.resolve(
                 phase: phase,
@@ -101,7 +101,7 @@ struct DetailRouteTests {
         for paneMode in [DetailPaneMode.display, .settings] {
             let route = DetailRoute.resolve(
                 phase: .operating(
-                    .bringUp(.starting(recovery: false)), from: .stopped,
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped,
                     boundSession: Self.session),
                 hasSetupState: false,
                 detailPaneMode: paneMode
@@ -120,7 +120,7 @@ struct DetailRouteTests {
             .operating(
                 .bringUp(.reverting(snapshotID: Self.session, resumesAfter: false)),
                 from: .running(sessionID: Self.session), sessionEnd: .endedByOperation),
-            .operating(.bringUp(.restoringSavedState), from: .suspended),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
         ] {
             for paneMode in [DetailPaneMode.display, .settings] {
                 let route = DetailRoute.resolve(

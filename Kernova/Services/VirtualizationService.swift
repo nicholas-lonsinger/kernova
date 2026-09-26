@@ -30,29 +30,22 @@ final class VirtualizationService {
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
     /// states.
     func start(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
+        _ instance: VMInstance, _ context: borrowing VMGuestStartContext,
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute> {
-        let operationKind = context.operation.kind
-        guard case .bringUp(let kind) = operationKind, let route = GuestStartRoute(kind) else {
-            #log(
-                Self.logger, .fault,
-                "start of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
-            )
-            assertionFailure("VirtualizationService.start outside a start or restore bring-up")
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "start")
-        }
+        let route = GuestStartRoute(context.kind)
+        let hasSaveFile = context.bringUp.operation.bundle.hasSaveFile
         #log(
             Self.logger, .debug,
-            "start: route=\(String(describing: route), privacy: .public), hasSaveFile=\(instance.hasSaveFile, privacy: .public)"
+            "start: route=\(String(describing: route), privacy: .public), hasSaveFile=\(hasSaveFile, privacy: .public)"
         )
         do {
             switch route {
             case .restoredSavedState:
-                try await restoreFromSaveFile(instance, context)
+                try await restoreFromSaveFile(instance, context.bringUp)
             case .coldBoot, .recoveryBoot:
                 try await coldBootRetryingLockContention(
-                    instance, context, bootIntoRecovery: route == .recoveryBoot,
+                    instance, context.bringUp, bootIntoRecovery: route == .recoveryBoot,
                     provisioning: route.deliversGuestProvisioning ? provisioning : nil)
             }
         } catch {
@@ -276,7 +269,7 @@ final class VirtualizationService {
         do {
             try await detachUSBAccessories(from: instance, session: session, for: sessionID)
             try await session.pauseIfRunning()
-            try await session.saveMachineState(to: instance.bundle.saveFileURL)
+            try await session.saveMachineState(to: context.bundle.saveFileURL)
         } catch {
             #log(
                 logger, .error,
@@ -326,19 +319,10 @@ final class VirtualizationService {
     /// snapshot directory and leaves the VM where it was: live, paused at
     /// worst, or at rest.
     func takeSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
         snapshot request: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        let operationKind = context.kind
-        guard case .capturingSnapshot(let mode) = operationKind else {
-            #log(
-                Self.logger, .fault,
-                "A snapshot of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
-            )
-            assertionFailure("VirtualizationService.takeSnapshot outside a capture")
-            throw VirtualizationError.invalidStateTransition(
-                from: instance.status, action: "take a snapshot of")
-        }
+        let mode = context.mode
         #log(
             Self.logger, .debug,
             "takeSnapshot: mode=\(String(describing: mode), privacy: .public), status=\(instance.status.displayName, privacy: .public)"
@@ -346,13 +330,15 @@ final class VirtualizationService {
         let snapshot = request.record(capturedIn: mode)
         switch mode {
         case .live:
-            guard let session = context.session else { throw VirtualizationError.noVirtualMachine }
+            guard let session = context.operation.session else {
+                throw VirtualizationError.noVirtualMachine
+            }
             return try await Self.captureWarmSnapshot(
-                instance, context, snapshot: request, session: session)
+                instance, context.operation, snapshot: request, session: session)
         case .suspended:
-            return try await takeSuspendedSnapshot(instance, context, snapshot: snapshot)
+            return try await takeSuspendedSnapshot(instance, context.operation, snapshot: snapshot)
         case .stopped:
-            return try await takeColdSnapshot(instance, context, snapshot: snapshot)
+            return try await takeColdSnapshot(instance, context.operation, snapshot: snapshot)
         }
     }
 
@@ -573,7 +559,7 @@ final class VirtualizationService {
     /// Returns the VM to a snapshot: its live session is discarded and the
     /// snapshot's disks and configuration are written back over the bundle's.
     ///
-    /// A warm snapshot installs its saved state, and a revert whose kind
+    /// A warm snapshot installs its saved state, and a revert whose context
     /// `resumesAfter` restores it inside this same operation; a cold snapshot
     /// drops the bundle's saved state and the VM rests stopped, whatever it
     /// was doing before.
@@ -583,18 +569,10 @@ final class VirtualizationService {
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` — the files are
     /// in place by then, so the caller records the revert as having landed.
     func revertToSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
-        let operationKind = context.operation.kind
-        guard case .bringUp(.reverting(_, let resumesAfter)) = operationKind else {
-            #log(
-                Self.logger, .fault,
-                "revert of '\(instance.name, privacy: .public)' ran under \(String(describing: operationKind), privacy: .public)"
-            )
-            assertionFailure("VirtualizationService.revertToSnapshot outside a revert")
-            throw VirtualizationError.invalidStateTransition(from: instance.status, action: "revert")
-        }
+        let snapshot = context.snapshot
         #log(
             Self.logger, .debug,
             "revertToSnapshot: status=\(instance.status.displayName, privacy: .public), hasVM=\(instance.hasLiveVirtualMachine, privacy: .public)"
@@ -605,14 +583,15 @@ final class VirtualizationService {
         // incomplete refuses without having cost the user the live guest.
         let plan: VMSnapshotRestorePlan
         do {
-            plan = try await context.operation.bundle.planRestore(fromSnapshot: snapshotID, kind: snapshot.kind)
+            plan = try await context.bringUp.operation.bundle.planRestore(
+                fromSnapshot: snapshotID, kind: snapshot.kind)
         } catch {
             return .failed(.asStarted, error)
         }
 
         // A live guest's memory and disks are exactly what the revert replaces,
         // and the user confirmed losing them — so terminate rather than save.
-        if let session = context.operation.session {
+        if let session = context.bringUp.operation.session {
             do {
                 try await session.stop()
             } catch {
@@ -622,7 +601,7 @@ final class VirtualizationService {
                 )
             }
         }
-        context.operation.endSession()
+        context.bringUp.operation.endSession()
 
         // Staged, then committed, then installed: nothing in the bundle moves
         // until the files are cloned aside and the configuration — which the
@@ -630,14 +609,15 @@ final class VirtualizationService {
         // a failed write stops the revert while it still costs the bundle
         // nothing.
         do {
-            try await context.operation.bundle.stageRestore(fromSnapshot: snapshotID, plan: plan)
+            try await context.bringUp.operation.bundle.stageRestore(
+                fromSnapshot: snapshotID, plan: plan)
             do {
                 try commitConfiguration(plan)
             } catch {
-                await context.operation.bundle.discardRestoreStaging()
+                await context.bringUp.operation.bundle.discardRestoreStaging()
                 throw error
             }
-            try await context.operation.bundle.installRestore(plan)
+            try await context.bringUp.operation.bundle.installRestore(plan)
         } catch {
             #log(
                 Self.logger, .error,
@@ -654,9 +634,9 @@ final class VirtualizationService {
         // cold one leaves none, so the write that just landed is what says
         // where the VM rests — unless the revert goes back to being live at
         // the captured state, which only a warm snapshot captured.
-        guard resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
+        guard context.resumesAfter, plan.kind == .warm else { return .rest(.atRest(.stopped), ()) }
         do {
-            try await restoreFromSaveFile(instance, context)
+            try await restoreFromSaveFile(instance, context.bringUp)
         } catch {
             return .failed(.atRest(.stopped), VirtualizationError.revertResumeFailed(underlying: error))
         }
@@ -754,7 +734,7 @@ final class VirtualizationService {
     ) async throws -> ConfigurationBuilder.BuildResult {
         let builder = configBuilder
         let config = instance.effectiveConfiguration
-        let bundleURL = instance.bundleURL
+        let bundleURL = context.bundle.url
         if config.bootMode == .efi {
             try await context.bundle.ensureEFIVariableStore()
         }
@@ -814,17 +794,27 @@ final class VirtualizationService {
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
+        try await Self.restoreSavedState(instance, context.operation, session: session)
+    }
 
-        #log(Self.logger, .debug, "restoreFromSaveFile: attempting restore from save file")
+    /// Loads the bundle's suspend slot into `session`, resumes the guest, and
+    /// drops the slot, over the VZ operations it needs rather than a concrete
+    /// session — like ``save(_:_:session:)``, so the slot it reads and the one
+    /// it drops are reachable without a real `VZVirtualMachine`.
+    static func restoreSavedState(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        session: any VMSnapshotSessionOperating
+    ) async throws {
+        #log(logger, .debug, "restoreFromSaveFile: attempting restore from save file")
         do {
-            try await session.restoreMachineState(from: instance.bundle.saveFileURL)
+            try await session.restoreMachineState(from: context.bundle.saveFileURL)
             try await session.resume()
-            context.operation.bundle.removeSaveFile()
+            context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
             #log(
-                Self.logger, .error,
-                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(Self.underlyingChainDescription(nsError), privacy: .public)]"
+                logger, .error,
+                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlyingChainDescription(nsError), privacy: .public)]"
             )
             throw VirtualizationError.restoreFailed(underlying: error)
         }

@@ -96,8 +96,8 @@ struct VMAdmissionTests {
         (.start(recovery: false), "AAAAIIR"),
         (.start(recovery: true), "AIIIIIR"),
         (.resume, "IIIAIAR"),
-        (.operation(.bringUp(.starting(recovery: false))), "AAAIIIR"),
-        (.operation(.bringUp(.restoringSavedState)), "IIIAIIR"),
+        (.operation(.bringUp(.guestStart(.starting(recovery: false)))), "AAAIIIR"),
+        (.operation(.bringUp(.guestStart(.restoringSavedState))), "IIIAIIR"),
         (.operation(.bringUp(.settingUp(.macOSInstall))), "IIIIIIR"),
         (.operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "AAAAAAR"),
         (.operation(.pausing), "IIIIAIR"),
@@ -155,8 +155,8 @@ struct VMAdmissionTests {
         (.pendingSetup, .start(recovery: false), "AAAAIIR"),
         (.pendingSetup, .start(recovery: true), "IIIIIIR"),
         (.pendingSetup, .operation(.bringUp(.settingUp(.macOSInstall))), "AAAIIIR"),
-        (.pendingSetup, .operation(.bringUp(.starting(recovery: false))), "IIIIIIR"),
-        (.pendingSetup, .operation(.bringUp(.starting(recovery: true))), "IIIIIIR"),
+        (.pendingSetup, .operation(.bringUp(.guestStart(.starting(recovery: false)))), "IIIIIIR"),
+        (.pendingSetup, .operation(.bringUp(.guestStart(.starting(recovery: true)))), "IIIIIIR"),
         (.pendingSetup, .cancel(.guestSetup), "IIIIIIR"),
         (.linuxPendingSetup, .start(recovery: false), "AAAAIIR"),
         (.linuxPendingSetup, .operation(.bringUp(.settingUp(.linuxImageDownload))), "AAAIIIR"),
@@ -246,14 +246,14 @@ struct VMAdmissionTests {
 
     nonisolated private static let heldTable: [HeldRow] = [
         HeldRow(
-            kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped,
+            kind: .bringUp(.guestStart(.starting(recovery: false))), startedFrom: .stopped,
             expected: "JBI IIIIII BIIB BBB BBBBAAAAA IIIB AIIII"),
         // A plain Start joins a Recovery boot; Start in Recovery joins nothing.
         HeldRow(
-            kind: .bringUp(.starting(recovery: true)), startedFrom: .stopped,
+            kind: .bringUp(.guestStart(.starting(recovery: true))), startedFrom: .stopped,
             expected: "JBI IIIIII BIIB BBB BBBBAAAAA IIIB AIIII"),
         HeldRow(
-            kind: .bringUp(.restoringSavedState), startedFrom: .suspended, slot: true,
+            kind: .bringUp(.guestStart(.restoringSavedState)), startedFrom: .suspended, slot: true,
             expected: "JIJ IIIIII IBBI BBB IBIIAAAAA IIIB AAIII"),
         HeldRow(
             kind: .bringUp(.settingUp(.macOSInstall)), startedFrom: .initialBoot,
@@ -368,7 +368,7 @@ struct VMAdmissionTests {
         let outcome = VMOutcome()
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .bringUp(.starting(recovery: false)), startedFrom: .stopped,
+                kind: .bringUp(.guestStart(.starting(recovery: false))), startedFrom: .stopped,
                 sessionState: .none, outcome: outcome))
         #expect(
             VMAdmission.decide(
@@ -392,19 +392,19 @@ struct VMAdmissionTests {
         #expect(
             VMAdmission.bringUpKind(
                 for: .start(recovery: false), phase: .suspended, facts: facts)
-                == .restoringSavedState)
+                == .guestStart(.restoringSavedState))
     }
 
     @Test("A bring-up is joined only on commit; offered, it reads as busy")
     func joinIsCommitOnly() {
         let phase = VMLifecyclePhase.operating(
             VMOperation(
-                kind: .bringUp(.restoringSavedState), startedFrom: .suspended,
+                kind: .bringUp(.guestStart(.restoringSavedState)), startedFrom: .suspended,
                 sessionState: .none, outcome: VMOutcome()))
         let facts = Self.facts(slot: true)
         #expect(
             VMAdmission.decide(.resume, posture: .offer, phase: phase, facts: facts)
-                == .refuse(.busy(.bringUp(.restoringSavedState))))
+                == .refuse(.busy(.bringUp(.guestStart(.restoringSavedState)))))
         #expect(
             VMAdmission.decide(.start(recovery: false), posture: .offer, phase: phase, facts: facts)
                 == .refuse(.invalidState))
@@ -427,22 +427,25 @@ struct VMAdmissionTests {
             // A saved state is restored ahead of any setup still pending.
             (
                 .start(recovery: false), .suspended, true, .pendingSetup,
-                .bringUp(.restoringSavedState), .restoringSavedState
+                .bringUp(.guestStart(.restoringSavedState)), .guestStart(.restoringSavedState)
             ),
             (
                 .start(recovery: false), .stopped, false, .linux,
-                .bringUp(.starting(recovery: false)), .starting(recovery: false)
+                .bringUp(.guestStart(.starting(recovery: false))), .guestStart(.starting(recovery: false))
             ),
             (
                 .start(recovery: true), .stopped, false, .linux,
-                .bringUp(.starting(recovery: true)), .starting(recovery: true)
+                .bringUp(.guestStart(.starting(recovery: true))), .guestStart(.starting(recovery: true))
             ),
             (
                 .start(recovery: true), .initialBoot, false, .pendingSetup,
-                .bringUp(.starting(recovery: true)), .starting(recovery: true)
+                .bringUp(.guestStart(.starting(recovery: true))), .guestStart(.starting(recovery: true))
             ),
             (.resume, .livePaused(sessionID: session), false, .plain, .resuming, nil),
-            (.resume, .suspended, true, .linux, .bringUp(.restoringSavedState), .restoringSavedState),
+            (
+                .resume, .suspended, true, .linux, .bringUp(.guestStart(.restoringSavedState)),
+                .guestStart(.restoringSavedState)
+            ),
             (.resume, .stopped, false, .plain, nil, nil),
             (.operation(.pausing), .running(sessionID: session), false, .plain, .pausing, nil),
             (.edit(.rename), .stopped, false, .plain, nil, nil),
@@ -502,7 +505,7 @@ struct VMAdmissionTests {
         ] {
             #expect(
                 VMAdmission.bringUpKind(for: .start(recovery: true), phase: phase, facts: facts)
-                    == .starting(recovery: true))
+                    == .guestStart(.starting(recovery: true)))
             #expect(
                 VMAdmission.decide(.start(recovery: true), posture: .commit, phase: phase, facts: facts)
                     == .refuse(.invalidState), "\(phase)")
@@ -521,7 +524,7 @@ struct VMAdmissionTests {
                 == conflict)
         #expect(
             VMAdmission.decide(
-                .operation(.bringUp(.starting(recovery: false))), posture: .commit,
+                .operation(.bringUp(.guestStart(.starting(recovery: false)))), posture: .commit,
                 phase: .stopped, facts: facts) == conflict)
         // A revert that resumes brings the snapshot's configuration up; one
         // that rests brings nothing up.

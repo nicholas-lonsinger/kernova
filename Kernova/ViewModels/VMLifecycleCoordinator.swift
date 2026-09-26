@@ -75,12 +75,12 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Lifecycle
 
-    /// Brings `instance` up by the start or restore bring-up `kind` names.
+    /// Brings `instance` up by the guest start `kind` names.
     func start(
-        _ instance: VMInstance, _ kind: VMBringUpKind,
+        _ instance: VMInstance, _ kind: VMGuestStartKind,
         provisioning: GuestProvisioningCredentials? = nil
     ) async throws -> GuestStartRoute {
-        try await instance.activity.bringUp(kind) { context in
+        try await instance.activity.startGuest(kind) { context in
             try await virtualizationService.start(instance, context, provisioning: provisioning)
         }
     }
@@ -112,7 +112,7 @@ final class VMLifecycleCoordinator {
         try instance.activity.performNow(.discardingSavedState) {
             (context: borrowing VMOperationContext) -> VMOperationEnding<Void> in
             context.bundle.removeSaveFile()
-            guard !instance.hasSaveFile else {
+            guard !context.bundle.hasSaveFile else {
                 return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
             }
             #log(
@@ -162,10 +162,10 @@ final class VMLifecycleCoordinator {
         _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
-        try await instance.activity.perform(.capturingSnapshot(mode)) { context in
+        try await instance.activity.captureSnapshot(mode) { context in
             // Read before the capture, since the capture is what clears them.
             let held = instance.liveUSBAccessories
-            let sessionID = context.sessionID
+            let sessionID = context.operation.sessionID
             let ending: VMOperationEnding<VMSnapshot>
             do {
                 ending = try await virtualizationService.takeSnapshot(
@@ -183,7 +183,7 @@ final class VMLifecycleCoordinator {
             do {
                 try record(captured)
             } catch {
-                await context.bundle.removeSnapshotDirectory(captured.id)
+                await context.operation.bundle.removeSnapshotDirectory(captured.id)
                 return .failed(rest, error)
             }
             return ending
@@ -325,11 +325,10 @@ final class VMLifecycleCoordinator {
         commitConfiguration: @escaping @MainActor (VMSnapshotRestorePlan) throws -> Void,
         landed: @escaping @MainActor () throws -> Void
     ) throws -> VMOutcome {
-        try instance.activity.launchBringUp(
-            .reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)
-        ) { [virtualizationService] context in
+        try instance.activity.launchRevert(to: snapshot, resumesAfter: resumesAfter) {
+            [virtualizationService] context in
             let ending = try await virtualizationService.revertToSnapshot(
-                instance, context, snapshot: snapshot, commitConfiguration: commitConfiguration)
+                instance, context, commitConfiguration: commitConfiguration)
             switch ending {
             case .rest(let rest, _):
                 do { try landed() } catch { return .failed(rest, error) }

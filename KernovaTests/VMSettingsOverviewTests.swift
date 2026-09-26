@@ -537,7 +537,7 @@ struct VMSettingsOverviewTests {
     func takeSnapshotFollowsTheViewModelGate() throws {
         let (vc, instance, viewModel) = makeController()
         instance.activity.placeForTesting(
-            .operating(.bringUp(.starting(recovery: false)), from: .stopped))
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         reapply(vc, (instance, viewModel))
 
         let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))
