@@ -97,7 +97,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
             await suspendIfNeeded()
         }
         if let error = startError { throw error }
-        if route == .restoredSavedState { instance.bundle.removeSaveFile() }
+        if route == .restoredSavedState { instance.bundle.removeSaveFile(context.operation) }
         context.bindSessionForTesting(UUID())
         return .rest(.live(.running), route)
     }
@@ -126,7 +126,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
-        instance.bundle.removeSaveFile()
+        instance.bundle.removeSaveFile(context)
         return .rest(.live(.running), ())
     }
 
@@ -156,14 +156,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let plan = try await instance.bundle.planRestore(
-            fromSnapshot: snapshot.id, kind: snapshot.kind)
+            context.operation, fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
             await suspendIfNeeded()
         }
         context.operation.endSession()
-        try await instance.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
+        try await instance.bundle.stageRestore(context.operation, fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(plan)
-        try await instance.bundle.installRestore(plan)
+        try await instance.bundle.installRestore(context.operation, plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.
         try VMInstanceFixture.writeSaveFile(for: instance)

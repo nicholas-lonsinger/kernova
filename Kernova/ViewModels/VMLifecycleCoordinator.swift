@@ -110,8 +110,8 @@ final class VMLifecycleCoordinator {
     /// ``VirtualizationError/savedStateNotDiscarded``.
     func discardSavedState(_ instance: VMInstance) throws {
         try instance.activity.performNow(.discardingSavedState) {
-            (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
-            instance.bundle.removeSaveFile()
+            (context: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+            instance.bundle.removeSaveFile(context)
             guard !instance.hasSaveFile else {
                 return .failed(.asStarted, VirtualizationError.savedStateNotDiscarded)
             }
@@ -183,7 +183,7 @@ final class VMLifecycleCoordinator {
             do {
                 try record(captured)
             } catch {
-                await instance.bundle.removeSnapshotDirectory(captured.id)
+                await instance.bundle.removeSnapshotDirectory(context, captured.id)
                 return .failed(rest, error)
             }
             return ending
@@ -354,9 +354,9 @@ final class VMLifecycleCoordinator {
     func discardSnapshot(
         _ instance: VMInstance, snapshotID: UUID, unlist: @MainActor () throws -> Void
     ) async throws {
-        try await instance.activity.perform(.deletingSnapshot) { _ in
+        try await instance.activity.perform(.deletingSnapshot) { context in
             try unlist()
-            try await instance.bundle.discardSnapshot(snapshotID)
+            try await instance.bundle.discardSnapshot(context, snapshotID)
             return .rest(.asStarted, ())
         }
     }

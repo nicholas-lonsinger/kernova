@@ -135,7 +135,7 @@ final class VMBundle {
     /// Creates snapshot `id`'s directory holding `configuration`, answering
     /// where its saved state goes and which bundle files it copies.
     func prepareSnapshot(
-        _ id: UUID, configuration: VMConfiguration
+        _ context: borrowing VMOperationContext, _ id: UUID, configuration: VMConfiguration
     ) async throws -> VMSnapshotCapturePlan {
         try await offMainActor {
             try $0.prepareSnapshot(bundleURL: $1, snapshotID: id, configuration: configuration)
@@ -143,7 +143,9 @@ final class VMBundle {
     }
 
     /// Clones `relativePaths` into snapshot `id`'s directory.
-    func captureDisks(intoSnapshot id: UUID, relativePaths: [String]) async throws {
+    func captureDisks(
+        _ context: borrowing VMOperationContext, intoSnapshot id: UUID, relativePaths: [String]
+    ) async throws {
         try await offMainActor {
             try $0.captureDisks(bundleURL: $1, snapshotID: id, relativePaths: relativePaths)
         }
@@ -151,18 +153,20 @@ final class VMBundle {
 
     /// Clones the suspend slot into snapshot `id`'s own saved state, leaving
     /// the slot in place.
-    func captureSuspendSlot(intoSnapshot id: UUID) async throws {
+    func captureSuspendSlot(
+        _ context: borrowing VMOperationContext, intoSnapshot id: UUID
+    ) async throws {
         try await offMainActor { try $0.captureSuspendSlot(bundleURL: $1, snapshotID: id) }
     }
 
     /// Removes snapshot `id`'s directory outright — a capture that failed
     /// partway, or one no manifest lists.
-    func removeSnapshotDirectory(_ id: UUID) async {
+    func removeSnapshotDirectory(_ context: borrowing VMOperationContext, _ id: UUID) async {
         await offMainActorInfallibly { $0.removeSnapshotDirectory(bundleURL: $1, snapshotID: id) }
     }
 
     /// Moves snapshot `id`'s directory to the Trash.
-    func discardSnapshot(_ id: UUID) async throws {
+    func discardSnapshot(_ context: borrowing VMOperationContext, _ id: UUID) async throws {
         try await offMainActor { try $0.discardSnapshot(bundleURL: $1, snapshotID: id) }
     }
 
@@ -177,26 +181,30 @@ final class VMBundle {
 
     /// What snapshot `id` holds, checked complete; touches nothing in the
     /// bundle.
-    func planRestore(fromSnapshot id: UUID, kind: VMSnapshotKind) async throws
-        -> VMSnapshotRestorePlan
-    {
+    func planRestore(
+        _ context: borrowing VMOperationContext, fromSnapshot id: UUID, kind: VMSnapshotKind
+    ) async throws -> VMSnapshotRestorePlan {
         try await offMainActor { try $0.planRestore(bundleURL: $1, snapshotID: id, kind: kind) }
     }
 
     /// Clones what `plan` restores from snapshot `id` into the restore staging
     /// directory; touches nothing else in the bundle.
-    func stageRestore(fromSnapshot id: UUID, plan: VMSnapshotRestorePlan) async throws {
+    func stageRestore(
+        _ context: borrowing VMOperationContext, fromSnapshot id: UUID, plan: VMSnapshotRestorePlan
+    ) async throws {
         try await offMainActor { try $0.stageRestore(bundleURL: $1, snapshotID: id, plan: plan) }
     }
 
     /// Swaps the staged files into the bundle and removes the staging
     /// directory.
-    func installRestore(_ plan: VMSnapshotRestorePlan) async throws {
+    func installRestore(
+        _ context: borrowing VMOperationContext, _ plan: VMSnapshotRestorePlan
+    ) async throws {
         try await offMainActor { try $0.installRestore(bundleURL: $1, plan: plan) }
     }
 
     /// Removes the restore staging directory, if the bundle holds one.
-    func discardRestoreStaging() async {
+    func discardRestoreStaging(_ context: borrowing VMOperationContext) async {
         await offMainActorInfallibly { $0.sweepRestoreStaging(bundleURL: $1) }
     }
 
@@ -211,7 +219,7 @@ final class VMBundle {
     /// Synchronous so a caller resting the VM can do both in one step. A
     /// removal the file system turned down leaves the slot in place and logs
     /// it; the caller reads the slot again to learn which happened.
-    func removeSaveFile() {
+    func removeSaveFile(_ context: borrowing VMOperationContext) {
         do {
             try machineFiles.removeSaveFile(bundleURL: url)
         } catch {
@@ -226,13 +234,15 @@ final class VMBundle {
 
     /// Creates the EFI variable store an EFI boot reads, unless the bundle
     /// already holds one.
-    func ensureEFIVariableStore() async throws {
+    func ensureEFIVariableStore(_ context: borrowing VMOperationContext) async throws {
         try await offMainActor { try $0.ensureEFIVariableStore(bundleURL: $1) }
     }
 
     /// Writes the macOS platform files an install of `hardwareModel` boots
     /// from, answering the machine identifier the bundle now holds.
-    func createMacPlatformFiles(hardwareModel: Data) async throws -> Data {
+    func createMacPlatformFiles(
+        _ context: borrowing VMOperationContext, hardwareModel: Data
+    ) async throws -> Data {
         try await offMainActor {
             try $0.createMacPlatformFiles(bundleURL: $1, hardwareModel: hardwareModel)
         }

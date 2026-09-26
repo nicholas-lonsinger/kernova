@@ -305,6 +305,19 @@ extension VMActivity {
     }
 }
 
+/// Runs `body` inside an operation holding a stopped VM built around `bundle`,
+/// answering what it returns — how a test reaches the ``VMOperationContext`` a
+/// ``VMBundle`` machine-file operation takes.
+@MainActor
+func withOperation<T>(
+    on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
+) async throws -> T {
+    let instance = VMInstance(bundle: bundle, phase: .stopped, preferences: makeTestPreferences())
+    return try await instance.activity.perform(.deletingSnapshot) { context in
+        .rest(.asStarted, try await body(context))
+    }
+}
+
 extension VMInstance {
     /// Whether a revert holds the VM.
     var isHeldByRevert: Bool {

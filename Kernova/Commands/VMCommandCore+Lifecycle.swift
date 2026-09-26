@@ -721,7 +721,7 @@ extension VMCommandCore {
         // The file, not an inference from the phase: a live guest normally
         // holds no slot, because a start that finds one restores it rather than
         // booting over it and the restore consumes the file — but
-        // ``VMBundle/removeSaveFile()`` reports a refusal by logging it, so a
+        // ``VMBundle/removeSaveFile(_:)`` reports a refusal by logging it, so a
         // slot can outlive the restore that meant to spend it, and the VM does
         // come back on it (``VMActivity/restingPhase(withoutSlot:)``).
         let keepsSuspendedSession = instance.hasSaveFile

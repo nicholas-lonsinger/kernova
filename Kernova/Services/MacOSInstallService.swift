@@ -47,7 +47,7 @@ final class MacOSInstallService {
 
         let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
         let machineIDData = try await instance.bundle.createMacPlatformFiles(
-            hardwareModel: hardwareModelData)
+            context.operation, hardwareModel: hardwareModelData)
         // The install stops unless the identity lands: the build below prefers
         // the configuration's hardware model over the bundle's file, which
         // `createMacPlatformFiles` writes only when absent, so a model an

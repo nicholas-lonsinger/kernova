@@ -132,7 +132,7 @@ final class VirtualizationService {
         // Per attempt, not once per start: the lock-contention retry loop ends
         // the session between attempts, taking this context's scopes with it.
         instance.beginSessionContext(bootedIntoRecovery: bootIntoRecovery)
-        let result = try await buildConfiguration(for: instance)
+        let result = try await buildConfiguration(for: instance, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -248,7 +248,7 @@ final class VirtualizationService {
             )
             throw error
         }
-        instance.bundle.removeSaveFile()
+        instance.bundle.removeSaveFile(context)
         #log(Self.logger, .notice, "Resumed VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.running), ())
     }
@@ -275,7 +275,7 @@ final class VirtualizationService {
             // `saveMachineState` writes the slot in place, so a throw leaves it
             // part-written — which a relaunch would offer as a resumable
             // session that cannot restore.
-            instance.bundle.removeSaveFile()
+            instance.bundle.removeSaveFile(context)
             // A guest that went away under the write rests the VM where its
             // end says; a failure written over it would report a state this
             // save did not produce.
@@ -287,7 +287,7 @@ final class VirtualizationService {
         guard context.sessionEnd == nil else {
             // The guest went away mid-write, so the slot on disk is however far
             // VZ got.
-            instance.bundle.removeSaveFile()
+            instance.bundle.removeSaveFile(context)
             #log(
                 Self.logger, .notice,
                 "VM '\(instance.name, privacy: .public)' lost its session mid-suspend — its partial saved state was dropped"
@@ -339,9 +339,9 @@ final class VirtualizationService {
             return try await Self.captureWarmSnapshot(
                 instance, context, snapshot: snapshot, session: session)
         case .suspended:
-            return try await takeSuspendedSnapshot(instance, snapshot: snapshot)
+            return try await takeSuspendedSnapshot(instance, context, snapshot: snapshot)
         case .stopped:
-            return try await takeColdSnapshot(instance, snapshot: snapshot)
+            return try await takeColdSnapshot(instance, context, snapshot: snapshot)
         }
     }
 
@@ -363,7 +363,7 @@ final class VirtualizationService {
         let snapshotID = snapshot.id
 
         do {
-            let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
+            let prepared = try await bundle.prepareSnapshot(context, snapshotID, configuration: configuration)
 
             // The guest is still there afterwards, so these are put back once
             // the capture is done — see
@@ -374,10 +374,10 @@ final class VirtualizationService {
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
             ) {
                 try await bundle.captureDisks(
-                    intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
+                    context, intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
             }
         } catch {
-            await bundle.removeSnapshotDirectory(snapshotID)
+            await bundle.removeSnapshotDirectory(context, snapshotID)
             #log(
                 logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -409,17 +409,18 @@ final class VirtualizationService {
     /// The bundle's disks alone, from a stopped VM — no VZ work, so nothing is
     /// paused and no saved state is written.
     private func takeColdSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        snapshot: VMSnapshotRecord
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let bundle = instance.bundle
         let configuration = instance.configuration
         let snapshotID = snapshot.id
         do {
-            let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
+            let prepared = try await bundle.prepareSnapshot(context, snapshotID, configuration: configuration)
             try await bundle.captureDisks(
-                intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
+                context, intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
         } catch {
-            await bundle.removeSnapshotDirectory(snapshotID)
+            await bundle.removeSnapshotDirectory(context, snapshotID)
             #log(
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -440,18 +441,19 @@ final class VirtualizationService {
     /// clone shares its blocks with that slot, so the capture costs the volume
     /// nothing until a resume drops the bundle's copy.
     private func takeSuspendedSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshotRecord
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        snapshot: VMSnapshotRecord
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let bundle = instance.bundle
         let configuration = instance.configuration
         let snapshotID = snapshot.id
         do {
-            let prepared = try await bundle.prepareSnapshot(snapshotID, configuration: configuration)
+            let prepared = try await bundle.prepareSnapshot(context, snapshotID, configuration: configuration)
             try await bundle.captureDisks(
-                intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
-            try await bundle.captureSuspendSlot(intoSnapshot: snapshotID)
+                context, intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
+            try await bundle.captureSuspendSlot(context, intoSnapshot: snapshotID)
         } catch {
-            await bundle.removeSnapshotDirectory(snapshotID)
+            await bundle.removeSnapshotDirectory(context, snapshotID)
             #log(
                 Self.logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
@@ -595,7 +597,7 @@ final class VirtualizationService {
         // incomplete refuses without having cost the user the live guest.
         let plan: VMSnapshotRestorePlan
         do {
-            plan = try await bundle.planRestore(fromSnapshot: snapshotID, kind: snapshot.kind)
+            plan = try await bundle.planRestore(context.operation, fromSnapshot: snapshotID, kind: snapshot.kind)
         } catch {
             return .failed(.asStarted, error)
         }
@@ -620,14 +622,14 @@ final class VirtualizationService {
         // a failed write stops the revert while it still costs the bundle
         // nothing.
         do {
-            try await bundle.stageRestore(fromSnapshot: snapshotID, plan: plan)
+            try await bundle.stageRestore(context.operation, fromSnapshot: snapshotID, plan: plan)
             do {
                 try commitConfiguration(plan)
             } catch {
-                await bundle.discardRestoreStaging()
+                await bundle.discardRestoreStaging(context.operation)
                 throw error
             }
-            try await bundle.installRestore(plan)
+            try await bundle.installRestore(context.operation, plan)
         } catch {
             #log(
                 Self.logger, .error,
@@ -739,12 +741,14 @@ final class VirtualizationService {
     /// Builds a VZ configuration off the main actor to avoid blocking the UI,
     /// first creating the EFI variable store an EFI boot reads when the bundle
     /// holds none.
-    private func buildConfiguration(for instance: VMInstance) async throws -> ConfigurationBuilder.BuildResult {
+    private func buildConfiguration(
+        for instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> ConfigurationBuilder.BuildResult {
         let builder = configBuilder
         let config = instance.effectiveConfiguration
         let bundleURL = instance.bundleURL
         if config.bootMode == .efi {
-            try await instance.bundle.ensureEFIVariableStore()
+            try await instance.bundle.ensureEFIVariableStore(context)
         }
         return try await Task.detached {
             try builder.build(from: config, bundleURL: bundleURL)
@@ -798,7 +802,7 @@ final class VirtualizationService {
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext()
-        let result = try await buildConfiguration(for: instance)
+        let result = try await buildConfiguration(for: instance, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -807,7 +811,7 @@ final class VirtualizationService {
         do {
             try await session.restoreMachineState(from: instance.bundle.saveFileURL)
             try await session.resume()
-            instance.bundle.removeSaveFile()
+            instance.bundle.removeSaveFile(context.operation)
         } catch {
             let nsError = error as NSError
             #log(
