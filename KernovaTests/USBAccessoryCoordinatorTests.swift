@@ -580,6 +580,39 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs == [1, 3])
     }
 
+    @Test("A start that ends running takes back its paired accessory in the step that settles it")
+    func aRealStartAttachesInItsEndingStep() async throws {
+        let service = MockUSBAccessoryService()
+        let instance = makeStoppedInstance()
+        let coordinator = try makeCoordinator(
+            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        instance.onSessionBecameAttachable = { [weak coordinator] in
+            coordinator?.sessionBecameAttachable(instance) ?? []
+        }
+        let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
+        try pair(accessory, with: instance)
+        service.accessories = [accessory]
+        instance.beginSessionContextForTesting()
+        let sessionID = UUID()
+        service.suspendNextAttach = true
+
+        try await instance.activity.startGuest(.starting(recovery: false)) { context in
+            context.bringUp.bindSessionForTesting(sessionID)
+            return .rest(.live(.running), ())
+        }
+
+        // The start's own ending admitted the attach: no other request could
+        // be decided against the running VM in between.
+        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 1))
+        #expect(instance.phase.operation?.startedFrom == .running(sessionID: sessionID))
+        try await service.attachStarted()
+        service.resumeAttach()
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+        #expect(service.attachedRegistryIDs == [1])
+        #expect(instance.phase == .running(sessionID: sessionID))
+    }
+
     @Test("Resuming a paused guest does not run the take-back again")
     func aResumeIsNotAnEdge() async throws {
         let service = MockUSBAccessoryService()
