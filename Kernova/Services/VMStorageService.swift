@@ -14,40 +14,39 @@ struct VMStorageService: Sendable {
         url.pathExtension == VMBundleFormat.fileExtension
     }
 
-    /// The root this process stages bundles under.
+    /// The library every copy of the app shares. Touches no disk.
+    static let productionLibraryDirectory = URL.applicationSupportDirectory
+        .appendingPathComponent("Kernova", isDirectory: true)
+        .appendingPathComponent("VMs", isDirectory: true)
+
+    /// Where every library bundle lives.
+    let libraryDirectory: URL
+
+    /// The root this service stages bundles under until
+    /// ``publishBundle(from:to:)`` renames a finished tree into the library.
+    ///
+    /// Inside the library so publication is a same-volume rename rather than a
+    /// second copy, and in its dot-prefixed `.Staging` so the hidden-skipping
+    /// enumerations — ``listVMBundles()`` and the import destination
+    /// reservation — never see a tree that is still growing. Every copy of
+    /// Kernova shares `.Staging` and reclaims it at launch, so each writes only
+    /// under a root it holds locked.
     let stagingRoot: ProcessStagingRoot
 
-    /// - Parameter stagingRoot: ``processStagingRoot`` in production.
-    init(stagingRoot: ProcessStagingRoot) {
-        self.stagingRoot = stagingRoot
+    /// A service over the library at `libraryDirectory`; touches no disk.
+    ///
+    /// - Parameter libraryDirectory: ``productionLibraryDirectory`` in production.
+    init(libraryDirectory: URL) {
+        self.libraryDirectory = libraryDirectory
+        stagingRoot = ProcessStagingRoot(
+            parent: libraryDirectory.appendingPathComponent(".Staging", isDirectory: true))
     }
 
     // MARK: - Directory Helpers
 
-    /// The `Application Support/Kernova` root every app-level store hangs off —
-    /// the single derivation of the path, so stores can never strand each other
-    /// by recomputing it differently. Touches no disk.
-    static let supportDirectory = URL.applicationSupportDirectory
-        .appendingPathComponent("Kernova", isDirectory: true)
-
-    private static let libraryDirectory = supportDirectory.appendingPathComponent(
-        "VMs", isDirectory: true)
-
-    /// This process's root for bundles still being written, until
-    /// ``publishBundle(from:to:)`` renames a finished tree into `vmsDirectory`.
-    ///
-    /// Under `vmsDirectory` so publication is a same-volume rename rather than a
-    /// second copy, and in its dot-prefixed `.Staging` so the hidden-skipping
-    /// enumerations — ``listVMBundles()`` and the import destination
-    /// reservation — never see a tree that is still growing. Every copy of
-    /// Kernova shares `.Staging` and reclaims it at launch, so each process
-    /// writes only under a root it holds locked.
-    static let processStagingRoot = ProcessStagingRoot(
-        parent: libraryDirectory.appendingPathComponent(".Staging", isDirectory: true))
-
     var vmsDirectory: URL {
         get throws {
-            let vmsDir = Self.libraryDirectory
+            let vmsDir = libraryDirectory
 
             if !FileManager.default.fileExists(atPath: vmsDir.path(percentEncoded: false)) {
                 try FileManager.default.createDirectory(at: vmsDir, withIntermediateDirectories: true)
@@ -155,24 +154,25 @@ struct VMStorageService: Sendable {
         }
     }
 
-    /// Creates a new, empty VM bundle directory at `bundleURL`.
-    ///
-    /// Every caller writes into a freshly minted ``makeStagedBundleURL()``; the
-    /// collision guard is the rename in ``publishBundle(from:to:)``.
+    /// Creates a new, empty VM bundle directory at `bundleURL`, a path
+    /// ``makeStagedBundleURL()`` minted, through ``stagingRoot`` so the root
+    /// is never there without its lock. The collision guard is the rename in
+    /// ``publishBundle(from:to:)``.
     func createVMBundle(at bundleURL: URL) throws {
-        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try stagingRoot.createDirectory(at: bundleURL)
         #log(
             Self.logger, .notice,
             "Created VM bundle directory \(bundleURL.lastPathComponent, privacy: .public)")
     }
 
-    /// Creates `destinationBundleURL` and copies `filesToCopy` into it from the
-    /// source bundle, skipping any the source lacks; the clone writes its own
-    /// configuration.
+    /// Creates `destinationBundleURL`, a path ``makeStagedBundleURL()`` minted,
+    /// as ``createVMBundle(at:)`` does, and copies `filesToCopy` into it from
+    /// the source bundle, skipping any the source lacks; the clone writes its
+    /// own configuration.
     func cloneVMBundle(
         from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String]
     ) throws {
-        try FileManager.default.createDirectory(at: destinationBundleURL, withIntermediateDirectories: true)
+        try stagingRoot.createDirectory(at: destinationBundleURL)
 
         let fm = FileManager.default
         for fileName in filesToCopy {

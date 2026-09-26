@@ -7,16 +7,27 @@ import Synchronization
 
 @Suite("VMStorageService Tests", .admissionGated)
 struct VMStorageServiceTests {
-    /// This test's staging root; siblings made from it stand in for other
-    /// processes'.
-    private let staging = TestStagingRoot()
+    /// A library directory this test owns, removed with the suite instance: the
+    /// test host is the app, so ``VMStorageService/productionLibraryDirectory``
+    /// is the maintainer's real library.
+    private final class ScratchLibrary: Sendable {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernovaTestLibrary-\(UUID().uuidString)", isDirectory: true)
+
+        deinit { try? FileManager.default.removeItem(at: url) }
+    }
+
+    private let library = ScratchLibrary()
     private let service: VMStorageService
 
-    /// Stages where the app does, for the cases that depend on the layout.
-    private let productionService = VMStorageService(stagingRoot: VMStorageService.processStagingRoot)
-
     init() {
-        service = VMStorageService(stagingRoot: staging.root)
+        service = VMStorageService(libraryDirectory: library.url)
+    }
+
+    /// A service over this test's library with a root of its own, standing in
+    /// for another process's.
+    private func otherProcess() -> VMStorageService {
+        VMStorageService(libraryDirectory: library.url)
     }
 
     private func files(_ bundleURL: URL) -> VMBundleFiles {
@@ -28,17 +39,22 @@ struct VMStorageServiceTests {
         VMStagedBundle.fixtureForTesting(at: bundleURL, access: CoordinatedBundleFileAccess())
     }
 
-    /// Creates the bundle directory at `url` and writes its first `config.json`,
-    /// as a create does.
-    private func createBundle(_ configuration: VMConfiguration, at url: URL) throws {
-        try service.createVMBundle(at: url)
+    /// Stages a bundle through `stager` and writes its first `config.json`, as
+    /// a create does.
+    private func stageBundle(
+        _ configuration: VMConfiguration, in stager: VMStorageService? = nil
+    ) throws -> URL {
+        let stager = stager ?? service
+        let url = try stager.makeStagedBundleURL()
+        try stager.createVMBundle(at: url)
         try writer(url).writeInitial(configuration)
+        return url
     }
 
-    /// Creates a bundle at its final URL, the shape publication leaves one in.
+    /// Stages and publishes a bundle, the shape publication leaves one in.
     private func makeBundle(_ configuration: VMConfiguration) throws -> URL {
         let url = try service.bundleURL(for: configuration)
-        try createBundle(configuration, at: url)
+        try service.publishBundle(from: try stageBundle(configuration), to: url)
         return url
     }
 
@@ -73,7 +89,6 @@ struct VMStorageServiceTests {
         )
 
         let bundleURL = try makeBundle(config)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let loaded = try files(bundleURL).readConfiguration()
         #expect(loaded.id == config.id)
@@ -91,7 +106,6 @@ struct VMStorageServiceTests {
         )
 
         let bundleURL = try makeBundle(config)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         // Update and save
         try writer(bundleURL).update(.configuration) {
@@ -107,8 +121,7 @@ struct VMStorageServiceTests {
 
     @Test("Deleting non-existent bundle throws error")
     func deleteNonExistentThrows() {
-        let fakeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("nonexistent-vm-bundle")
+        let fakeURL = library.url.appendingPathComponent("nonexistent-vm-bundle")
 
         #expect(throws: VMStorageError.self) {
             try service.deleteVMBundle(at: fakeURL)
@@ -151,8 +164,7 @@ struct VMStorageServiceTests {
 
     @Test("Permanently deleting non-existent bundle throws error")
     func permanentlyDeleteNonExistentThrows() {
-        let fakeURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("nonexistent-vm-bundle")
+        let fakeURL = library.url.appendingPathComponent("nonexistent-vm-bundle")
 
         #expect(throws: VMStorageError.self) {
             try service.permanentlyDeleteVMBundle(at: fakeURL)
@@ -168,7 +180,6 @@ struct VMStorageServiceTests {
         )
 
         let bundleURL = try makeBundle(config)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         let bundles = try service.listVMBundles()
         #expect(bundles.contains(bundleURL))
@@ -182,9 +193,6 @@ struct VMStorageServiceTests {
         let second = try makeBundle(VMConfiguration(name: "Second", guestOS: .linux, bootMode: .efi))
         let moved = first.deletingLastPathComponent()
             .appendingPathComponent("Moved-\(UUID().uuidString).kernova", isDirectory: true)
-        defer {
-            for url in [first, second, moved] { try? FileManager.default.removeItem(at: url) }
-        }
         let identity = try #require(service.bundleIdentity(at: first))
         #expect(service.bundleIdentity(at: second) != identity)
 
@@ -198,10 +206,9 @@ struct VMStorageServiceTests {
 
     @Test(
         "Two spellings a case-insensitive volume folds together name one bundle",
-        .enabled(if: VMStorageServiceTests.vmsDirectoryFoldsCase()))
+        .enabled(if: VMStorageServiceTests.scratchVolumeFoldsCase()))
     func bundleIdentityIsTheVolumes() throws {
         let url = try makeBundle(VMConfiguration(name: "Folded", guestOS: .linux, bootMode: .efi))
-        defer { try? FileManager.default.removeItem(at: url) }
         let respelled = url.deletingLastPathComponent()
             .appendingPathComponent(url.lastPathComponent.lowercased(), isDirectory: true)
         #expect(VMBundleIdentity.spelling(respelled) != VMBundleIdentity.spelling(url))
@@ -209,9 +216,11 @@ struct VMStorageServiceTests {
         #expect(service.bundleIdentity(at: respelled) == service.bundleIdentity(at: url))
     }
 
-    private static func vmsDirectoryFoldsCase() -> Bool {
-        guard let vmsDirectory = try? VMStorageService(stagingRoot: TestStagingRoot().root).vmsDirectory,
-            let values = try? vmsDirectory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
+    /// Whether the volume every ``ScratchLibrary`` sits on folds case.
+    private static func scratchVolumeFoldsCase() -> Bool {
+        guard
+            let values = try? FileManager.default.temporaryDirectory.resourceValues(
+                forKeys: [.volumeSupportsCaseSensitiveNamesKey])
         else { return false }
         return values.volumeSupportsCaseSensitiveNames == false
     }
@@ -233,16 +242,25 @@ struct VMStorageServiceTests {
 
     // MARK: - Staging & Publication
 
-    @Test("A staged bundle sits in this process's claimed root, hidden inside the VMs directory, and is absent")
-    func stagedBundleURLIsHiddenAndAbsent() throws {
-        let root = VMStorageService.processStagingRoot
-        let staged = try productionService.makeStagedBundleURL()
-        let parent = root.url.deletingLastPathComponent()
+    @Test("The production library is Kernova/VMs in the app's Application Support")
+    func productionLibraryLocation() {
+        let expected = URL.applicationSupportDirectory.appendingPathComponent(
+            "Kernova/VMs", isDirectory: true)
+        #expect(
+            VMStorageService.productionLibraryDirectory.path(percentEncoded: false)
+                == expected.path(percentEncoded: false))
+    }
 
-        #expect(staged.deletingLastPathComponent() == root.url)
-        #expect(FileManager.default.fileExists(atPath: root.url.path(percentEncoded: false)))
-        #expect(parent.lastPathComponent.hasPrefix("."))
-        #expect(parent.deletingLastPathComponent() == (try productionService.vmsDirectory))
+    @Test("A staged bundle sits in this service's claimed root, hidden inside the library, and is absent")
+    func stagedBundleURLIsHiddenAndAbsent() throws {
+        let root = service.stagingRoot.url
+        let staged = try service.makeStagedBundleURL()
+
+        #expect(staged.deletingLastPathComponent() == root)
+        #expect(FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+        #expect(
+            root.deletingLastPathComponent()
+                == library.url.appendingPathComponent(".Staging", isDirectory: true))
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
     }
 
@@ -255,34 +273,26 @@ struct VMStorageServiceTests {
 
     @Test("Listing bundles never admits a config-bearing bundle that is still staged")
     func listIgnoresStagedBundles() throws {
-        let config = VMConfiguration(name: "Interrupted Write", guestOS: .linux, bootMode: .efi)
-
-        let staged = try productionService.makeStagedBundleURL()
-        try createBundle(config, at: staged)
-        defer { try? FileManager.default.removeItem(at: staged) }
+        let staged = try stageBundle(
+            VMConfiguration(name: "Interrupted Write", guestOS: .linux, bootMode: .efi))
 
         let configURL = VMBundleLayout(bundleURL: staged).configURL
         #expect(FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)))
-        #expect(!(try productionService.listVMBundles().contains(staged)))
+        #expect(!(try service.listVMBundles().contains(staged)))
     }
 
     @Test("Publishing renames the staged bundle into the library and makes it listable")
     func publishMakesBundleListable() throws {
         let config = VMConfiguration(name: "Published", guestOS: .linux, bootMode: .efi)
 
-        let staged = try productionService.makeStagedBundleURL()
-        try createBundle(config, at: staged)
-        let finalURL = try productionService.bundleURL(for: config)
-        defer {
-            try? FileManager.default.removeItem(at: staged)
-            try? FileManager.default.removeItem(at: finalURL)
-        }
+        let staged = try stageBundle(config)
+        let finalURL = try service.bundleURL(for: config)
 
-        try productionService.publishBundle(from: staged, to: finalURL)
+        try service.publishBundle(from: staged, to: finalURL)
 
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
-        #expect(try productionService.listVMBundles().contains(finalURL))
+        #expect(try service.listVMBundles().contains(finalURL))
         #expect(try files(finalURL).readConfiguration().id == config.id)
     }
 
@@ -297,15 +307,9 @@ struct VMStorageServiceTests {
             // would replace it.
             try FileManager.default.createDirectory(at: finalURL, withIntermediateDirectories: true)
         } else {
-            try createBundle(winner, at: finalURL)
+            _ = try makeBundle(winner)
         }
-        let loser = VMConfiguration(name: "Loser", guestOS: .linux, bootMode: .efi)
-        let staged = try service.makeStagedBundleURL()
-        try createBundle(loser, at: staged)
-        defer {
-            try? FileManager.default.removeItem(at: staged)
-            try? FileManager.default.removeItem(at: finalURL)
-        }
+        let staged = try stageBundle(VMConfiguration(name: "Loser", guestOS: .linux, bootMode: .efi))
 
         let refusal = #expect(throws: VMStorageError.self) {
             try service.publishBundle(from: staged, to: finalURL)
@@ -328,15 +332,7 @@ struct VMStorageServiceTests {
             VMConfiguration(name: "Contender \($0)", guestOS: .linux, bootMode: .efi)
         }
         let finalURL = try service.bundleURL(for: contenders[0])
-        let staged = try contenders.map { config in
-            let url = try service.makeStagedBundleURL()
-            try createBundle(config, at: url)
-            return url
-        }
-        defer {
-            for url in staged { try? FileManager.default.removeItem(at: url) }
-            try? FileManager.default.removeItem(at: finalURL)
-        }
+        let staged = try contenders.map { try stageBundle($0) }
 
         let outcomes = Mutex<[Int: Result<Void, any Error>]>([:])
         let service = service
@@ -361,17 +357,16 @@ struct VMStorageServiceTests {
 
     @Test("Reclaiming keeps a bundle another running process is staging, and this process's own")
     func reclaimKeepsBundlesLiveProcessesAreStaging() async throws {
-        let otherProcess = VMStorageService(stagingRoot: staging.makeSibling())
-        let theirs = try otherProcess.makeStagedBundleURL()
-        try createBundle(VMConfiguration(name: "Theirs", guestOS: .linux, bootMode: .efi), at: theirs)
-        let ours = try service.makeStagedBundleURL()
-        try createBundle(VMConfiguration(name: "Ours", guestOS: .linux, bootMode: .efi), at: ours)
+        let other = otherProcess()
+        let theirs = try stageBundle(
+            VMConfiguration(name: "Theirs", guestOS: .linux, bootMode: .efi), in: other)
+        let ours = try stageBundle(VMConfiguration(name: "Ours", guestOS: .linux, bootMode: .efi))
 
         await service.reclaimStagedBundles().value
 
         #expect(FileManager.default.fileExists(atPath: theirs.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: ours.path(percentEncoded: false)))
-        withExtendedLifetime(otherProcess) {}
+        withExtendedLifetime(other) {}
     }
 
     @Test("Reclaiming discards the bundles an exited process was staging")
@@ -379,10 +374,8 @@ struct VMStorageServiceTests {
         let abandoned: URL
         do {
             // Deinitializing the root releases its lock, as its process's exit does.
-            let exited = VMStorageService(stagingRoot: staging.makeSibling())
-            abandoned = try exited.makeStagedBundleURL()
-            try createBundle(
-                VMConfiguration(name: "Abandoned", guestOS: .linux, bootMode: .efi), at: abandoned)
+            abandoned = try stageBundle(
+                VMConfiguration(name: "Abandoned", guestOS: .linux, bootMode: .efi), in: otherProcess())
         }
 
         await service.reclaimStagedBundles().value
@@ -395,10 +388,11 @@ struct VMStorageServiceTests {
 
     @Test("Reclaiming discards a bundle staged directly under the staging directory, where no lock holds it")
     func reclaimDiscardsAnUnrootedStagedBundle() async throws {
-        let unrooted = staging.parent.appendingPathComponent(
+        let unrooted = service.stagingRoot.url.deletingLastPathComponent().appendingPathComponent(
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)", isDirectory: true)
-        try createBundle(
-            VMConfiguration(name: "Unrooted", guestOS: .linux, bootMode: .efi), at: unrooted)
+        try FileManager.default.createDirectory(at: unrooted, withIntermediateDirectories: true)
+        try writer(unrooted).writeInitial(
+            VMConfiguration(name: "Unrooted", guestOS: .linux, bootMode: .efi))
 
         await service.reclaimStagedBundles().value
 
@@ -407,14 +401,9 @@ struct VMStorageServiceTests {
 
     @Test("A clone copies only the files it was given, so it inherits no USB pairings")
     func cloneLeavesUSBPairingsBehind() throws {
-        let source = VMConfiguration(name: "Pairing Source", guestOS: .linux, bootMode: .efi)
-        let sourceURL = try makeBundle(source)
-        let clone = VMConfiguration(name: "Pairing Clone", guestOS: .linux, bootMode: .efi)
-        let cloneURL = try service.bundleURL(for: clone)
-        defer {
-            try? FileManager.default.removeItem(at: sourceURL)
-            try? FileManager.default.removeItem(at: cloneURL)
-        }
+        let sourceURL = try makeBundle(
+            VMConfiguration(name: "Pairing Source", guestOS: .linux, bootMode: .efi))
+        let cloneURL = try service.makeStagedBundleURL()
         try writer(sourceURL).update(.usbPairings) {
             $0 = USBAccessoryPairingSet(pairings: [
                 USBAccessoryPairing(
