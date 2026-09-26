@@ -14,10 +14,6 @@ extension VMLibrary {
     /// library read there sits between process start and the first window. The
     /// watcher starts only after the read applies — its callback re-reads every
     /// bundle on the main actor, which must not race the initial load.
-    ///
-    /// Launch is also where an interrupted run's staged bundles are reclaimed.
-    /// Nothing waits on those removals: a staged name is minted per write, so one
-    /// still in flight can never name a path this run is about to use.
     func startLibrary() async {
         storageService.reclaimStagedBundles()
         await reclaimRestoreStaging()

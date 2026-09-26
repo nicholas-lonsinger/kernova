@@ -4,7 +4,7 @@ import KernovaTestSupport
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
-/// except `vmsDirectory`/`stagingDirectory`, which import/clone tests need as real, writable
+/// except `vmsDirectory`/`stagingRoot`, which import/clone tests need as real, writable
 /// directories since `VMCommandCore.importVM(from:)` does a raw `FileManager.copyItem` into the
 /// staging area rather than going through this protocol, and `cloneVMBundle`, which creates its
 /// destination directory for the same reason (see below). `baseDirectory` is unique per instance
@@ -59,8 +59,18 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             }
         }
     }
-    private let baseDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
+    private let baseDirectory: URL
+
+    /// Where staged paths are minted, as the real service's root sits under the
+    /// VMs directory's `.Staging`.
+    private let stagingRoot: ProcessStagingRoot
+
+    init() {
+        baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
+        stagingRoot = ProcessStagingRoot(
+            parent: baseDirectory.appendingPathComponent(".Staging", isDirectory: true))
+    }
 
     deinit {
         // `vmsDirectory` creates `baseDirectory` on every access (see below); reclaim it here so
@@ -156,14 +166,6 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         }
     }
 
-    var stagingDirectory: URL {
-        get throws {
-            let staging = baseDirectory.appendingPathComponent(".Staging", isDirectory: true)
-            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-            return staging
-        }
-    }
-
     func bundleURL(for configuration: VMConfiguration) throws -> URL {
         baseDirectory.appendingPathComponent(
             "\(configuration.id.uuidString).\(VMBundleFormat.fileExtension)",
@@ -172,7 +174,8 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     }
 
     func makeStagedBundleURL() throws -> URL {
-        let url = try stagingDirectory.appendingPathComponent(
+        try stagingRoot.claim()
+        let url = stagingRoot.url.appendingPathComponent(
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
@@ -185,7 +188,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         if let error = listVMBundlesError { throw error }
         // Mirrors the real service's hidden-skipping enumeration, which never
         // admits a bundle still being written under `.Staging`.
-        let staging = (try? stagingDirectory)?.standardizedFileURL
+        let staging = stagingRoot.url.standardizedFileURL
         return files.bundleURLs.filter {
             files.data(atRelativePath: VMBundleLayout.configRelativePath, in: $0) != nil
                 && $0.deletingLastPathComponent().standardizedFileURL != staging

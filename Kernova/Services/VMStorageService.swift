@@ -14,26 +14,40 @@ struct VMStorageService: Sendable {
         url.pathExtension == VMBundleFormat.fileExtension
     }
 
+    /// The root this process stages bundles under.
+    let stagingRoot: ProcessStagingRoot
+
+    /// - Parameter stagingRoot: ``processStagingRoot`` in production.
+    init(stagingRoot: ProcessStagingRoot) {
+        self.stagingRoot = stagingRoot
+    }
+
     // MARK: - Directory Helpers
 
     /// The `Application Support/Kernova` root every app-level store hangs off —
     /// the single derivation of the path, so stores can never strand each other
-    /// by recomputing it differently.
-    static var supportDirectory: URL {
-        get throws {
-            try FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-            .appendingPathComponent("Kernova", isDirectory: true)
-        }
-    }
+    /// by recomputing it differently. Touches no disk.
+    static let supportDirectory = URL.applicationSupportDirectory
+        .appendingPathComponent("Kernova", isDirectory: true)
+
+    private static let libraryDirectory = supportDirectory.appendingPathComponent(
+        "VMs", isDirectory: true)
+
+    /// This process's root for bundles still being written, until
+    /// ``publishBundle(from:to:)`` renames a finished tree into `vmsDirectory`.
+    ///
+    /// Under `vmsDirectory` so publication is a same-volume rename rather than a
+    /// second copy, and in its dot-prefixed `.Staging` so the hidden-skipping
+    /// enumerations — ``listVMBundles()`` and the import destination
+    /// reservation — never see a tree that is still growing. Every copy of
+    /// Kernova shares `.Staging` and reclaims it at launch, so each process
+    /// writes only under a root it holds locked.
+    static let processStagingRoot = ProcessStagingRoot(
+        parent: libraryDirectory.appendingPathComponent(".Staging", isDirectory: true))
 
     var vmsDirectory: URL {
         get throws {
-            let vmsDir = try Self.supportDirectory.appendingPathComponent("VMs", isDirectory: true)
+            let vmsDir = Self.libraryDirectory
 
             if !FileManager.default.fileExists(atPath: vmsDir.path(percentEncoded: false)) {
                 try FileManager.default.createDirectory(at: vmsDir, withIntermediateDirectories: true)
@@ -51,33 +65,16 @@ struct VMStorageService: Sendable {
         )
     }
 
-    /// Where a bundle still being written lives until ``publishBundle(from:to:)``
-    /// renames the finished tree into `vmsDirectory`.
-    ///
-    /// Inside `vmsDirectory` so publication is a same-volume rename rather than a
-    /// second copy, and dot-prefixed so the hidden-skipping enumerations —
-    /// ``listVMBundles()`` and the import destination reservation — never see a
-    /// tree that is still growing.
-    var stagingDirectory: URL {
-        get throws {
-            let staging = try vmsDirectory.appendingPathComponent(".Staging", isDirectory: true)
-
-            if !FileManager.default.fileExists(atPath: staging.path(percentEncoded: false)) {
-                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-            }
-            return staging
-        }
-    }
-
-    /// A fresh staged path for one create, clone or import to build its bundle at.
+    /// A fresh staged path for one create, clone or import to build its bundle
+    /// at, under ``stagingRoot``, which this call claims.
     ///
     /// Named for a UUID minted here rather than the configuration's: an import
     /// keeps the source bundle's id, so a configuration id would give a retried
-    /// import the same path as the interrupted attempt whose tree the launch
-    /// reclaim is still deleting. A per-write name cannot collide with anything.
-    /// The directory does not exist, which import's `copyItem` requires.
+    /// import the path of an earlier attempt whose discard failed. The directory
+    /// does not exist, which import's `copyItem` requires.
     func makeStagedBundleURL() throws -> URL {
-        try stagingDirectory.appendingPathComponent(
+        try stagingRoot.claim()
+        return stagingRoot.url.appendingPathComponent(
             "\(UUID().uuidString).\(VMBundleFormat.fileExtension)",
             isDirectory: true
         )
@@ -129,42 +126,17 @@ struct VMStorageService: Sendable {
             "Discarded the staged bundle at \(stagedURL.lastPathComponent, privacy: .public)")
     }
 
-    /// Discards every staged bundle an earlier run left behind, returning the
-    /// task its removals run on.
+    /// Removes everything under `.Staging` that no process holds locked — an
+    /// exited process's root and the bundles it was writing — returning the task
+    /// the removals run on.
     ///
-    /// An interrupted write leaves a tree whose payload is incomplete and whose
-    /// source still exists, so it is discarded outright rather than trashed. The
-    /// enumeration is synchronous — one `readdir` — while the removals run
-    /// detached, because a staged tree can be multi-gigabyte and this runs at
-    /// launch. Nothing has to await the returned task: every staged name is
-    /// minted per write, so a removal still in flight can never name a path this
-    /// run is about to use.
+    /// Detached, because a staged tree can be multi-gigabyte and this runs at
+    /// launch. Nothing has to await the task: a root some process holds, this
+    /// one's included, is never removed.
     @discardableResult
     func reclaimStagedBundles() -> Task<Void, Never> {
-        let entries: [URL]
-        do {
-            entries = try FileManager.default.contentsOfDirectory(
-                at: try stagingDirectory, includingPropertiesForKeys: nil, options: [])
-        } catch {
-            #log(
-                Self.logger, .warning,
-                "Could not enumerate staged VM bundles: \(error.localizedDescription, privacy: .public)"
-            )
-            return Task {}
-        }
-
-        return Task.detached {
-            for entry in entries {
-                do {
-                    try discardStagedBundle(at: entry)
-                } catch {
-                    #log(
-                        Self.logger, .warning,
-                        "Could not reclaim the staged bundle at \(entry.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                    )
-                }
-            }
-        }
+        let root = stagingRoot
+        return Task.detached { root.reclaimAbandonedRoots() }
     }
 
     // MARK: - CRUD
