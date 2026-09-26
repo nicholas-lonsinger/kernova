@@ -7,9 +7,9 @@ import KernovaTestSupport
 /// except `vmsDirectory`/`stagingRoot`, which import/clone tests need as real, writable
 /// directories since `VMCommandCore.importVM(from:)` does a raw `FileManager.copyItem` into the
 /// staging area rather than going through this protocol, and `cloneVMBundle`, which creates its
-/// destination directory for the same reason (see below). `baseDirectory` is unique per instance
-/// (suffixed with a UUID) so parallel/`.serialized` tests copying real bundles into it can't
-/// collide or leak state into each other.
+/// destination directory for the same reason (see below). `baseDirectory` is a
+/// `TestScratchDirectory` per instance, so tests copying real bundles into it can't collide or
+/// leak state into each other.
 ///
 /// Because `vmsDirectory`/`cloneVMBundle` are real, on-disk paths, and `VMLibraryViewModel.startLibrary()`
 /// starts a real `VMDirectoryWatcher` against `vmsDirectory`, a test that calls it and drives an async
@@ -59,24 +59,18 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             }
         }
     }
-    private let baseDirectory: URL
+    private let scratch: TestScratchDirectory
+    private var baseDirectory: URL { scratch.url }
 
     /// Where staged paths are minted, as the real service's root sits under the
     /// VMs directory's `.Staging`.
     private let stagingRoot: ProcessStagingRoot
 
     init() {
-        baseDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MockVMs-\(UUID().uuidString)", isDirectory: true)
+        let scratch = TestScratchDirectory(prefix: "MockVMs")
+        self.scratch = scratch
         stagingRoot = ProcessStagingRoot(
-            parent: baseDirectory.appendingPathComponent(".Staging", isDirectory: true))
-    }
-
-    deinit {
-        // `vmsDirectory` creates `baseDirectory` on every access (see below); reclaim it here so
-        // every test — not just the ones that exercise a real copy — doesn't leak a directory
-        // into the system temp folder on every run.
-        try? FileManager.default.removeItem(at: baseDirectory)
+            parent: scratch.url.appendingPathComponent(".Staging", isDirectory: true))
     }
 
     // MARK: - Call Tracking

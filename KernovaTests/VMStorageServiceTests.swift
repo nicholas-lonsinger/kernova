@@ -7,17 +7,10 @@ import Synchronization
 
 @Suite("VMStorageService Tests", .admissionGated)
 struct VMStorageServiceTests {
-    /// A library directory this test owns, removed with the suite instance: the
-    /// test host is the app, so ``VMStorageService/productionLibraryDirectory``
-    /// is the maintainer's real library.
-    private final class ScratchLibrary: Sendable {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaTestLibrary-\(UUID().uuidString)", isDirectory: true)
-
-        deinit { try? FileManager.default.removeItem(at: url) }
-    }
-
-    private let library = ScratchLibrary()
+    /// The library this test owns: the test host is the app, so
+    /// ``VMStorageService/productionLibraryDirectory`` is the maintainer's
+    /// real library.
+    private let library = TestScratchDirectory(prefix: "KernovaTestLibrary")
     private let service: VMStorageService
 
     init() {
@@ -216,7 +209,7 @@ struct VMStorageServiceTests {
         #expect(service.bundleIdentity(at: respelled) == service.bundleIdentity(at: url))
     }
 
-    /// Whether the volume every ``ScratchLibrary`` sits on folds case.
+    /// Whether the volume every test's library sits on folds case.
     private static func scratchVolumeFoldsCase() -> Bool {
         guard
             let values = try? FileManager.default.temporaryDirectory.resourceValues(
