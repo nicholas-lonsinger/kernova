@@ -778,14 +778,16 @@ struct VMCapabilityCatalogTests {
     @Test("The account state walks from nothing, through owed, to answered")
     func guestAccountStateWalksItsThreeStandings() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
         let intent = GuestAccountIntent(
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
             enablesRemoteLogin: false)
+        let without = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        #expect(harness.catalog.guestAccountState(of: without) == .none)
 
-        #expect(harness.catalog.guestAccountState(of: instance) == .none)
-
-        harness.library.editConfiguration(of: instance) { $0.pendingGuestAccount = intent }
+        // An account is set only at creation.
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
+            $0.pendingGuestAccount = intent
+        }
         #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
         #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
@@ -806,11 +808,11 @@ struct VMCapabilityCatalogTests {
         arguments: [VMLifecyclePhase.stopped, .suspended, .failed(message: "Boot failed.")])
     func standingBringUpRefusesAnOwedAccount(phase: VMLifecyclePhase) {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS)
-        // Answered first, to show the phase alone would have brought it up.
-        #expect(harness.catalog.standingBringUp(for: instance) != nil)
+        // A VM owing nothing, to show the phase alone would have brought it up.
+        let owingNothing = makeInstance(in: harness, phase: phase, guestOS: .macOS)
+        #expect(harness.catalog.standingBringUp(for: owingNothing) != nil)
 
-        harness.library.editConfiguration(of: instance) {
+        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS) {
             $0.pendingGuestAccount = GuestAccountIntent(
                 fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
                 enablesRemoteLogin: false)

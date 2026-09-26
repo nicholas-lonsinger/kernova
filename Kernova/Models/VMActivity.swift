@@ -920,13 +920,15 @@ struct VMEditPermit: ~Copyable, Sendable {
         /// An edit admitted for these classes beside whatever holds the VM.
         case edit(VMEditClasses)
         /// The operation holding the VM, whose admission covers its own
-        /// writes whole.
+        /// writes whole: while it holds the VM, nothing else is admitted but
+        /// the edits its kind declares.
         case operation(VMOperationKind)
 
-        /// Whether a write of `classes` is within this authority.
-        func covers(_ classes: VMEditClasses) -> Bool {
+        /// Whether this authority may write a field any one of `classes`
+        /// writes (``VMStateFieldClasses``).
+        func mayWrite(_ classes: VMEditClasses) -> Bool {
             switch self {
-            case .edit(let admitted): admitted.isSuperset(of: classes)
+            case .edit(let admitted): !admitted.isDisjoint(with: classes)
             case .operation: true
             }
         }
@@ -950,7 +952,7 @@ struct VMEditPermit: ~Copyable, Sendable {
     fileprivate init(instance: VMInstance, authority: Authority) {
         self.instance = instance
         self.authority = authority
-        self.bundle = VMBundle.StateFiles(of: instance, StateFilesKey())
+        self.bundle = VMBundle.StateFiles(of: instance, authority: authority, StateFilesKey())
     }
 
     /// Writes the VM's configuration through the library it belongs to

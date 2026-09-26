@@ -130,7 +130,7 @@ struct VMLibraryAdoptionTests {
         storage.moveBundle(from: original, to: moved)
         library.reconcileWithDisk()
 
-        library.editConfiguration(of: instance) { $0.name = "Renamed After Move" }
+        library.editConfiguration(of: instance, as: .rename) { $0.name = "Renamed After Move" }
 
         #expect(storage.files.configuration(at: moved)?.name == "Renamed After Move")
         #expect(storage.files.configuration(at: original) == nil)

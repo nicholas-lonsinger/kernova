@@ -543,8 +543,7 @@ final class VMLibraryViewModel {
         self.lifecycle = lifecycle
         let library = VMLibrary(
             storageService: storageService,
-            bundleFactory: VMBundle.Factory(
-                machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem)),
+            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: fileSystem),
             lifecycle: lifecycle,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,

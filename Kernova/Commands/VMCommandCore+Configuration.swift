@@ -45,7 +45,8 @@ extension VMCommandCore {
     /// `set` input in any state. A gate that refuses names every assignment it
     /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:)``);
     /// the write holds a permit for the classes of the named keys the VM takes,
-    /// and an assignment that moves the file outside them is refused.
+    /// and an assignment that moves a field those classes may not write
+    /// (``VMStateFieldClasses``) is refused.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read
@@ -86,12 +87,13 @@ extension VMCommandCore {
         }
         // The configuration's gates are judged on what `config.json` holds,
         // inside the write: the permit covers every key the VM takes now, and
-        // one that moves the file outside it is refused there.
+        // one that moves a field outside it is refused there.
         let admittedConfigurationEdits = configurationWrites.map { (key: $0.key, value: $0.value) }
             .filter { capabilities.accepts($0.key.capability(writing: $0.value), on: instance) }
         let classes = (hostStateEdits + admittedConfigurationEdits).reduce(into: VMEditClasses()) {
             $0.formUnion($1.key.editClasses(writing: $1.value))
         }
+        let admittedKeys = Set(admittedConfigurationEdits.map(\.key.name))
 
         var moved: [VMConfigurationKey] = []
         try edit(classes, on: instance, verb: .setConfiguration) { permit in
@@ -101,7 +103,7 @@ extension VMCommandCore {
                     configuration: { config in
                         moved = try apply(
                             configurationWrites, to: &config, on: instance, within: permit.authority,
-                            context: context, confirmed: confirmed)
+                            admittedKeys: admittedKeys, context: context, confirmed: confirmed)
                     },
                     hostState: { hostState in
                         for change in hostStateChanges {
@@ -143,14 +145,24 @@ extension VMCommandCore {
         let change: (inout VMHostState) -> Void
     }
 
+    /// One assignment that moved the configuration, or whose value its key
+    /// refused.
+    private struct MovedAssignment {
+        let key: VMConfigurationKey
+        let value: String
+        /// The fields it moved that `authority` may not write, when it moved
+        /// any; `nil` for a value its key refused, which moved nothing.
+        let refusedFields: [String]?
+    }
+
     /// Lands `writes` on `config`, answering the assignments that moved it —
     /// one whose value its key refuses counts as moving it, so its gate is
     /// asked before its value is — and the first value refusal.
     private static func moved(
         _ writes: [ConfigurationWrite], applyingTo config: inout VMConfiguration,
-        context: VMConfigurationWriteContext
-    ) -> (edits: [(key: VMConfigurationKey, value: String)], valueRefusal: (any Error)?) {
-        var moved: [(key: VMConfigurationKey, value: String)] = []
+        within authority: VMEditPermit.Authority, context: VMConfigurationWriteContext
+    ) -> (assignments: [MovedAssignment], valueRefusal: (any Error)?) {
+        var moved: [MovedAssignment] = []
         var valueRefusal: (any Error)?
         for write in writes {
             let before = config
@@ -158,29 +170,41 @@ extension VMCommandCore {
                 try write.field.write(write.value, &config, context)
             } catch {
                 valueRefusal = valueRefusal ?? error
-                moved.append((write.key, write.value))
+                moved.append(MovedAssignment(key: write.key, value: write.value, refusedFields: nil))
                 continue
             }
-            if config != before { moved.append((write.key, write.value)) }
+            guard config != before else { continue }
+            moved.append(
+                MovedAssignment(
+                    key: write.key, value: write.value,
+                    refusedFields: VMConfiguration.fieldClasses.refused(
+                        from: before, to: config, by: authority)))
         }
         return (moved, valueRefusal)
     }
 
     /// Lands `writes` on `config` — what `config.json` holds — refusing unless
-    /// `authority` covers every one that moves it, answering the keys that
+    /// `authority` may write every field they move, answering the keys that
     /// moved.
     ///
-    /// The gate answers an assignment whose value this key refuses too, so a
-    /// VM whose state pins the key says so rather than naming the value.
+    /// The gate answers an assignment whose value this key refuses too — one
+    /// admission did not take (`admittedKeys`) — so a VM whose state pins the
+    /// key says so rather than naming the value.
     private func apply(
         _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
-        within authority: VMEditPermit.Authority, context: VMConfigurationWriteContext,
-        confirmed: Bool
+        within authority: VMEditPermit.Authority, admittedKeys: Set<String>,
+        context: VMConfigurationWriteContext, confirmed: Bool
     ) throws -> [VMConfigurationKey] {
         let held = config
-        let (moved, valueRefusal) = Self.moved(writes, applyingTo: &config, context: context)
+        let (moved, valueRefusal) = Self.moved(
+            writes, applyingTo: &config, within: authority, context: context)
         try requireGates(
-            refusing: moved.filter { !authority.covers($0.key.editClasses(writing: $0.value)) },
+            refusing: moved.filter { assignment in
+                guard let refusedFields = assignment.refusedFields else {
+                    return !admittedKeys.contains(assignment.key.name)
+                }
+                return !refusedFields.isEmpty
+            }.map { (key: $0.key, value: $0.value) },
             on: instance)
         if let valueRefusal { throw valueRefusal }
         for write in writes where write.field.read(config) != write.field.read(held) {

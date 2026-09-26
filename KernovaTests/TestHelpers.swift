@@ -85,8 +85,7 @@ func makeWiredLibrary(
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
-        bundleFactory: VMBundle.Factory(
-            machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files)),
+        machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
@@ -196,9 +195,10 @@ extension VMLibrary {
 
 extension VMInstance {
     /// Commits `change` to this VM's snapshot manifest as setup a test relies
-    /// on, under a ``VMEditClasses/snapshotMetadata`` permit.
+    /// on, as the write of an operation holding the VM — what lists a
+    /// snapshot or moves the current marker.
     func editSnapshotManifest(_ change: (inout VMSnapshotManifest) -> Void) throws {
-        try activity.edit(.snapshotMetadata) { try $0.bundle.commitSnapshotManifest(change) }
+        try withOperationNow(on: self) { try $0.permit.bundle.commitSnapshotManifest(change) }
     }
 
     /// Puts `manifest` in this fixture VM's bundle as though the bundle already

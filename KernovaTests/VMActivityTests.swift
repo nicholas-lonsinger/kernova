@@ -290,7 +290,9 @@ struct VMActivityTests {
         }
     }
 
-    @Test("A rename and a live-key write are refused at the write during a revert; presentation is not")
+    @Test(
+        "A rename and a live-key write are refused at the write during a revert; presentation bookkeeping is not"
+    )
     func revertRefusesRenameAndLiveKeysAtTheWrite() throws {
         let live = VMLifecyclePhase.running(sessionID: UUID())
         let revert = VMOperationKind.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true))
@@ -306,11 +308,106 @@ struct VMActivityTests {
             }
         }
         #expect(instance.name != "Renamed")
-        let presented = try instance.activity.edit(.hostPresentation) { permit in
+        let recorded = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.lastFullscreenDisplayID = 7 }
+        }
+        #expect(recorded.landed)
+        #expect(instance.hostState.lastFullscreenDisplayID == 7)
+        // The display preference is the user's live key, not presentation
+        // bookkeeping: a presentation permit cannot carry it past R8.
+        let preferred = try instance.activity.edit(.hostPresentation) { permit in
             library.updateHostState(permit) { $0.displayPreference = .fullscreen }
         }
-        #expect(presented.landed)
-        #expect(instance.hostState.displayPreference == .fullscreen)
+        #expect(preferred.fieldsOutsidePermit == ["displayPreference"])
+        #expect(instance.hostState.displayPreference == .inline)
+    }
+
+    @Test("A commit refuses every field its permit's classes may not write, and changes nothing")
+    func aCommitRefusesFieldsOutsideItsPermit() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+        let memory = instance.configuration.memorySizeInGB
+
+        // A rename admitted on a live VM carries no machine key with it.
+        let renamed = try instance.activity.edit(.rename) { permit in
+            permit.updateConfiguration {
+                $0.name = "Renamed"
+                $0.memorySizeInGB = memory + 4
+            }
+        }
+        #expect(renamed.fieldsOutsidePermit == ["memorySizeInGB"])
+        #expect(instance.configuration.memorySizeInGB == memory)
+        #expect(instance.name != "Renamed")
+
+        // The settings pair stops at the configuration it refused.
+        let settings = try instance.activity.edit(.observations) { permit in
+            permit.updateSettings(
+                configuration: { $0.clipboardSharingEnabled.toggle() },
+                hostState: { $0.lastFullscreenDisplayID = 3 })
+        }
+        #expect(settings.fieldsOutsidePermit == ["clipboardSharingEnabled"])
+        #expect(instance.hostState.lastFullscreenDisplayID == nil)
+
+        // Host state is checked the same way.
+        let autoStart = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.startsAutomaticallyOnLaunch = true }
+        }
+        #expect(autoStart.fieldsOutsidePermit == ["startsAutomaticallyOnLaunch"])
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
+
+        // And the two files one class writes whole.
+        #expect(throws: VMStateFieldRefusal(fields: ["pairings"])) {
+            try instance.activity.edit(.snapshotMetadata) { permit in
+                try permit.bundle.commitUSBPairings {
+                    $0.upsert(
+                        USBAccessoryPairing(
+                            key: "k", form: .serialNumber, displayName: "Stick",
+                            receptacleLabel: nil, pairedAt: Date(timeIntervalSince1970: 0)))
+                }
+            }
+        }
+        #expect(instance.usbPairings.isEmpty)
+        #expect(throws: VMStateFieldRefusal(fields: ["snapshots"])) {
+            try instance.activity.edit(.pairingRules) { permit in
+                try permit.bundle.commitSnapshotManifest { $0.snapshots.removeAll() }
+            }
+        }
+        #expect(instance.snapshotManifest.snapshots.count == 1)
+    }
+
+    @Test(
+        "An observation may turn the install reminder back on and retract the guest account, but never silence or set either"
+    )
+    func observationsWriteOnlyWhatTheyDisprove() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let dismissed = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = true }
+        }
+        #expect(dismissed.fieldsOutsidePermit == ["agentInstallNudgeDismissed"])
+        library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = true }
+        let reset = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = false }
+        }
+        #expect(reset.landed)
+        #expect(!instance.hostState.agentInstallNudgeDismissed)
+
+        let account = GuestAccountIntent(
+            fullName: "User", username: "user", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        let asserted = try instance.activity.edit(.observations) { permit in
+            permit.updateConfiguration { $0.pendingGuestAccount = account }
+        }
+        #expect(asserted.fieldsOutsidePermit == ["pendingGuestAccount"])
+        #expect(instance.configuration.pendingGuestAccount == nil)
+        try instance.activity.performNow(.deletingSnapshot) { context in
+            #expect(context.permit.updateConfiguration { $0.pendingGuestAccount = account }.landed)
+            return .rest(.asStarted, ())
+        }
+        let retracted = try instance.activity.edit(.observations) { library.retractGuestAccount($0) }
+        #expect(retracted.landed)
+        #expect(instance.configuration.pendingGuestAccount == nil)
     }
 
     @Test("An operation's own permit writes the VM it holds, where an edit beside it is refused")

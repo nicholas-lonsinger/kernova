@@ -370,16 +370,15 @@ enum VMAdmission {
         _ operation: VMOperation, _ request: Request, posture: Posture, facts: Facts
     ) -> Decision {
         let basis = operation.settledBasis(slotOnDisk: facts.hasSaveFile)
-        // A session a Force Stop is terminating takes nothing new: a second
-        // Force Stop joins the first — offered, it reads as busy, like every
-        // join — and the rest is answered as the powered-off VM will answer.
-        if let stop = operation.session?.stopping {
-            if request == .sessionAction(.forceStop) {
-                return posture == .commit ? .join(stop) : .refuse(.busy(.forceStopping))
-            }
-            return classified(request, posture: posture, against: basis, facts: facts, busy: .forceStopping)
+        // A session a Force Stop is terminating is held as `.forceStopping`: a
+        // second Force Stop joins the first — offered, it reads as busy, like
+        // every join — and the rest is answered as that kind declares.
+        let stop = operation.session?.stopping
+        if let stop, request == .sessionAction(.forceStop) {
+            return posture == .commit ? .join(stop) : .refuse(.busy(.forceStopping))
         }
-        let declaration = operation.kind.declaration
+        let holder = stop == nil ? operation.kind : .forceStopping
+        let declaration = holder.declaration
         if posture == .commit, let join = join(for: request),
             declaration.joinedBy.contains(join)
         {
@@ -387,7 +386,7 @@ enum VMAdmission {
         }
         switch request {
         case .cancel(let family):
-            if operation.kind.belongs(to: family) { return .admit }
+            if holder.belongs(to: family) { return .admit }
         case .edit(let classes):
             // A tolerated edit still answers to every settled rule — the clone
             // lock and a build without USB among them.
@@ -401,7 +400,7 @@ enum VMAdmission {
         case .start, .resume, .operation, .evict, .affordance:
             break
         }
-        return classified(request, posture: posture, against: basis, facts: facts, busy: operation.kind)
+        return classified(request, posture: posture, against: basis, facts: facts, busy: holder)
     }
 
     /// What the VM would answer once the operation holding it ends, settled

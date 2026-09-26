@@ -246,7 +246,7 @@ struct VMSettingsGeneralPanelTests {
         let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
         #expect(!visibleLabel("OS version", in: vc.view))
 
-        viewModel.library.editConfiguration(of: instance) { $0.lastSeenGuestOSVersion = "26.6" }
+        viewModel.library.editConfiguration(of: instance, as: .observations) { $0.lastSeenGuestOSVersion = "26.6" }
         vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
 
         #expect(visibleLabel("OS version", in: vc.view))

@@ -480,7 +480,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness)
         let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
         let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        harness.library.editConfiguration(of: instance) { $0.storageDisks = [main, extra] }
+        harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [main, extra] }
 
         try await harness.core.removeStorageDisk(
             .id(instance.id), disk: main.id, trashFile: true, confirmed: true)
@@ -517,7 +517,7 @@ struct VMCommandCoreAttachmentTests {
         // A second surface removing the other disk while this one's resolve is
         // in flight: trashing this one now would empty the list.
         harness.core.afterSharingResolveForTesting = {
-            harness.library.editConfiguration(of: instance) { $0.storageDisks = [external] }
+            harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [external] }
         }
 
         let refusal = await commandError {
@@ -540,7 +540,7 @@ struct VMCommandCoreAttachmentTests {
         // A second surface removing the same row while this one's resolve is in
         // flight: the id this call decided to trash is no longer attached.
         harness.core.afterSharingResolveForTesting = {
-            harness.library.editConfiguration(of: instance) { $0.storageDisks = [other] }
+            harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [other] }
         }
 
         let refusal = await commandError {
@@ -1003,7 +1003,7 @@ struct VMCommandCoreAttachmentTests {
         // An Eject from the row's own menu, landing while this removal's
         // resolve is in flight.
         harness.core.afterSharingResolveForTesting = {
-            harness.library.editConfiguration(of: instance) { $0.removableMedia = nil }
+            harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
         }
 
         let refusal = await commandError {

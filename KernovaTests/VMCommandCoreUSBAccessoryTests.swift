@@ -518,6 +518,32 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(harness.storage.files.pairings(at: instance.bundleURL)?.isEmpty == true)
     }
 
+    @Test("A pairing move the VM holding the pairing refuses is reported as that VM being busy")
+    func pairingMoveRefusalNamesTheHoldingVM() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let holder = makeStoppedInstance(in: harness, name: "Holder")
+        let target = makeRunningInstance(in: harness, name: "Target")
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let pairing = try #require(USBAccessoryPairing.make(for: accessory))
+        try holder.activity.edit(.pairingRules) {
+            try harness.library.updateUSBPairings($0) { $0.upsert(pairing) }
+        }
+        holder.activity.placeForTesting(.operating(.deleting, from: .stopped))
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+
+        _ = try await attach(accessory, to: target, in: harness)
+
+        #expect(service.attachedRegistryIDs == [7])
+        let busy = harness.core.admissionRefusal(.busy(.deleting), on: holder)
+        #expect(reported.count == 1)
+        #expect(reported.first?.message.hasSuffix(busy.message) == true)
+        #expect(holder.usbPairings.pairings.map(\.key) == [pairing.key])
+        #expect(target.usbPairings.isEmpty)
+    }
+
     @Test("A detach the user asked for forgets the rule")
     func detachForgetsThePairing() async throws {
         let harness = makeHarness()

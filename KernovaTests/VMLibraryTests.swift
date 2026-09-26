@@ -315,6 +315,46 @@ struct VMLibraryTests {
         #expect(failures.showError)
     }
 
+    @Test("A snapshot's whole configuration passes the MAC-address refusal only as the revert's own write")
+    func onlyARevertCommitsPastTheMACAddressRefusal() async throws {
+        let (library, storage, _, _) = makeLibrary()
+        let address = "02:11:22:33:44:55"
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: address)
+        let reverting = VMInstanceFixture.make(
+            name: "Reverting", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) { $0.macAddress = "02:66:77:88:99:aa" }
+        let holder = VMInstanceFixture.make(name: "Holder") { $0.macAddress = address }
+        for instance in [reverting, holder] {
+            library.register(instance, storage: storage)
+        }
+        var captured = reverting.configuration
+        captured.macAddress = address
+        func install(_ permit: borrowing VMEditPermit) throws {
+            try permit.bundle.commitConfiguration { $0 = $0.adoptingSnapshotState(captured) }
+        }
+
+        // An edit that may write the machine keys, and another operation's
+        // own write, are refused whole.
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.edit(.machineKeys, install)
+        }
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.performNow(.deletingSnapshot) { context in
+                try install(context.permit)
+                return .rest(.asStarted, ())
+            }
+        }
+        #expect(reverting.configuration.macAddress != address)
+
+        try await reverting.activity.bringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
+            try install(context.operation.permit)
+            return .rest(.atRest(.stopped), ())
+        }
+        #expect(reverting.configuration.macAddress == address)
+    }
+
     @Test("Settling on the live media list writes that field alone and tells the VM nothing")
     func settleRemovableMediaWritesOnlyTheList() async throws {
         let (library, storage, _, _) = makeLibrary()
@@ -373,13 +413,16 @@ struct VMLibraryTests {
     }
 
     @Test("A reverted configuration is committed as captured, with nothing refused")
-    func commitRevertedConfigurationWritesWithoutRefusing() throws {
+    func commitRevertedConfigurationWritesWithoutRefusing() async throws {
         let (library, storage, _, _) = makeLibrary()
         let other = VMInstanceFixture.make(name: "Other") {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
-        let instance = VMInstanceFixture.make(name: "Mine") {
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")
+        let instance = VMInstanceFixture.make(
+            name: "Mine", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:02"
         }
@@ -390,10 +433,13 @@ struct VMLibraryTests {
         written.memorySizeInGB += 2
         let saves = storage.saveConfigurationCallCount
 
-        try withOperationNow(on: instance) { context in
+        try await instance.activity.bringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
             try library.commitRevertedConfiguration(
                 VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
-                context.permit)
+                context.operation.permit)
+            return .rest(.asStarted, ())
         }
 
         #expect(instance.configuration == written)
@@ -1175,14 +1221,16 @@ struct VMLibraryTests {
             library.register(instance, storage: storage)
         }
         try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
-        first.activity.placeForTesting(.operating(.forceStopping, from: .running(sessionID: UUID())))
+        first.activity.placeForTesting(.operating(.deleting, from: .stopped))
 
-        #expect(throws: VMAdmissionRefusal(refusal: .busy(.forceStopping))) {
+        let refused = #expect(throws: VMLibrary.PairingMoveRefused.self) {
             try second.activity.edit(.pairingRules) {
                 try library.pairUSBAccessory(pairing(key: "k"), $0)
             }
         }
 
+        #expect(refused?.holder === first)
+        #expect(refused?.refusal == VMAdmissionRefusal(refusal: .busy(.deleting)))
         #expect(first.usbPairings.pairings.map(\.key) == ["k"])
         #expect(second.usbPairings.isEmpty)
     }

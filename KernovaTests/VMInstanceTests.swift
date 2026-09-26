@@ -525,15 +525,15 @@ struct VMInstanceTests {
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
         // The wording names what is actually unavailable: the app-managed
         // network for Shared and Host Only, a host interface for Bridged.
-        library.editConfiguration(of: instance) { $0.networkMode = .shared }
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .shared }
         #expect(
             instance.statusToolTip
                 == "The Shared Network is unavailable. Kernova reconnects automatically.")
-        library.editConfiguration(of: instance) { $0.networkMode = .hostOnly }
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .hostOnly }
         #expect(
             instance.statusToolTip
                 == "The Host Only network is unavailable. Kernova reconnects automatically.")
-        library.editConfiguration(of: instance) { $0.networkMode = .bridged }
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .bridged }
         #expect(instance.statusToolTip?.contains("network interface") == true)
     }
 
@@ -552,7 +552,7 @@ struct VMInstanceTests {
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 
-        library.editConfiguration(of: instance) {
+        library.editConfiguration(of: instance, as: .networkAttachment) {
             $0.networkMode = .bridged
             $0.bridgedInterfaceIdentifier = "en0"
         }
@@ -573,7 +573,7 @@ struct VMInstanceTests {
         #expect(device.appliedPlans == [.nat])
         instance.activity.placeForTesting(.stopped)
 
-        library.editConfiguration(of: instance) { $0.networkMode = .bridged }
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .bridged }
 
         #expect(device.appliedPlans == [.nat])
     }
@@ -1510,7 +1510,7 @@ struct VMInstanceTests {
 
         // Wipe the persisted version: the synthesizer guard falls back to
         // .waiting rather than producing .expectedMissing(expected: "").
-        library.editConfiguration(of: instance) { $0.lastSeenAgentVersion = nil }
+        library.editConfiguration(of: instance, as: .observations) { $0.lastSeenAgentVersion = nil }
         #expect(instance.agentStatus == .waiting)
     }
 
@@ -1803,11 +1803,11 @@ struct VMInstanceTests {
         let extra = StorageDisk(
             path: "AdditionalDisks/extra.asif", readOnly: false, label: "Extra",
             isInternal: true, kind: .virtio)
-        library.editConfiguration(of: instance) { $0.storageDisks = [main, extra] }
+        library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [main, extra] }
         #expect(!instance.isSoleStorageDisk(main))
         #expect(!instance.isSoleStorageDisk(extra))
 
-        library.editConfiguration(of: instance) { $0.storageDisks = [extra] }
+        library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [extra] }
         #expect(instance.isSoleStorageDisk(extra))
     }
 
@@ -1819,7 +1819,7 @@ struct VMInstanceTests {
 
         #expect(!instance.hasGuestAgentInstallerMounted)
 
-        library.editConfiguration(of: instance) {
+        library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [
                 RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
             ]
@@ -1827,7 +1827,7 @@ struct VMInstanceTests {
         #expect(instance.hasGuestAgentInstallerMounted)
 
         // An unrelated removable item must not count as the installer.
-        library.editConfiguration(of: instance) {
+        library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [
                 RemovableMediaItem(path: "/some/other/disk.img", readOnly: false)
             ]

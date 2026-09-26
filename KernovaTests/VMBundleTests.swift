@@ -672,12 +672,15 @@ struct VMBundleTests {
 }
 
 extension VMBundle {
-    /// Commits through a permit on a stopped VM over this bundle — what every
-    /// state-file write holds — for the tests that exercise the bundle's files
-    /// rather than a verb.
+    /// Commits as the write of an operation holding a stopped VM over this
+    /// bundle, whose permit writes every field — for the tests that exercise
+    /// the bundle's files rather than a verb or the field classes.
     fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
         let instance = VMInstance(bundle: self, phase: .stopped, preferences: makeTestPreferences())
-        try instance.activity.edit(.observations, commit)
+        try instance.activity.performNow(.creatingStorageDisk) { context in
+            try commit(context.permit)
+            return .rest(.asStarted, ())
+        }
     }
 
     fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {

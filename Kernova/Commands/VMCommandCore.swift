@@ -498,17 +498,23 @@ final class VMCommandCore: VMCommanding {
             .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
         case .noLibrary:
             .notFound(.id(instance.id))
+        case .outsidePermit:
+            invalidState(instance)
         }
     }
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
     ///
-    /// An admission refusal is mapped by ``admissionRefusal(_:on:)``, and a
-    /// ``CommandError`` a body raised passes through as it is.
+    /// An admission refusal is mapped by ``admissionRefusal(_:on:)`` — on the
+    /// VM that refused, which for a pairing move is the VM that held the
+    /// pairing — and a ``CommandError`` a body raised passes through as it is.
     func failure(_ error: Error, verb: VMVerb, on instance: VMInstance) -> CommandError {
         if let commandError = error as? CommandError { return commandError }
         if let refused = error as? VMAdmissionRefusal {
             return admissionRefusal(refused.refusal, on: instance)
+        }
+        if let moved = error as? VMLibrary.PairingMoveRefused {
+            return admissionRefusal(moved.refusal.refusal, on: moved.holder)
         }
         return .operationFailed(verb: verb, message: error.localizedDescription)
     }

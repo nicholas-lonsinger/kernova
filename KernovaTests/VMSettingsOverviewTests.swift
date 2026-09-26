@@ -353,7 +353,7 @@ struct VMSettingsOverviewTests {
 
         // Turned on where the toggle still lives — the panel, or the clipboard
         // window — and shared a folder with the guest.
-        viewModel.library.editConfiguration(of: instance) {
+        viewModel.library.editConfiguration(of: instance, as: [.liveKeys, .machineKeys]) {
             $0.clipboardSharingEnabled = true
             $0.clipboardPassthroughEnabled = true
             $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
