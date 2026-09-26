@@ -48,8 +48,8 @@ the facade and present its refusals in their own idiom:
 values and is the one reader and writer of those files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
 (`CoordinatedBundleFileAccess` in production); every write holds a
-`VMEditPermit` that `VMActivity` mints on admission, and `VMLibrary` owns the
-policy a configuration write passes on its way there. `VMBundle` is also the one writer
+`VMEditPermit` that `VMActivity` mints on admission, and a configuration write
+passes the policy `VMLibrary` builds every bundle with through `VMBundle.Factory`. `VMBundle` is also the one writer
 of the bundle's machine files, through the `VMBundleMachineFileWorking` seam
 (`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds.
 `VMInstance` is the `@MainActor`

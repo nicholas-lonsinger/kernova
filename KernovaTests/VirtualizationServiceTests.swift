@@ -464,8 +464,9 @@ struct VirtualizationServiceTests {
         macAddress: String? = nil, capturedMACAddress: String? = nil,
         machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
+        let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
         let instance = try VMInstanceFixture.makeOnDisk(
-            name: "Revert VM", phase: phase,
+            name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot]),
             bundleFactory: machineFiles.map(VMBundle.Factory.init(machineFiles:))
         ) {
             $0.memorySizeInGB = 16
@@ -484,7 +485,6 @@ struct VirtualizationServiceTests {
             StorageDisk(
                 id: extraID, path: "AdditionalDisks/\(extraID.uuidString).asif", isInternal: true),
         ]
-        let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
         let snapshotLayout = layout.snapshotLayout(id: snapshot.id)
         try FileManager.default.createDirectory(
             at: snapshotLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
@@ -496,8 +496,6 @@ struct VirtualizationServiceTests {
         try VMConfiguration.makeJSONEncoder().encode(capturedConfiguration)
             .write(to: snapshotLayout.configURL)
 
-        // The VM as it stands now: more memory, and the second disk removed.
-        try instance.editSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         return RevertFixture(
             instance: instance, snapshot: snapshot,
             capturedConfiguration: capturedConfiguration,

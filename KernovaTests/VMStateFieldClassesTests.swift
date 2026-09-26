@@ -69,9 +69,12 @@ struct VMStateFieldClassesTests {
         let classes = VMConfiguration.fieldClasses
         // Adding the device mints its address, both part of the swap.
         #expect(classes.refused(from: off, to: on, by: .edit(.networkAttachment)) == [])
-        // Taking it away is hardware alone.
-        #expect(classes.refused(from: on, to: off, by: .edit(.networkAttachment)) == ["networkEnabled"])
-        #expect(classes.refused(from: on, to: off, by: .edit(.machineKeys)) == [])
+        // Taking it away is hardware alone, and keeps the address.
+        var removed = on
+        removed.applyNetworkMode(nil)
+        #expect(
+            classes.refused(from: on, to: removed, by: .edit(.networkAttachment)) == ["networkEnabled"])
+        #expect(classes.refused(from: on, to: removed, by: .edit(.machineKeys)) == [])
         // Replacing an address is not part of any swap.
         var readdressed = on
         readdressed.macAddress = "02:11:22:33:44:55"
