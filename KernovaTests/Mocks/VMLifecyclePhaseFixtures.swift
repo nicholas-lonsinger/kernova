@@ -77,6 +77,9 @@ enum VMLifecyclePhaseFixtures {
             .operating(.deleting, from: .stopped),
             .operating(.creatingStorageDisk, from: .stopped),
             .operating(.creatingRemovableMedia, from: live),
+            // At rest, where a snapshot delete tolerates a machine-key edit
+            // and still refuses every other operation.
+            .operating(.deletingSnapshot, from: .stopped),
         ]
     }()
 

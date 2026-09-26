@@ -121,7 +121,7 @@ extension VMCommandCore {
         _ selector: VMSelector, disk id: UUID, trashFile: Bool, confirmed: Bool
     ) async throws {
         let instance = try resolve(selector)
-        try require(.editStorageDisks, on: instance)
+        try require(trashFile ? .trashStorageDisk : .editStorageDisks, on: instance)
         let disk = try removableStorageDisk(id, on: instance)
         guard trashFile else {
             try detachStorageDisk(id, from: instance)

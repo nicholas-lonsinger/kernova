@@ -141,6 +141,10 @@ struct VMLifecyclePhaseTests {
             Row(
                 status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
+            // Deleting a snapshot of a stopped VM.
+            Row(
+                status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: false),
         ]
     }()
 
