@@ -103,7 +103,7 @@ enum VMAdmission {
         phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         let decision = decideRegardlessOfTermination(request, posture: posture, phase: phase, facts: facts)
-        guard decision == .admit, facts.terminating, origin == .newWork,
+        guard decision == .admit, facts.terminating, !origin.exempts(request),
             beginsOperation(request, phase: phase)
         else { return decision }
         return .refuse(.terminating)
@@ -466,16 +466,34 @@ enum VMAdmission {
 }
 
 /// Whose request admission is deciding, as the termination reads it.
+///
+/// Each exempt origin names the one request it exempts, and
+/// ``exempts(_:)`` holds that pairing: any other request made under it is
+/// decided as new work, so no caller can carry an exemption onto a request
+/// it was not made for.
 enum VMRequestOrigin: Sendable, Equatable {
     /// A person's verb, or work the app starts on its own — refused an
     /// operation once the termination has begun.
     case newWork
-    /// The termination's own work: the save pass's suspends.
-    case termination
+    /// The save pass's suspend of a VM settled live.
+    case terminationSave
     /// The baseline revert an Ephemeral Mode VM owes each power-off, which a
     /// quit waits out rather than refuses — so a guest that powers off during
     /// one never rests on the disks the mode discards.
-    case powerOff
+    case powerOffRevert
+
+    /// Whether this origin exempts `request` from the termination's refusal.
+    func exempts(_ request: VMAdmission.Request) -> Bool {
+        switch self {
+        case .newWork:
+            return false
+        case .terminationSave:
+            return request == .operation(.saving)
+        case .powerOffRevert:
+            guard case .operation(.bringUp(.reverting)) = request else { return false }
+            return true
+        }
+    }
 }
 
 /// A request that reads what a VM presents rather than moving it.

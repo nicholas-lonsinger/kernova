@@ -110,8 +110,9 @@ struct AppTerminationGateTests {
         controller.requestFullQuit()
 
         try await spy.ended.wait { spy.endings.count == 1 }
-        // A second pass would reach `trySave` on a VM the first one holds and
-        // force-stop it mid-write, so exactly one pass runs and ends.
+        // A second pass's save would be refused as busy on the VM the first
+        // one holds, and force-stop it mid-write, so exactly one pass runs and
+        // ends.
         #expect(spy.endings == [.terminate])
     }
 

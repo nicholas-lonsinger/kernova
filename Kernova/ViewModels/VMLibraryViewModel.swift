@@ -873,7 +873,7 @@ final class VMLibraryViewModel {
 
     /// Suspends a VM for the termination save pass, throwing on failure.
     func saveForTermination(_ instance: VMInstance) async throws {
-        try await core.suspend(instance, origin: .termination)
+        try await core.suspend(instance, origin: .terminationSave)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's

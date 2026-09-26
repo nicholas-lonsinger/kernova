@@ -235,7 +235,7 @@ extension VMCommandCore {
         )
         let outcome: VMOutcome
         do {
-            outcome = try startRevert(instance, to: baseline, origin: .powerOff)
+            outcome = try startRevert(instance, to: baseline, origin: .powerOffRevert)
         } catch {
             report(failure(error, verb: .revertToSnapshot, on: instance), on: instance)
             return

@@ -250,15 +250,55 @@ struct VMAdmissionTests {
         #expect(Self.settledCells(request, .plain, terminating: true) == expected, "\(request)")
     }
 
+    /// The settled columns during the termination under each exempt origin:
+    /// the one request it names decides as though nothing were terminating,
+    /// and every other request is refused as new work is.
+    nonisolated private static let exemptTable: [(VMRequestOrigin, VMAdmission.Request, String)] = [
+        (.terminationSave, .operation(.saving), "IIIIAAR"),
+        (.terminationSave, .start(recovery: false), "TTTTIIR"),
+        (.terminationSave, .resume, "IIITITR"),
+        (.terminationSave, .operation(.capturingSnapshot(.live)), "IIIITTR"),
+        (.terminationSave, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "TTTTTTR"),
+        (.terminationSave, .operation(.deleting), "TTTTIIR"),
+        (.terminationSave, .edit(.hotPlugMedia), "AAAITTR"),
+        (.powerOffRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "AAAAAAR"),
+        (.powerOffRevert, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: true))), "AAAAAAR"),
+        (.powerOffRevert, .start(recovery: false), "TTTTIIR"),
+        (.powerOffRevert, .resume, "IIITITR"),
+        (.powerOffRevert, .operation(.saving), "IIIITTR"),
+        (.powerOffRevert, .operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
+        (.powerOffRevert, .operation(.deletingSnapshot), "TTTTTTR"),
+        (.powerOffRevert, .operation(.discardingSavedState), "IIITIIR"),
+    ]
+
     @Test(
-        "The termination's own work and a power-off's revert decide as though nothing were terminating",
+        "During the termination an exempt origin exempts only the request it names",
+        arguments: exemptTable.indices)
+    func exemptOriginExemptsOnlyItsRequest(row: Int) {
+        let (origin, request, expected) = Self.exemptTable[row]
+        #expect(
+            Self.settledCells(request, .plain, terminating: true, origin: origin) == expected,
+            "\(request) \(origin)")
+    }
+
+    @Test(
+        "Under an exempt origin every other request decides as new work does",
         arguments: settledTable.indices)
-    func terminationWorkIsUnrefused(row: Int) {
-        let (request, expected) = Self.settledTable[row]
-        for origin in [VMRequestOrigin.termination, .powerOff] {
+    func exemptOriginWidensNothingElse(row: Int) {
+        let (request, _) = Self.settledTable[row]
+        let asNewWork = Self.settledCells(request, .plain, terminating: true)
+        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert] where !origin.exempts(request) {
             #expect(
-                Self.settledCells(request, .plain, terminating: true, origin: origin) == expected,
+                Self.settledCells(request, .plain, terminating: true, origin: origin) == asNewWork,
                 "\(request) \(origin)")
+        }
+    }
+
+    @Test("Outside the termination, an origin changes no decision", arguments: settledTable.indices)
+    func originIsInertOutsideTheTermination(row: Int) {
+        let (request, expected) = Self.settledTable[row]
+        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert] {
+            #expect(Self.settledCells(request, .plain, origin: origin) == expected, "\(request) \(origin)")
         }
     }
 
