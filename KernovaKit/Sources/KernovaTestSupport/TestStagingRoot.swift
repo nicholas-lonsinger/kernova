@@ -10,18 +10,13 @@ public final class TestStagingRoot: Sendable {
     public let root: ProcessStagingRoot
 
     /// The parent ``root`` sits under.
-    public let parent: URL
+    public var parent: URL { scratch.url }
+
+    private let scratch = TestScratchDirectory(prefix: "KernovaTestStaging")
 
     /// A root under a fresh parent; touches no disk.
     public init() {
-        parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaTestStaging", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        root = ProcessStagingRoot(parent: parent)
-    }
-
-    deinit {
-        try? FileManager.default.removeItem(at: parent)
+        root = ProcessStagingRoot(parent: scratch.url)
     }
 
     /// Another root under the same parent, standing in for another process's.

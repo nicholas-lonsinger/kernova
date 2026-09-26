@@ -64,18 +64,10 @@ struct VMCommandSocketListenerTests {
         }
     }
 
-    /// A group container with a short path, removed with the suite instance:
-    /// `sockaddr_un.sun_path` holds 104 bytes and the real container's own path
-    /// already spends most of them in production.
-    private final class ScratchContainer: Sendable {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent(
-                "knv-\(UUID().uuidString.prefix(6).lowercased())", isDirectory: true)
-
-        deinit { try? FileManager.default.removeItem(at: url) }
-    }
-
-    private let container = ScratchContainer()
+    /// A group container with a short path: `sockaddr_un.sun_path` holds 104
+    /// bytes and the real container's own path already spends most of them in
+    /// production.
+    private let container = TestScratchDirectory(prefix: "knv")
 
     /// The claim on a fresh copy of the app, its socket in ``container``.
     private func makeClaim() throws -> AppCopyClaim {

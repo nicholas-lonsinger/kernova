@@ -105,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let entitlements = EntitlementService(reader: ProcessEntitlementReader())
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
         let viewModel = VMLibraryViewModel(
-            storageService: VMStorageService(),
+            storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             virtualizationService: VirtualizationService(
                 vmnetNetworks: vmnetNetworks, entitlements: entitlements),
             installService: MacOSInstallService(
