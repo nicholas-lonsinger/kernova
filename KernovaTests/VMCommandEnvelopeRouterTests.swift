@@ -90,7 +90,7 @@ struct VMCommandEnvelopeRouterTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: .linux, library: harness.library,
-            storage: harness.storage, preferences: preferences, mutate: mutate)
+            preferences: preferences, mutate: mutate)
     }
 
     // MARK: - Reads
@@ -442,13 +442,12 @@ struct VMCommandEnvelopeRouterTests {
     func repeatedCancelGuestSetupRefusesOnceDrained() async throws {
         let installService = SuspendingMockMacOSInstallService()
         let harness = makeHarness(installService: installService)
-        let instance = VMInstanceFixture.make(
+        let instance = harness.library.registerFixture(
             name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
         ) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        harness.library.register(instance, storage: harness.storage)
 
         let started = try await harness.transport.send(
             .start(.id(instance.id), recovery: false))
@@ -498,13 +497,12 @@ struct VMCommandEnvelopeRouterTests {
             fileSystem: fileSystem, preferences: preferences)
         let transport = makeTransport(over: core)
 
-        let instance = VMInstanceFixture.make(
+        let instance = library.registerFixture(
             name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
         ) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        library.register(instance, storage: storage)
 
         let started = try await transport.send(.start(.id(instance.id), recovery: false))
         #expect(started.result == .ok)

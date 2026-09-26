@@ -72,12 +72,10 @@ struct VMBundleTests {
     /// A VM over the bundle at `url`, read through `access` and registered with
     /// a library — the only writer of a configuration.
     private func makeVM(at url: URL, access: any VMBundleFileAccessing) throws -> (VMLibrary, VMInstance) {
-        let instance = VMInstance(
-            bundle: makeBundle(try files(url, access).read()), phase: .stopped,
-            preferences: makeTestPreferences())
-        let library = makeWiredLibrary()
+        let library = makeWiredLibrary(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem))
+        let instance = library.admitForTesting(
+            try files(url, access).read(), phase: .stopped, preferences: makeTestPreferences())
         library.wireHooks(for: instance)
-        library.admitForTesting(instance)
         return (library, instance)
     }
 

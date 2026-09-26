@@ -465,9 +465,10 @@ struct VirtualizationServiceTests {
         machineFiles: (any VMBundleMachineFileWorking)? = nil
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
-        let instance = try VMInstanceFixture.makeOnDisk(
-            name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot]),
-            bundleFactory: machineFiles.map(VMBundle.Factory.init(machineFiles:))
+        let library = makeWiredLibrary(
+            machineFiles: machineFiles ?? VMBundleMachineFiles(fileSystem: MockFileSystem()))
+        let instance = try library.registerOnDiskFixture(
+            name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {
             $0.memorySizeInGB = 16
             $0.macAddress = macAddress
@@ -499,7 +500,7 @@ struct VirtualizationServiceTests {
         return RevertFixture(
             instance: instance, snapshot: snapshot,
             capturedConfiguration: capturedConfiguration,
-            library: makeWiredLibrary(holding: [instance]))
+            library: library)
     }
 
     /// Reverts `fixture`'s VM to `snapshot` — the fixture's own unless named —
@@ -896,15 +897,16 @@ struct VirtualizationServiceTests {
     private func makeLiveMACPair(
         restingAt phase: VMLifecyclePhase
     ) -> (library: VMLibrary, resting: VMInstance, live: VMInstance) {
-        let resting = VMInstanceFixture.make(name: "Resting", phase: phase) {
+        let library = makeWiredLibrary()
+        let resting = library.registerFixture(name: "Resting", phase: phase) {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:40"
         }
-        let live = VMInstanceFixture.make(name: "Live", phase: .running(sessionID: UUID())) {
+        let live = library.registerFixture(name: "Live", phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:40"
         }
-        return (makeWiredLibrary(holding: [resting, live]), resting, live)
+        return (library, resting, live)
     }
 
     /// The identity conflict a refusal carries, or `nil` for any other error.
@@ -1351,13 +1353,13 @@ struct VirtualizationServiceTests {
         // Moved since the pick, so only the bookmark still finds it.
         try FileManager.default.moveItem(
             at: picked, to: directory.appendingPathComponent("Moved.kernel"))
-        let instance = VMInstanceFixture.make(phase: .stopped) {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = library.registerFixture(phase: .stopped) {
             $0.bootMode = .linuxKernel
             $0.kernelPath = picked.path(percentEncoded: false)
             $0.kernelBookmark = bookmark
         }
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(holding: [instance], storage: storage)
         defer { withExtendedLifetime(library) {} }
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 

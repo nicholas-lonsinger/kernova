@@ -64,8 +64,7 @@ struct DetailAlertsPresenterTests {
         name: String = "Test VM", in viewModel: VMLibraryViewModel,
         hostState: VMHostState = VMHostState()
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: name, hostState: hostState)
-        viewModel.library.admitForTesting(instance)
+        let instance = viewModel.library.admitFixture(name: name, hostState: hostState)
         return instance
     }
 
@@ -75,13 +74,12 @@ struct DetailAlertsPresenterTests {
     private func makeInstanceWithExternalDisk(name: String = "Ext VM", in viewModel: VMLibraryViewModel)
         -> VMInstance
     {
-        let instance = VMInstanceFixture.make(name: name) { config in
+        let instance = viewModel.library.admitFixture(name: name) { config in
             config.storageDisks = [
                 StorageDisk(
                     path: "/tmp/does-not-exist-\(config.id.uuidString).img", isInternal: false)
             ]
         }
-        viewModel.library.admitForTesting(instance)
         return instance
     }
 

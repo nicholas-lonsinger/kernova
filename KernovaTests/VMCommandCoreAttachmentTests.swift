@@ -62,7 +62,7 @@ struct VMCommandCoreAttachmentTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, library: harness.library,
-            storage: harness.storage, preferences: preferences, mutate: mutate)
+            preferences: preferences, mutate: mutate)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {

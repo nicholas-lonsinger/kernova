@@ -57,19 +57,18 @@ struct VMSettingsNetworkPanelTests {
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         viewModel: VMLibraryViewModel? = nil
     ) -> (VMSettingsViewController, VMInstance) {
-        let instance = VMInstanceFixture.make(phase: phase) {
+        // The pane always shows a VM the library holds, and the library is what
+        // answers its address and its entitlements — so `vmnetNetworks` and
+        // `entitled` reach the panel through the library, never the panel
+        // directly.
+        let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
+        let instance = library.library.registerFixture(phase: phase) {
             $0.networkEnabled = networkEnabled
             $0.networkMode = mode
             $0.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
             $0.macAddress = macAddress
         }
         if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
-        // The pane always shows a VM the library holds, and the library is what
-        // answers its address and its entitlements — so `vmnetNetworks` and
-        // `entitled` reach the panel through the library, never the panel
-        // directly.
-        let library = viewModel ?? makeViewModel(vmnetNetworks: vmnetNetworks, entitled: entitled)
-        registerSettingsInstance(instance, in: library)
         let vc = makeSettingsPane(
             instance: instance, viewModel: library, isReadOnly: isReadOnly,
             bridgedInterfaces: interfaces)
@@ -472,11 +471,10 @@ struct VMSettingsNetworkPanelTests {
         _ mac: String, presenter: MockVMLibraryPresenting? = nil
     ) -> VMLibraryViewModel {
         let viewModel = makeViewModel()
-        let holder = makeSettingsInstance(guestOS: .linux) {
+        viewModel.library.admitFixture(guestOS: .linux) {
             $0.name = "Holder"
             $0.macAddress = mac
         }
-        viewModel.library.admitForTesting([holder])
         if let presenter { viewModel.presenter = presenter }
         return viewModel
     }

@@ -423,8 +423,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSLocalFile() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -445,8 +445,8 @@ struct VMLifecycleCoordinatorTests {
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -476,8 +476,8 @@ struct VMLifecycleCoordinatorTests {
             source: .downloadLatest,
             downloadDestinationPath: persisted.path(percentEncoded: false)
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
@@ -510,8 +510,8 @@ struct VMLifecycleCoordinatorTests {
             version: "15.6.1",
             build: "24G90"
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -574,9 +574,9 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         installService.installError = makeInstallVMLimitExceededError()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         instance.activity.placeForTesting(.failed(message: "stale message from an earlier failure"))
-        let library = makeWiredLibrary(holding: [instance])
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: (any Error).self) {
@@ -593,8 +593,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSClearsInstallContextOnSuccess() async throws {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -607,8 +607,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSRecordsTheInstalledImage() async throws {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
         installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
 
@@ -623,8 +623,8 @@ struct VMLifecycleCoordinatorTests {
     func installMacOSFailureRecordsNoImage() async {
         let (coordinator, _, installService, _, _) = makeCoordinator()
         let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
         installService.installError = MacOSInstallError.unsupportedRestoreImage
 
@@ -647,8 +647,8 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        let instance = VMInstanceFixture.make { $0.installContext = originalContext }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = originalContext }
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: CancellationError.self) {
@@ -677,8 +677,8 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -707,8 +707,8 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: persisted.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
@@ -750,8 +750,8 @@ struct VMLifecycleCoordinatorTests {
             ).path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
@@ -789,8 +789,8 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: destination.path(percentEncoded: false),
             requestedFreshDownload: true
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         do {
@@ -822,8 +822,8 @@ struct VMLifecycleCoordinatorTests {
             requestedFreshDownload: true,
             remoteURL: Self.pinnedRestoreImageURL
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         do {
@@ -850,8 +850,8 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
         try await coordinator.launchGuestSetup(on: instance).value()
@@ -927,8 +927,8 @@ struct VMLifecycleCoordinatorTests {
                 RestoreImageFilename.destination(for: ipswService.fetchResult.url)
             ).path(percentEncoded: false)
         )
-        let instance = VMInstanceFixture.make { $0.installContext = originalContext }
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = originalContext }
         defer { withExtendedLifetime(library) {} }
 
         do {
@@ -948,8 +948,9 @@ struct VMLifecycleCoordinatorTests {
     private func makeInstallingInstance(
         context: MacOSInstallContext, storage: MockVMStorageService
     ) -> (VMInstance, VMLibrary) {
-        let instance = VMInstanceFixture.make(guestOS: .macOS) { $0.installContext = context }
-        return (instance, makeWiredLibrary(holding: [instance], storage: storage))
+        let library = makeWiredLibrary(storage: storage)
+        let instance = library.registerFixture(guestOS: .macOS) { $0.installContext = context }
+        return (instance, library)
     }
 
     @Test("A latest install whose destination move cannot be saved fails before the download")
@@ -1113,12 +1114,11 @@ struct VMLifecycleCoordinatorTests {
         context: LinuxInstallContext, in fixture: LinuxFixture,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Debian") {
+        let instance = fixture.library.registerFixture(name: "Debian") {
             $0.linuxInstallContext = context
             mutate(&$0)
         }
         instance.activity.placeForTesting(.initialBoot)
-        fixture.library.register(instance, storage: fixture.storage)
         return instance
     }
 

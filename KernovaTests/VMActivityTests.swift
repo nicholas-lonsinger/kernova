@@ -54,12 +54,12 @@ struct VMActivityTests {
     private func makeWiredInstance(
         _ phase: VMLifecyclePhase
     ) -> (VMInstance, Recorder, VMLibrary) {
-        let (instance, recorder) = makeInstance(phase)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
         let library = makeWiredLibrary(
-            holding: [instance],
             lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()))
+        let instance = library.registerFixture(
+            phase: phase,
+            snapshots: VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
+        let recorder = Recorder()
         // Wiring installs the library's own power-off hook; the recorder's
         // stands in for it here.
         instance.activity.onPoweredOff = { recorder.poweredOff += 1 }

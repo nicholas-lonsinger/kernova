@@ -36,10 +36,6 @@ struct RemindersSettingsViewControllerTests {
         )
     }
 
-    private func makeInstance(name: String) -> VMInstance {
-        VMInstanceFixture.make(name: name, guestOS: .macOS)
-    }
-
     /// Builds the pane with `vmCount` VMs and runs the appear-time layout the
     /// way NSTabViewController does: it reads `preferredContentSize` at switch
     /// time and sizes the pane's view to exactly that.
@@ -54,7 +50,7 @@ struct RemindersSettingsViewControllerTests {
     ) {
         let viewModel = makeViewModel()
         for index in 1...vmCount {
-            viewModel.library.admitForTesting(makeInstance(name: "VM \(index)"))
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
@@ -72,7 +68,7 @@ struct RemindersSettingsViewControllerTests {
     private func makeShownPane(vmCount: Int) -> RemindersSettingsViewController {
         let viewModel = makeViewModel()
         for index in 1...vmCount {
-            viewModel.library.admitForTesting(makeInstance(name: "VM \(index)"))
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         // Measure while detached, exactly as the pane does before the tab
@@ -276,7 +272,7 @@ struct RemindersSettingsViewControllerTests {
     func firstVisitHoldsFlashForArrivalCue() throws {
         let viewModel = makeViewModel()
         for index in 1...9 {
-            viewModel.library.admitForTesting(makeInstance(name: "VM \(index)"))
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
@@ -346,9 +342,8 @@ struct RemindersSettingsViewControllerTests {
     @Test("Only a VM the install reminder applies to gets a per-VM row")
     func onlyMacOSVMsGetARow() throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitForTesting([
-            makeInstance(name: "Mac"), VMInstanceFixture.make(name: "Tux", guestOS: .linux),
-        ])
+        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
         controller.viewWillAppear()
@@ -363,8 +358,7 @@ struct RemindersSettingsViewControllerTests {
     func unsavedPerVMEditRepaintsTheSwitch() throws {
         let viewModel = makeViewModel()
         let storage = try #require(viewModel.storageService as? MockVMStorageService)
-        let instance = VMInstanceFixture.make(name: "Mac", guestOS: .macOS, files: storage.files)
-        viewModel.library.admitForTesting([instance])
+        let instance = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
         storage.saveHostStateError = CocoaError(.fileWriteNoPermission)
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
@@ -382,7 +376,7 @@ struct RemindersSettingsViewControllerTests {
     @Test("With only Linux VMs the section says there is no macOS VM")
     func onlyLinuxVMsShowTheEmptyState() throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitForTesting([VMInstanceFixture.make(name: "Tux", guestOS: .linux)])
+        viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
         let controller = RemindersSettingsViewController(viewModel: viewModel)
         _ = controller.view
         controller.viewWillAppear()

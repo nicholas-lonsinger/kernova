@@ -64,16 +64,15 @@ func makeTestLifecycle(
         downloadsDirectory: downloadsDirectory)
 }
 
-/// A real `VMLibrary` over mocks, holding `instances` registered as a load
-/// would have left them: the test target's one construction of a library, and
-/// what a test changes a VM's configuration through once the VM exists, since
-/// only the library writes it.
+/// A real `VMLibrary` over mocks: the test target's one construction of a
+/// library, and what a test changes a VM's configuration through once the VM
+/// exists, since only the library writes it. Its VMs come from
+/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
 /// reaches it weakly.
 @MainActor
 func makeWiredLibrary(
-    holding instances: [VMInstance] = [],
     storage: MockVMStorageService = MockVMStorageService(),
     machineFiles: (any VMBundleMachineFileWorking)? = nil,
     lifecycle: VMLifecycleCoordinator? = nil,
@@ -92,9 +91,6 @@ func makeWiredLibrary(
         arpTable: arpTable,
         entitlements: .entitled,
         guestAccountPasswords: guestAccountPasswords)
-    for instance in instances {
-        library.register(instance, storage: storage)
-    }
     return library
 }
 
@@ -113,23 +109,78 @@ extension VMLibrary {
         await waitForObservedChange { [self] in !hasRevertInFlight }
     }
 
-    /// Adds each of `instances`, in order, unwired and unread.
-    func admitForTesting(_ instances: [VMInstance]) {
-        for instance in instances {
-            admitForTesting(instance)
-        }
+    /// Builds a fixture VM over this library's ``bundleFactory`` and adds it
+    /// to the library as it stands, unwired and with its bundle's files in a
+    /// store of its own — a test's stand-in for a VM a load would have
+    /// adopted.
+    ///
+    /// The parameters are ``VMInstanceFixture/make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``'s.
+    @discardableResult
+    func admitFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        hostState: VMHostState = VMHostState(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
+        files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        admitForTesting(
+            VMInstanceFixture.seed(
+                name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
+                pairings: pairings, files: files, mutate: mutate),
+            phase: phase, preferences: preferences)
     }
 
-    /// Wires `instance` and adds it to the library, with its bundle's files in
-    /// `storage` as a load would have found them: a fixture built over a store
-    /// of its own hands that store's files to `storage` and writes through it
-    /// from then on.
-    func register(_ instance: VMInstance, storage: MockVMStorageService) {
-        if let files = instance.bundle.fileAccessForTesting as? InMemoryVMBundleFiles {
-            files.forward(to: storage.files)
+    /// ``admitFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``,
+    /// wired as a load would have left it and with its bundle's files in this
+    /// library's storage: a `files` the test passes hands what it holds to
+    /// that storage and writes through it from then on.
+    @discardableResult
+    func registerFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        hostState: VMHostState = VMHostState(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
+        files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        guard let storage = storageService as? MockVMStorageService else {
+            preconditionFailure("A fixture registers only with a library over MockVMStorageService")
         }
+        let read = VMInstanceFixture.seed(
+            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
+            pairings: pairings, files: files, mutate: mutate)
+        files.forward(to: storage.files)
+        let instance = admitForTesting(read, phase: phase, preferences: preferences)
         wireHooks(for: instance)
-        admitForTesting(instance)
+        return instance
+    }
+
+    /// A fixture VM over a real bundle directory
+    /// (``VMInstanceFixture/seedOnDisk(name:guestOS:snapshots:mutate:)``),
+    /// built over this library's ``bundleFactory`` and wired — for a test that
+    /// drives the machine files the library was made over.
+    @discardableResult
+    func registerOnDiskFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) throws -> VMInstance {
+        let instance = admitForTesting(
+            try VMInstanceFixture.seedOnDisk(
+                name: name, guestOS: guestOS, snapshots: snapshots, mutate: mutate),
+            phase: phase, preferences: preferences)
+        wireHooks(for: instance)
+        return instance
     }
 
     /// Applies `mutate` to `instance`'s host state as setup a test relies on,
@@ -449,11 +500,28 @@ extension VMInstance {
 func makeInstanceWithLiveSession(named name: String = "Live Session VM")
     -> (instance: VMInstance, sessionID: UUID)
 {
-    let instance = VMInstanceFixture.make(name: name, guestOS: .macOS) {
-        $0.clipboardSharingEnabled = true
-        $0.agentLogForwardingEnabled = true
-        $0.dropFilesEnabled = true
+    enterLiveSession(
+        VMInstanceFixture.make(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
+}
+
+extension VMLibrary {
+    /// ``makeInstanceWithLiveSession(named:)``, registered with this library.
+    func registerInstanceWithLiveSession(named name: String = "Live Session VM")
+        -> (instance: VMInstance, sessionID: UUID)
+    {
+        enterLiveSession(
+            registerFixture(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
     }
+}
+
+private func enableEveryLiveSessionFeature(_ config: inout VMConfiguration) {
+    config.clipboardSharingEnabled = true
+    config.agentLogForwardingEnabled = true
+    config.dropFilesEnabled = true
+}
+
+@MainActor
+private func enterLiveSession(_ instance: VMInstance) -> (instance: VMInstance, sessionID: UUID) {
     let sessionID = UUID()
     instance.activity.placeForTesting(.running(sessionID: sessionID))
     instance.beginSessionContextForTesting()

@@ -50,7 +50,7 @@ struct GuestAccountResumePromptTests {
         intent: GuestAccountIntent?, installPending: Bool = true,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(name: "Sequoia", guestOS: .macOS) {
+        let instance = viewModel.library.registerFixture(name: "Sequoia", guestOS: .macOS) {
             if installPending {
                 $0.installContext = MacOSInstallContext(
                     source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
@@ -59,7 +59,6 @@ struct GuestAccountResumePromptTests {
             mutate(&$0)
         }
         instance.activity.placeForTesting(installPending ? .initialBoot : .stopped)
-        viewModel.library.register(instance, storage: storage)
         return instance
     }
 

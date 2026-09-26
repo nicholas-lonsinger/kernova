@@ -62,7 +62,7 @@ struct VMCommandCoreConfigurationTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences,
+            library: harness.library, preferences: preferences,
             mutate: mutate)
     }
 

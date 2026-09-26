@@ -50,8 +50,7 @@ struct VMRemovableMediaReconcilerTests {
     private func makeRunningInstance(
         in harness: Harness, _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> (instance: VMInstance, sessionID: UUID) {
-        let instance = VMInstanceFixture.make(mutate: mutate)
-        harness.library.register(instance, storage: harness.storage)
+        let instance = harness.library.registerFixture(mutate: mutate)
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
         instance.beginSessionContextForTesting()
@@ -110,7 +109,7 @@ struct VMRemovableMediaReconcilerTests {
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = new }
 
-        while instance.liveRemovableMedia.isEmpty { await Task.yield() }
+        try await waitForChange { !instance.liveRemovableMedia.isEmpty }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
@@ -135,7 +134,7 @@ struct VMRemovableMediaReconcilerTests {
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
 
-        while !instance.liveRemovableMedia.isEmpty { await Task.yield() }
+        try await waitForChange { instance.liveRemovableMedia.isEmpty }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
@@ -158,7 +157,7 @@ struct VMRemovableMediaReconcilerTests {
             $0.removableMedia = [RemovableMediaItem(id: newID, path: "/tmp/new.iso", readOnly: true)]
         }
 
-        while instance.liveRemovableMedia.first?.path != "/tmp/new.iso" { await Task.yield() }
+        try await waitForChange { instance.liveRemovableMedia.first?.path == "/tmp/new.iso" }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
@@ -182,7 +181,7 @@ struct VMRemovableMediaReconcilerTests {
             $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
         }
 
-        while instance.liveRemovableMedia.first?.readOnly != false { await Task.yield() }
+        try await waitForChange { instance.liveRemovableMedia.first?.readOnly == false }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
@@ -256,7 +255,7 @@ struct VMRemovableMediaReconcilerTests {
             $0 = configWithRemovable($0, path: "/tmp/missing.iso")
         }
 
-        while !failures.showError { await Task.yield() }
+        try await failures.recorded.wait { failures.showError }
 
         #expect(mock.attachCallCount == 1)
         #expect(failures.errorMessage != nil)
@@ -284,7 +283,7 @@ struct VMRemovableMediaReconcilerTests {
             $0.removableMedia = [RemovableMediaItem(id: newID, path: "/tmp/new.iso", readOnly: true)]
         }
 
-        while instance.liveRemovableMedia.first?.path != "/tmp/new.iso" { await Task.yield() }
+        try await waitForChange { instance.liveRemovableMedia.first?.path == "/tmp/new.iso" }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
@@ -409,7 +408,7 @@ struct VMRemovableMediaReconcilerTests {
         let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         // The guest powers off before the suspended attach resolves.
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
         instance.handleSessionEvent(.guestDidStop)
@@ -431,7 +430,7 @@ struct VMRemovableMediaReconcilerTests {
 
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
 
         // A force stop lands under the suspended attach: no successor session
         // can come up while the pass still holds the VM.
@@ -460,7 +459,7 @@ struct VMRemovableMediaReconcilerTests {
 
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
 
         // The force stop is what makes the attach fail, so an alert would name
         // an error the user caused and a rollback would describe live media
@@ -491,7 +490,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // The pass for A suspends inside the attach; B is committed behind it.
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
 
         // Force Stop; an edit to C made while the pass still holds the VM
@@ -525,17 +524,17 @@ struct VMRemovableMediaReconcilerTests {
 
         // Three rapid edits before the first attach can complete.
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configC }
 
         // Release the suspended attach (A); the loop should then detach A,
         // attach C (B was overwritten before any attach started for it).
         mock.resumeSuspended()
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         mock.resumeSuspended()
 
-        while instance.liveRemovableMedia.first?.path != "/tmp/C.iso" { await Task.yield() }
+        try await waitForChange { instance.liveRemovableMedia.first?.path == "/tmp/C.iso" }
 
         // Final state: A then C attached; A detached. B was skipped entirely.
         #expect(mock.attachCallCount == 2)
@@ -560,13 +559,13 @@ struct VMRemovableMediaReconcilerTests {
         let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
 
         // A's attach is refused; B's, which the drain runs next, lands.
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
         mock.resumeSuspended()
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         mock.attachError = nil
         mock.resumeSuspended()
         await waitForObservedChange { !isReconciling(instance) }
@@ -589,14 +588,14 @@ struct VMRemovableMediaReconcilerTests {
         let configB = configWithRemovable(baseConfig, path: "/tmp/B.iso")
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configB }
 
         // Both attaches are refused, so what is live when the queue empties —
         // nothing — is what the configuration ends up describing.
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
         mock.resumeSuspended()
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         mock.resumeSuspended()
         await waitForObservedChange { !isReconciling(instance) }
 
@@ -619,7 +618,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // Held from the edit's own commit, before the pass has had a turn.
         #expect(isReconciling(instance))
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         #expect(isReconciling(instance))
 
         mock.resumeSuspended()
@@ -637,7 +636,7 @@ struct VMRemovableMediaReconcilerTests {
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         let configB = configWithRemovable(instance.configuration, path: "/tmp/B.iso")
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         let pass = try #require(instance.phase.operation)
         #expect(pass.kind == .reconcilingMedia)
 
@@ -650,7 +649,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // A's attach lands; the same pass then detaches it and attaches B.
         mock.resumeSuspended()
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         #expect(mock.lastAttachedPath == "/tmp/B.iso")
         #expect(instance.phase.operation?.outcome === pass.outcome)
 
@@ -677,7 +676,7 @@ struct VMRemovableMediaReconcilerTests {
 
         let configA = configWithRemovable(instance.configuration, path: "/tmp/A.iso")
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0 = configA }
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
 
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.reconcilingMedia))) {
             try await harness.lifecycle.save(instance)

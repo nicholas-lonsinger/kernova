@@ -105,12 +105,17 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var arrivals: [VMArrival] { entries.compactMap(\.arrival) }
 
     #if DEBUG
-    /// Adds `instance` to the library as it stands, unwired and unread — a
-    /// test's stand-in for a VM a load would have adopted — its bundle
-    /// answering to this library's configuration policy.
-    func admitForTesting(_ instance: VMInstance) {
-        instance.bundle.answerToConfigurationPolicyForTesting(configurationPolicy)
+    /// Adds the VM `read` describes to the library as it stands, unwired — a
+    /// test's stand-in for a VM a load would have adopted, its bundle built by
+    /// ``bundleFactory`` as every VM's is.
+    @discardableResult
+    func admitForTesting(
+        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
+    ) -> VMInstance {
+        let instance = VMInstance(
+            bundle: bundleFactory.make(read), phase: phase, preferences: preferences)
         entries.append(.vm(instance))
+        return instance
     }
     #endif
 

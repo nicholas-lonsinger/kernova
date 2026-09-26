@@ -120,7 +120,7 @@ struct VMCommandCoreTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, library: harness.library,
-            storage: harness.storage, preferences: preferences, hostState: hostState, mutate: mutate)
+            preferences: preferences, hostState: hostState, mutate: mutate)
     }
 
     @discardableResult
@@ -132,7 +132,7 @@ struct VMCommandCoreTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences,
+            library: harness.library, preferences: preferences,
             hostState: hostState, mutate: mutate)
     }
 
@@ -1131,13 +1131,12 @@ struct VMCommandCoreTests {
             diskImageService: MockDiskImageService(),
             fileSystem: fileSystem, preferences: preferences)
 
-        let instance = VMInstanceFixture.make(
+        let instance = library.registerFixture(
             name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
         ) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        library.register(instance, storage: storage)
 
         try await core.start(.id(instance.id), recovery: false)
         for await _ in installService.installStartedStream { break }

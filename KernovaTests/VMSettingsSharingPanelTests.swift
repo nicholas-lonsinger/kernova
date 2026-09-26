@@ -75,11 +75,10 @@ struct VMSettingsSharingPanelTests {
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(guestOS: guestOS) {
+        let instance = viewModel.library.registerFixture(guestOS: guestOS) {
             $0.clipboardSharingEnabled = sharingEnabled
             mutate(&$0)
         }
-        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
@@ -307,10 +306,9 @@ struct VMSettingsSharingPanelTests {
         _ directories: [SharedDirectory], phase: VMLifecyclePhase = .stopped
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux, phase: phase) {
+        let instance = viewModel.library.registerFixture(guestOS: .linux, phase: phase) {
             $0.sharedDirectories = directories
         }
-        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: phase != .stopped)
         vc.loadViewIfNeeded()

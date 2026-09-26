@@ -54,17 +54,39 @@ private func makeClipboardViewModel(preferences: AppPreferences) -> VMLibraryVie
 /// on whatever the developer last picked in Settings.
 @MainActor
 private func makeClipboardInstance(passthroughEnabled: Bool = false) -> VMInstance {
-    let instance = VMInstanceFixture.make(
-        name: "Clipboard VM",
-        preferences: makeTestPreferences()
-    ) {
+    beginClipboardSession(
+        VMInstanceFixture.make(
+            name: "Clipboard VM", preferences: makeTestPreferences(),
+            mutate: clipboardConfiguration(passthroughEnabled: passthroughEnabled)))
+}
+
+/// ``makeClipboardInstance(passthroughEnabled:)``, registered with `library` —
+/// what a test that edits the VM's configuration writes through.
+@MainActor
+private func registerClipboardInstance(
+    in library: VMLibrary, passthroughEnabled: Bool = false
+) -> VMInstance {
+    beginClipboardSession(
+        library.registerFixture(
+            name: "Clipboard VM", preferences: makeTestPreferences(),
+            mutate: clipboardConfiguration(passthroughEnabled: passthroughEnabled)))
+}
+
+private func clipboardConfiguration(
+    passthroughEnabled: Bool
+) -> (inout VMConfiguration) -> Void {
+    {
         // The window this controller fills is offered only while sharing is on
         // (``VMInstance/canShowClipboard``), and passthrough rides on it, so every
         // VM the controller ever sees carries the flag.
         $0.clipboardSharingEnabled = true
         $0.clipboardPassthroughEnabled = passthroughEnabled
     }
-    // The clipboard service is session state, so it needs a session to live in.
+}
+
+/// The clipboard service is session state, so it needs a session to live in.
+@MainActor
+private func beginClipboardSession(_ instance: VMInstance) -> VMInstance {
     instance.beginSessionContextForTesting()
     return instance
 }
@@ -420,8 +442,11 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
 
     @Test("toggling passthrough live moves the switch and the actions without reopening")
     func liveToggleUpdatesFooterAndActions() async throws {
-        let (vc, instance) = makeConnectedController()
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = registerClipboardInstance(in: library)
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
+        let vc = makeController(instance: instance)
+        _ = vc.view
         #expect(vc.areCommandActionsEnabledForTesting == true)
 
         // Driven through the production `ObservationLoop`, not
@@ -446,8 +471,8 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     @Test("paste:/copy: are gated while passthrough is on and restored when it's off")
     func responderChainGatedByPassthrough() {
         let service = FakeClipboardService(content: ClipboardContent(text: "some content"))
-        let instance = makeClipboardInstance(passthroughEnabled: true)
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = registerClipboardInstance(in: library, passthroughEnabled: true)
         instance.sessionContext?.clipboardService = service
         let vc = makeController(instance: instance)
         _ = vc.view
@@ -481,8 +506,8 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         hostPasteboard.setString("from the Mac", forType: .string)
 
         let service = FakeClipboardService(content: .empty)
-        let instance = makeClipboardInstance(passthroughEnabled: true)
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = registerClipboardInstance(in: library, passthroughEnabled: true)
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
@@ -510,8 +535,8 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         defer { registry.releaseAllForTesting() }
 
         let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
-        let instance = makeClipboardInstance(passthroughEnabled: true)
-        let library = makeWiredLibrary(holding: [instance])
+        let library = makeWiredLibrary()
+        let instance = registerClipboardInstance(in: library, passthroughEnabled: true)
         instance.sessionContext?.clipboardService = service
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
@@ -767,23 +792,23 @@ struct ClipboardPassthroughSwitchTests {
 
     /// The controller and the view model it holds **weakly** — a caller that
     /// drops the view model leaves the write path with nothing to write through.
-    private func makeController(_ instance: VMInstance) -> (
-        ClipboardContentViewController, VMLibraryViewModel
+    private func makeController(passthroughEnabled: Bool = false) -> (
+        ClipboardContentViewController, VMLibraryViewModel, VMInstance
     ) {
         let viewModel = makeClipboardViewModel(preferences: preferences)
         // The switch writes through the configuration verb, which resolves the
         // VM through the library.
-        registerSettingsInstance(instance, in: viewModel)
+        let instance = registerClipboardInstance(
+            in: viewModel.library, passthroughEnabled: passthroughEnabled)
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: viewModel, publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
         _ = vc.view  // forces loadView + viewDidLoad → updateUI
-        return (vc, viewModel)
+        return (vc, viewModel, instance)
     }
 
     @Test("turning passthrough off writes immediately, with no confirmation")
     func flipOffWritesImmediately() {
-        let instance = makeClipboardInstance(passthroughEnabled: true)
-        let (vc, viewModel) = makeController(instance)
+        let (vc, viewModel, instance) = makeController(passthroughEnabled: true)
         defer { _ = viewModel }
         #expect(vc.isPassthroughSwitchOnForTesting == true)
 
@@ -795,8 +820,7 @@ struct ClipboardPassthroughSwitchTests {
 
     @Test("turning it on with no window to confirm in writes nothing and re-renders off")
     func flipOnWithoutWindowWritesNothing() {
-        let instance = makeClipboardInstance()
-        let (vc, viewModel) = makeController(instance)
+        let (vc, viewModel, instance) = makeController()
         defer { _ = viewModel }
 
         // The offscreen test controller has no window to host the confirmation
@@ -809,8 +833,7 @@ struct ClipboardPassthroughSwitchTests {
 
     @Test("confirming the security prompt turns passthrough on")
     func confirmEnables() async throws {
-        let instance = makeClipboardInstance()
-        let (vc, viewModel) = makeController(instance)
+        let (vc, viewModel, instance) = makeController()
         defer { _ = viewModel }
 
         vc.confirmPassthroughEnableForTesting()
@@ -827,8 +850,7 @@ struct ClipboardPassthroughSwitchTests {
 
     @Test("cancelling the prompt writes nothing and puts the switch back")
     func cancelReverts() {
-        let instance = makeClipboardInstance()
-        let (vc, viewModel) = makeController(instance)
+        let (vc, viewModel, instance) = makeController()
         defer { _ = viewModel }
         // The user flipped it; the sheet is up.
         vc.setPassthroughSwitchForTesting(true)
@@ -841,8 +863,7 @@ struct ClipboardPassthroughSwitchTests {
 
     @Test("a write from another surface moves this window's switch")
     func writeFromAnotherSurfaceMovesTheSwitch() async throws {
-        let instance = makeClipboardInstance()
-        let (vc, viewModel) = makeController(instance)
+        let (vc, viewModel, instance) = makeController()
         #expect(vc.isPassthroughSwitchOnForTesting == false)
 
         // Another surface's write, landing on the same model.

@@ -1,9 +1,9 @@
 import Foundation
 @testable import Kernova
 
-/// The unregistered counterpart to ``RegisteredVMInstanceFixture`` — a
-/// `VMInstance` whose bundle is read from `files`, with nothing wired into a
-/// library.
+/// A `VMInstance` whose bundle is read from `files`, with nothing wired into a
+/// library, and the bundle a library builds its own fixture VMs from —
+/// ``VMLibrary/admitFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 @MainActor
 enum VMInstanceFixture {
     /// The bundle URL is derived from the configuration `mutate` leaves behind.
@@ -13,7 +13,7 @@ enum VMInstanceFixture {
     /// store of the instance's own unless the test passes one it also reads.
     /// `bundleFactory` builds the bundle — over a ``MockVMBundleMachineFiles``
     /// of the instance's own unless the test passes a factory over one it
-    /// also reads, or a library's.
+    /// also reads.
     static func make(
         name: String = "Test VM",
         guestOS: VMGuestOS = .linux,
@@ -26,36 +26,43 @@ enum VMInstanceFixture {
         bundleFactory: VMBundle.Factory? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
+        let read = seed(
+            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
+            pairings: pairings, files: files, mutate: mutate)
+        return VMInstance(
+            bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
+                .make(read),
+            phase: phase, preferences: preferences)
+    }
+
+    /// Seeds a fixture bundle's files into `files` and reads it back as a load
+    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``
+    /// and a library's fixture admission build their bundle from.
+    static func seed(
+        name: String, guestOS: VMGuestOS, hostState: VMHostState, snapshots: VMSnapshotManifest,
+        pairings: USBAccessoryPairingSet, files: InMemoryVMBundleFiles,
+        mutate: (inout VMConfiguration) -> Void
+    ) -> VMBundleRead {
         var config = VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
         mutate(&config)
         let url = bundleURL(for: config.id)
         files.seed(config, hostState: hostState, snapshots: snapshots, pairings: pairings, at: url)
-        return VMInstance(
-            bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
-                .make(read(url, from: files)),
-            phase: phase, preferences: preferences)
+        return read(url, from: files)
     }
 
-    /// A VM whose bundle is a real directory under the temporary directory,
-    /// read and written through ``CoordinatedBundleFileAccess`` — for a test
-    /// that drives the real machine files or reads the bundle's files back off
-    /// disk. The caller takes it away again with ``removeBundle(of:)``.
-    ///
-    /// `bundleFactory` defaults to one over a real ``VMBundleMachineFiles``
-    /// that trashes through a ``MockFileSystem``.
+    /// Writes a fixture bundle as a real directory under the temporary
+    /// directory, read and written through ``CoordinatedBundleFileAccess``,
+    /// and reads it back as a load would — for a test that drives the real
+    /// machine files or reads the bundle's files back off disk. The caller
+    /// takes it away again with ``removeBundle(of:)``.
     ///
     /// `snapshots` is written before the read; each snapshot's MAC address is
     /// whatever its own `config.json` on disk holds when the bundle is read.
-    static func makeOnDisk(
-        name: String = "Test VM",
-        guestOS: VMGuestOS = .linux,
-        phase: VMLifecyclePhase = .stopped,
-        preferences: AppPreferences = makeTestPreferences(),
-        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
-        bundleFactory: VMBundle.Factory? = nil,
-        mutate: (inout VMConfiguration) -> Void = { _ in }
-    ) throws -> VMInstance {
+    static func seedOnDisk(
+        name: String, guestOS: VMGuestOS, snapshots: VMSnapshotManifest,
+        mutate: (inout VMConfiguration) -> Void
+    ) throws -> VMBundleRead {
         var config = VMConfiguration(
             name: name, guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
         mutate(&config)
@@ -66,11 +73,7 @@ enum VMInstanceFixture {
         if !snapshots.snapshots.isEmpty || snapshots.currentID != nil {
             try files.update(.snapshotManifest) { $0 = snapshots }
         }
-        return VMInstance(
-            bundle: (bundleFactory
-                ?? VMBundle.Factory(machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem())))
-                .make(try files.read()),
-            phase: phase, preferences: preferences)
+        return try files.read()
     }
 
     /// What the bundle at `url` holds, read the way the library reads it.

@@ -12,13 +12,13 @@ struct VMLiveIdentitiesTests {
         let preferences = makeTestPreferences()
         preferences.blockDuplicateMachineIDBoot = true
         let identity = Data([3, 1, 4])
-        let first = VMInstanceFixture.make(name: "First", preferences: preferences) {
+        let library = makeWiredLibrary(preferences: preferences)
+        let first = library.registerFixture(name: "First", preferences: preferences) {
             $0.genericMachineIdentifierData = identity
         }
-        let second = VMInstanceFixture.make(name: "Second", preferences: preferences) {
+        let second = library.registerFixture(name: "Second", preferences: preferences) {
             $0.genericMachineIdentifierData = identity
         }
-        let library = makeWiredLibrary(holding: [first, second], preferences: preferences)
 
         first.activity.placeForTesting(
             .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))

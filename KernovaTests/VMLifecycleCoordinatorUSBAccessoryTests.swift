@@ -33,9 +33,9 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     }
 
     private func makeInstance(sessionID: UUID, on coordinator: VMLifecycleCoordinator) -> VMInstance {
-        let instance = VMInstanceFixture.make(
-            name: "USB VM", phase: .running(sessionID: sessionID))
-        libraries.keep(makeWiredLibrary(holding: [instance], lifecycle: coordinator))
+        let library = makeWiredLibrary(lifecycle: coordinator)
+        libraries.keep(library)
+        let instance = library.registerFixture(name: "USB VM", phase: .running(sessionID: sessionID))
         instance.beginSessionContextForTesting()
         return instance
     }

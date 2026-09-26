@@ -75,7 +75,7 @@ struct VMCommandCoreUSBAccessoryTests {
     private func makeRunningInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: .running(sessionID: UUID()), guestOS: .linux,
-            library: harness.library, storage: harness.storage, preferences: preferences)
+            library: harness.library, preferences: preferences)
         instance.beginSessionContextForTesting()
         return instance
     }
@@ -83,7 +83,7 @@ struct VMCommandCoreUSBAccessoryTests {
     private func makeStoppedInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: .stopped, guestOS: .linux, library: harness.library,
-            storage: harness.storage, preferences: preferences)
+            preferences: preferences)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {
@@ -270,7 +270,7 @@ struct VMCommandCoreUSBAccessoryTests {
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
             let instance = RegisteredVMInstanceFixture.register(
                 name: "Core VM", phase: phase, guestOS: .linux, library: harness.library,
-                storage: harness.storage, preferences: preferences)
+                preferences: preferences)
 
             let refusal = await commandError {
                 try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 7)

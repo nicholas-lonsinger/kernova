@@ -58,7 +58,7 @@ struct VMCommandCoreArrivalTests {
     private func makeSource(in harness: Harness) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: "Source", phase: .stopped, guestOS: .linux, library: harness.library,
-            storage: storage, preferences: preferences)
+            preferences: preferences)
     }
 
     /// Collects every `.failure` event from here on.

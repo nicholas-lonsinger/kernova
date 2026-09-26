@@ -1,9 +1,11 @@
 import Foundation
 @testable import Kernova
 
-/// The configuration policy of a fixture bundle no library has admitted:
-/// nothing across VMs to refuse, and no live policy to carry a commit to.
-/// ``VMLibrary/admitForTesting(_:)`` replaces it with the library's own.
+/// The configuration policy of a fixture VM no library holds: nothing across
+/// VMs to refuse, and no live policy to carry a commit to. A library admits
+/// only a bundle its own factory builds
+/// (``VMLibrary/admitForTesting(_:phase:preferences:)``), so a bundle over
+/// this policy never joins one.
 @MainActor
 final class NoLibraryConfigurationPolicy: VMConfigurationPolicy {
     func refusal(

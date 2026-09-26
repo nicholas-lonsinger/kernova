@@ -29,7 +29,7 @@ final class VMBundle {
 
     @ObservationIgnored private let files: VMBundleFiles
     @ObservationIgnored private let fileWorker: any VMBundleMachineFileWorking
-    @ObservationIgnored fileprivate var configurationPolicy: any VMConfigurationPolicy
+    @ObservationIgnored fileprivate let configurationPolicy: any VMConfigurationPolicy
 
     var url: URL { files.url }
 
@@ -39,14 +39,6 @@ final class VMBundle {
     /// Test-only seam: a test registering a fixture VM with a library points
     /// the fixture's in-memory files at the library's storage through it.
     var fileAccessForTesting: any VMBundleFileAccessing { files.access }
-
-    /// Makes `policy` the one this bundle's configuration commits answer to.
-    ///
-    /// Test-only seam: a fixture built before the library that admits it
-    /// answers to that library's policy, as a bundle the library built does.
-    func answerToConfigurationPolicyForTesting(_ policy: any VMConfigurationPolicy) {
-        configurationPolicy = policy
-    }
     #endif
 
     private(set) var configuration: VMConfiguration

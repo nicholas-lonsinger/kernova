@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 
 /// Records what `VMLibrary` hands to its `onFailure` hook, so tests can assert
 /// which alert the library asked for with no presenter in the picture.
@@ -11,10 +12,14 @@ final class MockLibraryFailureSink {
     /// Parallel to `errors`: the alert title each message was raised under.
     private(set) var errorTitles: [String] = []
 
+    /// Fired after each recorded failure.
+    let recorded = AsyncGate()
+
     /// Wire this to `VMLibrary.onFailure`.
     func record(title: String, message: String) {
         errors.append(message)
         errorTitles.append(title)
+        recorded.notify()
     }
 
     // MARK: - Mirror accessors

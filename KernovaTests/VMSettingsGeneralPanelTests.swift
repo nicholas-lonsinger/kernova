@@ -331,13 +331,12 @@ struct VMSettingsGeneralPanelTests {
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = viewModel ?? makeViewModel()
         let baseline = ephemeral ? snapshots.first : nil
-        let instance = makeSettingsInstance(
+        let instance = viewModel.library.registerFixture(
             guestOS: .linux,
             hostState: baseline.map { .ephemeral(baseline: $0.id) } ?? VMHostState())
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: snapshots, currentID: snapshots.first?.id))
-        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -626,18 +625,15 @@ struct VMSettingsGeneralPanelTests {
     ) {
         let viewModel = makeViewModel()
         let marksItself = guestOS == .macOS && markedMacOSVMs > 0
-        let instance = makeSettingsInstance(
+        let instance = viewModel.library.admitFixture(
             guestOS: guestOS, hostState: VMHostState(startsAutomaticallyOnLaunch: marksItself))
-        var library = [instance]
         for index in 0..<(markedMacOSVMs - (marksItself ? 1 : 0)) {
-            let other = makeSettingsInstance(
+            viewModel.library.admitFixture(
                 guestOS: .macOS, hostState: VMHostState(startsAutomaticallyOnLaunch: true)
             ) {
                 $0.name = "Marked \(index)"
             }
-            library.append(other)
         }
-        viewModel.library.admitForTesting(library)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()

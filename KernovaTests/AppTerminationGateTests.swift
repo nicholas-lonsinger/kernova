@@ -138,19 +138,23 @@ struct AppTerminationGateTests {
 
     // MARK: - What a Quit Waits Out
 
-    /// A full quit whose pass records how it ended, over a library that
-    /// holds `instances`, each wired to it.
+    /// A full quit whose pass records how it ended.
     private func makeFullQuit(
-        holding instances: [VMInstance] = [],
         diskImages: MockDiskImageService = MockDiskImageService()
     ) -> (AppTerminationController, VMLibraryViewModel, EndingSpy) {
         let (controller, viewModel) = makeController(diskImages: diskImages)
         viewModel.keepInMenuBarOnQuit = true
-        for instance in instances { instance.peers = viewModel.library }
-        viewModel.library.admitForTesting(instances)
         let spy = EndingSpy()
         controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
         return (controller, viewModel, spy)
+    }
+
+    /// A VM named `name` in `viewModel`'s library, with the library as its
+    /// peers.
+    private func admitPeer(named name: String, to viewModel: VMLibraryViewModel) -> VMInstance {
+        let instance = viewModel.library.admitFixture(name: name)
+        instance.peers = viewModel.library
+        return instance
     }
 
     /// Asks for a full quit and lets its pass run as far as it gets without
@@ -164,9 +168,9 @@ struct AppTerminationGateTests {
 
     @Test("R6: a quit waits out a snapshot trash")
     func quitWaitsOutASnapshotTrash() async throws {
-        let instance = VMInstanceFixture.make(name: "Trashing")
+        let (controller, viewModel, spy) = makeFullQuit()
+        let instance = admitPeer(named: "Trashing", to: viewModel)
         instance.activity.placeForTesting(.stopped)
-        let (controller, viewModel, spy) = makeFullQuit(holding: [instance])
         let gate = GatedStep()
         let trash = try instance.activity.launch(.deletingSnapshot) { _ in
             try await gate.pass()
@@ -186,9 +190,9 @@ struct AppTerminationGateTests {
 
     @Test("R6: a quit waits out a delete's trashes")
     func quitWaitsOutADelete() async throws {
-        let instance = VMInstanceFixture.make(name: "Deleting")
+        let (controller, viewModel, spy) = makeFullQuit()
+        let instance = admitPeer(named: "Deleting", to: viewModel)
         instance.activity.placeForTesting(.stopped)
-        let (controller, _, spy) = makeFullQuit(holding: [instance])
         let gate = GatedStep()
         let delete = Task { try await instance.activity.delete { _ in try await gate.pass() } }
         try await gate.waitUntilEntered()
@@ -204,12 +208,12 @@ struct AppTerminationGateTests {
 
     @Test("R6: a quit waits out a disk-image creation")
     func quitWaitsOutADiskImageCreation() async throws {
-        let instance = VMInstanceFixture.make(name: "Creating")
-        instance.activity.placeForTesting(.stopped)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let diskImages = MockDiskImageService()
         diskImages.holdCreateDiskImage()
-        let (controller, viewModel, spy) = makeFullQuit(holding: [instance], diskImages: diskImages)
+        let (controller, viewModel, spy) = makeFullQuit(diskImages: diskImages)
+        let instance = admitPeer(named: "Creating", to: viewModel)
+        instance.activity.placeForTesting(.stopped)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
         let creation = Task { @MainActor in
             try await viewModel.commands.createStorageDisk(.id(instance.id), sizeInGB: 8)
         }
@@ -244,10 +248,10 @@ struct AppTerminationGateTests {
 
     @Test("A quit saves each live VM once its trash is waited out")
     func quitSavesTheLiveVMAfterItsWait() async throws {
-        let instance = VMInstanceFixture.make(name: "Live")
+        let (controller, viewModel, spy) = makeFullQuit()
+        let instance = admitPeer(named: "Live", to: viewModel)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         defer { VMInstanceFixture.removeBundle(of: instance) }
-        let (controller, _, spy) = makeFullQuit(holding: [instance])
         let gate = GatedStep()
         let trash = try instance.activity.launch(.deletingSnapshot) { _ in
             try await gate.pass()

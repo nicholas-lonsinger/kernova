@@ -80,11 +80,8 @@ struct VMLibraryViewModelSnapshotTests {
         phase: VMLifecyclePhase = .running(sessionID: UUID()),
         name: String = "Snapshot VM", _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        let instance = VMInstanceFixture.make(
-            name: name, phase: phase, preferences: preferences, files: files,
-            bundleFactory: viewModel.library.bundleFactory, mutate: mutate)
-        viewModel.library.admitForTesting(instance)
-        return instance
+        viewModel.library.admitFixture(
+            name: name, phase: phase, preferences: preferences, files: files, mutate: mutate)
     }
 
     private func makeSnapshot(name: String = "Before the update") -> VMSnapshot {

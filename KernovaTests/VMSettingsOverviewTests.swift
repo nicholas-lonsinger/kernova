@@ -15,14 +15,9 @@ struct VMSettingsOverviewTests {
         makeSettingsViewModel(preferences: preferences)
     }
 
-    private func makeInstance(
-        name: String = "Test VM", guestOS: VMGuestOS, macAddress: String? = nil,
-        mutate: (inout VMConfiguration) -> Void = { _ in }
-    ) -> VMInstance {
-        VMInstanceFixture.make(name: name, guestOS: guestOS) {
-            $0.macAddress = macAddress
-            mutate(&$0)
-        }
+    /// A VM no library holds, with no MAC address.
+    private func makeInstance(guestOS: VMGuestOS) -> VMInstance {
+        VMInstanceFixture.make(guestOS: guestOS) { $0.macAddress = nil }
     }
 
     private func makeController(
@@ -30,8 +25,10 @@ struct VMSettingsOverviewTests {
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: guestOS, mutate: mutate)
-        registerSettingsInstance(instance, in: viewModel)
+        let instance = viewModel.library.registerFixture(guestOS: guestOS) {
+            $0.macAddress = nil
+            mutate(&$0)
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -217,8 +214,9 @@ struct VMSettingsOverviewTests {
     @Test("Opening a panel commits an edit in flight instead of hiding its editor")
     func drillInSettlesAnOpenFieldEditor() throws {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        registerSettingsInstance(instance, in: viewModel)
+        let instance = viewModel.library.registerFixture(guestOS: .linux) {
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
@@ -520,8 +518,7 @@ struct VMSettingsOverviewTests {
 
         // A switch to another VM drops the footprint outright: its count must
         // not land beside the previous VM's.
-        let other = makeInstance(guestOS: .macOS)
-        viewModel.library.admitForTesting(other)
+        let other = viewModel.library.admitFixture(guestOS: .macOS) { $0.macAddress = nil }
         let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
         other.seedSnapshotManifest(
             VMSnapshotManifest(
@@ -548,9 +545,12 @@ struct VMSettingsOverviewTests {
     @Test("A duplicate MAC address raises the Network card's warning glyph")
     func duplicateMACRaisesTheCardWarning() throws {
         let viewModel = makeViewModel()
-        let instance = makeInstance(guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        let other = makeInstance(name: "Twin", guestOS: .linux, macAddress: "aa:bb:cc:dd:ee:ff")
-        viewModel.library.admitForTesting([instance, other])
+        let instance = viewModel.library.admitFixture(guestOS: .linux) {
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        viewModel.library.admitFixture(name: "Twin", guestOS: .linux) {
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()

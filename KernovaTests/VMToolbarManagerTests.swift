@@ -139,8 +139,9 @@ struct VMToolbarManagerTests {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
         let (library, lifecycle) = makeLibrary(virtualization: suspending)
-        let instance = makeInstance(phase: .livePaused(sessionID: UUID()))
-        library.admitForTesting(instance)
+        let instance = library.admitFixture(phase: .livePaused(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
         let manager = makeManager(instance: instance, library: library)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 
