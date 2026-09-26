@@ -670,6 +670,8 @@ struct VMCapabilityCatalogTests {
             window, window, window, window, window,
             // snapshot delete, USB attach, media reconcile, Force Stop, deleting
             window, window, window, window, library,
+            // storage disk on a stopped VM, removable disk on a running one
+            library, window,
         ]
         let phases = VMLifecyclePhaseFixtures.all
         #expect(detached.count == phases.count)

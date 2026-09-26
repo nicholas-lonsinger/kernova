@@ -656,9 +656,11 @@ struct VMBundleTests {
         let diskImages = MockDiskImageService()
         let id = UUID()
 
-        let relativePath = try await bundle.createInternalDisk(
-            id: id, sizeInGB: 16, using: diskImages)
-        try await bundle.trashInternalDisk(atRelativePath: relativePath)
+        try await withOperation(on: bundle) { context in
+            let relativePath = try await context.bundle.createInternalDisk(
+                id: id, sizeInGB: 16, using: diskImages)
+            try await context.bundle.trashInternalDisk(atRelativePath: relativePath)
+        }
 
         let diskURL = VMBundleLayout(bundleURL: bundle.url).additionalDiskURL(id: id)
         #expect(diskImages.lastCreatedDiskImageURL == diskURL)

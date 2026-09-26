@@ -130,10 +130,17 @@ struct VMLifecyclePhaseTests {
             Row(
                 status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
-            // Deleting a stopped VM.
+            // Deleting a stopped VM, and creating a disk on one.
             Row(
                 status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
                 hasActiveDisplay: false, isAtRest: false),
+            Row(
+                status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                hasActiveDisplay: false, isAtRest: false),
+            // Creating a removable disk on a running VM.
+            Row(
+                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
+                hasActiveDisplay: true, isAtRest: false),
         ]
     }()
 

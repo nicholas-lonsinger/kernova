@@ -345,6 +345,15 @@ enum VMOperationKind: Sendable, Equatable {
     case forceStopping
     case discardingSavedState
     case deleting
+    /// Writing a new disk image inside the bundle and adding it to the VM's
+    /// storage disks.
+    case creatingStorageDisk
+    /// Dropping a storage disk and moving the file behind it to the Trash.
+    case removingStorageDisk
+    /// Writing a new disk image where the user chose and attaching it as
+    /// removable media — hot-plugged into a live guest before the operation
+    /// ends.
+    case creatingRemovableMedia
     /// A clone copying the VM's files out of its bundle.
     case copyingOut
 
@@ -561,6 +570,15 @@ extension VMOperationKind {
             return .init(
                 status: .base, holdsIdentity: .never, quit: .waitOut, display: .base,
                 toleratedSessionActions: [], edits: .only([]), joinedBy: [])
+        case .creatingStorageDisk, .removingStorageDisk:
+            return .init(
+                status: .base, holdsIdentity: .never, quit: .waitOut, display: .base,
+                toleratedSessionActions: [], edits: .baseExcept(.machineKeys), joinedBy: [])
+        case .creatingRemovableMedia:
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable,
+                edits: .baseExcept([.machineKeys, .hotPlugMedia]), joinedBy: [])
         case .copyingOut:
             return .init(
                 status: .base, holdsIdentity: .never, quit: .interrupt, display: .base,

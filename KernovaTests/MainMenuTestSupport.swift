@@ -25,11 +25,12 @@ final class StubMenuHost: MainMenuHosting {
 @MainActor
 func makeLibraryViewModel(
     preferences: AppPreferences,
-    usbAccessoryService: (any USBAccessoryProviding)? = nil
+    usbAccessoryService: (any USBAccessoryProviding)? = nil,
+    diskImageService: MockDiskImageService = MockDiskImageService()
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
-        diskImageService: MockDiskImageService(),
+        diskImageService: diskImageService,
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),

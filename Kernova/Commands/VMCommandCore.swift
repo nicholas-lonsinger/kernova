@@ -351,6 +351,9 @@ final class VMCommandCore: VMCommanding {
         case .forceStopping: "force stopping"
         case .discardingSavedState: "discarding its saved state"
         case .deleting: "being deleted"
+        case .creatingStorageDisk: "creating a storage disk"
+        case .removingStorageDisk: "removing a storage disk"
+        case .creatingRemovableMedia: "creating a removable disk"
         case .copyingOut: "being cloned"
         }
     }
@@ -418,6 +421,35 @@ final class VMCommandCore: VMCommanding {
     ) throws {
         try requireSaved(
             library.updateConfiguration(of: instance, mutate: mutate), of: instance, verb: verb)
+    }
+
+    /// ``writeConfiguration(of:verb:_:)`` as a step of the operation `context`
+    /// holds `instance` for, returning once a removable-media change it makes
+    /// is live in that operation's session
+    /// (``VMLibrary/updateConfiguration(of:in:mutate:)``).
+    func writeConfiguration(
+        of instance: VMInstance, in context: borrowing VMOperationContext, verb: VMVerb,
+        _ mutate: (inout VMConfiguration) -> Void
+    ) async throws {
+        let write = await library.updateConfiguration(of: instance, in: context, mutate: mutate)
+        try requireSaved(write, of: instance, verb: verb)
+    }
+
+    /// Runs `body` as the operation `kind` on `instance`, which rests where it
+    /// started once `body` ends, and answers any refusal or failure in the
+    /// command vocabulary under `verb` (``failure(_:verb:on:)``).
+    func perform(
+        _ kind: VMOperationKind, on instance: VMInstance, verb: VMVerb,
+        _ body: (borrowing VMOperationContext) async throws -> Void
+    ) async throws {
+        do {
+            try await instance.activity.perform(kind) { context in
+                try await body(context)
+                return .rest(.asStarted, ())
+            }
+        } catch {
+            throw failure(error, verb: verb, on: instance)
+        }
     }
 
     /// The refusal a verb raises when the library turned its settings write

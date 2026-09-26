@@ -117,6 +117,9 @@ struct VMAdmissionTests {
         (.operation(.forceStopping), "IIIIAAR"),
         (.operation(.discardingSavedState), "IIIAIIR"),
         (.operation(.deleting), "AAAAIIR"),
+        (.operation(.creatingStorageDisk), "AAAIIIR"),
+        (.operation(.removingStorageDisk), "AAAIIIR"),
+        (.operation(.creatingRemovableMedia), "AAAIAAR"),
         (.operation(.copyingOut), "AAAIIIR"),
         (.edit(.machineKeys), "AAAIIIR"),
         (.edit(.liveKeys), "AAAAAAR"),
@@ -183,6 +186,11 @@ struct VMAdmissionTests {
         (.clone, .edit(.liveKeys), "AAAAAAR"),
         (.clone, .operation(.copyingOut), "AAAIIIR"),
         (.clone, .operation(.deletingSnapshot), "AAAAAAR"),
+        // A disk created in, or trashed from, the bundle is a machine-key
+        // write; removable media lives outside it.
+        (.clone, .operation(.creatingStorageDisk), "bbbIIIR"),
+        (.clone, .operation(.removingStorageDisk), "bbbIIIR"),
+        (.clone, .operation(.creatingRemovableMedia), "AAAIAAR"),
         (.cloneWithPendingSetup, .start(recovery: false), "bbbbIIR"),
         (.cloneWithPendingSetup, .operation(.bringUp(.settingUp(.macOSInstall))), "bbbIIIR"),
     ]
@@ -228,6 +236,9 @@ struct VMAdmissionTests {
         (.operation(.discardingSavedState), "IIITIIR"),
         (.operation(.deleting), "TTTTIIR"),
         (.operation(.copyingOut), "TTTIIIR"),
+        (.operation(.creatingStorageDisk), "TTTIIIR"),
+        (.operation(.removingStorageDisk), "TTTIIIR"),
+        (.operation(.creatingRemovableMedia), "TTTITTR"),
         // A hot-plug edit commits the media reconcile only on a live VM; at
         // rest it is a write like any other.
         (.edit(.hotPlugMedia), "AAAITTR"),
@@ -336,6 +347,7 @@ struct VMAdmissionTests {
     ///   operation;
     /// - stopped capture, suspended capture, discard, clone copy-out;
     /// - snapshot delete, revert, delete;
+    /// - storage disk create, storage disk remove, removable disk create;
     /// - the edit classes M L H N P Nm S R O;
     /// - Stop, Force Stop, Cancel Setup, evict;
     /// - the affordances inspect, display, external display, clipboard,
@@ -350,6 +362,8 @@ struct VMAdmissionTests {
         .operation(.deletingSnapshot),
         .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))),
         .operation(.deleting),
+        .operation(.creatingStorageDisk), .operation(.removingStorageDisk),
+        .operation(.creatingRemovableMedia),
         .edit(.machineKeys), .edit(.liveKeys), .edit(.hotPlugMedia), .edit(.networkAttachment),
         .edit(.hostPresentation), .edit(.rename), .edit(.snapshotMetadata), .edit(.pairingRules),
         .edit(.observations),
@@ -373,76 +387,90 @@ struct VMAdmissionTests {
     nonisolated private static let heldTable: [HeldRow] = [
         HeldRow(
             kind: .bringUp(.guestStart(.starting(recovery: false))), startedFrom: .stopped,
-            expected: "JBI IIIIII BIIB BBB BBBBAAAAA IIIB AIIII"),
+            expected: "JBI IIIIII BIIB BBB BBB BBBBAAAAA IIIB AIIII"),
         // A plain Start joins a Recovery boot; Start in Recovery joins nothing.
         HeldRow(
             kind: .bringUp(.guestStart(.starting(recovery: true))), startedFrom: .stopped,
-            expected: "JBI IIIIII BIIB BBB BBBBAAAAA IIIB AIIII"),
+            expected: "JBI IIIIII BIIB BBB BBB BBBBAAAAA IIIB AIIII"),
         HeldRow(
             kind: .bringUp(.guestStart(.restoringSavedState)), startedFrom: .suspended, slot: true,
-            expected: "JIJ IIIIII IBBI BBB IBIIAAAAA IIIB AAIII"),
+            expected: "JIJ IIIIII IBBI BBB III IBIIAAAAA IIIB AAIII"),
         HeldRow(
             kind: .bringUp(.settingUp(.macOSInstall)), startedFrom: .initialBoot,
             variant: .pendingSetup,
-            expected: "BII IIIIII IIIB BBB BBBBAAAAA IIAB AIIII"),
+            expected: "BII IIIIII IIIB BBB BBB BBBBAAAAA IIAB AIIII"),
         HeldRow(
             kind: .bringUp(.settingUp(.linuxImageDownload)), startedFrom: .initialBoot,
             variant: .linuxPendingSetup,
-            expected: "BII IIIIII IIIB BBB BBBBAAAAA IIAB AIIII"),
+            expected: "BII IIIIII IIIB BBB BBB BBBBAAAAA IIAB AIIII"),
         HeldRow(
             kind: .bringUp(.reverting(snapshotID: session, resumesAfter: true)),
             startedFrom: live,
-            expected: "III BBBBBB IIII BBI IBBBABAAA BBII AAIII"),
+            expected: "III BBBBBB IIII BBI IIB IBBBABAAA BBII AAIII"),
         HeldRow(
             kind: .bringUp(.reverting(snapshotID: session, resumesAfter: false)),
             startedFrom: .stopped,
-            expected: "BBI IIIIII BIIB BBB BBBBABAAA IIIB AAIII"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBABAAA IIIB AAIII"),
         HeldRow(
             kind: .pausing, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
         HeldRow(
             kind: .resuming, startedFrom: .livePaused(sessionID: session),
-            expected: "IIB IBBBBB IIII BBI IABAAAAAA AAII AAAAB"),
+            expected: "IIB IBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
         HeldRow(
             kind: .saving, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IBBBAAAAA BBII AAIII"),
+            expected: "III BBBBBB IIII BBI IIB IBBBAAAAA BBII AAIII"),
         HeldRow(
             kind: .capturingSnapshot(.live), startedFrom: live,
-            expected: "III BBBBBB IIII BBI IBBBAAAAA BBII AAIII"),
+            expected: "III BBBBBB IIII BBI IIB IBBBAAAAA BBII AAIII"),
         HeldRow(
             kind: .capturingSnapshot(.stopped), startedFrom: .stopped,
-            expected: "BBI IIIIII BIIB BBB BBBBAAAAA IIIB AAIII"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBAAAAA IIIB AAIII"),
         HeldRow(
             kind: .capturingSnapshot(.suspended), startedFrom: .suspended, slot: true,
-            expected: "BIB IIIIII IBBI BBB IBIIAAAAA IIIB AAIII"),
+            expected: "BIB IIIIII IBBI BBB III IBIIAAAAA IIIB AAIII"),
         HeldRow(
             kind: .deletingSnapshot, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IABAAABAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IABAAABAA AAII AAAAB"),
         HeldRow(
             kind: .attachingUSB(registryID: 7), startedFrom: live,
-            expected: "III BBBBBB IIII BBI IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
         HeldRow(
             kind: .detachingUSB(deviceID: session), startedFrom: live,
-            expected: "III BBBBBB IIII BBI IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
         // Removable-media edits, the guest-agent disk among them, coalesce
         // into the pass.
         HeldRow(
             kind: .reconcilingMedia, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IAAAAAAAA AAII AAAAA"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         // Answered as the powered-off VM will answer, with a second Force Stop
         // joining the first; the guest is presented until its session ends.
         HeldRow(
             kind: .forceStopping, startedFrom: live,
-            expected: "BBI IIIIII BIIB BBB BBBBBBBBB IJIB AAAAB"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBBBBBB IJIB AAAAB"),
         HeldRow(
             kind: .discardingSavedState, startedFrom: .suspended, slot: true,
-            expected: "BIB IIIIII IBBI BBB IBIIBBBBB IIIB AAIII"),
+            expected: "BIB IIIIII IBBI BBB III IBIIBBBBB IIIB AAIII"),
         HeldRow(
             kind: .deleting, startedFrom: .stopped,
-            expected: "BBI IIIIII BIIB BBB BBBBBBBBB IIIB AIIII"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBBBBBB IIIB AIIII"),
+        HeldRow(
+            kind: .creatingStorageDisk, startedFrom: .stopped,
+            expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
+        HeldRow(
+            kind: .removingStorageDisk, startedFrom: .stopped,
+            expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
+        // A live guest keeps taking a stop while the image is written and
+        // attached.
+        HeldRow(
+            kind: .creatingRemovableMedia, startedFrom: live,
+            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+        HeldRow(
+            kind: .creatingRemovableMedia, startedFrom: .stopped,
+            expected: "BBI IIIIII BIIB BBB BBB BABAAAAAA IIIB AIIII"),
         HeldRow(
             kind: .copyingOut, startedFrom: .stopped,
-            expected: "BBI IIIIII BIIB BBB BAAAAAAAA IIIB AIIII"),
+            expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
 
         // Facts varied under a held operation.
 
@@ -450,24 +478,24 @@ struct VMAdmissionTests {
         // holds is busy with the clone — a tolerated machine-key edit too.
         HeldRow(
             kind: .deletingSnapshot, startedFrom: .stopped, variant: .clone,
-            expected: "bbI IIIIII BIIB Bbb bABAAABAA IIIB AIIII"),
+            expected: "bbI IIIIII BIIB Bbb bbB bABAAABAA IIIB AIIII"),
         // A build without USB passthrough refuses it as unsupported whatever
         // holds the VM.
         HeldRow(
             kind: .deletingSnapshot, startedFrom: live, variant: .noUSB,
-            expected: "III BBBUBB IIII BBI IABAAABUA AAII AAAAB"),
+            expected: "III BBBUBB IIII BBI IIB IABAAABUA AAII AAAAB"),
         HeldRow(
             kind: .deleting, startedFrom: .stopped, variant: .noUSB,
-            expected: "BBI IIIUII BIIB BBB BBBBBBBUB IIIB AIIII"),
+            expected: "BBI IIIUII BIIB BBB BBB BBBBBBBUB IIIB AIIII"),
         // Once the session ended, requests answer as the rest that end
         // implies: suspended where the slot survived it…
         HeldRow(
             kind: .saving, startedFrom: live, slot: true, sessionEnd: .endedByOperation,
-            expected: "BIB IIIIII IBBI BBB IBIIAAAAA IIIB AAIII"),
+            expected: "BIB IIIIII IBBI BBB III IBIIAAAAA IIIB AAIII"),
         // …and failed after Virtualization stopped the guest with an error.
         HeldRow(
             kind: .pausing, startedFrom: live, sessionEnd: .stoppedWithError(message: "boom"),
-            expected: "BII IIIIII IIIB BBB AABAAAAAA IIIB AIIII"),
+            expected: "BII IIIIII IIIB BBB BBB AABAAAAAA IIIB AIIII"),
     ]
 
     @Test(

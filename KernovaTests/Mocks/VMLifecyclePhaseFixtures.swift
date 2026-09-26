@@ -75,6 +75,8 @@ enum VMLifecyclePhaseFixtures {
             .operating(.reconcilingMedia, from: live),
             .operating(.forceStopping, from: live),
             .operating(.deleting, from: .stopped),
+            .operating(.creatingStorageDisk, from: .stopped),
+            .operating(.creatingRemovableMedia, from: live),
         ]
     }()
 

@@ -41,9 +41,10 @@ struct AppTerminationGateTests {
     }
 
     private func makeController(
-        residency: any SoftQuitHosting = SoftQuitSpy()
+        residency: any SoftQuitHosting = SoftQuitSpy(),
+        diskImages: MockDiskImageService = MockDiskImageService()
     ) -> (AppTerminationController, VMLibraryViewModel) {
-        let viewModel = makeLibraryViewModel(preferences: preferences)
+        let viewModel = makeLibraryViewModel(preferences: preferences, diskImageService: diskImages)
         return (
             AppTerminationController(viewModel: viewModel, residency: residency), viewModel
         )
@@ -140,9 +141,10 @@ struct AppTerminationGateTests {
     /// A full quit whose pass records how it ended, over a library that
     /// holds `instances`, each wired to it.
     private func makeFullQuit(
-        holding instances: [VMInstance] = []
+        holding instances: [VMInstance] = [],
+        diskImages: MockDiskImageService = MockDiskImageService()
     ) -> (AppTerminationController, VMLibraryViewModel, EndingSpy) {
-        let (controller, viewModel) = makeController()
+        let (controller, viewModel) = makeController(diskImages: diskImages)
         viewModel.keepInMenuBarOnQuit = true
         for instance in instances { instance.peers = viewModel.library }
         viewModel.library.admitForTesting(instances)
@@ -198,6 +200,29 @@ struct AppTerminationGateTests {
         try await delete.value
         try await spy.ended.wait { spy.endings.count == 1 }
         #expect(instance.phase == .removed)
+    }
+
+    @Test("R6: a quit waits out a disk-image creation")
+    func quitWaitsOutADiskImageCreation() async throws {
+        let instance = VMInstanceFixture.make(name: "Creating")
+        instance.activity.placeForTesting(.stopped)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        let diskImages = MockDiskImageService()
+        diskImages.holdCreateDiskImage()
+        let (controller, viewModel, spy) = makeFullQuit(holding: [instance], diskImages: diskImages)
+        let creation = Task { @MainActor in
+            try await viewModel.commands.createStorageDisk(.id(instance.id), sizeInGB: 8)
+        }
+        try await diskImages.parked.wait { diskImages.isParked }
+
+        await requestFullQuitAndLetItRun(controller)
+        #expect(spy.endings.isEmpty)
+
+        diskImages.resumeCreateDiskImage()
+        try await creation.value
+        try await spy.ended.wait { spy.endings.count == 1 }
+        // The entry naming the image landed before the quit went on.
+        #expect(instance.configuration.storageDisks?.last?.isInternal == true)
     }
 
     @Test("A quit waits out an arrival withdrawing the bundle a cancel took back")

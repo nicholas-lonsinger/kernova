@@ -627,17 +627,49 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     func updateConfiguration(
         of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
     ) -> SettingsWrite {
-        switch commitConfiguration(of: instance, mutate: mutate) {
+        switch commitConfiguration(of: instance, by: .edit, mutate: mutate) {
         case .committed: .saved
         case .stopped(let write): write
         }
+    }
+
+    /// Commits a mutation of `instance`'s configuration as a step of the
+    /// operation `context` holds the VM for, then drives a `removableMedia`
+    /// change into that operation's live session before answering — the
+    /// reconcile a settled live VM launches, run inside the operation.
+    ///
+    /// Refused only on the MAC-address rule: the operation was admitted, and
+    /// the removable-media rule ``updateConfiguration(of:mutate:)`` applies is
+    /// about edits made beside an operation. `context` must be the operation
+    /// holding `instance`.
+    func updateConfiguration(
+        of instance: VMInstance, in context: borrowing VMOperationContext,
+        mutate: (inout VMConfiguration) -> Void
+    ) async -> SettingsWrite {
+        let old = instance.bundle.configuration
+        if case .stopped(let write) = commitConfiguration(of: instance, by: .operation, mutate: mutate) {
+            return write
+        }
+        if VMConfiguration.removableMediaChanged(old: old, new: instance.bundle.configuration) {
+            await removableMedia.reconcile(instance, context)
+        }
+        return .saved
+    }
+
+    /// Who a configuration commit is made by.
+    private enum ConfigurationWriter {
+        /// An edit, admitted beside whatever operation holds the VM.
+        case edit
+        /// The operation holding the VM.
+        case operation
     }
 
     /// ``updateConfiguration(of:mutate:)``'s commit, answering whether the
     /// change moved the file; what `mutate` throws leaves the file as it was
     /// and is thrown on.
     private func commitConfiguration<Failure: Error>(
-        of instance: VMInstance, mutate: (inout VMConfiguration) throws(Failure) -> Void
+        of instance: VMInstance, by writer: ConfigurationWriter,
+        mutate: (inout VMConfiguration) throws(Failure) -> Void
     ) throws(Failure) -> ConfigurationCommit {
         let bundle = instance.bundle
         let old = bundle.configuration
@@ -658,7 +690,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                 {
                     throw Refused(refusal: .macAddressInUse(conflict))
                 }
-                if removableMedia.refuseUnattachableEdit(on: instance, movingFrom: onDisk, to: config) {
+                if writer == .edit,
+                    removableMedia.refuseUnattachableEdit(on: instance, movingFrom: onDisk, to: config)
+                {
                     throw Refused(refusal: .sessionNotAttachable)
                 }
                 wrote = true
@@ -705,7 +739,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         configuration: (inout VMConfiguration) throws(Failure) -> Void,
         hostState: (inout VMHostState) -> Void
     ) throws(Failure) -> SettingsWrite {
-        switch try commitConfiguration(of: instance, mutate: configuration) {
+        switch try commitConfiguration(of: instance, by: .edit, mutate: configuration) {
         case .stopped(let write):
             return write
         case .committed(let wrote):

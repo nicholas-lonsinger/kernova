@@ -772,7 +772,8 @@ final class VMInstance: VMActivityOwner {
             activateNetworkAttachment()
         case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
             .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
-            .discardingSavedState, .deleting, .copyingOut:
+            .discardingSavedState, .deleting, .creatingStorageDisk, .removingStorageDisk,
+            .creatingRemovableMedia, .copyingOut:
             break
         }
     }
