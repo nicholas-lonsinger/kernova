@@ -202,9 +202,12 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         return try lock.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
     }
 
-    func writing<T>(_ bundleURL: URL, _ body: (any VMBundleFileWriting) throws -> T) throws -> T {
-        if let target { return try target.writing(bundleURL, body) }
-        guard holds(bundleURL) else { return try disk.writing(bundleURL, body) }
+    func writing<T>(
+        _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
+        _ body: (any VMBundleFileWriting) throws -> T
+    ) throws -> T {
+        if let target { return try target.writing(bundleURL, key, body) }
+        guard holds(bundleURL) else { return try disk.writing(bundleURL, key, body) }
         return try lock.withLock { try body(Handle(store: self, bundle: Self.key(bundleURL))) }
     }
 

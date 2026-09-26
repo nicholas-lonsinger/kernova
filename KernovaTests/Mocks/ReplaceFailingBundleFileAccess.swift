@@ -31,8 +31,11 @@ final class ReplaceFailingBundleFileAccess: VMBundleFileAccessing, @unchecked Se
         try disk.reading(bundleURL, body)
     }
 
-    func writing<T>(_ bundleURL: URL, _ body: (any VMBundleFileWriting) throws -> T) throws -> T {
-        try disk.writing(bundleURL) { files in try body(Handle(wrapped: files, owner: self)) }
+    func writing<T>(
+        _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
+        _ body: (any VMBundleFileWriting) throws -> T
+    ) throws -> T {
+        try disk.writing(bundleURL, key) { files in try body(Handle(wrapped: files, owner: self)) }
     }
 
     private struct Handle: VMBundleFileWriting {

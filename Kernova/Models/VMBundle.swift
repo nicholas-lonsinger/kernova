@@ -38,7 +38,7 @@ final class VMBundle {
     ///
     /// Test-only seam: a test registering a fixture VM with a library points
     /// the fixture's in-memory files at the library's storage through it.
-    var fileAccessForTesting: any VMBundleFileAccessing { files.access }
+    var fileAccessForTesting: any VMBundleFileAccessing { files.accessForTesting }
     #endif
 
     private(set) var configuration: VMConfiguration

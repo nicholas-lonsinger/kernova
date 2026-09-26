@@ -149,7 +149,17 @@ struct UnreadableBundleFile: LocalizedError {
 /// is never a copy of stale memory.
 struct VMBundleFiles: Sendable {
     let url: URL
-    let access: any VMBundleFileAccessing
+    fileprivate let access: any VMBundleFileAccessing
+
+    init(url: URL, access: any VMBundleFileAccessing) {
+        self.url = url
+        self.access = access
+    }
+
+    #if DEBUG
+    /// What these files are read and written through.
+    var accessForTesting: any VMBundleFileAccessing { access }
+    #endif
 
     /// Reads all four state files in one coordinated read.
     ///
@@ -202,7 +212,7 @@ struct VMBundleFiles: Sendable {
     fileprivate func replace<Value>(
         _ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void
     ) throws -> Value {
-        try access.writing(url) { files in
+        try access.writing(url, VMBundleFileWriteKey()) { files in
             let current = try file.read(from: files)
             var new = current
             try change(&new)
@@ -240,7 +250,7 @@ struct VMStagedBundle: Sendable {
     /// Writes the bundle's first `config.json`.
     func writeInitial(_ configuration: VMConfiguration) throws {
         let data = try VMBundleStateFile.configuration.encode(configuration)
-        try files.access.writing(url) {
+        try files.access.writing(url, VMBundleFileWriteKey()) {
             try $0.replace(atRelativePath: VMBundleStateFile.configuration.relativePath, with: data)
         }
     }
@@ -261,6 +271,15 @@ struct VMStagedBundle: Sendable {
         VMStagedBundle(url: url, access: access)
     }
     #endif
+}
+
+/// What ``VMBundleFileAccessing/writing(_:_:_:)`` asks for, so only this
+/// file — a ``VMBundle``'s commits through ``VMBundleFiles/update(_:_:_:)``
+/// and a ``VMStagedBundle``'s writes — replaces a bundle's state file: the
+/// initializer is `fileprivate`, which `@testable import` does not open, and
+/// the key is passed `borrowing`, so no conformer can keep one.
+struct VMBundleFileWriteKey: ~Copyable {
+    fileprivate init() {}
 }
 
 /// What one ``VMBundleFiles/read()`` found — the only thing a ``VMBundle`` is

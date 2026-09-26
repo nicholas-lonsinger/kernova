@@ -322,8 +322,6 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isStopActionAvailable(on: stopped))
     }
 
-    // MARK: - Clone in flight
-
     @Test("Clone stays available while a different VM is being copied")
     func cloneIgnoresAnotherVMsCopy() async {
         let harness = makeHarness()

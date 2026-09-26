@@ -12,7 +12,10 @@ protocol VMBundleFileAccessing: Sendable {
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T
 
     /// Runs `body` under a coordinated write of the bundle at `bundleURL`.
-    func writing<T>(_ bundleURL: URL, _ body: (any VMBundleFileWriting) throws -> T) throws -> T
+    func writing<T>(
+        _ bundleURL: URL, _ key: borrowing VMBundleFileWriteKey,
+        _ body: (any VMBundleFileWriting) throws -> T
+    ) throws -> T
 }
 
 /// The files of one bundle as a coordinated access sees them.
