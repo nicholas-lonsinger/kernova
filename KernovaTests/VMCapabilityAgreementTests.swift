@@ -161,7 +161,7 @@ struct VMCapabilityAgreementTests {
                 let snapshot = VMSnapshot(name: "Kept", macAddress: nil)
                 let instance = RegisteredVMInstanceFixture.register(
                     name: "Agreeing", phase: .stopped, guestOS: guestOS, snapshots: [snapshot],
-                    library: harness.library, storage: harness.storage, preferences: preferences)
+                    library: harness.library, preferences: preferences)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 defer { VMInstanceFixture.removeBundle(of: instance) }
                 // The slot the operation started from is a file, as every

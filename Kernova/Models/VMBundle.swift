@@ -16,7 +16,8 @@ import KernovaLogging
 /// A commit reads the file, applies its change to what the file holds, replaces
 /// the file, and only then publishes the new value; one that throws leaves the
 /// value as it was. The change runs inside the coordinated write, so it must be
-/// pure — no UI, no suspension, no second access to this bundle.
+/// pure — no UI, no suspension, no second access to this bundle. Commits are
+/// reached only through ``StateFiles``.
 ///
 /// A machine-file operation runs its file work off the main actor, through
 /// ``VMBundleMachineFileWorking``. Every one that changes the bundle is
@@ -28,6 +29,7 @@ final class VMBundle {
 
     @ObservationIgnored private let files: VMBundleFiles
     @ObservationIgnored private let fileWorker: any VMBundleMachineFileWorking
+    @ObservationIgnored fileprivate let configurationPolicy: any VMConfigurationPolicy
 
     var url: URL { files.url }
 
@@ -44,9 +46,13 @@ final class VMBundle {
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
 
-    fileprivate init(_ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking) {
+    fileprivate init(
+        _ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking,
+        configurationPolicy: any VMConfigurationPolicy
+    ) {
         files = read.files
         fileWorker = machineFiles
+        self.configurationPolicy = configurationPolicy
         configuration = read.configuration
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
@@ -54,20 +60,26 @@ final class VMBundle {
     }
 
     /// What builds every ``VMBundle``, holding the machine-file work they share
-    /// where nothing else can reach it.
+    /// and the configuration policy every configuration commit answers to,
+    /// where nothing else can reach them.
     ///
     /// Its one other operation is the launch reclaim of restore staging, which
     /// runs before any bundle is built.
     struct Factory: Sendable {
         private let machineFiles: any VMBundleMachineFileWorking
+        private let configurationPolicy: any VMConfigurationPolicy
 
-        init(machineFiles: any VMBundleMachineFileWorking) {
+        init(
+            machineFiles: any VMBundleMachineFileWorking,
+            configurationPolicy: any VMConfigurationPolicy
+        ) {
             self.machineFiles = machineFiles
+            self.configurationPolicy = configurationPolicy
         }
 
         @MainActor
         func make(_ read: VMBundleRead) -> VMBundle {
-            VMBundle(read, machineFiles: machineFiles)
+            VMBundle(read, machineFiles: machineFiles, configurationPolicy: configurationPolicy)
         }
 
         /// Removes the restore staging directory an interrupted revert left in
@@ -93,23 +105,23 @@ final class VMBundle {
 
     // MARK: - State files
 
-    /// Commits `change` to `config.json`; `key` confines the call to
-    /// ``VMLibrary``, which owns the refusals a configuration write passes.
-    func commitConfiguration(
-        key _: VMLibrary.ConfigurationWriteKey, _ change: (inout VMConfiguration) throws -> Void
-    ) throws {
+    fileprivate func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
         publish(try files.update(.configuration, change), to: \.configuration)
     }
 
-    func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+    fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
         publish(try files.update(.hostState, change), to: \.hostState)
     }
 
-    func commitSnapshotManifest(_ change: (inout VMSnapshotManifest) throws -> Void) throws {
+    fileprivate func commitSnapshotManifest(
+        _ change: (inout VMSnapshotManifest) throws -> Void
+    ) throws {
         publish(try files.update(.snapshotManifest, change), to: \.snapshotManifest)
     }
 
-    func commitUSBPairings(_ change: (inout USBAccessoryPairingSet) throws -> Void) throws {
+    fileprivate func commitUSBPairings(
+        _ change: (inout USBAccessoryPairingSet) throws -> Void
+    ) throws {
         publish(try files.update(.usbPairings, change), to: \.usbPairings)
     }
 
@@ -139,7 +151,107 @@ final class VMBundle {
     }
 }
 
+/// What a configuration commit answers to beyond its permit: the refusals and
+/// the follow-through that span the library a VM belongs to.
+@MainActor
+protocol VMConfigurationPolicy: AnyObject, Sendable {
+    /// Why moving `instance`'s configuration from `old` — what `config.json`
+    /// holds — to `new` under `authority` is refused, or `nil` when it is not.
+    ///
+    /// Runs inside the coordinated write, so it must be pure.
+    func refusal(
+        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration,
+        under authority: VMEditPermit.Authority
+    ) -> (any Error)?
+
+    /// Carries a commit that moved `instance`'s configuration from `old` to
+    /// `new` to whatever acts on it.
+    func committed(on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration)
+}
+
 extension VMBundle {
+    /// One VM's state-file commits — reachable only as ``VMEditPermit/bundle``,
+    /// so every write holds a permit admission minted, on that VM's own bundle.
+    ///
+    /// Every commit is refused, leaving its file as it was, when it moves a
+    /// field its permit's authority may not write
+    /// (``VMStateFieldRefusal``): what a write changes is checked against
+    /// what the file holds, never trusted from the caller.
+    ///
+    /// Every call commits to the bundle the VM lives in at that moment, as
+    /// ``MachineFiles`` does.
+    @MainActor
+    struct StateFiles: ~Copyable, Sendable {
+        private let owner: VMInstance
+        private let authority: VMEditPermit.Authority
+
+        /// `key` is what only ``VMEditPermit`` mints, over its own VM.
+        init(
+            of owner: VMInstance, authority: VMEditPermit.Authority,
+            _ key: VMEditPermit.StateFilesKey
+        ) {
+            self.owner = owner
+            self.authority = authority
+        }
+
+        private var bundle: VMBundle { owner.bundle }
+
+        /// Commits `change` to `config.json`, refused by the field check and
+        /// then by the bundle's ``VMConfigurationPolicy`` inside the write,
+        /// and carried to that policy once it moved what memory holds.
+        func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
+            let bundle = bundle
+            let policy = bundle.configurationPolicy
+            let old = bundle.configuration
+            try bundle.commitConfiguration { config in
+                let onDisk = config
+                try change(&config)
+                guard config != onDisk else { return }
+                try requireWritable(VMConfiguration.fieldClasses, from: onDisk, to: config)
+                if let refusal = policy.refusal(
+                    on: owner, movingFrom: onDisk, to: config, under: authority)
+                {
+                    throw refusal
+                }
+            }
+            let new = bundle.configuration
+            if new != old {
+                policy.committed(on: owner, from: old, to: new)
+            }
+        }
+
+        func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+            try bundle.commitHostState { hostState in
+                let onDisk = hostState
+                try change(&hostState)
+                try requireWritable(VMHostState.fieldClasses, from: onDisk, to: hostState)
+            }
+        }
+
+        func commitSnapshotManifest(_ change: (inout VMSnapshotManifest) throws -> Void) throws {
+            try bundle.commitSnapshotManifest { manifest in
+                let onDisk = manifest
+                try change(&manifest)
+                try requireWritable(VMSnapshotManifest.fieldClasses, from: onDisk, to: manifest)
+            }
+        }
+
+        func commitUSBPairings(_ change: (inout USBAccessoryPairingSet) throws -> Void) throws {
+            try bundle.commitUSBPairings { pairings in
+                let onDisk = pairings
+                try change(&pairings)
+                try requireWritable(USBAccessoryPairingSet.fieldClasses, from: onDisk, to: pairings)
+            }
+        }
+
+        private func requireWritable<Root>(
+            _ classification: VMStateFieldClasses<Root>, from old: Root, to new: Root
+        ) throws {
+            let refused = classification.refused(from: old, to: new, by: authority)
+            guard refused.isEmpty else { throw VMStateFieldRefusal(fields: refused) }
+        }
+    }
+
     /// One VM's machine-file operations — reachable only as
     /// ``VMOperationContext/bundle``, so only an operation holding the VM runs
     /// them, and only on that VM's own bundle.
@@ -151,10 +263,10 @@ extension VMBundle {
     /// operation either.
     @MainActor
     struct MachineFiles: ~Copyable, Sendable {
-        private let owner: any VMActivityOwner
+        private let owner: VMInstance
 
         /// `key` is what only ``VMOperationContext`` mints, over its own VM.
-        init(of owner: any VMActivityOwner, _ key: VMOperationContext.MachineFilesKey) {
+        init(of owner: VMInstance, _ key: VMOperationContext.MachineFilesKey) {
             self.owner = owner
         }
 

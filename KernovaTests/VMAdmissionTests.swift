@@ -444,10 +444,11 @@ struct VMAdmissionTests {
             kind: .reconcilingMedia, startedFrom: live,
             expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         // Answered as the powered-off VM will answer, with a second Force Stop
-        // joining the first; the guest is presented until its session ends.
+        // joining the first and presentation and metadata edits taken; the
+        // guest is presented until its session ends.
         HeldRow(
             kind: .forceStopping, startedFrom: live,
-            expected: "BBI IIIIII BIIB BBB BBB BBBBBBBBB IJIB AAAAB"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBAAAAA IJIB AAAAB"),
         HeldRow(
             kind: .discardingSavedState, startedFrom: .suspended, slot: true,
             expected: "BIB IIIIII IBBI BBB III IBIIBBBBB IIIB AAIII"),
@@ -730,8 +731,8 @@ struct VMAdmissionTests {
                 == .refuse(.invalidState))
     }
 
-    @Test("A session a Force Stop is terminating takes nothing new, and a second Force Stop joins it")
-    func stoppingSessionTakesNothingNew() {
+    @Test("A session a Force Stop is terminating takes what a Force Stop does, and a second Force Stop joins it")
+    func stoppingSessionTakesWhatAForceStopTakes() {
         let stop = VMOutcome()
         let phase = VMLifecyclePhase.operating(
             VMOperation(
@@ -754,10 +755,14 @@ struct VMAdmissionTests {
             #expect(decide(request) == .refuse(.invalidState), "\(request)")
         }
         for request: VMAdmission.Request in [
-            .start(recovery: false), .edit(.hostPresentation), .edit(.machineKeys),
+            .start(recovery: false), .edit(.machineKeys), .edit(.liveKeys),
             .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
         ] {
             #expect(decide(request) == .refuse(.busy(.forceStopping)), "\(request)")
+        }
+        // The edits a Force Stop takes, it takes here too.
+        for classes: VMEditClasses in [.hostPresentation, .rename, .observations] {
+            #expect(decide(.edit(classes)) == .admit, "\(classes)")
         }
         // A slot that survives the session is what the VM will rest on.
         #expect(

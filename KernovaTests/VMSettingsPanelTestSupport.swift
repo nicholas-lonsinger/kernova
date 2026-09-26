@@ -42,17 +42,6 @@ func makeSettingsInstance(
     VMInstanceFixture.make(guestOS: guestOS, phase: phase, hostState: hostState, mutate: mutate)
 }
 
-/// Puts `instance` in the view model's library, which is what lets the command
-/// verbs a panel's controls call resolve it by id.
-@MainActor
-func registerSettingsInstance(_ instance: VMInstance, in viewModel: VMLibraryViewModel) {
-    guard let storage = viewModel.storageService as? MockVMStorageService else {
-        Issue.record("the settings view model is not over a MockVMStorageService")
-        return
-    }
-    viewModel.library.register(instance, storage: storage)
-}
-
 /// The test target's one construction site for the settings pane, which is what
 /// keeps every fixture off the app-wide activation center.
 ///
@@ -96,8 +85,9 @@ func makeSettingsController(
     preferences: AppPreferences
 ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
     let viewModel = makeSettingsViewModel(preferences: preferences)
-    let instance = makeSettingsInstance(guestOS: guestOS, phase: phase)
-    registerSettingsInstance(instance, in: viewModel)
+    // In the library, which is what lets the command verbs a panel's controls
+    // call resolve it by id.
+    let instance = viewModel.library.registerFixture(guestOS: guestOS, phase: phase)
     if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
     let vc = makeSettingsPane(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)

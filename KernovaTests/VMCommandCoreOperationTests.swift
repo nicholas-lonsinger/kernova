@@ -53,7 +53,7 @@ struct VMCommandCoreOperationTests {
     ) -> VMInstance {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences,
+            library: harness.library, preferences: preferences,
             mutate: mutate)
         for snapshot in snapshots {
             harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)

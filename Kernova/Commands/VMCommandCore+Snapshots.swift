@@ -64,10 +64,8 @@ extension VMCommandCore {
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
         do {
             return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
-                captured in
-                try self.commitSnapshotManifest(of: instance, verb: .takeSnapshot) {
-                    $0.insert(captured)
-                }
+                permit, captured in
+                try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
             }
         } catch {
             #log(
@@ -189,11 +187,11 @@ extension VMCommandCore {
         do {
             outcome = try lifecycle.startRevert(
                 instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
-                commitConfiguration: { [library] plan in
-                    try library.commitRevertedConfiguration(plan, on: instance)
+                commitConfiguration: { [library] permit, plan in
+                    try library.commitRevertedConfiguration(plan, permit)
                 },
-                landed: { [weak self] in
-                    try self?.commitSnapshotManifest(of: instance, verb: .revertToSnapshot) {
+                landed: { [weak self] permit in
+                    try self?.commitSnapshotManifest(permit, verb: .revertToSnapshot) {
                         $0.currentID = snapshot.id
                     }
                 })
@@ -295,10 +293,8 @@ extension VMCommandCore {
         // directory, which costs space and no data.
         var unlisted = false
         do {
-            try await lifecycle.discardSnapshot(instance, snapshotID: id) {
-                try self.commitSnapshotManifest(of: instance, verb: .deleteSnapshot) {
-                    $0.remove(id: id)
-                }
+            try await lifecycle.discardSnapshot(instance, snapshotID: id) { permit in
+                try self.commitSnapshotManifest(permit, verb: .deleteSnapshot) { $0.remove(id: id) }
                 unlisted = true
             }
         } catch let failure as CommandError {
@@ -353,8 +349,8 @@ extension VMCommandCore {
             snapshot.name != trimmed
         else { return }
         try require(.renameSnapshot, on: instance)
-        try commitSnapshotManifest(of: instance, verb: .renameSnapshot) {
-            $0.rename(id: id, to: trimmed)
+        try edit(.renameSnapshot, on: instance, verb: .renameSnapshot) { permit in
+            try commitSnapshotManifest(permit, verb: .renameSnapshot) { $0.rename(id: id, to: trimmed) }
         }
     }
 
@@ -369,8 +365,10 @@ extension VMCommandCore {
         guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.notes != trimmed
         else { return }
         try require(.setSnapshotNotes, on: instance)
-        try commitSnapshotManifest(of: instance, verb: .setSnapshotNotes) {
-            $0.setNotes(id: id, to: trimmed)
+        try edit(.setSnapshotNotes, on: instance, verb: .setSnapshotNotes) { permit in
+            try commitSnapshotManifest(permit, verb: .setSnapshotNotes) {
+                $0.setNotes(id: id, to: trimmed)
+            }
         }
     }
 
@@ -385,16 +383,18 @@ extension VMCommandCore {
         return snapshot
     }
 
-    /// Commits `change` to the bundle's manifest, applied to what the file
-    /// holds; a change that moves nothing writes nothing.
+    /// Commits `change` to the manifest of the VM `permit` writes, applied to
+    /// what the file holds; a change that moves nothing writes nothing.
     ///
     /// On failure the manifest stays as the bundle holds it, and the verb is
     /// refused.
     private func commitSnapshotManifest(
-        of instance: VMInstance, verb: VMVerb, _ change: (inout VMSnapshotManifest) -> Void
+        _ permit: borrowing VMEditPermit, verb: VMVerb,
+        _ change: (inout VMSnapshotManifest) -> Void
     ) throws {
+        let instance = permit.instance
         do {
-            try instance.bundle.commitSnapshotManifest(change)
+            try permit.bundle.commitSnapshotManifest(change)
         } catch {
             #log(
                 Self.logger, .error,

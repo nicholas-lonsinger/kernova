@@ -107,8 +107,7 @@ struct VMLibraryAdoptionTests {
     func aBundleMovedWithinTheVMsDirectoryKeepsItsVMReboundToTheNewURL() {
         let library = makeLibrary()
         let instance = RegisteredVMInstanceFixture.register(
-            name: "Mover", phase: .stopped, guestOS: .linux, library: library, storage: storage,
-            preferences: preferences)
+            name: "Mover", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
         let moved = bundleURL("Moved Here")
 
         storage.moveBundle(from: instance.bundleURL, to: moved)
@@ -123,14 +122,13 @@ struct VMLibraryAdoptionTests {
     func aWriteAfterTheMoveLandsAtTheNewURL() {
         let library = makeLibrary()
         let instance = RegisteredVMInstanceFixture.register(
-            name: "Mover", phase: .stopped, guestOS: .linux, library: library, storage: storage,
-            preferences: preferences)
+            name: "Mover", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
         let original = instance.bundleURL
         let moved = bundleURL("Moved Here")
         storage.moveBundle(from: original, to: moved)
         library.reconcileWithDisk()
 
-        library.editConfiguration(of: instance) { $0.name = "Renamed After Move" }
+        library.editConfiguration(of: instance, as: .rename) { $0.name = "Renamed After Move" }
 
         #expect(storage.files.configuration(at: moved)?.name == "Renamed After Move")
         #expect(storage.files.configuration(at: original) == nil)
@@ -141,8 +139,7 @@ struct VMLibraryAdoptionTests {
         let reports = Reports()
         let library = makeLibrary(reports: reports)
         let instance = RegisteredVMInstanceFixture.register(
-            name: "ubuntu", phase: .stopped, guestOS: .linux, library: library, storage: storage,
-            preferences: preferences)
+            name: "ubuntu", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
         let lowercase = bundleURL("ubuntu")
         storage.moveBundle(from: instance.bundleURL, to: lowercase)
         library.reconcileWithDisk()
@@ -192,7 +189,7 @@ struct VMLibraryAdoptionTests {
         let library = makeLibrary(reports: reports)
         let instance = RegisteredVMInstanceFixture.register(
             name: "Original", phase: .stopped, guestOS: .linux, library: library,
-            storage: storage, preferences: preferences)
+            preferences: preferences)
         let original = instance.bundleURL
         storage.files.seed(
             instance.configuration, hostState: VMHostState(), snapshots: VMSnapshotManifest(),

@@ -210,9 +210,9 @@ struct VMInstanceLiveVsockPolicyTests {
     /// running on the accepted channel for the rest of the session.
     @Test("A log hand-off queued before the toggle-off installs nothing")
     func logHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
+        let library = makeWiredLibrary()
+        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .log, on: instance, sessionID: sessionID)
-        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -233,9 +233,9 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("A drop hand-off queued before the toggle-off installs nothing")
     func dropHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
+        let library = makeWiredLibrary()
+        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
-        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()
@@ -254,9 +254,9 @@ struct VMInstanceLiveVsockPolicyTests {
 
     @Test("A clipboard hand-off queued before the toggle-off installs nothing")
     func clipboardHandOffCrossingDisableIsRefused() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
+        let library = makeWiredLibrary()
+        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
         let host = try framedHost(for: .clipboard, on: instance, sessionID: sessionID)
-        let library = makeWiredLibrary(holding: [instance])
         let (acceptedFd, guestFd) = try makeRawSocketPair()
         let guest = VsockChannel(fileDescriptor: guestFd)
         guest.start()

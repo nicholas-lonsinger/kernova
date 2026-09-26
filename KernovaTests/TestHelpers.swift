@@ -64,16 +64,15 @@ func makeTestLifecycle(
         downloadsDirectory: downloadsDirectory)
 }
 
-/// A real `VMLibrary` over mocks, holding `instances` registered as a load
-/// would have left them: the test target's one construction of a library, and
-/// what a test changes a VM's configuration through once the VM exists, since
-/// only the library writes it.
+/// A real `VMLibrary` over mocks: the test target's one construction of a
+/// library, and what a test changes a VM's configuration through once the VM
+/// exists, since only the library writes it. Its VMs come from
+/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
 /// reaches it weakly.
 @MainActor
 func makeWiredLibrary(
-    holding instances: [VMInstance] = [],
     storage: MockVMStorageService = MockVMStorageService(),
     machineFiles: (any VMBundleMachineFileWorking)? = nil,
     lifecycle: VMLifecycleCoordinator? = nil,
@@ -85,17 +84,13 @@ func makeWiredLibrary(
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
-        bundleFactory: VMBundle.Factory(
-            machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files)),
+        machineFiles: machineFiles ?? MockVMBundleMachineFiles(files: storage.files),
         lifecycle: lifecycle ?? makeTestLifecycle(fileSystem: fileSystem),
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
         entitlements: .entitled,
         guestAccountPasswords: guestAccountPasswords)
-    for instance in instances {
-        library.register(instance, storage: storage)
-    }
     return library
 }
 
@@ -114,70 +109,163 @@ extension VMLibrary {
         await waitForObservedChange { [self] in !hasRevertInFlight }
     }
 
-    /// Adds each of `instances`, in order, unwired and unread.
-    func admitForTesting(_ instances: [VMInstance]) {
-        for instance in instances {
-            admitForTesting(instance)
-        }
+    /// Builds a fixture VM over this library's ``bundleFactory`` and adds it
+    /// to the library as it stands, unwired and with its bundle's files in a
+    /// store of its own — a test's stand-in for a VM a load would have
+    /// adopted.
+    ///
+    /// The parameters are ``VMInstanceFixture/make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:mutate:)``'s.
+    @discardableResult
+    func admitFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        hostState: VMHostState = VMHostState(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
+        files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        admitForTesting(
+            VMInstanceFixture.seed(
+                name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
+                pairings: pairings, files: files, mutate: mutate),
+            phase: phase, preferences: preferences)
     }
 
-    /// Wires `instance` and adds it to the library, with its bundle's files in
-    /// `storage` as a load would have found them: a fixture built over a store
-    /// of its own hands that store's files to `storage` and writes through it
-    /// from then on.
-    func register(_ instance: VMInstance, storage: MockVMStorageService) {
-        if let files = instance.bundle.fileAccessForTesting as? InMemoryVMBundleFiles {
-            files.forward(to: storage.files)
+    /// ``admitFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``,
+    /// wired as a load would have left it and with its bundle's files in this
+    /// library's storage: a `files` the test passes hands what it holds to
+    /// that storage and writes through it from then on.
+    @discardableResult
+    func registerFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        hostState: VMHostState = VMHostState(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
+        files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        guard let storage = storageService as? MockVMStorageService else {
+            preconditionFailure("A fixture registers only with a library over MockVMStorageService")
         }
+        let read = VMInstanceFixture.seed(
+            name: name, guestOS: guestOS, hostState: hostState, snapshots: snapshots,
+            pairings: pairings, files: files, mutate: mutate)
+        files.forward(to: storage.files)
+        let instance = admitForTesting(read, phase: phase, preferences: preferences)
         wireHooks(for: instance)
-        admitForTesting(instance)
+        return instance
+    }
+
+    /// A fixture VM over a real bundle directory
+    /// (``VMInstanceFixture/seedOnDisk(name:guestOS:snapshots:mutate:)``),
+    /// built over this library's ``bundleFactory`` and wired — for a test that
+    /// drives the machine files the library was made over.
+    @discardableResult
+    func registerOnDiskFixture(
+        name: String = "Test VM",
+        guestOS: VMGuestOS = .linux,
+        phase: VMLifecyclePhase = .stopped,
+        preferences: AppPreferences = makeTestPreferences(),
+        snapshots: VMSnapshotManifest = VMSnapshotManifest(),
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) throws -> VMInstance {
+        let instance = admitForTesting(
+            try VMInstanceFixture.seedOnDisk(
+                name: name, guestOS: guestOS, snapshots: snapshots, mutate: mutate),
+            phase: phase, preferences: preferences)
+        wireHooks(for: instance)
+        return instance
     }
 
     /// Applies `mutate` to `instance`'s host state as setup a test relies on,
-    /// recording an issue when the write does not land.
+    /// under a permit admission mints for `classes`, recording an issue when
+    /// the edit is refused or does not land.
     func editHostState(
-        of instance: VMInstance,
+        of instance: VMInstance, as classes: VMEditClasses = .liveKeys,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMHostState) -> Void
     ) {
-        guard
-            case .saved = updateHostState(of: instance, mutate: mutate)
-        else {
+        let write = try? instance.activity.edit(classes) { updateHostState($0, mutate: mutate) }
+        guard case .saved? = write else {
             Issue.record("the host-state edit did not land", sourceLocation: sourceLocation)
             return
         }
     }
 
     /// Applies `mutate` to `instance`'s configuration as setup a test relies
-    /// on, recording an issue when the write is refused or does not land.
+    /// on, under a permit admission mints for `classes`, recording an issue
+    /// when the edit is refused or does not land.
     func editConfiguration(
-        of instance: VMInstance,
+        of instance: VMInstance, as classes: VMEditClasses = .liveKeys,
         sourceLocation: SourceLocation = #_sourceLocation,
         _ mutate: (inout VMConfiguration) -> Void
     ) {
-        guard case .saved = updateConfiguration(of: instance, mutate: mutate)
-        else {
+        let write = try? instance.activity.edit(classes) { updateConfiguration($0, mutate: mutate) }
+        guard case .saved? = write else {
             Issue.record("the configuration edit did not land", sourceLocation: sourceLocation)
             return
         }
     }
+
+    /// ``updateConfiguration(_:mutate:)`` under a permit admission mints on
+    /// `instance` for `classes`; throws the refusal when admission gives one.
+    @discardableResult
+    func updateConfiguration(
+        of instance: VMInstance, as classes: VMEditClasses,
+        mutate: (inout VMConfiguration) -> Void
+    ) throws -> SettingsWrite {
+        try instance.activity.edit(classes) { updateConfiguration($0, mutate: mutate) }
+    }
+
+    /// ``updateSettings(_:configuration:hostState:)`` under a permit admission
+    /// mints on `instance` for `classes`.
+    @discardableResult
+    func updateSettings(
+        of instance: VMInstance, as classes: VMEditClasses,
+        configuration: (inout VMConfiguration) -> Void, hostState: (inout VMHostState) -> Void
+    ) throws -> SettingsWrite {
+        try instance.activity.edit(classes) {
+            updateSettings($0, configuration: configuration, hostState: hostState)
+        }
+    }
+
+    /// ``updateUSBPairings(_:mutate:)`` under a ``VMEditClasses/pairingRules``
+    /// permit on `instance`.
+    func updateUSBPairings(
+        of instance: VMInstance, mutate: (inout USBAccessoryPairingSet) -> Void
+    ) throws {
+        try instance.activity.edit(.pairingRules) { try updateUSBPairings($0, mutate: mutate) }
+    }
 }
 
 extension VMInstance {
+    /// Commits `change` to this VM's snapshot manifest as setup a test relies
+    /// on, as the write of an operation holding the VM — what lists a
+    /// snapshot or moves the current marker.
+    func editSnapshotManifest(_ change: (inout VMSnapshotManifest) -> Void) throws {
+        try withOperationNow(on: self) { try $0.permit.bundle.commitSnapshotManifest(change) }
+    }
+
     /// Puts `manifest` in this fixture VM's bundle as though the bundle already
     /// held it, snapshot MAC stubs included, and has the bundle read it back.
     ///
     /// For a VM built over ``InMemoryVMBundleFiles`` — what every fixture is.
     func seedSnapshotManifest(_ manifest: VMSnapshotManifest) {
         seedBundleFiles { $0.setManifest(manifest, at: bundleURL) }
-        refreshBundle { try $0.commitSnapshotManifest { _ in } }
+        refreshBundle { try $0.bundle.commitSnapshotManifest { _ in } }
     }
 
     /// Puts `pairings` in this fixture VM's bundle as though the bundle
     /// already held them, and has the bundle read them back.
     func seedUSBPairings(_ pairings: USBAccessoryPairingSet) {
         seedBundleFiles { $0.setPairings(pairings, at: bundleURL) }
-        refreshBundle { try $0.commitUSBPairings { _ in } }
+        refreshBundle { try $0.bundle.commitUSBPairings { _ in } }
     }
 
     /// The in-memory store this fixture VM's bundle files live in — the store
@@ -197,10 +285,12 @@ extension VMInstance {
     }
 
     /// A commit that changes nothing reads the file and publishes what it
-    /// holds, which is how a seeded file reaches memory.
-    private func refreshBundle(_ commit: (VMBundle) throws -> Void) {
+    /// holds, which is how a seeded file reaches memory — made under a
+    /// ``VMEditClasses/observations`` permit, which every phase a fixture
+    /// seeds in admits.
+    private func refreshBundle(_ commit: (borrowing VMEditPermit) throws -> Void) {
         do {
-            try commit(bundle)
+            try activity.edit(.observations, commit)
         } catch {
             preconditionFailure("A seeded bundle file could not be read back: \(error)")
         }
@@ -333,8 +423,30 @@ func withOperation<T>(
     on bundle: VMBundle, _ body: (borrowing VMOperationContext) async throws -> T
 ) async throws -> T {
     let instance = VMInstance(bundle: bundle, phase: .stopped, preferences: makeTestPreferences())
-    return try await instance.activity.perform(.deletingSnapshot) { context in
+    return try await withOperation(on: instance, .deletingSnapshot, body)
+}
+
+/// Runs `body` as the operation `kind` on `instance`, which rests where it
+/// started — what a test needs to act with an operation's context, or with
+/// the permit its own writes hold.
+@MainActor
+func withOperation<T>(
+    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    _ body: (borrowing VMOperationContext) async throws -> T
+) async throws -> T {
+    try await instance.activity.perform(kind) { context in
         .rest(.asStarted, try await body(context))
+    }
+}
+
+/// The synchronous ``withOperation(on:_:_:)``.
+@MainActor
+func withOperationNow<T>(
+    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    _ body: (borrowing VMOperationContext) throws -> T
+) throws -> T {
+    try instance.activity.performNow(kind) { context in
+        .rest(.asStarted, try body(context))
     }
 }
 
@@ -388,11 +500,28 @@ extension VMInstance {
 func makeInstanceWithLiveSession(named name: String = "Live Session VM")
     -> (instance: VMInstance, sessionID: UUID)
 {
-    let instance = VMInstanceFixture.make(name: name, guestOS: .macOS) {
-        $0.clipboardSharingEnabled = true
-        $0.agentLogForwardingEnabled = true
-        $0.dropFilesEnabled = true
+    enterLiveSession(
+        VMInstanceFixture.make(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
+}
+
+extension VMLibrary {
+    /// ``makeInstanceWithLiveSession(named:)``, registered with this library.
+    func registerInstanceWithLiveSession(named name: String = "Live Session VM")
+        -> (instance: VMInstance, sessionID: UUID)
+    {
+        enterLiveSession(
+            registerFixture(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
     }
+}
+
+private func enableEveryLiveSessionFeature(_ config: inout VMConfiguration) {
+    config.clipboardSharingEnabled = true
+    config.agentLogForwardingEnabled = true
+    config.dropFilesEnabled = true
+}
+
+@MainActor
+private func enterLiveSession(_ instance: VMInstance) -> (instance: VMInstance, sessionID: UUID) {
     let sessionID = UUID()
     instance.activity.placeForTesting(.running(sessionID: sessionID))
     instance.beginSessionContextForTesting()

@@ -445,7 +445,7 @@ struct VMEditClasses: OptionSet, Sendable, Hashable {
         .snapshotMetadata, .pairingRules, .rename, .observations,
     ]
 
-    /// The classes a bring-up, save or capture leaves open.
+    /// The classes a bring-up, save, capture or Force Stop leaves open.
     static let presentationAndMetadata: VMEditClasses = [
         .hostPresentation, .snapshotMetadata, .pairingRules, .rename, .observations,
     ]
@@ -562,7 +562,7 @@ extension VMOperationKind {
         case .forceStopping:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
-                toleratedSessionActions: [], edits: .only([]), joinedBy: [])
+                toleratedSessionActions: [], edits: .only(.presentationAndMetadata), joinedBy: [])
         case .discardingSavedState:
             return .init(
                 status: .base, holdsIdentity: .never, quit: .notApplicable, display: .base,

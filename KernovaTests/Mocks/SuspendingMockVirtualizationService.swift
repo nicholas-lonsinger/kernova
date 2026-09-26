@@ -170,7 +170,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
-        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
+        commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
         if shouldSuspendBeforePlanning {
@@ -183,7 +183,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         }
         context.bringUp.operation.endSession()
         try await context.bringUp.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
-        try commitConfiguration(plan)
+        try commitConfiguration(context.bringUp.operation.permit, plan)
         if shouldSuspendBeforeInstall {
             await suspendIfNeeded()
         }

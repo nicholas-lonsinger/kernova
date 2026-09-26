@@ -28,8 +28,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     // MARK: - Services
 
     let storageService: any VMStorageProviding
-    /// What every VM's bundle is built by.
+    /// What every VM's bundle is built by, over ``configurationPolicy``.
     let bundleFactory: VMBundle.Factory
+    /// What every configuration commit to one of this library's bundles
+    /// answers to.
+    let configurationPolicy: VMLibraryConfigurationPolicy
     let lifecycle: VMLifecycleCoordinator
 
     /// Where each VM's answer for the account it owes its guest is held — the
@@ -42,7 +45,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     // MARK: - Collaborators
 
     /// Drives a running VM's XHCI removable-media list to what its
-    /// configuration asks for, dispatched from ``applyLivePolicy(for:old:new:)``.
+    /// configuration asks for, dispatched from
+    /// ``VMLibraryConfigurationPolicy/committed(on:from:to:)``.
     @ObservationIgnored let removableMedia: VMRemovableMediaReconciler
 
     /// The uniqueness of each VM's MAC address across the library.
@@ -101,10 +105,17 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var arrivals: [VMArrival] { entries.compactMap(\.arrival) }
 
     #if DEBUG
-    /// Adds `instance` to the library as it stands, unwired and unread — a
-    /// test's stand-in for a VM a load would have adopted.
-    func admitForTesting(_ instance: VMInstance) {
+    /// Adds the VM `read` describes to the library as it stands, unwired — a
+    /// test's stand-in for a VM a load would have adopted, its bundle built by
+    /// ``bundleFactory`` as every VM's is.
+    @discardableResult
+    func admitForTesting(
+        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
+    ) -> VMInstance {
+        let instance = VMInstance(
+            bundle: bundleFactory.make(read), phase: phase, preferences: preferences)
         entries.append(.vm(instance))
+        return instance
     }
     #endif
 
@@ -211,7 +222,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     init(
         storageService: any VMStorageProviding,
-        bundleFactory: VMBundle.Factory,
+        machineFiles: any VMBundleMachineFileWorking,
         lifecycle: VMLifecycleCoordinator,
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
@@ -221,7 +232,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             InMemoryGuestAccountPasswordStore()
     ) {
         self.storageService = storageService
-        self.bundleFactory = bundleFactory
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences
@@ -234,11 +244,17 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
         self.macAddresses = macAddresses
         self.liveIdentities = VMLiveIdentities(macAddresses: macAddresses, preferences: preferences)
+        let configurationPolicy = VMLibraryConfigurationPolicy(
+            macAddresses: macAddresses, removableMedia: removableMedia,
+            guestAddresses: guestAddresses)
+        self.configurationPolicy = configurationPolicy
+        self.bundleFactory = VMBundle.Factory(
+            machineFiles: machineFiles, configurationPolicy: configurationPolicy)
 
         // Assigned after every stored property is set: each closure — and the
         // roster — references the library, which cannot be named before then.
-        removableMedia.onSettle = { [weak self] instance, media in
-            self?.settleRemovableMedia(of: instance, toLive: media)
+        removableMedia.onSettle = { [weak self] permit, media in
+            self?.settleRemovableMedia(permit, toLive: media)
         }
         removableMedia.onFailure = { [weak self] error in
             self?.presentError(error)
@@ -472,12 +488,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// it describes — the intent as a question about an account that can never be
     /// created, the password as a secret nothing will ever spend.
     ///
-    /// The intent is written first and the password dropped only once it
-    /// landed, so a write that is refused or not saved leaves both halves as
-    /// they were — and the caller, whose operation this retraction is a step
-    /// of, reports the outcome.
-    func retractGuestAccount(for instance: VMInstance) -> SettingsWrite {
-        let outcome = updateConfiguration(of: instance) { $0.pendingGuestAccount = nil }
+    /// The intent is written first, under `permit`, and the password dropped
+    /// only once it landed, so a write that is refused or not saved leaves both
+    /// halves as they were — and the caller, whose operation this retraction
+    /// is a step of, reports the outcome.
+    func retractGuestAccount(_ permit: borrowing VMEditPermit) -> SettingsWrite {
+        let instance = permit.instance
+        let outcome = updateConfiguration(permit) { $0.pendingGuestAccount = nil }
         guard case .saved = outcome else {
             #log(
                 Self.logger, .notice,
@@ -500,14 +517,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         // must capture it weakly:
         // a strong capture forms a self-retain cycle that leaks the VMInstance after
         // it's removed from `entries`.
-        instance.onUpdateConfiguration = { [weak self, weak instance] mutate in
-            guard let self, let instance else { return .refused(.noLibrary) }
-            return self.updateConfiguration(of: instance, mutate: mutate)
+        instance.onUpdateConfiguration = { [weak self] permit, mutate in
+            guard let self else { return .refused(.noLibrary) }
+            return self.updateConfiguration(permit, mutate: mutate)
         }
-        instance.onUpdateSettings = { [weak self, weak instance] configuration, hostState in
-            guard let self, let instance else { return .refused(.noLibrary) }
-            return self.updateSettings(
-                of: instance, configuration: configuration, hostState: hostState)
+        instance.onUpdateSettings = { [weak self] permit, configuration, hostState in
+            guard let self else { return .refused(.noLibrary) }
+            return self.updateSettings(permit, configuration: configuration, hostState: hostState)
         }
         instance.peers = self
         // Auto-eject the installer disk once the agent handshakes a current version.
@@ -575,27 +591,20 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         /// The new MAC address is one another VM holds; the refusal was
         /// presented as it was made.
         case macAddressInUse(VMMACAddressRegistry.MACAddressConflict)
-        /// The removable-media list changed while the VM's live session is in
-        /// a phase no reconcile can drive.
-        case sessionNotAttachable
         /// The write reached no library: the instance was never wired to one,
         /// or the library that wired it is gone.
         case noLibrary
+        /// The change moved fields its permit may not write.
+        case outsidePermit(VMStateFieldRefusal)
 
         var errorDescription: String? {
             switch self {
             case .macAddressInUse: "Another virtual machine holds that MAC address."
-            case .sessionNotAttachable:
-                "The virtual machine can\u{2019}t take a removable-media change in its current state."
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
+            case .outsidePermit:
+                "The virtual machine\u{2019}s current state doesn\u{2019}t allow this change."
             }
         }
-    }
-
-    /// A refusal thrown out of a configuration commit, which leaves the file as
-    /// it was.
-    private struct Refused: Error {
-        let refusal: SettingsRefusal
     }
 
     /// Thrown out of a commit when the caller's `mutate` threw, which leaves
@@ -603,7 +612,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     private struct MutateThrew: Error {}
 
     /// How a configuration commit ended, before the host-state half of an
-    /// ``updateSettings(of:configuration:hostState:)`` runs.
+    /// ``updateSettings(_:configuration:hostState:)`` runs.
     private enum ConfigurationCommit {
         /// Committed; `wrote` says whether the change moved what the file holds.
         case committed(wrote: Bool)
@@ -611,72 +620,55 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         case stopped(SettingsWrite)
     }
 
-    /// Commits a mutation of `instance`'s configuration, then dispatches the
-    /// live policy and removable-media reconcile for what moved.
+    /// Commits a mutation of the configuration of the VM `permit` writes
+    /// through ``VMBundle/StateFiles/commitConfiguration(_:)``, answering its
+    /// refusal or failure as a ``SettingsWrite``.
     ///
     /// `mutate` applies to what `config.json` holds, not to memory, so a field
-    /// another process changed since this one last read survives. Refused
-    /// whole — no field it also sets is applied — when it moves the VM onto a
-    /// MAC address another VM holds, in its configuration or in one of its
-    /// snapshots; and when it changes `removableMedia` while the VM's live
-    /// session is not attachable. A save that fails is presented, and memory
-    /// stays equal to the file.
+    /// another process changed since this one last read survives. A refusal
+    /// changes nothing; a MAC-address refusal is presented. A save that fails
+    /// is presented, and memory stays equal to the file.
     ///
     /// `mutate` runs inside the coordinated write, so it must be pure.
     @discardableResult
     func updateConfiguration(
-        of instance: VMInstance, mutate: (inout VMConfiguration) -> Void
+        _ permit: borrowing VMEditPermit, mutate: (inout VMConfiguration) -> Void
     ) -> SettingsWrite {
-        switch commitConfiguration(of: instance, by: .edit, mutate: mutate) {
+        switch commitConfiguration(permit, mutate: mutate) {
         case .committed: .saved
         case .stopped(let write): write
         }
     }
 
-    /// Commits a mutation of `instance`'s configuration as a step of the
-    /// operation `context` holds the VM for, then drives a `removableMedia`
-    /// change into that operation's live session before answering — the
-    /// reconcile a settled live VM launches, run inside the operation.
-    ///
-    /// Refused only on the MAC-address rule: the operation was admitted, and
-    /// the removable-media rule ``updateConfiguration(of:mutate:)`` applies is
-    /// about edits made beside an operation. `context` must be the operation
-    /// holding `instance`.
+    /// Commits a mutation of the configuration as a write of the operation
+    /// `context` holds the VM for, then drives a `removableMedia` change into
+    /// that operation's live session before answering — the reconcile a
+    /// settled live VM launches, run inside the operation.
     func updateConfiguration(
-        of instance: VMInstance, in context: borrowing VMOperationContext,
-        mutate: (inout VMConfiguration) -> Void
+        in context: borrowing VMOperationContext, mutate: (inout VMConfiguration) -> Void
     ) async -> SettingsWrite {
-        let old = instance.bundle.configuration
-        if case .stopped(let write) = commitConfiguration(of: instance, by: .operation, mutate: mutate) {
+        let old = context.instance.bundle.configuration
+        if case .stopped(let write) = commitConfiguration(context.permit, mutate: mutate) {
             return write
         }
-        if VMConfiguration.removableMediaChanged(old: old, new: instance.bundle.configuration) {
-            await removableMedia.reconcile(instance, context)
+        if VMConfiguration.removableMediaChanged(old: old, new: context.instance.bundle.configuration) {
+            await removableMedia.reconcile(context)
         }
         return .saved
     }
 
-    /// Who a configuration commit is made by.
-    private enum ConfigurationWriter {
-        /// An edit, admitted beside whatever operation holds the VM.
-        case edit
-        /// The operation holding the VM.
-        case operation
-    }
-
-    /// ``updateConfiguration(of:mutate:)``'s commit, answering whether the
+    /// ``updateConfiguration(_:mutate:)``'s commit, answering whether the
     /// change moved the file; what `mutate` throws leaves the file as it was
     /// and is thrown on.
     private func commitConfiguration<Failure: Error>(
-        of instance: VMInstance, by writer: ConfigurationWriter,
+        _ permit: borrowing VMEditPermit,
         mutate: (inout VMConfiguration) throws(Failure) -> Void
     ) throws(Failure) -> ConfigurationCommit {
-        let bundle = instance.bundle
-        let old = bundle.configuration
+        let instance = permit.instance
         var wrote = false
         var mutateFailure: Failure?
         do {
-            try bundle.commitConfiguration(key: ConfigurationWriteKey()) { config in
+            try permit.bundle.commitConfiguration { config in
                 let onDisk = config
                 do throws(Failure) {
                     try mutate(&config)
@@ -684,24 +676,15 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                     mutateFailure = error
                     throw MutateThrew()
                 }
-                guard config != onDisk else { return }
-                if let conflict = macAddresses.macAddressConflict(
-                    on: instance, movingFrom: onDisk, to: config)
-                {
-                    throw Refused(refusal: .macAddressInUse(conflict))
-                }
-                if writer == .edit,
-                    removableMedia.refuseUnattachableEdit(on: instance, movingFrom: onDisk, to: config)
-                {
-                    throw Refused(refusal: .sessionNotAttachable)
-                }
-                wrote = true
+                wrote = config != onDisk
             }
-        } catch let refused as Refused {
-            if case .macAddressInUse(let conflict) = refused.refusal {
+        } catch let refusal as SettingsRefusal {
+            if case .macAddressInUse(let conflict) = refusal {
                 macAddresses.presentRefusal(conflict, on: instance)
             }
-            return .stopped(.refused(refused.refusal))
+            return .stopped(.refused(refusal))
+        } catch let refused as VMStateFieldRefusal {
+            return .stopped(.refused(outsidePermit(refused, on: instance)))
         } catch {
             if let mutateFailure { throw mutateFailure }
             #log(
@@ -712,20 +695,25 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             return .stopped(
                 .notSaved(SettingsWriteFailure(failed: .configuration, landed: [], underlying: error)))
         }
-        let new = bundle.configuration
-        if new != old {
-            applyLivePolicy(for: instance, old: old, new: new)
-            // A live switch onto an app-managed network starts a guest worth
-            // watching without starting a session.
-            guestAddresses.watch()
-        }
         return .committed(wrote: wrote)
     }
 
-    /// Commits a change to `instance`'s configuration and one to its host
-    /// state, each applied once to what its own file holds.
+    /// `refused` as the refusal a settings write answers, logged: a write that
+    /// moves a field its permit may not write is a caller's mistake.
+    private func outsidePermit(
+        _ refused: VMStateFieldRefusal, on instance: VMInstance
+    ) -> SettingsRefusal {
+        #log(
+            Self.logger, .error,
+            "Refused a write to '\(instance.name, privacy: .public)' that moved \(refused.fields.joined(separator: ", "), privacy: .public) outside its permit"
+        )
+        return .outsidePermit(refused)
+    }
+
+    /// Commits a change to the configuration of the VM `permit` writes and one
+    /// to its host state, each applied once to what its own file holds.
     ///
-    /// The configuration commits first, on ``updateConfiguration(of:mutate:)``'s
+    /// The configuration commits first, on ``updateConfiguration(_:mutate:)``'s
     /// terms, and a refusal or failed save there leaves the host state
     /// unattempted. `configuration` may also refuse by throwing, judged on
     /// what `config.json` holds; the error is thrown on and nothing changed. A
@@ -735,39 +723,41 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// Both changes run inside their coordinated writes, so they must be pure.
     @discardableResult
     func updateSettings<Failure: Error>(
-        of instance: VMInstance,
+        _ permit: borrowing VMEditPermit,
         configuration: (inout VMConfiguration) throws(Failure) -> Void,
         hostState: (inout VMHostState) -> Void
     ) throws(Failure) -> SettingsWrite {
-        switch try commitConfiguration(of: instance, by: .edit, mutate: configuration) {
+        switch try commitConfiguration(permit, mutate: configuration) {
         case .stopped(let write):
             return write
         case .committed(let wrote):
-            return commitHostState(
-                of: instance, landed: wrote ? [.configuration] : [], mutate: hostState)
+            return commitHostState(permit, landed: wrote ? [.configuration] : [], mutate: hostState)
         }
     }
 
-    /// Commits a change to `instance`'s host state, applied to what
-    /// `host-state.json` holds; a save that fails is presented, and memory
-    /// stays equal to the file.
+    /// Commits a change to the host state of the VM `permit` writes, applied
+    /// to what `host-state.json` holds; a save that fails is presented, and
+    /// memory stays equal to the file.
     ///
     /// `mutate` runs inside the coordinated write, so it must be pure.
     @discardableResult
     func updateHostState(
-        of instance: VMInstance, mutate: (inout VMHostState) -> Void
+        _ permit: borrowing VMEditPermit, mutate: (inout VMHostState) -> Void
     ) -> SettingsWrite {
-        commitHostState(of: instance, landed: [], mutate: mutate)
+        commitHostState(permit, landed: [], mutate: mutate)
     }
 
     /// The host-state commit both settings writes end in; `landed` is what the
     /// same write already committed, for the failure to report.
     private func commitHostState(
-        of instance: VMInstance, landed: [SettingsWriteFailure.File],
+        _ permit: borrowing VMEditPermit, landed: [SettingsWriteFailure.File],
         mutate: (inout VMHostState) -> Void
     ) -> SettingsWrite {
+        let instance = permit.instance
         do {
-            try instance.bundle.commitHostState(mutate)
+            try permit.bundle.commitHostState(mutate)
+        } catch let refused as VMStateFieldRefusal {
+            return .refused(outsidePermit(refused, on: instance))
         } catch {
             #log(
                 Self.logger, .error,
@@ -780,19 +770,22 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         return .saved
     }
 
-    /// Points `instance`'s removable-media list at what its live session
-    /// actually holds, after the session refused some of the list it was asked
-    /// for.
+    /// Points the removable-media list of the VM `permit` writes at what its
+    /// live session actually holds, after the session refused some of the
+    /// list it was asked for.
     ///
-    /// Commits that one field. It refuses nothing and dispatches nothing to
-    /// the running VM, which the list already describes. A save that fails is
+    /// Commits that one field, as a write of the operation the reconcile runs
+    /// in: the running VM already holds the list, and the reconcile that
+    /// operation runs is the one that drove it there. A save that fails is
     /// presented and leaves the configuration as the bundle holds it; the live
     /// list stays in ``VMInstance/liveRemovableMedia``.
-    func settleRemovableMedia(of instance: VMInstance, toLive media: [RemovableMediaItem]?) {
-        let bundle = instance.bundle
-        let old = bundle.configuration.removableMedia
+    func settleRemovableMedia(
+        _ permit: borrowing VMEditPermit, toLive media: [RemovableMediaItem]?
+    ) {
+        let instance = permit.instance
+        let old = instance.bundle.configuration.removableMedia
         do {
-            try bundle.commitConfiguration(key: ConfigurationWriteKey()) { $0.removableMedia = media }
+            try permit.bundle.commitConfiguration { $0.removableMedia = media }
         } catch {
             #log(
                 Self.logger, .error,
@@ -801,24 +794,23 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             presentError(error)
             return
         }
-        guard bundle.configuration.removableMedia != old else { return }
+        guard instance.bundle.configuration.removableMedia != old else { return }
         #log(
             Self.logger, .notice,
             "Settled the removable media config for '\(instance.name, privacy: .public)' on its live state after a reconcile error"
         )
     }
 
-    /// Commits the configuration a snapshot revert installs, ahead of the
-    /// revert swapping the snapshot's files into `instance`'s bundle.
+    /// Commits the configuration a snapshot revert installs, as a write of the
+    /// revert `permit` belongs to, ahead of the revert swapping the snapshot's
+    /// files into the bundle.
     ///
     /// The snapshot's configuration is applied to what `config.json` holds, so
-    /// the VM keeps the name and identity its bundle carries now. No live
-    /// policy runs — the revert has already ended the session it would apply
-    /// to — and nothing is refused: the snapshot's saved state restores only
-    /// under the MAC address it was taken with, which ``VMMACAddressRegistry``
-    /// keeps for this VM while the snapshot is listed.
-    func commitRevertedConfiguration(_ plan: VMSnapshotRestorePlan, on instance: VMInstance) throws {
-        try instance.bundle.commitConfiguration(key: ConfigurationWriteKey()) {
+    /// the VM keeps the name and identity its bundle carries now.
+    func commitRevertedConfiguration(
+        _ plan: VMSnapshotRestorePlan, _ permit: borrowing VMEditPermit
+    ) throws {
+        try permit.bundle.commitConfiguration {
             $0 = $0.adoptingSnapshotState(plan.configuration)
         }
     }
@@ -827,15 +819,16 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// accessories back from — the attach and detach verbs, the prompt's
     /// answer, and the settings row's remove button alike.
     ///
-    /// Commits the mutation to the bundle's pairings file; a mutation that
-    /// changes nothing writes nothing. Throws when the write fails, leaving the
-    /// pairings as the bundle holds them.
+    /// Commits the mutation to the pairings file of the VM `permit` writes; a
+    /// mutation that changes nothing writes nothing. Throws when the write
+    /// fails, leaving the pairings as the bundle holds them.
     func updateUSBPairings(
-        of instance: VMInstance,
+        _ permit: borrowing VMEditPermit,
         mutate: (inout USBAccessoryPairingSet) -> Void
     ) throws {
+        let instance = permit.instance
         do {
-            try instance.bundle.commitUSBPairings(mutate)
+            try permit.bundle.commitUSBPairings(mutate)
         } catch {
             #log(
                 Self.logger, .error,
@@ -845,23 +838,28 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
     }
 
-    func pairUSBAccessory(_ pairing: USBAccessoryPairing, with instance: VMInstance) throws {
+    /// Pairs `pairing` with the VM `permit` writes, moving it off every other
+    /// VM that holds it first, each under a ``VMEditClasses/pairingRules``
+    /// edit of its own; throws ``PairingMoveRefused`` when one of those VMs'
+    /// state refuses the edit, leaving the target unpaired.
+    func pairUSBAccessory(_ pairing: USBAccessoryPairing, _ permit: borrowing VMEditPermit) throws {
         for other in instances
-        where other !== instance && other.usbPairings.pairing(forKey: pairing.key) != nil {
-            try updateUSBPairings(of: other) { $0.remove(key: pairing.key) }
+        where other !== permit.instance && other.usbPairings.pairing(forKey: pairing.key) != nil {
+            do {
+                try other.activity.edit(.pairingRules) { otherPermit in
+                    try updateUSBPairings(otherPermit) { $0.remove(key: pairing.key) }
+                }
+            } catch let refused as VMAdmissionRefusal {
+                throw PairingMoveRefused(holder: other, refusal: refused)
+            }
         }
-        try updateUSBPairings(of: instance) { $0.upsert(pairing) }
+        try updateUSBPairings(permit) { $0.upsert(pairing) }
     }
 
-    /// Pushes a configuration change to a running VM.
-    ///
-    /// Hot-toggleable fields (`agentLogForwardingEnabled`, `clipboardSharingEnabled`)
-    /// take effect immediately via `VMInstance.applyLivePolicy`; changes to
-    /// `removableMedia` trigger a runtime XHCI list-diff; everything else is
-    /// persisted-only and waits for next start.
-    func applyLivePolicy(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
-        instance.applyLivePolicy(oldConfig: old, newConfig: new)
-        removableMedia.apply(for: instance, old: old, new: new)
+    /// A pairing move refused by the state of the VM that held the pairing.
+    struct PairingMoveRefused: Error {
+        let holder: VMInstance
+        let refusal: VMAdmissionRefusal
     }
 
     // MARK: - Error Handling
@@ -887,14 +885,5 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// Hands an error message to ``onFailure``.
     func surfaceError(_ message: String, title: String = "Error") {
         onFailure?(title, message)
-    }
-}
-
-extension VMLibrary {
-    /// What ``VMBundle/commitConfiguration(key:_:)`` asks for, so only this
-    /// file can write a VM's configuration past the refusals it owns: the
-    /// initializer is `fileprivate`, which `@testable import` does not open.
-    struct ConfigurationWriteKey {
-        fileprivate init() {}
     }
 }

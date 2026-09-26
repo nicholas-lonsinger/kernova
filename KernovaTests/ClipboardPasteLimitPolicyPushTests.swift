@@ -15,8 +15,8 @@ import Testing
 @Suite("Clipboard paste ceiling policy push", .serialized, .admissionGated)
 @MainActor
 struct ClipboardPasteLimitPolicyPushTests {
-    private func makeInstance(preferences: AppPreferences) -> VMInstance {
-        let instance = VMInstanceFixture.make(
+    private func makeInstance(in library: VMLibrary, preferences: AppPreferences) -> VMInstance {
+        let instance = library.admitFixture(
             name: "Ceiling VM", guestOS: .macOS, phase: .running(sessionID: UUID()),
             preferences: preferences, mutate: { $0.clipboardSharingEnabled = true })
         // The phase's session identity stands in for a live `VZVirtualMachine`,
@@ -66,8 +66,7 @@ struct ClipboardPasteLimitPolicyPushTests {
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled)
 
-        let instance = makeInstance(preferences: preferences)
-        viewModel.library.admitForTesting(instance)
+        let instance = makeInstance(in: viewModel.library, preferences: preferences)
         let guest = try attachControlService(to: instance)
         defer {
             instance.stopVsockServices()

@@ -52,7 +52,7 @@ final class MacOSInstallService {
         // the configuration's hardware model over the bundle's file, which
         // `createMacPlatformFiles` writes only when absent, so a model an
         // earlier attempt recorded would stand in for this image's.
-        try instance.performConfigurationMutation {
+        try context.operation.permit.updateConfiguration {
             $0.hardwareModelData = hardwareModelData
             $0.machineIdentifierData = machineIDData
         }.get()

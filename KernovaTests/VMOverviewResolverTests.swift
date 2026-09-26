@@ -12,12 +12,11 @@ struct VMOverviewResolverTests {
 
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
 
-    /// `inLibrary` lists the VM the resolver is bound to, which is what lets the
-    /// reads it issues — each addressing its VM by id — answer at all.
+    /// A resolver whose reads — each addressing its VM by id — answer only
+    /// when `instance` is one of `viewModel`'s library's own.
     private func makeResolver(
         instance: VMInstance,
         viewModel: VMLibraryViewModel? = nil,
-        inLibrary: Bool = false,
         entitled: Bool = true,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         interfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
@@ -27,7 +26,6 @@ struct VMOverviewResolverTests {
             viewModel
             ?? makeSettingsViewModel(
                 preferences: preferences, vmnetNetworks: vmnetNetworks, entitled: entitled)
-        if inLibrary { model.library.admitForTesting(instance) }
         return VMOverviewResolver(
             instance: instance,
             viewModel: model,
@@ -115,11 +113,14 @@ struct VMOverviewResolverTests {
 
     /// A Shared VM on `aa:bb:cc:dd:ee:ff`, running unless `phase` says otherwise.
     private func sharedInstance(phase: VMLifecyclePhase = .running(sessionID: UUID())) -> VMInstance {
-        VMInstanceFixture.make(phase: phase) {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
+        VMInstanceFixture.make(phase: phase, mutate: Self.shareNetwork)
+    }
+
+    /// Networking on, Shared, on `aa:bb:cc:dd:ee:ff`.
+    private static func shareNetwork(_ config: inout VMConfiguration) {
+        config.networkEnabled = true
+        config.networkMode = .shared
+        config.macAddress = "aa:bb:cc:dd:ee:ff"
     }
 
     @Test("The address is the observer's answer for a running VM, and displaying it materializes nothing")
@@ -131,7 +132,9 @@ struct VMOverviewResolverTests {
             arpTable: ScriptedARPTable([
                 .scripted("192.168.64.9", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
             ]))
-        let resolver = makeResolver(instance: sharedInstance(), viewModel: model, inLibrary: true)
+        let instance = model.library.admitFixture(
+            phase: .running(sessionID: UUID()), mutate: Self.shareNetwork)
+        let resolver = makeResolver(instance: instance, viewModel: model)
         await model.library.guestAddresses.readForTesting()
 
         resolver.refresh()
@@ -180,16 +183,15 @@ struct VMOverviewResolverTests {
     @Test("A duplicate MAC names the other VMs holding it")
     func duplicateMACWarningNamesTheOtherVMs() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = VMInstanceFixture.make {
+        let instance = viewModel.library.admitFixture {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        let twin = VMInstanceFixture.make {
+        viewModel.library.admitFixture {
             $0.name = "Twin"
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        viewModel.library.admitForTesting([instance, twin])
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
 
         resolver.refresh()
@@ -237,12 +239,13 @@ struct VMOverviewResolverTests {
 
     @Test("The snapshots' footprint lands from an off-main read, keyed to its set")
     func snapshotFootprintFollowsItsSet() async throws {
-        let instance = VMInstanceFixture.make()
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: [snapshot], currentID: snapshot.id))
-        let resolver = makeResolver(instance: instance, inLibrary: true)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
 
         resolver.refresh()
         #expect(resolver.resolved.snapshotTotalBytes == nil)
@@ -257,10 +260,11 @@ struct VMOverviewResolverTests {
 
     @Test("A size already read survives the re-read the next snapshot triggers")
     func measuredSizesOutliveARereadOfTheSameVM() async throws {
-        let instance = VMInstanceFixture.make()
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture()
         let first = VMSnapshot(name: "First", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [first], currentID: first.id))
-        let resolver = makeResolver(instance: instance, inLibrary: true)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         let measured = try #require(resolver.resolved.snapshotSizes[first.id])
@@ -285,13 +289,14 @@ struct VMOverviewResolverTests {
 
     @Test("Deleting a snapshot drops its size and leaves the rest measured")
     func deletingASnapshotDropsOnlyItsOwnSize() async throws {
-        let instance = VMInstanceFixture.make()
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture()
         let first = VMSnapshot(name: "First", macAddress: nil)
         let second = VMSnapshot(name: "Second", macAddress: nil)
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: [first, second], currentID: second.id))
-        let resolver = makeResolver(instance: instance, inLibrary: true)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         #expect(resolver.resolved.snapshotSizes.count == 2)
@@ -309,12 +314,12 @@ struct VMOverviewResolverTests {
     @Test("Binding to another VM drops what described the outgoing one")
     func rebindingClearsTheOutgoingVMsValues() async {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = VMInstanceFixture.make()
+        let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: [snapshot], currentID: snapshot.id))
-        let resolver = makeResolver(instance: instance, viewModel: viewModel, inLibrary: true)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         await resolver.bootDiskTaskForTesting?.value
@@ -332,12 +337,13 @@ struct VMOverviewResolverTests {
 
     @Test("A resolved read reports the category whose card it moved")
     func resolvedReadsReportTheirCategory() async {
-        let instance = VMInstanceFixture.make()
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.seedSnapshotManifest(
             VMSnapshotManifest(
                 snapshots: [snapshot], currentID: snapshot.id))
-        let resolver = makeResolver(instance: instance, inLibrary: true)
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
         var reported: [VMSettingsCategory] = []
         resolver.onCategoryResolved = { reported.append($0) }
 

@@ -66,17 +66,15 @@ extension VMInstance {
     /// Opens scoped access for every bookmarked external path in the
     /// configuration, healing stale or moved bookmarks on the way.
     ///
-    /// Called by ``beginSessionContext(_:bootedIntoRecovery:)`` at the top of each
-    /// boot attempt with the freshly opened context, before the configuration
-    /// builder resolves any paths. The walk is
+    /// Called when each boot attempt opens its context, before the
+    /// configuration builder resolves any paths. The walk is
     /// ``VMConfiguration/externalFileReferences``, and
     /// ``ExternalFileReference/Kind/opensRuntimeScope`` decides which kinds a
     /// boot takes a scope on.
     ///
     /// The heals land on the context, which the build reads
-    /// (``effectiveConfiguration``), and are written to the bundle as well; a
-    /// write that fails is reported, and the next boot heals again from the
-    /// same bookmarks.
+    /// (``effectiveConfiguration``); ``writeHeals(of:_:)`` writes them to the
+    /// bundle.
     func openRuntimeFileAccess(into context: VMSessionContext) {
         var scopes: [ScopedAccess] = []
         var heals: [ExternalReferenceHeal] = []
@@ -98,14 +96,20 @@ extension VMInstance {
         }
 
         context.heals = heals
-        if !heals.isEmpty {
-            performConfigurationMutation { config in
-                for heal in heals {
-                    config.healExternalReference(
-                        heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
-                }
+        context.fileAccess.adoptConfigScopes(scopes)
+    }
+
+    /// Writes the heals `context`'s boot found to the bundle, as a write of
+    /// the bring-up `permit` belongs to; a write that fails is reported, and
+    /// the next boot heals again from the same bookmarks.
+    func writeHeals(of context: VMSessionContext, _ permit: borrowing VMEditPermit) {
+        let heals = context.heals
+        guard !heals.isEmpty else { return }
+        permit.updateConfiguration { config in
+            for heal in heals {
+                config.healExternalReference(
+                    heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
             }
         }
-        context.fileAccess.adoptConfigScopes(scopes)
     }
 }

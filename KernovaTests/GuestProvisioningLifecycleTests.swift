@@ -28,12 +28,13 @@ struct GuestProvisioningLifecycleTests {
     private func makeInstance(
         intent: GuestAccountIntent? = nil
     ) -> (instance: VMInstance, library: VMLibrary) {
-        let instance = VMInstanceFixture.make(name: "Unattended VM", guestOS: .macOS) {
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture(name: "Unattended VM", guestOS: .macOS) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
             $0.pendingGuestAccount = intent
         }
-        return (instance, makeWiredLibrary(holding: [instance]))
+        return (instance, library)
     }
 
     // MARK: - Rejoining the Intent

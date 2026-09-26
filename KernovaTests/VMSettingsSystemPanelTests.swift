@@ -34,14 +34,13 @@ struct VMSettingsSystemPanelTests {
         hiDPI: Bool? = nil
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(guestOS: guestOS) {
+        let instance = viewModel.library.registerFixture(guestOS: guestOS) {
             $0.displayWidth = width
             $0.displayHeight = height
             $0.displayPPI = ppi
             $0.displaySizesToWindow = sizesToWindow
             $0.displayHiDPI = hiDPI ?? DisplayBootSizing.isHiDPI(ppi: ppi)
         }
-        registerSettingsInstance(instance, in: viewModel)
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -491,12 +490,11 @@ struct VMSettingsSystemPanelTests {
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             entitlements: .entitled)
         viewModel.presenter = presenter
-        let instance = VMInstanceFixture.make(guestOS: .macOS) {
+        let instance = viewModel.library.registerFixture(guestOS: .macOS) {
             $0.displayResolution = resolution
             $0.displaySizesToWindow = false
             $0.displayHiDPI = DisplayBootSizing.isHiDPI(ppi: resolution.ppi)
         }
-        viewModel.library.register(instance, storage: storage)
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()

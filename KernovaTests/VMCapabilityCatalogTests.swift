@@ -46,7 +46,7 @@ struct VMCapabilityCatalogTests {
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
-            library: harness.library, storage: harness.storage, preferences: preferences,
+            library: harness.library, preferences: preferences,
             hostState: hostState, mutate: mutate)
     }
 
@@ -778,14 +778,16 @@ struct VMCapabilityCatalogTests {
     @Test("The account state walks from nothing, through owed, to answered")
     func guestAccountStateWalksItsThreeStandings() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
         let intent = GuestAccountIntent(
             fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
             enablesRemoteLogin: false)
+        let without = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
+        #expect(harness.catalog.guestAccountState(of: without) == .none)
 
-        #expect(harness.catalog.guestAccountState(of: instance) == .none)
-
-        harness.library.editConfiguration(of: instance) { $0.pendingGuestAccount = intent }
+        // An account is set only at creation.
+        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
+            $0.pendingGuestAccount = intent
+        }
         #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
         #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
@@ -806,11 +808,11 @@ struct VMCapabilityCatalogTests {
         arguments: [VMLifecyclePhase.stopped, .suspended, .failed(message: "Boot failed.")])
     func standingBringUpRefusesAnOwedAccount(phase: VMLifecyclePhase) {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS)
-        // Answered first, to show the phase alone would have brought it up.
-        #expect(harness.catalog.standingBringUp(for: instance) != nil)
+        // A VM owing nothing, to show the phase alone would have brought it up.
+        let owingNothing = makeInstance(in: harness, phase: phase, guestOS: .macOS)
+        #expect(harness.catalog.standingBringUp(for: owingNothing) != nil)
 
-        harness.library.editConfiguration(of: instance) {
+        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS) {
             $0.pendingGuestAccount = GuestAccountIntent(
                 fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
                 enablesRemoteLogin: false)
@@ -843,7 +845,7 @@ struct VMCapabilityCatalogTests {
 
     @available(macOS 27.0, *)
     @Test("A retraction leaves nothing owed and nothing held")
-    func retractingEndsBothHalves() {
+    func retractingEndsBothHalves() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
             $0.pendingGuestAccount = GuestAccountIntent(
@@ -853,7 +855,8 @@ struct VMCapabilityCatalogTests {
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
 
-        #expect(harness.library.retractGuestAccount(for: instance).landed)
+        #expect(
+            try instance.activity.edit(.liveKeys) { harness.library.retractGuestAccount($0) }.landed)
 
         // Not "asks again": the window is gone, so the question is gone with it.
         #expect(instance.configuration.pendingGuestAccount == nil)
@@ -863,12 +866,13 @@ struct VMCapabilityCatalogTests {
 
     @available(macOS 27.0, *)
     @Test("Retracting an account a VM never owed writes nothing")
-    func retractingWithoutAnAccountWritesNothing() {
+    func retractingWithoutAnAccountWritesNothing() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS)
         let writesBefore = harness.storage.saveConfigurationCallCount
 
-        #expect(harness.library.retractGuestAccount(for: instance).landed)
+        #expect(
+            try instance.activity.edit(.liveKeys) { harness.library.retractGuestAccount($0) }.landed)
 
         #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }

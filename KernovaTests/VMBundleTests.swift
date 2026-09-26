@@ -72,12 +72,10 @@ struct VMBundleTests {
     /// A VM over the bundle at `url`, read through `access` and registered with
     /// a library — the only writer of a configuration.
     private func makeVM(at url: URL, access: any VMBundleFileAccessing) throws -> (VMLibrary, VMInstance) {
-        let instance = VMInstance(
-            bundle: makeBundle(try files(url, access).read()), phase: .stopped,
-            preferences: makeTestPreferences())
-        let library = makeWiredLibrary()
+        let library = makeWiredLibrary(machineFiles: VMBundleMachineFiles(fileSystem: fileSystem))
+        let instance = library.admitForTesting(
+            try files(url, access).read(), phase: .stopped, preferences: makeTestPreferences())
         library.wireHooks(for: instance)
-        library.admitForTesting(instance)
         return (library, instance)
     }
 
@@ -99,7 +97,8 @@ struct VMBundleTests {
         let bundle = instance.bundle
         switch file {
         case .configuration:
-            return library.updateConfiguration(of: instance) { $0.name = "Mine" }.landed
+            return (try? library.updateConfiguration(of: instance, as: .rename) { $0.name = "Mine" })?
+                .landed == true
         case .hostState:
             return (try? bundle.commitHostState { $0.displayPreference = .popOut }) != nil
         case .snapshotManifest:
@@ -241,7 +240,9 @@ struct VMBundleTests {
             let corrupt = Data("{ not json".utf8)
             try corrupt.write(to: configURL)
 
-            let write = library.updateConfiguration(of: instance) { $0.name = "Renamed" }
+            let write = try library.updateConfiguration(of: instance, as: .rename) {
+                $0.name = "Renamed"
+            }
 
             #expect(write.failedToSave)
             #expect(instance.configuration == before)
@@ -665,5 +666,34 @@ struct VMBundleTests {
         let diskURL = VMBundleLayout(bundleURL: bundle.url).additionalDiskURL(id: id)
         #expect(diskImages.lastCreatedDiskImageURL == diskURL)
         #expect(fileSystem.trashedURLs == [diskURL])
+    }
+}
+
+extension VMBundle {
+    /// Commits as the write of an operation holding a stopped VM over this
+    /// bundle, whose permit writes every field — for the tests that exercise
+    /// the bundle's files rather than a verb or the field classes.
+    fileprivate func permitted(_ commit: (borrowing VMEditPermit) throws -> Void) throws {
+        let instance = VMInstance(bundle: self, phase: .stopped, preferences: makeTestPreferences())
+        try instance.activity.performNow(.creatingStorageDisk) { context in
+            try commit(context.permit)
+            return .rest(.asStarted, ())
+        }
+    }
+
+    fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
+        try permitted { try $0.bundle.commitHostState(change) }
+    }
+
+    fileprivate func commitSnapshotManifest(
+        _ change: (inout VMSnapshotManifest) throws -> Void
+    ) throws {
+        try permitted { try $0.bundle.commitSnapshotManifest(change) }
+    }
+
+    fileprivate func commitUSBPairings(
+        _ change: (inout USBAccessoryPairingSet) throws -> Void
+    ) throws {
+        try permitted { try $0.bundle.commitUSBPairings(change) }
     }
 }

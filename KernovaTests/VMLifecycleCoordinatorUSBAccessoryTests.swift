@@ -33,9 +33,9 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     }
 
     private func makeInstance(sessionID: UUID, on coordinator: VMLifecycleCoordinator) -> VMInstance {
-        let instance = VMInstanceFixture.make(
-            name: "USB VM", phase: .running(sessionID: sessionID))
-        libraries.keep(makeWiredLibrary(holding: [instance], lifecycle: coordinator))
+        let library = makeWiredLibrary(lifecycle: coordinator)
+        libraries.keep(library)
+        let instance = library.registerFixture(name: "USB VM", phase: .running(sessionID: sessionID))
         instance.beginSessionContextForTesting()
         return instance
     }
@@ -173,7 +173,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let snapshot = VMSnapshotCaptureRequest(name: "Snap")
         _ = try await coordinator.takeSnapshot(
             instance, mode: .live, snapshot: snapshot
-        ) { _ in }
+        ) { _, _ in }
 
         // The handle it went off under names nothing now; it goes back on under
         // the one macOS assigned it after the reset.
@@ -197,7 +197,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }()
         // Event-driven both ways: the assignment lands only once the put-back
         // is actually parked on it.
@@ -223,7 +223,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         _ = try await coordinator.takeSnapshot(
             instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _ in }
+        ) { _, _ in }
 
         // The snapshot the user asked for is written; the hardware is simply
         // where a surprise unplug would have left it.
@@ -244,7 +244,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         _ = try await coordinator.takeSnapshot(
             instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _ in }
+        ) { _, _ in }
 
         #expect(service.awaitedIdentities.isEmpty)
         #expect(service.attachedRegistryIDs == [9])
@@ -269,7 +269,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }()
         // Both waits parked at once is the thing under test: a put-back that
         // waited one at a time could never have two, and the second one's
@@ -302,7 +302,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
         instance.handleSessionEvent(.guestDidStop)
@@ -335,7 +335,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }
 
         // The snapshot is gone and the guest is still running, so the user's
@@ -367,7 +367,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }
 
         // Only the one the sweep ejected is waited for and put back; the one it
@@ -394,7 +394,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
                 instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _ in }
+            ) { _, _ in }
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device for the put-back.

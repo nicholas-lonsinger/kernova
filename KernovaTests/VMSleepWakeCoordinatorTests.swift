@@ -220,16 +220,16 @@ struct VMSleepWakeCoordinatorTests {
         let virtService = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtService, fileSystem: fileSystem)
         let mac = "aa:bb:cc:dd:ee:30"
-        let sleeper = VMInstanceFixture.make(name: "Sleeper") {
+        let library = makeWiredLibrary(lifecycle: lifecycle)
+        let sleeper = library.registerFixture(name: "Sleeper") {
             $0.networkEnabled = true
             $0.macAddress = mac
         }
         sleeper.activity.placeForTesting(.running(sessionID: UUID()))
-        let twin = VMInstanceFixture.make(name: "Twin") {
+        let twin = library.registerFixture(name: "Twin") {
             $0.networkEnabled = true
             $0.macAddress = mac
         }
-        let library = makeWiredLibrary(holding: [sleeper, twin], lifecycle: lifecycle)
         let coordinator = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
         coordinator.onFailure = { [failures] error in
             failures.record(title: "Error", message: error.localizedDescription)

@@ -184,7 +184,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// one when the revert resumes after.
     func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
-        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
+        commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
         let plan: VMSnapshotRestorePlan
@@ -200,7 +200,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         do {
             try await context.bringUp.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
             do {
-                try commitConfiguration(plan)
+                try commitConfiguration(context.bringUp.operation.permit, plan)
             } catch {
                 await context.bringUp.operation.bundle.discardRestoreStaging()
                 throw error

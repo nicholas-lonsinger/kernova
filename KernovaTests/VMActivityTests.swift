@@ -54,12 +54,12 @@ struct VMActivityTests {
     private func makeWiredInstance(
         _ phase: VMLifecyclePhase
     ) -> (VMInstance, Recorder, VMLibrary) {
-        let (instance, recorder) = makeInstance(phase)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
         let library = makeWiredLibrary(
-            holding: [instance],
             lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()))
+        let instance = library.registerFixture(
+            phase: phase,
+            snapshots: VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
+        let recorder = Recorder()
         // Wiring installs the library's own power-off hook; the recorder's
         // stands in for it here.
         instance.activity.onPoweredOff = { recorder.poweredOff += 1 }
@@ -249,6 +249,192 @@ struct VMActivityTests {
         #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
             try instance.activity.performNow(.discardingSavedState) { _ in .rest(.atRest(.stopped), ()) }
         }
+    }
+
+    // MARK: - Edits
+
+    /// One class at a time, so a table row names the class admission refused.
+    private static let singleEditClasses: [VMEditClasses] = [
+        .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
+        .snapshotMetadata, .pairingRules, .rename, .observations,
+    ]
+
+    @Test("An edit's permit is minted exactly where admission admits the edit, naming its own VM")
+    func editMintsAPermitWhereAdmissionAdmits() throws {
+        let session = UUID()
+        let live = VMLifecyclePhase.running(sessionID: session)
+        let phases: [VMLifecyclePhase] = [
+            .stopped, live, .livePaused(sessionID: session),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true)), from: live),
+            .operating(.saving, from: live), .operating(.pausing, from: live),
+            .operating(.forceStopping, from: live), .removed,
+        ]
+        for phase in phases {
+            let (instance, _, library) = makeWiredInstance(.stopped)
+            defer { withExtendedLifetime(library) {} }
+            instance.activity.placeForTesting(phase)
+            for classes in Self.singleEditClasses {
+                let decision = instance.activity.decide(.edit(classes), posture: .commit)
+                let permitted = try? instance.activity.edit(classes) { permit in
+                    #expect(permit.instance === instance)
+                    #expect(permit.authority == .edit(classes))
+                    return true
+                }
+                #expect((permitted == true) == (decision == .admit), "\(phase) \(classes)")
+                if case .refuse(let reason) = decision {
+                    #expect(throws: VMAdmissionRefusal(refusal: reason), "\(phase) \(classes)") {
+                        try instance.activity.edit(classes) { _ in }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test(
+        "A rename and a live-key write are refused at the write during a revert; presentation bookkeeping is not"
+    )
+    func revertRefusesRenameAndLiveKeysAtTheWrite() throws {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        let revert = VMOperationKind.bringUp(.reverting(snapshotID: UUID(), resumesAfter: true))
+        let (instance, _, library) = makeWiredInstance(.stopped)
+        defer { withExtendedLifetime(library) {} }
+        instance.activity.placeForTesting(.operating(revert, from: live))
+
+        for classes in [VMEditClasses.rename, .liveKeys] {
+            #expect(throws: VMAdmissionRefusal(refusal: .busy(revert)), "\(classes)") {
+                try instance.activity.edit(classes) { permit in
+                    _ = permit.updateConfiguration { $0.name = "Renamed" }
+                }
+            }
+        }
+        #expect(instance.name != "Renamed")
+        let recorded = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.lastFullscreenDisplayID = 7 }
+        }
+        #expect(recorded.landed)
+        #expect(instance.hostState.lastFullscreenDisplayID == 7)
+        // The display preference is the user's live key, not presentation
+        // bookkeeping: a presentation permit cannot carry it past R8.
+        let preferred = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.displayPreference = .fullscreen }
+        }
+        #expect(preferred.fieldsOutsidePermit == ["displayPreference"])
+        #expect(instance.hostState.displayPreference == .inline)
+    }
+
+    @Test("A commit refuses every field its permit's classes may not write, and changes nothing")
+    func aCommitRefusesFieldsOutsideItsPermit() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+        let memory = instance.configuration.memorySizeInGB
+
+        // A rename admitted on a live VM carries no machine key with it.
+        let renamed = try instance.activity.edit(.rename) { permit in
+            permit.updateConfiguration {
+                $0.name = "Renamed"
+                $0.memorySizeInGB = memory + 4
+            }
+        }
+        #expect(renamed.fieldsOutsidePermit == ["memorySizeInGB"])
+        #expect(instance.configuration.memorySizeInGB == memory)
+        #expect(instance.name != "Renamed")
+
+        // The settings pair stops at the configuration it refused.
+        let settings = try instance.activity.edit(.observations) { permit in
+            permit.updateSettings(
+                configuration: { $0.clipboardSharingEnabled.toggle() },
+                hostState: { $0.lastFullscreenDisplayID = 3 })
+        }
+        #expect(settings.fieldsOutsidePermit == ["clipboardSharingEnabled"])
+        #expect(instance.hostState.lastFullscreenDisplayID == nil)
+
+        // Host state is checked the same way.
+        let autoStart = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.startsAutomaticallyOnLaunch = true }
+        }
+        #expect(autoStart.fieldsOutsidePermit == ["startsAutomaticallyOnLaunch"])
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
+
+        // And the two files one class writes whole.
+        #expect(throws: VMStateFieldRefusal(fields: ["pairings"])) {
+            try instance.activity.edit(.snapshotMetadata) { permit in
+                try permit.bundle.commitUSBPairings {
+                    $0.upsert(
+                        USBAccessoryPairing(
+                            key: "k", form: .serialNumber, displayName: "Stick",
+                            receptacleLabel: nil, pairedAt: Date(timeIntervalSince1970: 0)))
+                }
+            }
+        }
+        #expect(instance.usbPairings.isEmpty)
+        #expect(throws: VMStateFieldRefusal(fields: ["snapshots"])) {
+            try instance.activity.edit(.pairingRules) { permit in
+                try permit.bundle.commitSnapshotManifest { $0.snapshots.removeAll() }
+            }
+        }
+        #expect(instance.snapshotManifest.snapshots.count == 1)
+    }
+
+    @Test(
+        "An observation may turn the install reminder back on and retract the guest account, but never silence or set either"
+    )
+    func observationsWriteOnlyWhatTheyDisprove() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let dismissed = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = true }
+        }
+        #expect(dismissed.fieldsOutsidePermit == ["agentInstallNudgeDismissed"])
+        library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = true }
+        let reset = try instance.activity.edit(.observations) { permit in
+            library.updateHostState(permit) { $0.agentInstallNudgeDismissed = false }
+        }
+        #expect(reset.landed)
+        #expect(!instance.hostState.agentInstallNudgeDismissed)
+
+        let account = GuestAccountIntent(
+            fullName: "User", username: "user", logsInAutomatically: false,
+            enablesRemoteLogin: false)
+        let asserted = try instance.activity.edit(.observations) { permit in
+            permit.updateConfiguration { $0.pendingGuestAccount = account }
+        }
+        #expect(asserted.fieldsOutsidePermit == ["pendingGuestAccount"])
+        #expect(instance.configuration.pendingGuestAccount == nil)
+        try instance.activity.performNow(.deletingSnapshot) { context in
+            #expect(context.permit.updateConfiguration { $0.pendingGuestAccount = account }.landed)
+            return .rest(.asStarted, ())
+        }
+        let retracted = try instance.activity.edit(.observations) { library.retractGuestAccount($0) }
+        #expect(retracted.landed)
+        #expect(instance.configuration.pendingGuestAccount == nil)
+    }
+
+    @Test("An operation's own permit writes the VM it holds, where an edit beside it is refused")
+    func anOperationsPermitWritesItsOwnVM() throws {
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: UUID()))
+        defer { withExtendedLifetime(library) {} }
+
+        let (authority, besideRefusal) = try instance.activity.performNow(.deletingSnapshot) {
+            (context: borrowing VMOperationContext)
+                -> VMOperationEnding<(VMEditPermit.Authority, VMAdmissionRefusal?)> in
+            #expect(context.instance === instance)
+            #expect(context.permit.instance === instance)
+            var refusal: VMAdmissionRefusal?
+            do {
+                try instance.activity.edit(.snapshotMetadata) { _ in }
+            } catch let refused as VMAdmissionRefusal {
+                refusal = refused
+            }
+            // A machine key no settled live VM takes, written as the
+            // operation's own.
+            #expect(context.permit.updateConfiguration { $0.memorySizeInGB = 6 }.landed)
+            return .rest(.asStarted, (context.permit.authority, refusal))
+        }
+
+        #expect(authority == .operation(.deletingSnapshot))
+        #expect(besideRefusal == VMAdmissionRefusal(refusal: .busy(.deletingSnapshot)))
+        #expect(instance.configuration.memorySizeInGB == 6)
     }
 
     // MARK: - launch

@@ -196,8 +196,7 @@ struct VMLibraryTests {
     @Test("selectedID persists to UserDefaults on change")
     func selectedIDPersistsToUserDefaults() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        library.admitForTesting(instance)
+        let instance = library.admitFixture()
 
         library.selectedID = instance.id
 
@@ -207,8 +206,7 @@ struct VMLibraryTests {
     @Test("selectedID clears UserDefaults when set to nil")
     func selectedIDClearsUserDefaults() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        library.admitForTesting(instance)
+        let instance = library.admitFixture()
         library.selectedID = instance.id
 
         library.selectedID = nil
@@ -282,26 +280,20 @@ struct VMLibraryTests {
 
     // MARK: - Configuration Writes
 
-    /// `instance`, live on a session no lifecycle call holds, registered in
-    /// `library` over `storage`.
-    private func registerRunning(
-        _ instance: VMInstance, in library: VMLibrary, storage: MockVMStorageService
-    ) -> UUID {
-        library.register(instance, storage: storage)
-        let sessionID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
+    /// Puts `instance` live on a session no lifecycle call holds.
+    private func placeRunning(_ instance: VMInstance) {
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        return sessionID
     }
 
     @Test("A request whose save fails changes nothing, in memory or on the running VM")
-    func discardedWriteLeavesTheOldValue() {
+    func discardedWriteLeavesTheOldValue() throws {
         let (library, storage, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Before")
-        _ = registerRunning(instance, in: library, storage: storage)
+        let instance = library.registerFixture(name: "Before")
+        placeRunning(instance)
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
-        let saved = library.updateConfiguration(of: instance) {
+        let saved = try library.updateConfiguration(of: instance, as: [.rename, .hotPlugMedia]) {
             $0.name = "After"
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/A.iso", readOnly: true)]
         }
@@ -315,50 +307,94 @@ struct VMLibraryTests {
         #expect(failures.showError)
     }
 
+    @Test("A snapshot's whole configuration passes the MAC-address refusal only as the revert's own write")
+    func onlyARevertCommitsPastTheMACAddressRefusal() async throws {
+        let (library, _, _, _) = makeLibrary()
+        let address = "02:11:22:33:44:55"
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: address)
+        let reverting = library.registerFixture(
+            name: "Reverting", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) { $0.macAddress = "02:66:77:88:99:aa" }
+        library.registerFixture(name: "Holder") { $0.macAddress = address }
+        var captured = reverting.configuration
+        captured.macAddress = address
+        func install(_ permit: borrowing VMEditPermit) throws {
+            try permit.bundle.commitConfiguration { $0 = $0.adoptingSnapshotState(captured) }
+        }
+
+        // An edit that may write the machine keys, and another operation's
+        // own write, are refused whole.
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.edit(.machineKeys, install)
+        }
+        #expect(throws: VMLibrary.SettingsRefusal.self) {
+            try reverting.activity.performNow(.deletingSnapshot) { context in
+                try install(context.permit)
+                return .rest(.asStarted, ())
+            }
+        }
+        #expect(reverting.configuration.macAddress != address)
+
+        try await reverting.activity.bringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
+            try install(context.operation.permit)
+            return .rest(.atRest(.stopped), ())
+        }
+        #expect(reverting.configuration.macAddress == address)
+    }
+
     @Test("Settling on the live media list writes that field alone and tells the VM nothing")
-    func settleRemovableMediaWritesOnlyTheList() {
+    func settleRemovableMediaWritesOnlyTheList() async throws {
         let (library, storage, _, _) = makeLibrary()
         let queued = RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)
         let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
-        let instance = VMInstanceFixture.make(name: "Mine") { $0.removableMedia = [queued] }
-        let sessionID = registerRunning(instance, in: library, storage: storage)
-        // A phase whose edits the write funnel refuses: the settle is not one.
-        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
+        let instance = library.registerFixture(name: "Mine") { $0.removableMedia = [queued] }
+        placeRunning(instance)
         let before = instance.configuration
 
-        library.settleRemovableMedia(of: instance, toLive: [live])
+        // The reconcile pass whose refusal the settle answers holds the VM.
+        let held = try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+            return instance.phase.operation?.kind
+        }
 
         var expected = before
         expected.removableMedia = [live]
         #expect(instance.configuration == expected)
         #expect(storage.bundles[instance.bundleURL] == expected)
-        // No pass was launched: the save still holds the VM.
-        #expect(instance.phase.operation?.kind == .saving)
+        // No second pass was launched: the reconcile still held the VM.
+        #expect(held == .reconcilingMedia)
+        #expect(instance.phase.operation == nil)
         #expect(!failures.showError)
     }
 
     @Test("Settling on the list the configuration already holds writes nothing")
-    func settleRemovableMediaNoOpsWhenUnchanged() {
+    func settleRemovableMediaNoOpsWhenUnchanged() async throws {
         let (library, storage, _, _) = makeLibrary()
         let live = RemovableMediaItem(path: "/tmp/live.iso", readOnly: true)
-        let instance = VMInstanceFixture.make { $0.removableMedia = [live] }
-        _ = registerRunning(instance, in: library, storage: storage)
+        let instance = library.registerFixture { $0.removableMedia = [live] }
+        placeRunning(instance)
         let saves = storage.saveConfigurationCallCount
 
-        library.settleRemovableMedia(of: instance, toLive: [live])
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: [live])
+        }
 
         #expect(storage.saveConfigurationCallCount == saves)
     }
 
     @Test("A settle whose write fails is reported and memory stays as the bundle holds it")
-    func settleRemovableMediaWhoseWriteFailsKeepsTheBundleList() {
+    func settleRemovableMediaWhoseWriteFailsKeepsTheBundleList() async throws {
         let (library, storage, _, _) = makeLibrary()
         let queued = [RemovableMediaItem(path: "/tmp/queued.iso", readOnly: true)]
-        let instance = VMInstanceFixture.make { $0.removableMedia = queued }
-        _ = registerRunning(instance, in: library, storage: storage)
+        let instance = library.registerFixture { $0.removableMedia = queued }
+        placeRunning(instance)
         storage.saveConfigurationError = NSError(domain: "test", code: 1)
 
-        library.settleRemovableMedia(of: instance, toLive: nil)
+        try await withOperation(on: instance, .reconcilingMedia) { context in
+            library.settleRemovableMedia(context.permit, toLive: nil)
+        }
 
         #expect(instance.configuration.removableMedia == queued)
         #expect(storage.bundles[instance.bundleURL]?.removableMedia == queued)
@@ -366,26 +402,32 @@ struct VMLibraryTests {
     }
 
     @Test("A reverted configuration is committed as captured, with nothing refused")
-    func commitRevertedConfigurationWritesWithoutRefusing() throws {
+    func commitRevertedConfigurationWritesWithoutRefusing() async throws {
         let (library, storage, _, _) = makeLibrary()
-        let other = VMInstanceFixture.make(name: "Other") {
+        library.registerFixture(name: "Other") {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
-        let instance = VMInstanceFixture.make(name: "Mine") {
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: "aa:bb:cc:dd:ee:01")
+        let instance = library.registerFixture(
+            name: "Mine", snapshots: VMSnapshotManifest(snapshots: [snapshot])
+        ) {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:02"
         }
-        library.register(other, storage: storage)
-        library.register(instance, storage: storage)
         var written = instance.configuration
         written.macAddress = "aa:bb:cc:dd:ee:01"
         written.memorySizeInGB += 2
         let saves = storage.saveConfigurationCallCount
 
-        try library.commitRevertedConfiguration(
-            VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
-            on: instance)
+        try await instance.activity.bringUp(
+            .reverting(snapshotID: snapshot.id, resumesAfter: false)
+        ) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
+                context.operation.permit)
+            return .rest(.asStarted, ())
+        }
 
         #expect(instance.configuration == written)
         #expect(storage.bundles[instance.bundleURL] == written)
@@ -396,8 +438,7 @@ struct VMLibraryTests {
     @Test("A reverted configuration keeps the name and identity the bundle holds")
     func commitRevertedConfigurationKeepsTheBundleIdentity() throws {
         let (library, storage, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Loaded")
-        library.register(instance, storage: storage)
+        let instance = library.registerFixture(name: "Loaded")
         // Another copy renamed the VM and gave it a machine identifier after
         // this one read the bundle.
         var onDisk = instance.configuration
@@ -408,9 +449,11 @@ struct VMLibraryTests {
         captured.memorySizeInGB = onDisk.memorySizeInGB + 2
         captured.genericMachineIdentifierData = Data([0x0A])
 
-        try library.commitRevertedConfiguration(
-            VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
-            on: instance)
+        try withOperationNow(on: instance) { context in
+            try library.commitRevertedConfiguration(
+                VMSnapshotRestorePlan(configuration: captured, relativePaths: [], kind: .cold),
+                context.permit)
+        }
 
         #expect(instance.configuration.name == "Renamed Elsewhere")
         #expect(instance.configuration.id == onDisk.id)
@@ -423,15 +466,14 @@ struct VMLibraryTests {
     @Test(
         "An updateSettings whose host-state write fails reports that the configuration landed, and memory equals both files"
     )
-    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() {
+    func updateSettingsWhoseHostStateWriteFailsReportsTheConfigurationLanded() throws {
         let (library, storage, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        library.register(instance, storage: storage)
+        let instance = library.registerFixture()
         let memory = instance.configuration.memorySizeInGB
         storage.saveHostStateError = NSError(domain: "test", code: 1)
 
-        let outcome = library.updateSettings(
-            of: instance,
+        let outcome = try library.updateSettings(
+            of: instance, as: [.machineKeys, .liveKeys],
             configuration: { $0.memorySizeInGB = memory + 2 },
             hostState: { $0.startsAutomaticallyOnLaunch = true })
 
@@ -487,17 +529,18 @@ struct VMLibraryTests {
             .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
         ])
         let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet, arpTable: table)
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+        let instance = library.admitFixture(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
             $0.networkMode = .bridged
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
-        library.admitForTesting(instance)
         library.guestAddresses.watch()
         // Bridged is nothing the table answers for, so nothing is read.
         #expect(library.guestAddresses.readTaskForTesting == nil)
 
-        library.updateConfiguration(of: instance) { $0.networkMode = .shared }
+        try library.updateConfiguration(of: instance, as: .networkAttachment) {
+            $0.networkMode = .shared
+        }
 
         let loop = try #require(library.guestAddresses.readTaskForTesting)
         try await waitForChange {
@@ -512,8 +555,7 @@ struct VMLibraryTests {
     @Test("selectedInstance returns the instance matching selectedID")
     func selectedInstance() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make()
-        library.admitForTesting(instance)
+        let instance = library.admitFixture()
         library.selectedID = instance.id
 
         #expect(library.selectedInstance?.id == instance.id)
@@ -550,9 +592,8 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
     func reconcileRemovesStoppedVMs() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Gone VM")
+        let instance = library.admitFixture(name: "Gone VM")
         instance.activity.placeForTesting(.stopped)
-        library.admitForTesting(instance)
 
         // Storage has no bundles, so instance should be removed
         library.reconcileWithDisk()
@@ -563,9 +604,8 @@ struct VMLibraryTests {
     @Test("Evicting a VM whose bundle is gone drops its held guest-account password")
     func reconcileDropsTheHeldGuestAccountPassword() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Gone VM")
+        let instance = library.admitFixture(name: "Gone VM")
         instance.activity.placeForTesting(.stopped)
-        library.admitForTesting(instance)
         library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
 
@@ -580,9 +620,8 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk preserves running VMs even if bundle is missing")
     func reconcilePreservesRunningVMs() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Running VM")
+        let instance = library.admitFixture(name: "Running VM")
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
@@ -598,7 +637,7 @@ struct VMLibraryTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = RegisteredVMInstanceFixture.register(
             name: "Suspended", phase: .suspended, guestOS: .linux, library: library,
-            storage: storage, preferences: makeTestPreferences())
+            preferences: makeTestPreferences())
 
         storage.files.removeBundle(at: instance.bundleURL)
         library.reconcileWithDisk()
@@ -612,7 +651,7 @@ struct VMLibraryTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = RegisteredVMInstanceFixture.register(
             name: "Paused", phase: .livePaused(sessionID: UUID()), guestOS: .linux,
-            library: library, storage: storage, preferences: makeTestPreferences())
+            library: library, preferences: makeTestPreferences())
 
         storage.files.removeBundle(at: instance.bundleURL)
         library.reconcileWithDisk()
@@ -626,7 +665,7 @@ struct VMLibraryTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = RegisteredVMInstanceFixture.register(
             name: "Reverting", phase: .stopped, guestOS: .linux, library: library,
-            storage: storage, preferences: makeTestPreferences())
+            preferences: makeTestPreferences())
         instance.activity.placeForTesting(
             .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
 
@@ -642,17 +681,16 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk rests a suspension whose slot has left the bundle")
     func reconcileNormalizesAnEmptiedSuspension() throws {
         let (library, storage, _, _) = makeLibrary()
-        let holding = VMInstanceFixture.make(name: "Still suspended")
+        let holding = library.admitFixture(name: "Still suspended")
         holding.activity.placeForTesting(.suspended)
         defer { VMInstanceFixture.removeBundle(of: holding) }
         try VMInstanceFixture.writeSaveFile(for: holding)
-        let emptied = VMInstanceFixture.make(name: "Slot gone")
+        let emptied = library.admitFixture(name: "Slot gone")
         emptied.activity.placeForTesting(.suspended)
         // Both bundles are on disk, so the pass has read them and what it found
         // inside them stands.
         storage.bundles[holding.bundleURL] = holding.configuration
         storage.bundles[emptied.bundleURL] = emptied.configuration
-        library.admitForTesting([holding, emptied])
 
         library.reconcileWithDisk()
 
@@ -664,12 +702,11 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk leaves a suspension alone when it could not read the bundle")
     func reconcileLeavesAnUnreadBundlesSuspensionAlone() {
         let (library, storage, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(name: "Bundle out of sight")
+        let instance = library.admitFixture(name: "Bundle out of sight")
         instance.activity.placeForTesting(.suspended)
         // Listed, but its configuration cannot be read this pass.
         storage.bundles[instance.bundleURL] = instance.configuration
         storage.loadConfigurationFailURLs = [instance.bundleURL]
-        library.admitForTesting(instance)
 
         library.reconcileWithDisk()
 
@@ -682,10 +719,9 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk updates selection when selected stopped VM is removed")
     func reconcileUpdatesSelection() {
         let (library, storage, _, _) = makeLibrary()
-        let remaining = VMInstanceFixture.make(name: "Remaining")
-        let removed = VMInstanceFixture.make(name: "Removed")
+        let remaining = library.admitFixture(name: "Remaining")
+        let removed = library.admitFixture(name: "Removed")
         removed.activity.placeForTesting(.stopped)
-        library.admitForTesting([remaining, removed])
         library.selectedID = removed.id
 
         // Only keep the remaining instance's bundle on disk
@@ -963,13 +999,12 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk removes .initialBoot VMs whose bundles vanish")
     func reconcileRemovesInitialBootVMs() {
         let (library, storage, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(
+        library.admitFixture(
             name: "Pending VM", guestOS: .macOS, phase: .initialBoot
         ) {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-        library.admitForTesting(instance)
         // Bundle is NOT in storage.bundles — simulating an on-disk deletion.
 
         library.reconcileWithDisk()
@@ -982,7 +1017,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk keeps an orphaned VM its setup holds, and evicts it once at rest")
     func reconcileKeepsAVMItsSetupHolds() {
         let (library, _, _, _) = makeLibrary()
-        let instance = VMInstanceFixture.make(
+        let instance = library.admitFixture(
             name: "Pending VM", guestOS: .macOS, phase: .initialBoot
         ) {
             $0.installContext = MacOSInstallContext(
@@ -990,7 +1025,6 @@ struct VMLibraryTests {
         }
         instance.activity.placeForTesting(
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot))
-        library.admitForTesting(instance)
         // Bundle absent from storage → eligible for eviction once nothing holds it.
 
         library.reconcileWithDisk()
@@ -1030,8 +1064,11 @@ struct VMLibraryTests {
     /// A library over `storage`, whose bundle files hold every VM's pairings.
     private func makePairingLibrary() -> (VMLibrary, MockVMStorageService) {
         let storage = MockVMStorageService()
+        // A build that passes accessories through, the only one that edits
+        // pairings.
         let library = makeWiredLibrary(
             storage: storage, machineFiles: VMBundleMachineFiles(fileSystem: fileSystem),
+            lifecycle: makeTestLifecycle(usbAccessoryService: MockUSBAccessoryService()),
             fileSystem: fileSystem, preferences: preferences)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
@@ -1102,8 +1139,7 @@ struct VMLibraryTests {
     @Test("updateUSBPairings writes the bundle, and writes nothing when nothing changed")
     func updateUSBPairingsPersistsAndNoOps() throws {
         let (library, storage) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Paired VM")
-        library.register(instance, storage: storage)
+        let instance = library.registerFixture(name: "Paired VM")
         let path = VMBundleLayout.usbPairingsRelativePath
 
         try library.updateUSBPairings(of: instance) { $0.upsert(self.pairing(key: "k")) }
@@ -1118,8 +1154,7 @@ struct VMLibraryTests {
     @Test("A pairing write that fails throws and leaves memory as the bundle holds it")
     func updateUSBPairingsThrowsOnAFailedWrite() {
         let (library, storage) = makePairingLibrary()
-        let instance = VMInstanceFixture.make(name: "Paired VM")
-        library.register(instance, storage: storage)
+        let instance = library.registerFixture(name: "Paired VM")
         storage.files.setReplaceError(
             VMStorageError.bundleNotFound(instance.bundleURL),
             for: VMBundleLayout.usbPairingsRelativePath)
@@ -1134,17 +1169,36 @@ struct VMLibraryTests {
 
     @Test("Pairing an accessory takes its key off every other virtual machine")
     func pairUSBAccessoryIsLibraryWide() throws {
-        let (library, storage) = makePairingLibrary()
-        let first = VMInstanceFixture.make(name: "First")
-        let second = VMInstanceFixture.make(name: "Second")
-        for instance in [first, second] {
-            library.register(instance, storage: storage)
-        }
+        let (library, _) = makePairingLibrary()
+        let first = library.registerFixture(name: "First")
+        let second = library.registerFixture(name: "Second")
         try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
 
-        try library.pairUSBAccessory(pairing(key: "k"), with: second)
+        try second.activity.edit(.pairingRules) {
+            try library.pairUSBAccessory(pairing(key: "k"), $0)
+        }
 
         #expect(first.usbPairings.isEmpty)
         #expect(second.usbPairings.pairings.map(\.key) == ["k"])
+    }
+
+    @Test("A pairing is not moved off a VM that takes no pairing edit, and lands nowhere")
+    func pairUSBAccessoryRefusedByAHeldOtherVM() throws {
+        let (library, _) = makePairingLibrary()
+        let first = library.registerFixture(name: "First")
+        let second = library.registerFixture(name: "Second")
+        try library.updateUSBPairings(of: first) { $0.upsert(self.pairing(key: "k")) }
+        first.activity.placeForTesting(.operating(.deleting, from: .stopped))
+
+        let refused = #expect(throws: VMLibrary.PairingMoveRefused.self) {
+            try second.activity.edit(.pairingRules) {
+                try library.pairUSBAccessory(pairing(key: "k"), $0)
+            }
+        }
+
+        #expect(refused?.holder === first)
+        #expect(refused?.refusal == VMAdmissionRefusal(refusal: .busy(.deleting)))
+        #expect(first.usbPairings.pairings.map(\.key) == ["k"])
+        #expect(second.usbPairings.isEmpty)
     }
 }

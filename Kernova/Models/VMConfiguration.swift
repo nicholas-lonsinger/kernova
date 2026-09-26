@@ -266,7 +266,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// and the account is owed until a boot has spent the one window macOS
     /// reads it in — the boot chained onto a completed install, or the next
     /// Start when something interrupted the two. Retracted by
-    /// ``VMLibrary/retractGuestAccount(for:)``, which is what every ending goes
+    /// ``VMLibrary/retractGuestAccount(_:)``, which is what every ending goes
     /// through.
     var pendingGuestAccount: GuestAccountIntent?
 

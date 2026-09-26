@@ -570,7 +570,7 @@ final class VirtualizationService {
     /// in place by then, so the caller records the revert as having landed.
     func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
-        commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
+        commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
         #log(
@@ -612,7 +612,7 @@ final class VirtualizationService {
             try await context.bringUp.operation.bundle.stageRestore(
                 fromSnapshot: snapshotID, plan: plan)
             do {
-                try commitConfiguration(plan)
+                try commitConfiguration(context.bringUp.operation.permit, plan)
             } catch {
                 await context.bringUp.operation.bundle.discardRestoreStaging()
                 throw error

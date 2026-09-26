@@ -56,14 +56,14 @@ struct VMCommandCoreUSBAccessoryTests {
         )
         let pairingCoordinator = USBAccessoryCoordinator(
             lifecycle: lifecycle, roster: library, pairings: library)
-        core.onUserAttachedAccessory = { [weak pairingCoordinator] instance, accessory in
-            try pairingCoordinator?.userAttached(accessory, to: instance)
+        core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
+            try pairingCoordinator?.userAttached(accessory, permit)
         }
         core.onUserDetachingAccessory = { [weak pairingCoordinator] _, accessory in
             pairingCoordinator?.userDetaching(accessory)
         }
-        core.onUserReleasedAccessory = { [weak pairingCoordinator] instance, accessory in
-            try pairingCoordinator?.userReleased(accessory, from: instance)
+        core.onUserReleasedAccessory = { [weak pairingCoordinator] permit, accessory in
+            try pairingCoordinator?.userReleased(accessory, permit)
         }
         return Harness(
             core: core, library: library, lifecycle: lifecycle, storage: storage,
@@ -75,7 +75,7 @@ struct VMCommandCoreUSBAccessoryTests {
     private func makeRunningInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: .running(sessionID: UUID()), guestOS: .linux,
-            library: harness.library, storage: harness.storage, preferences: preferences)
+            library: harness.library, preferences: preferences)
         instance.beginSessionContextForTesting()
         return instance
     }
@@ -83,7 +83,7 @@ struct VMCommandCoreUSBAccessoryTests {
     private func makeStoppedInstance(in harness: Harness, name: String = "Core VM") -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: .stopped, guestOS: .linux, library: harness.library,
-            storage: harness.storage, preferences: preferences)
+            preferences: preferences)
     }
 
     private func commandError(_ body: () async throws -> Void) async -> CommandError? {
@@ -270,7 +270,7 @@ struct VMCommandCoreUSBAccessoryTests {
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
             let instance = RegisteredVMInstanceFixture.register(
                 name: "Core VM", phase: phase, guestOS: .linux, library: harness.library,
-                storage: harness.storage, preferences: preferences)
+                preferences: preferences)
 
             let refusal = await commandError {
                 try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 7)
@@ -518,6 +518,32 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(harness.storage.files.pairings(at: instance.bundleURL)?.isEmpty == true)
     }
 
+    @Test("A pairing move the VM holding the pairing refuses is reported as that VM being busy")
+    func pairingMoveRefusalNamesTheHoldingVM() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let holder = makeStoppedInstance(in: harness, name: "Holder")
+        let target = makeRunningInstance(in: harness, name: "Target")
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let pairing = try #require(USBAccessoryPairing.make(for: accessory))
+        try holder.activity.edit(.pairingRules) {
+            try harness.library.updateUSBPairings($0) { $0.upsert(pairing) }
+        }
+        holder.activity.placeForTesting(.operating(.deleting, from: .stopped))
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+
+        _ = try await attach(accessory, to: target, in: harness)
+
+        #expect(service.attachedRegistryIDs == [7])
+        let busy = harness.core.admissionRefusal(.busy(.deleting), on: holder)
+        #expect(reported.count == 1)
+        #expect(reported.first?.message.hasSuffix(busy.message) == true)
+        #expect(holder.usbPairings.pairings.map(\.key) == [pairing.key])
+        #expect(target.usbPairings.isEmpty)
+    }
+
     @Test("A detach the user asked for forgets the rule")
     func detachForgetsThePairing() async throws {
         let harness = makeHarness()
@@ -585,8 +611,10 @@ struct VMCommandCoreUSBAccessoryTests {
         // which an echo that got through has been attached too.
         let marker = MockUSBAccessoryService.accessory(
             registryID: 20, serial: "MARKER", receptacle: "hub/Port-B@1")
-        try harness.library.pairUSBAccessory(
-            try #require(USBAccessoryPairing.make(for: marker)), with: instance)
+        let markerPairing = try #require(USBAccessoryPairing.make(for: marker))
+        try instance.activity.edit(.pairingRules) {
+            try harness.library.pairUSBAccessory(markerPairing, $0)
+        }
         // macOS hands the reset stick back under a new registry ID before the
         // detach has returned, while the pairing it ends is still in place.
         service.duringNextDetach = {

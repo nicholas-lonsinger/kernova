@@ -46,11 +46,12 @@ enum GuestAgentDiskMountOutcome: Equatable, Sendable {
 /// media, its shared directories, and the bundled guest-agent installer disk.
 ///
 /// Every one resolves through a ``VMSelector``. An edit refuses through
-/// ``VMCommandCore/require(_:on:)`` and writes through
-/// ``VMLibrary/updateConfiguration(of:mutate:)``; a verb that writes or
-/// trashes a disk image runs as an operation holding the VM, and writes
-/// through ``VMLibrary/updateConfiguration(of:in:mutate:)``. Consent is a
-/// parameter: trashing the file behind an attachment refuses without it.
+/// ``VMCommandCore/require(_:on:)`` and writes under the permit its admission
+/// mints (``VMCommandCore/writeConfiguration(of:as:verb:_:)``); a verb that
+/// writes or trashes a disk image runs as an operation holding the VM, and
+/// writes as that operation (``VMCommandCore/writeConfiguration(in:verb:_:)``).
+/// Consent is a parameter: trashing the file behind an attachment refuses
+/// without it.
 extension VMCommandCore {
     // MARK: - Storage Disks
 
@@ -61,7 +62,7 @@ extension VMCommandCore {
         try require(.editStorageDisks, on: instance)
         guard !files.isEmpty else { return }
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
+        try writeConfiguration(of: instance, as: .editStorageDisks, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             var known = Set(disks.map(\.path))
             for file in files where known.insert(file.path).inserted {
@@ -91,7 +92,7 @@ extension VMCommandCore {
             }
             let layout = VMBundleLayout(bundleURL: context.bundle.url)
             var createdLabel = "\(sizeInGB) GB Disk"
-            try await writeConfiguration(of: instance, in: context, verb: .editStorageDisk) { config in
+            try await writeConfiguration(in: context, verb: .editStorageDisk) { config in
                 var disks = config.effectiveStorageDisks(layout: layout)
                 let label = StorageDisk.uniqueLabel(
                     base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
@@ -154,7 +155,7 @@ extension VMCommandCore {
             }
             let layout = VMBundleLayout(bundleURL: context.bundle.url)
             try await writeConfiguration(
-                of: instance, in: context, verb: .editStorageDisk,
+                in: context, verb: .editStorageDisk,
                 Self.dropStorageDisk(id, layout: layout))
             guard shared.isEmpty else {
                 #log(
@@ -241,7 +242,7 @@ extension VMCommandCore {
         try require(.editStorageDisks, on: instance)
         let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
+        try writeConfiguration(of: instance, as: .editStorageDisks, verb: .editStorageDisk) { config in
             let disks = config.effectiveStorageDisks(layout: layout)
             config.setStorageDisks(
                 disks.enumerated()
@@ -263,7 +264,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
         guard !files.isEmpty else { return }
-        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
+        try writeConfiguration(of: instance, as: .editRemovableMedia, verb: .editRemovableMedia) { config in
             var items = config.removableMedia ?? []
             var known = Set(items.map(\.path))
             for file in files where known.insert(file.path).inserted {
@@ -313,7 +314,7 @@ extension VMCommandCore {
             }
             // The file is the user's, and stays whatever becomes of the entry.
             let created = destinationURL.path(percentEncoded: false)
-            let write = await library.updateConfiguration(of: instance, in: context) { config in
+            let write = await library.updateConfiguration(in: context) { config in
                 config.removableMedia = (config.removableMedia ?? []) + [item]
             }
             switch write {
@@ -472,7 +473,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.editSharedDirectories, on: instance)
         guard !files.isEmpty else { return }
-        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
+        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
@@ -494,7 +495,7 @@ extension VMCommandCore {
         guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
+        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             directories.removeAll { $0.id == id }
             config.sharedDirectories = directories.isEmpty ? nil : directories
@@ -511,7 +512,7 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
         guard current.readOnly != readOnly else { return }
-        try writeConfiguration(of: instance, verb: .editSharedDirectory) { config in
+        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
             var directories = config.sharedDirectories ?? []
             guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
             directories[index].readOnly = readOnly
@@ -557,7 +558,7 @@ extension VMCommandCore {
         #log(
             Self.logger, .notice,
             "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
-        try writeConfiguration(of: instance, verb: .guestAgentDisk) { config in
+        try writeConfiguration(of: instance, as: .toggleGuestAgentDisk, verb: .guestAgentDisk) { config in
             config.removableMedia =
                 (config.removableMedia ?? [])
                 + [
@@ -591,19 +592,28 @@ extension VMCommandCore {
         #log(
             Self.logger, .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
-        switch library.updateConfiguration(
-            of: instance,
-            mutate: { config in
-                let pruned = (config.removableMedia ?? []).filter { $0.path != path }
-                config.removableMedia = pruned.isEmpty ? nil : pruned
-            })
-        {
+        let write: VMLibrary.SettingsWrite
+        do {
+            write = try instance.activity.edit(.hotPlugMedia) { permit in
+                library.updateConfiguration(permit) { config in
+                    let pruned = (config.removableMedia ?? []).filter { $0.path != path }
+                    config.removableMedia = pruned.isEmpty ? nil : pruned
+                }
+            }
+        } catch {
+            #log(
+                Self.logger, .notice,
+                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)' (\(instance.status.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)"
+            )
+            return
+        }
+        switch write {
         case .saved:
             break
         case .refused(let refusal):
             #log(
                 Self.logger, .notice,
-                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)' (\(instance.status.rawValue, privacy: .public)): \(refusal.localizedDescription, privacy: .public)"
+                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
             )
         case .notSaved:
             #log(
@@ -625,19 +635,21 @@ extension VMCommandCore {
     /// rather than as that verb's stale-attachment refusal — and keeps its
     /// saved state, which a confirmation landing late must not destroy.
     ///
-    /// The removal is committed *before* the discard, which is the step nothing
-    /// can undo: the alert is window-modal and every other door stays live
-    /// behind it, so a bring-up, a clone or a copy can take the VM between the
-    /// offer and the click — and the configuration write can refuse or fail to
-    /// reach disk. Every one of those leaves the VM with both its session and
-    /// its attachment, and tells the caller why.
+    /// On a VM resting on its saved state the removal is a write of the discard
+    /// operation itself, committed *before* the saved state goes — the step
+    /// nothing can undo: the alert is window-modal and every other door stays
+    /// live behind it, so a bring-up, a clone or a copy can take the VM between
+    /// the offer and the click — and the configuration write can refuse or fail
+    /// to reach disk. Every one of those leaves the VM with both its session
+    /// and its attachment, and tells the caller why. A VM holding no saved
+    /// state — a bring-up consumed it while the alert was up, or a live session
+    /// takes the change as a hot-plug — gets the plain edit.
     ///
-    /// The one thing the discard must precede is the *gate*, which refuses an
-    /// edit while a saved state is on disk. That gate is therefore asked of the
-    /// VM as it will stand once the discard lands, and the removal then goes
-    /// through the same private detach the public verb uses — on these
-    /// arguments (`trashFile: false`, already-confirmed, entry re-checked above)
-    /// that verb adds nothing else.
+    /// The edit's gate refuses while a saved state is on disk, so it is asked
+    /// of the VM as it will stand once the discard lands; the removal is the
+    /// same change the public verb makes — on these arguments (`trashFile:
+    /// false`, already-confirmed, entry re-checked above) that verb adds
+    /// nothing else.
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -672,21 +684,28 @@ extension VMCommandCore {
         if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
             try refuseSoleStorageDiskRemoval(of: disk, on: instance)
         }
-        switch failure.kind {
-        case .storageDisk: try detachStorageDisk(failure.id, from: instance)
-        case .removableMedia: try detachRemovableMedia(failure.id, from: instance)
+        let removal: (inout VMConfiguration) -> Void =
+            switch failure.kind {
+            case .storageDisk:
+                Self.dropStorageDisk(
+                    failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL))
+            case .removableMedia: Self.dropRemovableMedia(failure.id)
+            }
+        guard instance.holdsSuspendedSession else {
+            try writeConfiguration(of: instance, as: capability, verb: failure.verb, removal)
+            logStartFailedRemoval(failure, from: instance)
+            return
         }
-        #log(
-            Self.logger, .notice,
-            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
-        )
-        // Only a VM resting on a slot has a suspension to end: a bring-up that
-        // succeeded while the alert was up consumed it, and a live session took
-        // the edit as a hot-plug.
-        guard instance.holdsSuspendedSession else { return }
+        var removed = false
         do {
-            try lifecycle.discardSavedState(instance)
+            try lifecycle.discardSavedState(instance) { permit in
+                try requireSaved(
+                    library.updateConfiguration(permit, mutate: removal), of: instance,
+                    verb: failure.verb)
+                removed = true
+            }
         } catch {
+            guard removed else { throw self.failure(error, verb: failure.verb, on: instance) }
             // The device set no longer matches the one the state was written
             // under, so that state cannot be restored — and the discard that
             // would have cleared it is what just failed. Both facts are known,
@@ -698,9 +717,17 @@ extension VMCommandCore {
                     "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted. That state can no longer be restored — discard it to start the virtual machine."
             )
         }
+        logStartFailedRemoval(failure, from: instance)
         #log(
             Self.logger, .notice,
             "Discarded saved state for '\(instance.name, privacy: .public)' along with the attachment its bring-up failed on"
+        )
+    }
+
+    private func logStartFailedRemoval(_ failure: StartFailedAttachment, from instance: VMInstance) {
+        #log(
+            Self.logger, .notice,
+            "Removed failed attachment '\(failure.label, privacy: .public)' from '\(instance.name, privacy: .public)'"
         )
     }
 
@@ -894,7 +921,7 @@ extension VMCommandCore {
         edit(&edited)
         guard edited != current else { return }
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
-        try writeConfiguration(of: instance, verb: .editStorageDisk) { config in
+        try writeConfiguration(of: instance, as: .editStorageDisks, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
             guard let index = disks.firstIndex(where: { $0.id == id }) else { return }
             disks[index] = edited
@@ -913,7 +940,7 @@ extension VMCommandCore {
         var edited = current
         edit(&edited)
         guard edited != current else { return }
-        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
+        try writeConfiguration(of: instance, as: .editRemovableMedia, verb: .editRemovableMedia) { config in
             var items = config.removableMedia ?? []
             guard let index = items.firstIndex(where: { $0.id == id }) else { return }
             items[index] = edited
@@ -924,7 +951,7 @@ extension VMCommandCore {
     /// Drops one storage disk's entry, leaving its file alone.
     private func detachStorageDisk(_ id: UUID, from instance: VMInstance) throws {
         try writeConfiguration(
-            of: instance, verb: .editStorageDisk,
+            of: instance, as: .editStorageDisks, verb: .editStorageDisk,
             Self.dropStorageDisk(id, layout: VMBundleLayout(bundleURL: instance.bundleURL)))
     }
 
@@ -941,7 +968,14 @@ extension VMCommandCore {
 
     /// Drops one removable medium's entry, leaving its file alone.
     private func detachRemovableMedia(_ id: UUID, from instance: VMInstance) throws {
-        try writeConfiguration(of: instance, verb: .editRemovableMedia) { config in
+        try writeConfiguration(
+            of: instance, as: .editRemovableMedia, verb: .editRemovableMedia,
+            Self.dropRemovableMedia(id))
+    }
+
+    /// The configuration change that drops removable medium `id`'s entry.
+    private static func dropRemovableMedia(_ id: UUID) -> (inout VMConfiguration) -> Void {
+        { config in
             var items = config.removableMedia ?? []
             items.removeAll { $0.id == id }
             config.removableMedia = items.isEmpty ? nil : items

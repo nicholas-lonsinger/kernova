@@ -48,9 +48,8 @@ struct VMDisplayPlacementPersistenceTests {
     func popInFromHeadlessPersistsInlineThroughTheVerb() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let storage = try #require(viewModel.storageService as? MockVMStorageService)
-        let instance = VMInstanceFixture.make(
+        let instance = viewModel.library.registerFixture(
             phase: .running(sessionID: UUID()), hostState: VMHostState(displayPreference: .popOut))
-        registerSettingsInstance(instance, in: viewModel)
         instance.displayMode = .hidden
         let placement = VMDisplayPlacementController(
             viewModel: viewModel, autosaveScope: .unsaved())
