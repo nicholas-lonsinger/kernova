@@ -144,12 +144,9 @@ struct AppResidencySummonTests {
     func arrivalRowSelectsTheArrival() async throws {
         let foreground = RecordingForeground(isHidden: false)
         let (controller, _, viewModel) = makeController(foreground: foreground)
-        let arrival = VMArrival(
-            id: UUID(), kind: .importing,
-            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi),
-            destinationURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("Arriving.kernova", isDirectory: true)
-        ) { _ in throw CancellationError() }
+        let arrival = VMArrival.inert(
+            .importing,
+            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi))
         viewModel.library.register(arrival)
         viewModel.selectedID = nil
 
