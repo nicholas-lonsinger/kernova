@@ -186,6 +186,25 @@ actor VMSession {
         }
     }
 
+    /// Stops the VM unless VZ reports it cannot be stopped, answering whether
+    /// `stop` ran to success.
+    ///
+    /// `false` when `canStop` is off, or when `stop`'s completion reports an
+    /// invalid state transition — the VM left a stoppable state between the
+    /// check and the call.
+    func stopIfStoppable() async throws -> Bool {
+        guard vm.canStop else { return false }
+        do {
+            try await stop()
+        } catch let error as NSError
+            where error.domain == VZError.errorDomain
+            && VZError.Code(rawValue: error.code) == .invalidVirtualMachineStateTransition
+        {
+            return false
+        }
+        return true
+    }
+
     /// Requests a graceful ACPI shutdown.
     func requestStop() throws {
         try vm.requestStop()
@@ -243,62 +262,6 @@ actor VMSession {
                     continuation.resume()
                 }
             }
-        }
-    }
-
-    /// Waits for the VM to reach `.stopped`, the timeout to elapse, or the
-    /// surrounding `Task` to be cancelled — whichever comes first.
-    ///
-    /// Never throws; outer cancellation only suppresses the timeout warning.
-    /// Bridges `vm.state`'s KVO through `NSObject.observe(_:options:)` rather
-    /// than Combine's `publisher(for:).values`, whose `AsyncPublisher` isn't
-    /// `Sendable` when its subject isn't — and the sequence has to cross into
-    /// a task-group child.
-    func waitUntilStopped(timeout: Duration) async {
-        // Quick path for the common case where VZ propagated synchronously.
-        if vm.state == .stopped { return }
-
-        let (stream, continuation) = AsyncStream<Void>.makeStream()
-
-        // The `defer { invalidate() }` below keeps the observation alive for
-        // the lifetime of this function; losing the reference silently stops it.
-        let observation = vm.observe(\.state, options: [.new]) { observed, _ in
-            if observed.state == .stopped {
-                continuation.yield(())
-                continuation.finish()
-            }
-        }
-        defer { observation.invalidate() }
-
-        // Cover the race: state may have transitioned to `.stopped` between
-        // the initial guard and observer registration above.
-        if vm.state == .stopped {
-            continuation.finish()
-            return
-        }
-
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                // `for await` over `AsyncStream` returns when the consumer's
-                // task is cancelled, so `group.cancelAll()` below unblocks this
-                // child without further plumbing.
-                for await _ in stream { return }
-            }
-            group.addTask {
-                // `try?`: when the group cancels this child the sleep throws,
-                // and exiting silently is what lets the group complete.
-                try? await Task.sleep(for: timeout)
-            }
-            _ = await group.next()
-            group.cancelAll()
-        }
-
-        // A timeout is an anomaly; a user cancel is not. Log only the former.
-        if vm.state != .stopped && !Task.isCancelled {
-            #log(
-                Self.logger, .warning,
-                "VM did not reach .stopped within timeout (state: \(String(describing: self.vm.state), privacy: .public))"
-            )
         }
     }
 

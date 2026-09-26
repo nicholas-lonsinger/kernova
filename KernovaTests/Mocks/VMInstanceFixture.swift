@@ -98,7 +98,7 @@ enum VMInstanceFixture {
     static func writeSaveFile(for instance: VMInstance) throws {
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        try Data("suspend slot".utf8).write(to: instance.bundle.saveFileURL)
+        try Data("suspend slot".utf8).write(to: instance.bundleLayout.saveFileURL)
     }
 
     /// Takes away the bundle directory a fixture wrote into.

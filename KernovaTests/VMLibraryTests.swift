@@ -135,7 +135,7 @@ struct VMLibraryTests {
 
         // An import or a wizard-created VM registered after the scan started,
         // so the scan cannot know about it.
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Arrived Mid-Read", gate: gate)
 
         await load.value
@@ -290,7 +290,7 @@ struct VMLibraryTests {
         library.register(instance, storage: storage)
         let sessionID = UUID()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return sessionID
     }
 
@@ -310,8 +310,8 @@ struct VMLibraryTests {
         #expect(instance.name == "Before")
         #expect(instance.configuration.removableMedia == nil)
         #expect(storage.bundles[instance.bundleURL]?.name == "Before")
-        // No pass was queued for a list that never became the configuration.
-        #expect(!instance.hasRemovableMediaReconcileOwed)
+        // No pass was launched for a list that never became the configuration.
+        #expect(instance.phase.operation == nil)
         #expect(failures.showError)
     }
 
@@ -323,7 +323,7 @@ struct VMLibraryTests {
         let instance = VMInstanceFixture.make(name: "Mine") { $0.removableMedia = [queued] }
         let sessionID = registerRunning(instance, in: library, storage: storage)
         // A phase whose edits the write funnel refuses: the settle is not one.
-        instance.activity.placeForTesting(.saving(sessionID: sessionID))
+        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
         let before = instance.configuration
 
         library.settleRemovableMedia(of: instance, toLive: [live])
@@ -332,7 +332,8 @@ struct VMLibraryTests {
         expected.removableMedia = [live]
         #expect(instance.configuration == expected)
         #expect(storage.bundles[instance.bundleURL] == expected)
-        #expect(!instance.hasRemovableMediaReconcileOwed)
+        // No pass was launched: the save still holds the VM.
+        #expect(instance.phase.operation?.kind == .saving)
         #expect(!failures.showError)
     }
 
@@ -626,10 +627,8 @@ struct VMLibraryTests {
         let instance = RegisteredVMInstanceFixture.register(
             name: "Reverting", phase: .stopped, guestOS: .linux, library: library,
             storage: storage, preferences: makeTestPreferences())
-        let request = UUID()
-        library.revertTasks[request] = VMLibrary.RevertRegistration(
-            instanceID: instance.id, task: Task {})
-        defer { library.revertTasks[request] = nil }
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
 
         storage.files.removeBundle(at: instance.bundleURL)
         library.reconcileWithDisk()
@@ -980,8 +979,8 @@ struct VMLibraryTests {
         #expect(storage.deleteVMBundleCallCount == 0)
     }
 
-    @Test("reconcileWithDisk cancels setupTask before evicting an orphaned VM")
-    func reconcileCancelsSetupTaskBeforeEviction() async {
+    @Test("reconcileWithDisk keeps an orphaned VM its setup holds, and evicts it once at rest")
+    func reconcileKeepsAVMItsSetupHolds() {
         let (library, _, _, _) = makeLibrary()
         let instance = VMInstanceFixture.make(
             name: "Pending VM", guestOS: .macOS, phase: .initialBoot
@@ -989,24 +988,22 @@ struct VMLibraryTests {
             $0.installContext = MacOSInstallContext(
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
-
-        // Spawn a long-running install task we can observe getting cancelled.
-        let cancelStream = AsyncStream<Void>.makeStream()
-        instance.setupTask = Task {
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                cancelStream.continuation.yield(())
-                cancelStream.continuation.finish()
-            }
-        }
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot))
         library.admitForTesting(instance)
-        // Bundle absent from storage → eligible for eviction.
+        // Bundle absent from storage → eligible for eviction once nothing holds it.
 
         library.reconcileWithDisk()
-        for await _ in cancelStream.stream { break }  // cancel propagated
+
+        // Evicting it now would leave the setup mutating a VM the library no
+        // longer knows about.
+        #expect(library.instances.first === instance)
+
+        instance.activity.placeForTesting(.initialBoot)
+        library.reconcileWithDisk()
 
         #expect(library.instances.isEmpty)
+        #expect(instance.phase == .removed)
     }
 
     // MARK: - Reconcile With Disk (Arrivals)
@@ -1014,7 +1011,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk leaves an arrival in flight in place")
     func reconcilePreservesArrivals() async {
         let (library, _, _, _) = makeLibrary()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Preparing VM", gate: gate)
 
         // Storage lists no bundle — the arrival's is still under the staging
@@ -1066,7 +1063,7 @@ struct VMLibraryTests {
         let (library, storage) = makePairingLibrary()
         let written = VMConfiguration(name: "Fresh VM", guestOS: .linux, bootMode: .efi)
         let pairings = USBAccessoryPairingSet(pairings: [pairing(key: "k")])
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
 
         let arrival = library.beginArrival(
             kind: .importing, configuration: written,

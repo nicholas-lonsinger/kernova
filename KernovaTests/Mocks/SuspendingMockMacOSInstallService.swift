@@ -25,6 +25,7 @@ final class SuspendingMockMacOSInstallService: MacOSInstallProviding {
 
     func install(
         into instance: VMInstance,
+        _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {

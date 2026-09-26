@@ -480,15 +480,9 @@ final class AppTerminationController: NSObject {
     /// Decides the pass's next move for one VM.
     ///
     /// ``VMStatus`` cannot tell a settling pause or resume from a settled VM —
-    /// both hold `.running` / `.paused` for the whole `vm.pause()` /
-    /// `vm.resume()` await — so the operation's own lifetime is what decides,
-    /// and a save issued against a held VM comes back as
-    /// ``VMLifecycleCoordinator/LifecycleError/operationInProgress``.
-    ///
-    /// The signal is ``VMLifecycleCoordinator/hasUnsettledOperation(for:)``
-    /// rather than the claim: a Stop arriving mid-wait releases the claim while
-    /// the pause it interrupted is still inside VZ, and saving there would issue
-    /// a second VZ operation on a busy VM.
+    /// both present `.running` / `.paused` for the whole `vm.pause()` /
+    /// `vm.resume()` await — so the operation holding the VM is what decides,
+    /// and a save issued against a held VM is refused as busy.
     ///
     /// `hasLiveSession` is what bounds the wait: `.installing`, `.starting` and
     /// `.restoring` all fail it, so the operations that run for minutes are
@@ -514,10 +508,10 @@ final class AppTerminationController: NSObject {
     /// reverting one is selectable here (both fail `hasLiveSession`), so nothing
     /// else would stop the loop from breaking out and letting the process exit
     /// mid-write. The per-VM wait below covers the selected VM's own settling
-    /// operation, per ``terminationSaveStep(hasLiveSession:hasActiveOperation:)``.
+    /// operation, per ``terminationSaveStep(hasLiveSession:hasUnsettledOperation:)``.
     ///
     /// The revert wait sits at the top of the loop for two reasons: this pass's
-    /// own force-stop fallback powers an Ephemeral VM off and registers a revert
+    /// own force-stop fallback powers an Ephemeral VM off and admits a revert
     /// mid-pass, and a revert that brings its VM back live re-enters selection,
     /// so that VM is save-suspended rather than killed running.
     private func runTerminationSavePass() async {
@@ -557,11 +551,9 @@ final class AppTerminationController: NSObject {
                 )
                 // The liveness escape ends the wait when the operation leaves the
                 // VM unsaveable — a failed pause landing on `.error`, or a Force
-                // Stop whose `vm.stop()` tears the session down while the
-                // interrupted operation is still inside VZ.
-                await waitForObservedChange { [viewModel] in
-                    !viewModel.lifecycle.hasUnsettledOperation(for: instance.id)
-                        || !instance.hasLiveSession
+                // Stop that ended the session the operation is still holding.
+                await waitForObservedChange {
+                    instance.phase.operation == nil || !instance.hasLiveSession
                 }
             }
 
@@ -600,7 +592,7 @@ final class AppTerminationController: NSObject {
     private func step(for instance: VMInstance) -> TerminationSaveStep {
         Self.terminationSaveStep(
             hasLiveSession: instance.hasLiveSession,
-            hasUnsettledOperation: viewModel.lifecycle.hasUnsettledOperation(for: instance.id)
+            hasUnsettledOperation: instance.phase.operation != nil
         )
     }
 
@@ -608,15 +600,13 @@ final class AppTerminationController: NSObject {
     /// fails and left a guest still live, so a half-live VM can't outlive the
     /// process.
     ///
-    /// A save that failed on its own terms tore its session down on the way out
-    /// (``VirtualizationService/tearDownIfStillOwned(_:actingFor:restingAt:)``),
-    /// which is why the termination is asked for only where
-    /// ``VMLifecyclePhase/canForceStop`` still holds: the VM it is owed to is
-    /// the one something else overtook and handed back live.
+    /// A save that failed on its own terms ended its session on the way out,
+    /// which is why the termination is asked for only where a Force Stop is
+    /// still admitted: the VM it is owed to is one handed back live.
     ///
     /// The pass waits an in-flight lifecycle operation out before calling this,
     /// so a rejection here is the residual race where a user-initiated operation
-    /// takes the lock in between. It is left alone rather than force-stopped:
+    /// takes the VM in between. It is left alone rather than force-stopped:
     /// force-stopping would abort an operation that is about to finish and
     /// discard the very guest state the pass exists to save, where letting the
     /// process exit costs the same RAM and nothing more.
@@ -637,7 +627,8 @@ final class AppTerminationController: NSObject {
                 Self.logger, .error,
                 "Failed to save '\(instance.name, privacy: .public)' during termination: \(error.localizedDescription, privacy: .public)"
             )
-            guard instance.canForceStop else { return false }
+            guard instance.activity.decide(.sessionAction(.forceStop), posture: .commit) == .admit
+            else { return false }
             do {
                 try await viewModel.tryForceStop(instance)
             } catch {

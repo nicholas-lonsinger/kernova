@@ -111,7 +111,10 @@ struct VMToolbarManagerTests {
         for (phase, expected) in [
             (VMLifecyclePhase.running(sessionID: UUID()), true),
             (.livePaused(sessionID: UUID()), true), (.stopped, true),
-            (.starting(sessionID: UUID()), false),
+            (
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                false
+            ),
         ] {
             let instance = makeInstance(phase: phase)
             let manager = makeManager(instance: instance)
@@ -157,15 +160,16 @@ struct VMToolbarManagerTests {
         manager.updateToolbarItems(in: toolbar)
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == true)
 
-        // The resume holds `.paused` while it settles, so the VM's own state
-        // still reads capturable — a capture started now would race the
-        // operation and be rejected, so the button has to go dim rather than
-        // error on click.
+        // The resume presents `.paused` while it runs, so the phase it started
+        // from still names a capture — one requested now is refused as busy,
+        // so the button has to go dim rather than error on click.
         let resume = Task { @MainActor in try await lifecycle.resume(instance) }
         await suspending.waitUntilSuspended()
         try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
 
-        #expect(instance.canTakeSnapshot)
+        #expect(
+            VMAdmission.settledCaptureMode(phase: instance.phase, facts: instance.admissionFacts)
+                == .live)
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
 
         suspending.resumeSuspended()
@@ -268,7 +272,7 @@ struct VMToolbarManagerTests {
     @Test("Every item is disabled while an arrival is the selected row")
     func selectedArrivalDisablesEveryItem() async throws {
         let library = makeLibrary().library
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Arriving", gate: gate)
         #expect(library.selectedID == arrival.id)
         let manager = makeManager(library: library, selection: { library.selectedInstance })
@@ -506,7 +510,8 @@ struct VMToolbarManagerTests {
 
     @Test("All lifecycle items disabled during transitioning states")
     func lifecycleDisabledDuringTransition() {
-        let instance = makeInstance(phase: .starting(sessionID: nil))
+        let instance = makeInstance(
+            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
 

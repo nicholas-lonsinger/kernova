@@ -36,7 +36,7 @@ func attachNetworkCoordinator(
         onPendingChange: { [weak instance] pending in
             instance?.sessionContext?.networkAttachmentPending = pending
         })
-    let context = instance.sessionContext ?? instance.beginSessionContext()
+    let context = instance.sessionContext ?? instance.beginSessionContextForTesting()
     context.networkAttachmentCoordinator = coordinator
     return coordinator
 }

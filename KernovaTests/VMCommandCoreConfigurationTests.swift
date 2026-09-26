@@ -1031,7 +1031,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("A bundle still being copied takes no configuration write")
     func anArrivalTakesNoWrite() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Alpha", gate: gate)
 
         // Resolution is the whole of what refuses this: an arrival is no VM, so

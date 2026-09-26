@@ -16,12 +16,8 @@ final class MacOSInstallService {
 
     // MARK: - Installation
 
-    /// Installs macOS from a restore image into the given VM instance.
-    ///
-    /// The caller has already entered
-    /// ``VMLifecyclePhase/installing(sessionID:)``
-    /// (``VMActivity/beginBringUp(_:)``), the phase the installer's session is
-    /// promoted into.
+    /// Installs macOS from a restore image into the given VM instance, under
+    /// the guest-setup bring-up that holds it.
     ///
     /// `progressHandler` receives installation progress in 0.0–1.0.
     ///
@@ -31,6 +27,7 @@ final class MacOSInstallService {
     ///   incompatible with this host, or any error rethrown from `VZMacOSInstaller`.
     func install(
         into instance: VMInstance,
+        _ context: borrowing VMBringUpContext,
         restoreImageURL: URL,
         progressHandler: @MainActor @Sendable @escaping (Double) -> Void
     ) async throws -> InstalledImage {
@@ -49,7 +46,7 @@ final class MacOSInstallService {
         }
 
         let hardwareModelData = supportedConfig.hardwareModel.dataRepresentation
-        let machineIDData = try await instance.bundle.createMacPlatformFiles(
+        let machineIDData = try await context.operation.bundle.createMacPlatformFiles(
             hardwareModel: hardwareModelData)
         // The install stops unless the identity lands: the build below prefers
         // the configuration's hardware model over the bundle's file, which
@@ -60,18 +57,14 @@ final class MacOSInstallService {
             $0.machineIdentifierData = machineIDData
         }.get()
 
-        instance.beginSessionContext()
+        instance.beginSessionContext(context)
         let result = try configBuilder.build(
             from: instance.effectiveConfiguration,
-            bundleURL: instance.bundleURL
+            bundleURL: context.operation.bundle.url
         )
 
-        instance.adoptBuildResult(result)
-        // A cancel caught by the check below unwinds with `instance.session` set,
-        // which `VMCommandCore.runGuestSetup`'s `catch is CancellationError` tears
-        // down. One caught before `attachSession` would leave the open session
-        // context — its pipes and its security scopes — with no matching VM.
-        guard let session = await instance.attachSession(from: result) else {
+        instance.adoptBuildResult(context, result)
+        guard let session = await instance.attachSession(context, from: result) else {
             throw VirtualizationError.noVirtualMachine
         }
         // Short of `bringUpSession`: an installer boot runs no vsock
@@ -88,24 +81,30 @@ final class MacOSInstallService {
             }
         }
 
-        // `VZMacOSInstaller.install` resolves its completion handler before VZ has
-        // finished propagating the post-install guest shutdown through `vm.state`.
-        // Without this wait the caller's auto-boot races the auxiliary-storage file
-        // lock ("Failed to lock auxiliary storage"), and `guestDidStop` hasn't yet
-        // cleared `instance.session`.
-        await session.waitUntilStopped(timeout: .seconds(30))
-
-        // `waitUntilStopped` observes cancellation but never throws, so the signal
-        // has to be re-raised here: otherwise a cancel landing during the wait lets
-        // the install return success and `runGuestSetup` auto-boots it.
-        try Task.checkCancellation()
-
-        // If the delegate never fired (timed out, or deallocated before
-        // `guestDidStop` ran), tear down explicitly so a later boot doesn't
-        // observe a stale attached VM.
-        if instance.hasLiveVirtualMachine {
-            instance.restAfterPowerOff()
+        // `VZMacOSInstaller.install`'s completion is documented only as called
+        // after the install succeeds or fails — not that the installer's VM
+        // has stopped. `VZVirtualMachine.stop`'s completion is documented as
+        // called once the VM has stopped or on error, so the session ends on
+        // that rather than on a delegate event.
+        #log(Self.logger, .notice, "Stopping the installer's VM for '\(instance.name, privacy: .public)'")
+        do {
+            let outcome =
+                try await session.stopIfStoppable() ? "stopped" : "was not stoppable; treated as stopped"
+            #log(
+                Self.logger, .notice,
+                "Installer's VM for '\(instance.name, privacy: .public)' \(outcome, privacy: .public)")
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Stopping the installer's VM for '\(instance.name, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
         }
+        context.operation.endSession()
+
+        // A cancel landing after the stop has to be raised here, or the install
+        // returns success and the setup chains a boot.
+        try Task.checkCancellation()
 
         instance.setupState?.progress = .fraction(1.0)
 

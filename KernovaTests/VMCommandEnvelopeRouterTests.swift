@@ -386,9 +386,12 @@ struct VMCommandEnvelopeRouterTests {
     @Test("An unconfirmed cancel refuses with the confirmation naming the running step")
     func cancelGuestSetupWithoutConsentRefuses() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
-        instance.setupTask = Task {}
+        let instance = makeInstance(in: harness, phase: .initialBoot) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+        let setup = try instance.launchParkedSetup()
         instance.setupState = .macOSInstall(hasDownloadStep: false)
+        defer { setup.task?.cancel() }
 
         let response = try await harness.transport.send(
             .cancelGuestSetup(.id(instance.id), confirmed: false))
@@ -404,15 +407,13 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A confirmed cancel of a running setup crosses the wire and cancels the task")
     func cancelGuestSetupCrossesTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .installing(sessionID: nil))
+        let instance = makeInstance(in: harness, phase: .initialBoot) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
         let cancelStream = AsyncStream<Void>.makeStream()
-        instance.setupTask = Task {
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                cancelStream.continuation.yield(())
-                cancelStream.continuation.finish()
-            }
+        try instance.launchParkedSetup {
+            cancelStream.continuation.yield(())
+            cancelStream.continuation.finish()
         }
 
         let response = try await harness.transport.send(
@@ -460,10 +461,10 @@ struct VMCommandEnvelopeRouterTests {
             .cancelGuestSetup(.id(instance.id), confirmed: true))
         #expect(firstCancel.result == .ok)
 
-        // Drain the setup task before asserting or firing the second cancel: the
-        // window between the cancel and the task's `defer { setupTask = nil }`
-        // legitimately still answers `.ok`.
-        await instance.setupTask?.value
+        // Drain the setup operation before asserting or firing the second
+        // cancel: until its ending commits, the operation still holds the VM
+        // and a cancel legitimately still answers `.ok`.
+        await instance.setupOperationTask?.value
 
         #expect(instance.status == .initialBoot)
         #expect(instance.configuration.installContext != nil)
@@ -913,7 +914,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A Finder reveal of a bundle still being written is refused")
     func showInFinderRefusesAnArrival() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
         var revealed: [UUID] = []
         harness.core.revealInFinder = { revealed.append($0.id) }

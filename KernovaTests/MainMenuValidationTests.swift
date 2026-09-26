@@ -84,18 +84,22 @@ struct MainMenuValidationTests {
     @Test(
         "Force Stop is enabled only where Virtualization takes a termination",
         arguments: [
-            (VMLifecyclePhase.running(sessionID: UUID()), true),
-            (.livePaused(sessionID: UUID()), true),
-            (.starting(sessionID: UUID()), false),
-            (.saving(sessionID: UUID()), false),
-            (.restoringSavedState(sessionID: UUID()), false),
-            (.capturingLive(sessionID: UUID()), false),
-            (.stopped, false),
+            (PhaseFixture.settled(.running(sessionID: UUID())), true),
+            (.settled(.livePaused(sessionID: UUID())), true),
+            (
+                .operating(
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                false
+            ),
+            (.operating(.saving, from: .running(sessionID: UUID())), false),
+            (.operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()), false),
+            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), false),
+            (.settled(.stopped), false),
         ])
     func forceStopValidationFollowsTheStoppableStates(
-        phase: VMLifecyclePhase, isEnabled: Bool
+        phase: PhaseFixture, isEnabled: Bool
     ) {
-        let instance = makeMenuInstance(phase: phase)
+        let instance = makeMenuInstance(phase: phase.phase)
         let fixture = makeFixture(instance: instance)
         let item = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
 

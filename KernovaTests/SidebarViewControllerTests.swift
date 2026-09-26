@@ -89,7 +89,7 @@ struct SidebarViewControllerTests {
         instance.activity.placeForTesting(.failed(message: "Test failure"))
         #expect(instance.statusDisplayNSColor == .systemRed)
 
-        instance.activity.placeForTesting(.starting(sessionID: nil))
+        instance.activity.placeForTesting(.operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
@@ -138,13 +138,16 @@ struct SidebarViewControllerTests {
     @Test(
         "Agent indicator suppressed outside a live session",
         arguments: [
-            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .restoringSavedState(sessionID: UUID()), .failed(message: "Boot failed."),
-            .initialBoot,
+            PhaseFixture.operating(
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+            .operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
+            .settled(.failed(message: "Boot failed.")),
+            .settled(.initialBoot),
         ]
     )
-    func agentSuppressedWhenNotInLiveSession(phase: VMLifecyclePhase) {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase)
+    func agentSuppressedWhenNotInLiveSession(phase: PhaseFixture) {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -164,7 +167,7 @@ struct SidebarViewControllerTests {
             $0.lastSeenAgentVersion = "1.2.3"
         }
         let library = makeWiredLibrary(holding: [instance])
-        instance.beginSessionContext().agentExpectedButMissing = true
+        instance.beginSessionContextForTesting().agentExpectedButMissing = true
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -201,7 +204,7 @@ struct SidebarViewControllerTests {
         let missing = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
             $0.lastSeenAgentVersion = "1.2.3"
         }
-        missing.beginSessionContext().agentExpectedButMissing = true
+        missing.beginSessionContextForTesting().agentExpectedButMissing = true
         #expect(
             SidebarVMRowCellView.visibleAgentStatus(for: missing, installPromptDisabled: true)
                 == .expectedMissing(expected: "1.2.3"))
@@ -420,7 +423,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = VMInstanceFixture.make(name: "Settled", phase: .stopped)
         viewModel.library.admitForTesting(instance)
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let copying = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
@@ -582,15 +585,16 @@ struct SidebarViewControllerTests {
     }
 
     @Test(
-        "A VM mid-operation offers neither stop — Virtualization takes a termination from neither",
+        "A VM coming up offers neither stop — Virtualization takes a termination from neither",
         arguments: [
-            VMLifecyclePhase.starting(sessionID: UUID()), .saving(sessionID: UUID()),
-            .restoringSavedState(sessionID: UUID()), .capturingLive(sessionID: UUID()),
+            PhaseFixture.operating(
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
         ])
-    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: VMLifecyclePhase) {
+    func contextMenuOffersNoStopWhileVirtualizationWouldRefuseOne(phase: PhaseFixture) {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(phase: phase)
+        let instance = VMInstanceFixture.make(phase: phase.phase)
         viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -600,10 +604,86 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Force Stop…"), "\(phase)")
     }
 
+    @Test(
+        "A live VM held by a save or capture lists both stops, dimmed until it ends",
+        arguments: [
+            PhaseFixture.operating(.saving, from: .running(sessionID: UUID())),
+            .operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())),
+        ])
+    func contextMenuDimsStopWhileAnOperationHoldsALiveVM(phase: PhaseFixture) {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = VMInstanceFixture.make(phase: phase.phase)
+        viewModel.library.admitForTesting(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        // Busy, not inapplicable: each is taken once the operation ends.
+        #expect(menuItem("Stop", in: menu)?.isEnabled == false, "\(phase)")
+        #expect(menuItem("Force Stop…", in: menu)?.isEnabled == false, "\(phase)")
+        #expect(menuItem("Suspend", in: menu)?.isEnabled == false, "\(phase)")
+    }
+
+    /// The lifecycle items, in the order each expectation lists them.
+    private static let lifecycleItems = [
+        "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Suspend",
+    ]
+
+    /// Each lifecycle item's state in a macOS guest's menu: `E` listed and
+    /// enabled, `D` listed and dimmed, `-` not listed. Dimmed is an item the
+    /// VM takes once the operation holding it ends.
+    @Test(
+        "Each lifecycle item is listed and enabled as the VM's state decides",
+        arguments: [
+            (PhaseFixture.settled(.stopped), "EE-----"),
+            (.settled(.failed(message: "Boot failed.")), "E------"),
+            (.settled(.suspended), "---E---"),
+            (.settled(.running(sessionID: UUID())), "--E-EEE"),
+            (.settled(.livePaused(sessionID: UUID())), "---EEEE"),
+            (
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                "DD-----"
+            ),
+            // A base-status operation from rest dims what the VM takes once it ends.
+            (.operating(.deletingSnapshot, from: .stopped), "DD-----"),
+            (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDD"),
+            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), "--D-DDD"),
+            // Operations that tolerate a stop leave both stops enabled.
+            (.operating(.pausing, from: .running(sessionID: UUID())), "--D-EED"),
+            (.operating(.attachingUSB(registryID: 1), from: .running(sessionID: UUID())), "--D-EED"),
+            // A live-paused VM's Stop resumes it first, which the resume in
+            // flight holds; its Force Stop is tolerated.
+            (.operating(.resuming, from: .livePaused(sessionID: UUID())), "---DDED"),
+            // A Force Stop in flight answers as the powered-off VM will.
+            (.operating(.forceStopping, from: .running(sessionID: UUID())), "DD-----"),
+        ])
+    func lifecycleItemsFollowTheVMsState(phase: PhaseFixture, expected: String) throws {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: phase.phase)
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        if case .settled(.suspended) = phase {
+            try VMInstanceFixture.writeSaveFile(for: instance)
+        }
+        viewModel.library.admitForTesting(instance)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let actual = String(
+            Self.lifecycleItems.map { title -> Character in
+                guard let item = menuItem(title, in: menu) else { return "-" }
+                return item.isEnabled ? "E" : "D"
+            })
+        #expect(actual == expected, "\(phase)")
+    }
+
     @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")
     func contextMenuNoForceStopDuringAColdCapture() {
         let viewModel = makeViewModel()
-        let instance = VMInstanceFixture.make(phase: .capturingAtRest)
+        let instance = VMInstanceFixture.make(
+            phase: .operating(.capturingSnapshot(.stopped), from: .stopped))
         viewModel.library.admitForTesting(instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -654,7 +734,7 @@ struct SidebarViewControllerTests {
     @Test("An arrival's row shows its name and label, and its menu offers only its Cancel")
     func arrivalRowShowsItsLabelAndOffersOnlyCancel() async throws {
         let viewModel = makeViewModel()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
@@ -851,7 +931,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let before = VMInstanceFixture.make(name: "Before")
         viewModel.library.admitForTesting(before)
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()

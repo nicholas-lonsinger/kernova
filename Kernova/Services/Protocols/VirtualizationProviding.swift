@@ -1,7 +1,7 @@
 import Foundation
 
-/// How a start reached the guest — decided by the VM's state as the start read
-/// it, and reported so no caller has to predict it.
+/// How a start reached the guest — the bring-up admission chose, reported so
+/// no caller has to predict it.
 ///
 /// A restore consumes the save file, so once the start is over nothing
 /// distinguishes the three; the start that took the branch is the only thing
@@ -9,34 +9,20 @@ import Foundation
 enum GuestStartRoute: Equatable, Sendable {
     /// Booted the guest from its disks.
     case coldBoot
-    /// The cold boot a `bootIntoRecovery` start performs, carrying the same
-    /// caveat that flag does: only a macOS guest comes up in Recovery.
+    /// The cold boot a Recovery start performs, carrying that start's caveat:
+    /// only a macOS guest comes up in Recovery.
     case recoveryBoot
     /// Restored the guest from the bundle's suspend slot, continuing the session
     /// saved there.
     case restoredSavedState
 
-    /// Which route a start of `instance` takes.
-    ///
-    /// The one derivation: a start branches *on* this rather than deciding the
-    /// same thing twice, so what it answers cannot disagree with what it did.
-    @MainActor
-    init(startOf instance: VMInstance, bootIntoRecovery: Bool) {
-        guard !instance.hasSaveFile else {
-            self = .restoredSavedState
-            return
+    /// The route `kind` takes.
+    init(_ kind: VMGuestStartKind) {
+        switch kind {
+        case .starting(let recovery): self = recovery ? .recoveryBoot : .coldBoot
+        case .restoringSavedState: self = .restoredSavedState
         }
-        self = bootIntoRecovery ? .recoveryBoot : .coldBoot
     }
-
-    /// Whether this route drops a `bootIntoRecovery` the caller asked for.
-    ///
-    /// A saved state names the session the guest comes back on, so the restore
-    /// performs no cold boot — Recovery included.
-    /// ``VMInstance/canStartInRecovery`` refuses a VM holding one, so a request
-    /// that still carries the flag came past a gate that should have turned it
-    /// back, and the start that reads this says so where it has a logger.
-    var dropsRecoveryBoot: Bool { self == .restoredSavedState }
 
     /// Whether this route carries the guest's provisioning options, which
     /// ``MacOSGuestProvisioning/macOSStartOptions(bootIntoRecovery:guestOS:provisioning:)``
@@ -44,58 +30,71 @@ enum GuestStartRoute: Equatable, Sendable {
     var deliversGuestProvisioning: Bool { self == .coldBoot }
 }
 
-/// Abstraction for VM lifecycle operations (start, stop, pause, resume, save).
+/// The Virtualization work each lifecycle operation's body runs.
 ///
-/// Restore has no entry point of its own — `start` and `resume` restore from a
-/// save file when one exists.
+/// Every method runs inside the operation ``VMActivity`` admitted, under its
+/// context, and answers where the VM rests. Stop and Force Stop are plain VZ
+/// calls that ``VMActivity/requestStop(_:)`` and ``VMActivity/forceStop(_:)``
+/// make once they have admitted the session action.
 @MainActor
 protocol VirtualizationProviding: Sendable {
-    /// Starts a virtual machine, answering how it reached the guest.
+    /// Brings the guest up the way `context`'s kind names — a cold boot, a
+    /// Recovery boot, or the restore of the bundle's saved state — answering
+    /// how it reached the guest.
     ///
-    /// `bootIntoRecovery` cold-boots a macOS guest into Recovery for this launch
-    /// only; it is ignored for Linux guests and for restore-from-save paths.
-    ///
-    /// `provisioning` is the macOS account this boot creates inside the guest.
-    /// Ignored on the same two paths, which create no account.
-    ///
-    /// Answers the route on every start that reached the guest, the one whose
-    /// session was released before it settled included: the guest came up either
-    /// way, and that is what the route reports.
+    /// `provisioning` is the macOS account a cold boot creates inside the
+    /// guest; the other two routes create none and ignore it.
     func start(
-        _ instance: VMInstance, bootIntoRecovery: Bool,
+        _ instance: VMInstance, _ context: borrowing VMGuestStartContext,
         provisioning: GuestProvisioningCredentials?
-    ) async throws -> GuestStartRoute
-    func stop(_ instance: VMInstance) async throws
-    func forceStop(_ instance: VMInstance) async throws
-    func pause(_ instance: VMInstance) async throws
-    func resume(_ instance: VMInstance) async throws
-    func save(_ instance: VMInstance) async throws
+    ) async throws -> VMOperationEnding<GuestStartRoute>
 
-    /// Captures `snapshot`, in the mode the VM is in right now
-    /// (``VMInstance/snapshotCaptureMode``) — copies of the bundle's disks,
+    /// Sends the guest the ACPI shutdown request.
+    func requestStop(_ instance: VMInstance) async throws
+
+    /// Terminates the guest where it stands.
+    func forceStop(_ instance: VMInstance) async throws
+
+    func pause(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void>
+
+    /// Resumes a live-paused guest from memory.
+    func resume(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void>
+
+    /// Writes the guest's state to the bundle's suspend slot and ends the
+    /// session.
+    func save(
+        _ instance: VMInstance, _ context: borrowing VMOperationContext
+    ) async throws -> VMOperationEnding<Void>
+
+    /// Captures `snapshot` in `context`'s mode — copies of the bundle's disks,
     /// plus the guest's memory from VZ or cloned from the bundle's suspend
     /// slot, unless the VM is stopped — leaving the VM where it was found.
-    /// Throws if the VM has since moved to a mode that disagrees with
-    /// `snapshot.kind`.
     ///
-    /// Answers `snapshot` carrying the ``VMSnapshot/macAddress`` of the
-    /// configuration the capture wrote.
-    func takeSnapshot(_ instance: VMInstance, snapshot: VMSnapshotRecord) async throws -> VMSnapshot
+    /// Answers the snapshot, of the kind the mode takes, carrying the
+    /// ``VMSnapshot/macAddress`` of the configuration the capture wrote.
+    func takeSnapshot(
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        snapshot: VMSnapshotCaptureRequest
+    ) async throws -> VMOperationEnding<VMSnapshot>
 
-    /// Returns the VM to `snapshot`, discarding whatever session is live and
-    /// keeping the snapshot itself.
+    /// Returns the VM to `context`'s snapshot, discarding whatever session is
+    /// live and keeping the snapshot itself.
     ///
-    /// The VM lands in the state the snapshot captured: paused on a warm
-    /// snapshot's memory image, stopped on a cold snapshot's disks — and a VM
-    /// that was live when reverted onto a warm snapshot is resumed into it, a
-    /// failure there arriving as
+    /// The VM lands in the state the snapshot captured: suspended on a warm
+    /// snapshot's memory image, stopped on a cold snapshot's disks — and a
+    /// revert whose context `resumesAfter` restores that memory image inside
+    /// the same operation, a failure there arriving as
     /// ``VirtualizationError/revertResumeFailed(underlying:)`` with the files
     /// already written. `commitConfiguration` receives the plan once the
     /// snapshot's files are staged and before any of them is swapped into the
     /// bundle; a throw there discards the staging and leaves the bundle as it
     /// was.
     func revertToSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot,
+        _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (VMSnapshotRestorePlan) throws -> Void
-    ) async throws
+    ) async throws -> VMOperationEnding<Void>
 }

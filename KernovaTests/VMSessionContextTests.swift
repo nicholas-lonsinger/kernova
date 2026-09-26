@@ -67,7 +67,7 @@ struct VMSessionContextTests {
     @Test("tearDown releases every service, pipe and hand-off the session held")
     func tearDownReleasesEverything() throws {
         let instance = makeInstance(guestOS: .linux)
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
 
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
@@ -117,10 +117,10 @@ struct VMSessionContextTests {
     @Test("tearDownSession drops the context, and every projection reads empty after")
     func tearDownSessionDropsTheContext() {
         let instance = makeInstance()
-        instance.beginSessionContext(bootedIntoRecovery: true)
+        instance.beginSessionContextForTesting(bootedIntoRecovery: true)
         #expect(instance.sessionContext != nil)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
@@ -137,46 +137,62 @@ struct VMSessionContextTests {
         #expect(instance.hasSeenAgentThisSession == false)
     }
 
-    @Test("beginSessionContext replaces a prior context, releasing what it held")
-    func beginSessionContextReplacesThePriorOne() {
-        let instance = makeInstance()
-        let first = instance.beginSessionContext()
-        first.serialInputPipe = Pipe()
-
-        let second = instance.beginSessionContext()
-
-        #expect(second !== first)
-        #expect(instance.sessionContext === second)
-        // The displaced context is drained, not merely dropped — an unreleased
-        // one would keep its VZ session and security scopes alive with nothing
-        // left pointing at it.
-        #expect(first.serialInputPipe == nil)
-    }
-
-    // MARK: - Build result
-
-    @Test("adoptBuildResult takes the build's pipes and cold-attached media")
-    func adoptBuildResultPopulatesTheContext() {
-        let instance = makeInstance(guestOS: .linux)
-        let context = instance.beginSessionContext()
-        let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
-        let result = ConfigurationBuilder.BuildResult(
+    private static func buildResult(
+        coldRemovableMedia: [RemovableMediaDeviceInfo] = []
+    ) -> ConfigurationBuilder.BuildResult {
+        ConfigurationBuilder.BuildResult(
             configuration: VZVirtualMachineConfiguration(),
             serialInputPipe: Pipe(),
             serialOutputPipe: Pipe(),
             clipboardInputPipe: Pipe(),
             clipboardOutputPipe: Pipe(),
-            coldRemovableMedia: [media],
+            coldRemovableMedia: coldRemovableMedia,
             vmnetNetworks: MockVmnetNetworkProvider(),
             entitlements: .unentitled)
+    }
 
-        instance.adoptBuildResult(result)
+    @Test("A bring-up that tries again releases the previous attempt's context before opening the next")
+    func retriedAttemptReleasesThePriorContext() async throws {
+        let instance = makeInstance(phase: .stopped)
+        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
+            let first = instance.beginSessionContext(context)
+            first.serialInputPipe = Pipe()
 
-        #expect(context.serialInputPipe === result.serialInputPipe)
-        #expect(context.serialOutputPipe === result.serialOutputPipe)
-        #expect(context.clipboardInputPipe === result.clipboardInputPipe)
-        #expect(context.clipboardOutputPipe === result.clipboardOutputPipe)
-        #expect(instance.liveRemovableMedia == [media])
+            context.operation.endSession()
+
+            // Drained, not merely dropped — an unreleased context would keep
+            // its VZ session and security scopes alive with nothing left
+            // pointing at it.
+            #expect(first.serialInputPipe == nil)
+            #expect(instance.sessionContext == nil)
+            let second = instance.beginSessionContext(context)
+            #expect(second !== first)
+            #expect(instance.sessionContext === second)
+            return .rest(.atRest(.stopped), ())
+        }
+        // A bring-up that ends at rest releases the context it left open.
+        #expect(instance.sessionContext == nil)
+    }
+
+    // MARK: - Build result
+
+    @Test("adoptBuildResult takes the build's pipes and cold-attached media")
+    func adoptBuildResultPopulatesTheContext() async throws {
+        let instance = makeInstance(guestOS: .linux, phase: .stopped)
+        let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
+        let result = Self.buildResult(coldRemovableMedia: [media])
+
+        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
+            let session = instance.beginSessionContext(context)
+            instance.adoptBuildResult(context, result)
+
+            #expect(session.serialInputPipe === result.serialInputPipe)
+            #expect(session.serialOutputPipe === result.serialOutputPipe)
+            #expect(session.clipboardInputPipe === result.clipboardInputPipe)
+            #expect(session.clipboardOutputPipe === result.clipboardOutputPipe)
+            #expect(instance.liveRemovableMedia == [media])
+            return .rest(.atRest(.stopped), ())
+        }
     }
 
     // MARK: - Runtime removable media write surface
@@ -185,7 +201,7 @@ struct VMSessionContextTests {
     func recordAttachedMediaAppends() {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let first = RemovableMediaDeviceInfo(path: "/tmp/a.iso", readOnly: true)
         let second = RemovableMediaDeviceInfo(path: "/tmp/b.iso", readOnly: false)
 
@@ -199,7 +215,7 @@ struct VMSessionContextTests {
     func forgetAttachedMediaRemovesOnlyTheMatch() {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let kept = RemovableMediaDeviceInfo(path: "/tmp/keep.iso", readOnly: true)
         let removed = RemovableMediaDeviceInfo(path: "/tmp/remove.iso", readOnly: false)
         instance.recordAttachedMedia(kept, for: sessionID)
@@ -214,8 +230,8 @@ struct VMSessionContextTests {
     func mediaWritesAreNoOpsWithNoSessionOpen() {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
-        instance.tearDownSession(restingAt: .stopped)
+        instance.beginSessionContextForTesting()
+        instance.handleSessionEvent(.guestDidStop)
         #expect(instance.sessionContext == nil)
 
         instance.recordAttachedMedia(RemovableMediaDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
@@ -225,28 +241,22 @@ struct VMSessionContextTests {
     }
 
     @Test("A media write for a superseded session leaves the successor's tracking alone")
-    func mediaWritesForASupersededSessionAreDropped() {
+    func mediaWritesForASupersededSessionAreDropped() async throws {
         let sessionA = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionA))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let carried = RemovableMediaDeviceInfo(path: "/tmp/carried.iso", readOnly: true)
         instance.recordAttachedMedia(carried, for: sessionA)
 
         // Force stop, then a restart whose cold boot re-registers the same item.
-        instance.tearDownSession(restingAt: .stopped)
-        instance.beginSessionContext()
+        instance.handleSessionEvent(.guestDidStop)
         let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
-        instance.adoptBuildResult(
-            ConfigurationBuilder.BuildResult(
-                configuration: VZVirtualMachineConfiguration(),
-                serialInputPipe: Pipe(),
-                serialOutputPipe: Pipe(),
-                clipboardInputPipe: Pipe(),
-                clipboardOutputPipe: Pipe(),
-                coldRemovableMedia: [coldBooted],
-                vmnetNetworks: MockVmnetNetworkProvider(),
-                entitlements: .unentitled))
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
+            instance.beginSessionContext(context)
+            instance.adoptBuildResult(context, Self.buildResult(coldRemovableMedia: [coldBooted]))
+            context.bindSessionForTesting(UUID())
+            return .rest(.live(.running), ())
+        }
 
         instance.recordAttachedMedia(carried, for: sessionA)
         instance.forgetAttachedMedia(deviceID: carried.id, for: sessionA)
@@ -265,7 +275,7 @@ struct VMSessionContextTests {
     func contextFieldChangeWakesTheObserver() {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
 
         #expect(
             observationFires(reading: { _ = instance.networkAttachmentPending }) {
@@ -305,7 +315,7 @@ struct VMSessionContextTests {
             let instance = makeInstance()
             #expect(
                 observationFires(reading: { track(instance) }) {
-                    instance.beginSessionContext()
+                    instance.beginSessionContextForTesting()
                 })
         }
     }
@@ -320,10 +330,10 @@ struct VMSessionContextTests {
             { @MainActor (instance: VMInstance) in _ = instance.liveRemovableMedia },
         ] {
             let instance = makeInstance()
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
             #expect(
                 observationFires(reading: { track(instance) }) {
-                    instance.tearDownSession(restingAt: .stopped)
+                    instance.handleSessionEvent(.guestDidStop)
                 })
         }
     }

@@ -155,7 +155,8 @@ struct VMLibraryViewModelSnapshotTests {
     func requestRefusedWhileTransitioning() {
         let harness = makeHarness()
         let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files, phase: .starting(sessionID: nil))
+            in: harness.viewModel, files: harness.storage.files,
+            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
 
         harness.viewModel.requestTakeSnapshot(instance)
 
@@ -185,7 +186,7 @@ struct VMLibraryViewModelSnapshotTests {
             at: instance.bundleURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
-            atPath: instance.bundle.saveFileURL.path(percentEncoded: false),
+            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
 
         await harness.viewModel.takeSnapshot(instance, name: "Suspended").value
@@ -222,22 +223,6 @@ struct VMLibraryViewModelSnapshotTests {
 
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
         #expect(instance.phase == .livePaused(sessionID: sessionID))
-    }
-
-    @Test("A capture stamped with the wrong kind for the VM's capture mode is refused")
-    func mismatchedKindIsRefused() async throws {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files, phase: .running(sessionID: sessionID))
-
-        await #expect(throws: VirtualizationError.self) {
-            _ = try await harness.virtualization.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Mis-stamped", kind: .cold))
-        }
-
-        #expect(harness.virtualization.takenSnapshots.isEmpty)
-        #expect(instance.phase == .running(sessionID: sessionID))
     }
 
     @Test("A snapshot is listed carrying the MAC address it was taken with")
@@ -552,7 +537,8 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.count == 1)
 
         // The sheet gathers a name, and the VM starts restoring while it is up.
-        instance.activity.placeForTesting(.revertingToSnapshot)
+        instance.activity.placeForTesting(
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         await harness.viewModel.takeSnapshot(instance, name: "Too late").value
 
         #expect(harness.virtualization.takenSnapshots.isEmpty)
@@ -575,7 +561,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A rename arriving while an operation is unsettled still lands")
     func renameLandsWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .revertingToSnapshot)
+        let instance = makeInstance(
+            in: harness.viewModel, files: harness.storage.files,
+            phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 
@@ -723,7 +711,9 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A note arriving while an operation is unsettled still lands")
     func notesLandWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .revertingToSnapshot)
+        let instance = makeInstance(
+            in: harness.viewModel, files: harness.storage.files,
+            phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
         seed(harness, instance, [snapshot])
 

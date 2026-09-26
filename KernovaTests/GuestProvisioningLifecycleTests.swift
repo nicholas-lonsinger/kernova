@@ -101,9 +101,9 @@ struct GuestProvisioningLifecycleTests {
         installService.installedImage = .macOSRestoreImage(version: "27.0", build: "27A100")
         let (instance, library) = makeInstance(intent: makeIntent())
         defer { withExtendedLifetime(library) {} }
-        let context = try #require(instance.configuration.installContext)
+        #expect(instance.configuration.installContext != nil)
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         // The install is over — that context goes. The account is not: the boot
         // that delivers it has not run, so anything interrupting the two must
@@ -118,9 +118,9 @@ struct GuestProvisioningLifecycleTests {
         installService.installedImage = .macOSRestoreImage(version: "26.5.2", build: "25F84")
         let (instance, library) = makeInstance(intent: makeIntent())
         defer { withExtendedLifetime(library) {} }
-        let context = try #require(instance.configuration.installContext)
+        #expect(instance.configuration.installContext != nil)
 
-        try await coordinator.installMacOS(on: instance, context: context)
+        try await coordinator.launchGuestSetup(on: instance).value()
 
         // The version the drop is decided from — the first authoritative reading
         // of what the guest actually is.

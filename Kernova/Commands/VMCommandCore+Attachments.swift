@@ -669,13 +669,11 @@ extension VMCommandCore {
         // that discard clears is lifted and every other blocker — a bring-up in
         // flight, a clone reading this bundle, a copy still writing it —
         // answers exactly as it will answer the verb.
-        let admitted = instance.answeringAsIfSavedStateDiscarded {
-            capabilities.accepts(capability, on: instance)
+        // The refusal names what this VM really accepts rather than what it
+        // would accept after a discard that is not going to happen.
+        guard capabilities.acceptsAsIfSavedStateDiscarded(capability, on: instance) else {
+            throw refusal(for: [capability], on: instance)
         }
-        // Built outside that window, so the refusal names what this VM really
-        // accepts rather than what it would accept after a discard that is not
-        // going to happen.
-        guard admitted else { throw refusal(for: [capability], on: instance) }
         if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
             try refuseSoleStorageDiskRemoval(of: disk, on: instance)
         }
@@ -691,7 +689,9 @@ extension VMCommandCore {
         // succeeded while the alert was up consumed it, and a live session took
         // the edit as a hot-plug.
         guard instance.holdsSuspendedSession else { return }
-        guard instance.discardSavedState() else {
+        do {
+            try lifecycle.discardSavedState(instance)
+        } catch {
             // The device set no longer matches the one the state was written
             // under, so that state cannot be restored — and the discard that
             // would have cleared it is what just failed. Both facts are known,

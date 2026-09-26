@@ -79,7 +79,11 @@ struct VMSettingsGeneralPanelTests {
     @Test("The name reads as disabled while the VM can't be renamed")
     func nameGraysWhenRenameIsUnavailable() throws {
         let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux, phase: .starting(sessionID: UUID()))
+        // A revert refuses the rename it would assign back over.
+        let instance = makeSettingsInstance(
+            guestOS: .linux,
+            phase: .operating(
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: true)
         vc.loadViewIfNeeded()

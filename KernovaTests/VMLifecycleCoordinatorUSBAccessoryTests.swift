@@ -22,10 +22,21 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         return (coordinator, accessories)
     }
 
-    private func makeInstance(sessionID: UUID) -> VMInstance {
+    /// The libraries this test's VMs are registered in, kept for the test's
+    /// length: a VM reads whether its build passes accessories through from
+    /// the library it belongs to.
+    private let libraries = Libraries()
+
+    private final class Libraries {
+        private var held: [VMLibrary] = []
+        func keep(_ library: VMLibrary) { held.append(library) }
+    }
+
+    private func makeInstance(sessionID: UUID, on coordinator: VMLifecycleCoordinator) -> VMInstance {
         let instance = VMInstanceFixture.make(
             name: "USB VM", phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
+        libraries.keep(makeWiredLibrary(holding: [instance], lifecycle: coordinator))
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -35,14 +46,14 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     func anEditHoldsTheOperationLock() async throws {
         let (coordinator, service) = makeCoordinator()
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
 
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        #expect(instance.phase.operation == nil)
         try await coordinator.attachUSBAccessory(1, to: instance, for: sessionID)
-        // The claim is released again once the edit settles, which is what lets
-        // the save that follows it run at all.
-        #expect(!coordinator.hasActiveOperation(for: instance.id))
+        // The operation ends with the edit, which is what lets the save that
+        // follows it run at all.
+        #expect(instance.phase == .running(sessionID: sessionID))
         #expect(instance.liveUSBAccessories.count == 1)
     }
 
@@ -50,7 +61,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     func aConcurrentEditIsRefused() async throws {
         let (coordinator, service) = makeCoordinator()
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 2))
         service.suspendNextAttach = true
@@ -60,7 +71,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         }()
         await service.attachStarted()
 
-        await #expect(throws: VMLifecycleCoordinator.LifecycleError.self) {
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.attachingUSB(registryID: 1)))) {
             try await coordinator.attachUSBAccessory(2, to: instance, for: sessionID)
         }
 
@@ -74,7 +85,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     func anAttachThatLosesItsSessionReleasesTheDevice() async throws {
         let (coordinator, service) = makeCoordinator()
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
         let deviceID = UUID()
         service.nextDeviceID = deviceID
@@ -85,7 +96,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         await attach
 
@@ -101,7 +112,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     func detachOfAnAlreadyGoneDeviceSucceeds() async throws {
         let (coordinator, service) = makeCoordinator()
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 3))
         let attached = try await coordinator.attachUSBAccessory(3, to: instance, for: sessionID)
         service.detachError = USBAccessoryError.deviceNotFound
@@ -116,7 +127,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
     func detachFailureIsReported() async throws {
         let (coordinator, service) = makeCoordinator()
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 3))
         let attached = try await coordinator.attachUSBAccessory(3, to: instance, for: sessionID)
         service.detachError = USBAccessoryError.noUSBController
@@ -153,15 +164,16 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: 11, serial: "0373")
 
-        let snapshot = VMSnapshotRecord(name: "Snap", kind: .warm)
+        let snapshot = VMSnapshotCaptureRequest(name: "Snap")
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: snapshot)
+            instance, mode: .live, snapshot: snapshot
+        ) { _ in }
 
         // The handle it went off under names nothing now; it goes back on under
         // the one macOS assigned it after the reset.
@@ -175,7 +187,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         // The capture ejects it and macOS has not handed it back yet.
@@ -184,7 +196,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }()
         // Event-driven both ways: the assignment lands only once the put-back
         // is actually parked on it.
@@ -201,7 +214,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
@@ -209,7 +222,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.answersMissingAccessoryImmediately = true
 
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+        ) { _ in }
 
         // The snapshot the user asked for is written; the hardware is simply
         // where a surprise unplug would have left it.
@@ -222,14 +236,15 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
             instance, for: sessionID, service: service, reassigningAs: nil, serial: "0373")
 
         _ = try await coordinator.takeSnapshot(
-            instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+        ) { _ in }
 
         #expect(service.awaitedIdentities.isEmpty)
         #expect(service.attachedRegistryIDs == [9])
@@ -243,7 +258,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "AAA"))
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 10, serial: "BBB"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
@@ -253,7 +268,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }()
         // Both waits parked at once is the thing under test: a put-back that
         // waited one at a time could never have two, and the second one's
@@ -277,7 +293,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let (coordinator, service) = makeCoordinator(
             virtualization: virtualization, returnTimeout: .seconds(30))
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
@@ -285,10 +301,11 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }()
         try await service.waitStarted.wait { service.parkedWaitCount > 0 }
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         let start = ContinuousClock.now
         await snapshot
         let elapsed = ContinuousClock.now - start
@@ -308,7 +325,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
@@ -317,7 +334,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }
 
         // The snapshot is gone and the guest is still running, so the user's
@@ -331,7 +349,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "AAA"))
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 10, serial: "BBB"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
@@ -348,7 +366,8 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }
 
         // Only the one the sweep ejected is waited for and put back; the one it
@@ -363,7 +382,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID)
+        let instance = makeInstance(sessionID: sessionID, on: coordinator)
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
         try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
         virtualization.onTakeSnapshot = captureEjecting(
@@ -374,11 +393,12 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         async let snapshot: Void = {
             _ = try? await coordinator.takeSnapshot(
-                instance, snapshot: VMSnapshotRecord(name: "Snap", kind: .warm))
+                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
+            ) { _ in }
         }()
         await service.attachStarted()
         // The guest goes away while VZ is capturing the device for the put-back.
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         await snapshot
 

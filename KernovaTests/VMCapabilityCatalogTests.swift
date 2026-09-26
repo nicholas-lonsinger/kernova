@@ -4,9 +4,10 @@ import Testing
 
 @testable import Kernova
 
-/// The one place per-VM command capability is derived: what each state admits,
-/// what a transient blocker takes away, and the capabilities whose commit is
-/// wider than their offer.
+/// The catalog's own part of per-VM capability: which request each capability
+/// asks admission for, how its three levels read that one decision, and the
+/// surfaces derived from them. What admission decides for each request is
+/// ``VMAdmissionTests``'.
 @Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
 @MainActor
 struct VMCapabilityCatalogTests {
@@ -49,104 +50,149 @@ struct VMCapabilityCatalogTests {
             hostState: hostState, mutate: mutate)
     }
 
-    /// Applicable in every state, so each case below names only what its state
-    /// adds.
-    private static let universal: Set<VMCapability> = [
-        .info, .ipAddress, .snapshots, .reveal, .showInFinder, .deleteSnapshot, .renameSnapshot,
-        .setSnapshotNotes, .editLiveConfiguration,
+    private static let coldBoot = VMOperationKind.bringUp(.guestStart(.starting(recovery: false)))
+
+    // MARK: - The request each capability asks for
+
+    /// Written out independently of ``VMCapability/request(on:)``; the revert
+    /// and the USB edit name a snapshot and an accessory that do not change the
+    /// decision, so those two rows are matched by shape below.
+    private static let requests: [VMCapability: VMAdmission.Request] = [
+        .info: .affordance(.inspect),
+        .ipAddress: .affordance(.inspect),
+        .snapshots: .affordance(.inspect),
+        .start: .start(recovery: false),
+        .startInRecovery: .start(recovery: true),
+        .cancelGuestSetup: .cancel(.guestSetup),
+        .stop: .sessionAction(.requestStop),
+        .restart: .sessionAction(.requestStop),
+        .forceStop: .sessionAction(.forceStop),
+        .discardSavedState: .operation(.discardingSavedState),
+        .pause: .operation(.pausing),
+        .resume: .resume,
+        .suspend: .operation(.saving),
+        .open: .affordance(.display),
+        .reveal: .affordance(.inspect),
+        .takeSnapshot: .operation(.capturingSnapshot(.stopped)),
+        .deleteSnapshot: .operation(.deletingSnapshot),
+        .renameSnapshot: .edit(.snapshotMetadata),
+        .setSnapshotNotes: .edit(.snapshotMetadata),
+        .editStorageDisks: .edit(.machineKeys),
+        .editRemovableMedia: .edit(.hotPlugMedia),
+        .editSharedDirectories: .edit(.machineKeys),
+        .forgetUSBPairing: .edit(.pairingRules),
+        .editConfiguration: .edit(.machineKeys),
+        .editLiveConfiguration: .edit(.liveKeys),
+        .switchNetworkMode: .edit(.networkAttachment),
+        .clone: .operation(.copyingOut),
+        .rename: .edit(.rename),
+        .delete: .operation(.deleting),
+        .showInFinder: .affordance(.inspect),
+        .togglePopOut: .affordance(.externalDisplay),
+        .toggleFullscreen: .affordance(.externalDisplay),
+        .showClipboard: .affordance(.clipboard),
+        .toggleGuestAgentDisk: .affordance(.guestAgentDisk),
+        .toggleSettingsPane: .affordance(.display),
     ]
 
-    /// The configuration edits every at-rest phase adds, named once — the
-    /// settings whose values are pinned by a live session or a saved state.
-    private static let atRestConfiguration: Set<VMCapability> = [
-        .editConfiguration, .switchNetworkMode,
-    ]
+    @Test("Each capability asks admission for the request the table states")
+    func requestPerCapability() {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness)
+        for capability in VMCapability.allCases {
+            let request = capability.request(on: instance)
+            switch capability {
+            case .revertToSnapshot:
+                guard case .operation(.bringUp(.reverting(_, resumesAfter: false)))? = request else {
+                    Issue.record("\(capability) asked for \(String(describing: request))")
+                    continue
+                }
+            case .editUSBAccessories:
+                guard case .operation(.attachingUSB)? = request else {
+                    Issue.record("\(capability) asked for \(String(describing: request))")
+                    continue
+                }
+            default:
+                #expect(request == Self.requests[capability], "\(capability)")
+            }
+        }
+        #expect(Self.requests.count == VMCapability.allCases.count - 2)
+    }
 
-    // MARK: - Applicability by state
-
-    @Test("Each phase admits exactly the capabilities its own predicates allow")
-    func applicabilityByPhase() {
-        let id = VMLifecyclePhaseFixtures.session
-        let display: Set<VMCapability> = [.open, .toggleSettingsPane]
-        let cases: [(label: String, phase: VMLifecyclePhase, added: Set<VMCapability>)] = [
-            (
-                "stopped", .stopped,
-                Self.atRestConfiguration.union([
-                    .start, .takeSnapshot, .editStorageDisks, .editRemovableMedia,
-                    .editSharedDirectories, .clone, .rename, .delete,
-                ])
-            ),
-            (
-                "running", .running(sessionID: id),
-                [
-                    .stop, .restart, .forceStop, .pause, .suspend, .open, .takeSnapshot,
-                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
-                    .toggleSettingsPane,
-                ]
-            ),
-            (
-                "live-paused", .livePaused(sessionID: id),
-                [
-                    .stop, .restart, .forceStop, .resume, .suspend, .open, .takeSnapshot,
-                    .editRemovableMedia, .rename, .togglePopOut, .toggleFullscreen,
-                    .toggleSettingsPane,
-                ]
-            ),
-            // No save file on disk, so this VM holds no suspended session:
-            // Resume, Discard and the suspend-slot capture all fall away, and
-            // what is left is an at-rest VM whose settings nothing pins.
-            (
-                "suspended, slot gone", .suspended,
-                Self.atRestConfiguration.union([
-                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories,
-                    .clone, .rename, .delete, .open, .toggleSettingsPane,
-                ])
-            ),
-            // No phase between a bring-up and a settled guest offers a force
-            // stop: VZ takes a termination only from Running or Paused, so the
-            // offer would be a control the framework refuses.
-            ("starting, no VM yet", .starting(sessionID: nil), []),
-            ("starting", .starting(sessionID: id), []),
-            ("saving", .saving(sessionID: id), display),
-            ("capturing live", .capturingLive(sessionID: id), display),
-            ("capturing at rest", .capturingAtRest, display),
-            ("restoring a saved state", .restoringSavedState(sessionID: id), display),
-            ("restoring, no VM yet", .restoringSavedState(sessionID: nil), display),
-            ("reverting to a snapshot", .revertingToSnapshot, display),
-            ("installing", .installing(sessionID: id), []),
-            ("installing, no VM yet", .installing(sessionID: nil), []),
-            (
-                "failed", .failed(message: "Boot failed."),
-                Self.atRestConfiguration.union([
-                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
-                    .rename, .delete,
-                ])
-            ),
-            (
-                "initialBoot", .initialBoot,
-                Self.atRestConfiguration.union([
-                    .start, .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .clone,
-                    .rename, .delete,
-                ])
-            ),
+    @Test(
+        "Take Snapshot asks for the capture the VM's settled phase takes, dimmed rather than lost during an operation")
+    func takeSnapshotRequestFollowsTheSettledPhase() throws {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        let cases: [(VMLifecyclePhase, VMSnapshotCaptureMode?)] = [
+            (.stopped, .stopped),
+            (live, .live),
+            (.livePaused(sessionID: UUID()), .live),
+            (.failed(message: "Boot failed."), nil),
+            (.initialBoot, nil),
+            (.operating(.pausing, from: live), .live),
+            (.operating(.deleting, from: .stopped), .stopped),
         ]
+        for (phase, mode) in cases {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+            #expect(
+                VMCapability.takeSnapshot.request(on: instance)
+                    == mode.map { .operation(.capturingSnapshot($0)) }, "\(phase)")
+        }
 
+        let harness = makeHarness()
+        let suspended = makeInstance(in: harness, phase: .suspended)
+        defer { VMInstanceFixture.removeBundle(of: suspended) }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+        #expect(
+            VMCapability.takeSnapshot.request(on: suspended)
+                == .operation(.capturingSnapshot(.suspended)))
+    }
+
+    // MARK: - The three levels
+
+    @Test("The three levels read one decision: applicable shows it, available enables it, accepts takes it")
+    func levelsReadOneDecision() {
+        struct Case {
+            let label: String
+            let phase: VMLifecyclePhase
+            let capability: VMCapability
+            let applicable: Bool
+            let available: Bool
+            let accepted: Bool
+        }
+        let cases = [
+            Case(
+                label: "admitted", phase: .stopped, capability: .start,
+                applicable: true, available: true, accepted: true),
+            // Refused as busy: shown dimmed, since the VM takes it once the
+            // operation ends.
+            Case(
+                label: "busy", phase: .operating(.deletingSnapshot, from: .stopped),
+                capability: .delete, applicable: true, available: false, accepted: false),
+            // Joined: never offered, taken on commit.
+            Case(
+                label: "joined", phase: .operating(Self.coldBoot, from: .stopped),
+                capability: .start, applicable: true, available: false, accepted: true),
+            Case(
+                label: "invalid", phase: .stopped, capability: .pause,
+                applicable: false, available: false, accepted: false),
+            Case(
+                label: "no request", phase: .failed(message: "Boot failed."),
+                capability: .takeSnapshot, applicable: false, available: false, accepted: false),
+        ]
         for testCase in cases {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: testCase.phase)
-            let applicable = Set(
-                VMCapability.allCases.filter { harness.catalog.isApplicable($0, to: instance) })
-
-            #expect(applicable == Self.universal.union(testCase.added), "\(testCase.label)")
-        }
-
-        // `VMLifecyclePhase` is `Equatable` but not `Hashable`, so completeness
-        // is containment plus a count check rather than a `Set` comparison —
-        // containment alone would still pass if a phase were dropped from the
-        // fixture list, since a shorter list asks fewer questions.
-        #expect(cases.count == VMLifecyclePhaseFixtures.all.count)
-        for phase in VMLifecyclePhaseFixtures.all {
-            #expect(cases.contains { $0.phase == phase }, "\(phase)")
+            #expect(
+                harness.catalog.isApplicable(testCase.capability, to: instance)
+                    == testCase.applicable, "\(testCase.label)")
+            #expect(
+                harness.catalog.isAvailable(testCase.capability, on: instance)
+                    == testCase.available, "\(testCase.label)")
+            #expect(
+                harness.catalog.accepts(testCase.capability, on: instance) == testCase.accepted,
+                "\(testCase.label)")
         }
     }
 
@@ -213,15 +259,19 @@ struct VMCapabilityCatalogTests {
         }
     }
 
-    @Test("A revert is applicable exactly when a snapshot exists to revert to and the VM is settled")
+    @Test("A revert is shown wherever a snapshot exists to revert to, and offered only on a settled VM")
     func revertToSnapshotApplicability() {
         for phase in VMLifecyclePhaseFixtures.all {
             let stockedHarness = makeHarness()
             let stocked = makeInstance(
                 in: stockedHarness, phase: phase, snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
+            // An operation holding the VM dims the revert rather than hiding it.
             #expect(
                 stockedHarness.catalog.isApplicable(.revertToSnapshot, to: stocked)
-                    == !phase.isTransitioning, "\(phase)")
+                    == (phase != .removed), "\(phase)")
+            #expect(
+                stockedHarness.catalog.isAvailable(.revertToSnapshot, on: stocked)
+                    == (phase.isSettled && phase != .removed), "\(phase)")
 
             let emptyHarness = makeHarness()
             let empty = makeInstance(in: emptyHarness, phase: phase)
@@ -275,7 +325,7 @@ struct VMCapabilityCatalogTests {
     func cloneIgnoresAnotherVMsCopy() async {
         let harness = makeHarness()
         let settled = makeInstance(in: harness, name: "Settled")
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let copying = harness.library.beginGatedArrival(named: "Copying", gate: gate)
 
         // Bundle destinations are reserved atomically and overlapping copies are
@@ -287,27 +337,28 @@ struct VMCapabilityCatalogTests {
         await copying.settle()
     }
 
-    @Test("A VM whose clone is still copying locks start, storage disks, delete and revert, and nothing else")
+    @Test("A VM whose clone is still copying locks start, machine-key edits, delete and revert, and nothing else")
     func cloneInFlightLocksSourceButNothingElse() async {
         let harness = makeHarness()
         let source = makeInstance(
             in: harness, name: "Source", snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
         let other = makeInstance(in: harness, name: "Other")
 
-        let locked: Set<VMCapability> = [.editStorageDisks, .delete, .revertToSnapshot, .start]
-        let unaffected: Set<VMCapability> = [
-            .clone, .rename, .editRemovableMedia, .editSharedDirectories,
+        let locked: Set<VMCapability> = [
+            .editStorageDisks, .editSharedDirectories, .editConfiguration, .delete,
+            .revertToSnapshot, .start,
         ]
+        let unaffected: Set<VMCapability> = [.clone, .rename, .editRemovableMedia]
 
         // A clone of a different VM says nothing about this one.
-        let otherGate = GatedArrivalWrite()
+        let otherGate = GatedStep()
         let otherClone = harness.library.beginGatedArrival(
             .cloning(sourceID: other.id), named: "Other copy", gate: otherGate)
         for capability in locked {
             #expect(harness.catalog.isAvailable(capability, on: source), "\(capability)")
         }
 
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: source.id), named: "Source copy", gate: gate)
         for capability in locked {
@@ -335,10 +386,10 @@ struct VMCapabilityCatalogTests {
         await otherClone.settle()
     }
 
-    // MARK: - Settling
+    // MARK: - During an operation
 
-    @Test("Take Snapshot stays applicable but goes unavailable while an operation settles")
-    func takeSnapshotWaitsForTheOperationToSettle() async throws {
+    @Test("Take Snapshot stays applicable but goes unavailable while an operation holds the VM")
+    func takeSnapshotIsDimmedDuringAnOperation() async throws {
         let suspending = SuspendingMockVirtualizationService()
         suspending.shouldSuspendOnResume = true
         let harness = makeHarness(virtualization: suspending)
@@ -356,12 +407,14 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isAvailable(.takeSnapshot, on: instance))
         #expect(!harness.catalog.isAvailable(.revertToSnapshot, on: instance))
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
-        // The lifecycle verbs carry no settle term — a stop has to be able to
-        // interrupt an operation that is still running.
-        #expect(harness.catalog.isAvailable(.stop, on: instance))
-        // Nor do a snapshot's name and note: `VMCommandCore` writes both while
-        // the VM is busy, so refusing them here would make `accepts` disagree
-        // with the verb whose guard it is meant to be.
+        // A resume tolerates a Force Stop, so a user can still break in on
+        // it; the graceful Stop of a paused guest resumes it first, so it
+        // waits the resume out.
+        #expect(harness.catalog.isAvailable(.forceStop, on: instance))
+        #expect(harness.catalog.isApplicable(.stop, to: instance))
+        #expect(!harness.catalog.isAvailable(.stop, on: instance))
+        // Nor are a snapshot's name and note held: a resume leaves the
+        // manifest's metadata open.
         #expect(harness.catalog.accepts(.renameSnapshot, on: instance))
         #expect(harness.catalog.accepts(.setSnapshotNotes, on: instance))
 
@@ -369,95 +422,86 @@ struct VMCapabilityCatalogTests {
         try await resume.value
     }
 
-    @Test("Only the three snapshot capabilities wait for an operation to settle")
-    func settleTermCoversOnlyTheSnapshotCapabilities() {
-        let waiting = VMCapability.allCases.filter(\.waitsForSettle)
-        #expect(Set(waiting) == Set([.takeSnapshot, .revertToSnapshot, .deleteSnapshot]))
-    }
-
     // MARK: - Bring-up: offer versus accept
 
-    @Test("A start is taken in either bring-up phase, and offered in neither")
-    func startAcceptsAVMAlreadyComingUp() {
+    @Test("A start is taken during the bring-up it would begin, and offered during none")
+    func startAcceptsAVMAlreadyComingUp() throws {
         // What lets the CLI verb that cold-launched the app join the boot the
         // launch auto-start pass began, in whichever order the two resumed. The
-        // restore phases carry it too: a boot with a save file spends its whole
-        // observable window there, not in `.starting`.
-        let bringingUp: [VMLifecyclePhase] = [
-            .starting(sessionID: nil), .starting(sessionID: UUID()),
-            .restoringSavedState(sessionID: nil), .restoringSavedState(sessionID: UUID()),
+        // restore carries it too: a boot with a save file spends its whole
+        // observable window there.
+        let starting: [VMLifecyclePhase] = [
+            .operating(Self.coldBoot, from: .stopped),
+            .operating(Self.coldBoot, from: .stopped, boundSession: UUID()),
         ]
-        for phase in bringingUp {
+        for phase in starting {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase)
 
             #expect(harness.catalog.accepts(.start, on: instance), "\(phase)")
-            #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
+            // Shown dimmed: the VM takes a Start once it rests again.
+            #expect(harness.catalog.isApplicable(.start, to: instance), "\(phase)")
             #expect(!harness.catalog.isAvailable(.start, on: instance), "\(phase)")
+        }
+
+        let restoring: [VMLifecyclePhase] = [
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
+            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
+        ]
+        for phase in restoring {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+            defer { VMInstanceFixture.removeBundle(of: instance) }
+            try VMInstanceFixture.writeSaveFile(for: instance)
+
+            for capability: VMCapability in [.start, .resume] {
+                #expect(harness.catalog.accepts(capability, on: instance), "\(capability) \(phase)")
+                #expect(!harness.catalog.isAvailable(capability, on: instance), "\(capability) \(phase)")
+            }
+            // A VM holding a saved state is offered Resume, never Start.
+            #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
+            #expect(harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
         }
     }
 
-    @Test("The bring-up exceptions widen the state term only, not the transient blockers")
-    func bringUpExceptionsStillHonorTheCloneLock() async {
-        // A start locks the source of a clone still copying files out of its
-        // bundle, and joining one does not exempt it: the exception replaces
-        // what the VM's own state admits, and nothing else.
-        let harness = makeHarness()
-        let source = makeInstance(in: harness, name: "Source", phase: .starting(sessionID: nil))
-        let gate = GatedArrivalWrite()
-        let clone = harness.library.beginGatedArrival(
-            .cloning(sourceID: source.id), named: "Source copy", gate: gate)
+    // MARK: - Rename
 
-        #expect(!harness.catalog.accepts(.start, on: source))
-
-        _ = clone.requestCancel()
-        gate.release()
-        await clone.settle()
-        #expect(harness.catalog.accepts(.start, on: source))
-    }
-
-    @Test("A resume is taken against a VM already restoring, and offered on none")
-    func resumeAcceptsAVMAlreadyRestoring() {
+    @Test("A rename is offered and taken while an operation that leaves it open runs")
+    func renameDuringAnOperationThatLeavesItOpen() {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
         for phase: VMLifecyclePhase in [
-            .restoringSavedState(sessionID: nil), .restoringSavedState(sessionID: UUID()),
+            .operating(.saving, from: live), .operating(Self.coldBoot, from: .stopped),
         ] {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase)
 
-            #expect(harness.catalog.accepts(.resume, on: instance), "\(phase)")
-            #expect(!harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
-            #expect(!harness.catalog.isAvailable(.resume, on: instance), "\(phase)")
+            #expect(harness.catalog.isAvailable(.rename, on: instance), "\(phase)")
+            #expect(harness.catalog.accepts(.rename, on: instance), "\(phase)")
         }
-    }
-
-    // MARK: - Rename: offer versus accept
-
-    @Test("A rename typed while the VM began a transient is offered no longer but still taken")
-    func renameAcceptsWiderThanItOffers() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .saving(sessionID: UUID()))
-
-        #expect(!harness.catalog.isApplicable(.rename, to: instance))
-        #expect(!harness.catalog.isAvailable(.rename, on: instance))
-        #expect(harness.catalog.accepts(.rename, on: instance))
     }
 
     @Test("A revert refuses the rename it would assign back over")
     func renameRefusedDuringARevert() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .revertingToSnapshot)
+        let instance = makeInstance(in: harness, phase: Self.reverting)
 
         #expect(!harness.catalog.accepts(.rename, on: instance))
     }
 
-    @Test("Outside the offer-versus-accept exceptions, a commit is exactly an offer")
+    /// A revert holding a VM that was stopped.
+    private static let reverting = VMLifecyclePhase.operating(
+        .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped)
+
+    @Test("Outside the joins, a commit is exactly an offer")
     func acceptanceMatchesAvailabilityElsewhere() {
-        /// The pairs the two levels disagree on: rename in every phase, and
-        /// each bring-up verb in the phase it joins.
+        /// The pairs the two levels disagree on: each verb during the operation
+        /// it joins.
         func isAnException(_ capability: VMCapability, in phase: VMLifecyclePhase) -> Bool {
-            switch (capability, phase) {
-            case (.rename, _), (.start, .starting), (.start, .restoringSavedState),
-                (.resume, .restoringSavedState):
+            switch (capability, phase.operation?.kind) {
+            case (.start, .bringUp(.guestStart(.starting(recovery: false)))?),
+                (.start, .bringUp(.guestStart(.restoringSavedState))?),
+                (.resume, .bringUp(.guestStart(.restoringSavedState))?),
+                (.forceStop, .forceStopping?):
                 true
             default: false
             }
@@ -520,8 +564,7 @@ struct VMCapabilityCatalogTests {
     func canDeleteSnapshotFollowsTheCapability() {
         let harness = makeHarness()
         let snapshot = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, phase: .revertingToSnapshot, snapshots: [snapshot])
+        let instance = makeInstance(in: harness, phase: Self.reverting, snapshots: [snapshot])
 
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
         #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
@@ -544,7 +587,7 @@ struct VMCapabilityCatalogTests {
 
         // A state the manifest cannot be edited in takes both rows, and says so
         // as the state rather than as the mode.
-        instance.activity.placeForTesting(.revertingToSnapshot)
+        instance.activity.placeForTesting(Self.reverting)
         #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .unavailable)
         #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .unavailable)
     }
@@ -590,51 +633,37 @@ struct VMCapabilityCatalogTests {
     /// captured, as much as the live guest of a running one.
     @Test("The reveal surface follows the display a VM has and where that display lives")
     func revealSurfaceByPreferenceAndPhase() {
-        let live = VMLifecyclePhaseFixtures.session
-        // Where a pop-out or fullscreen VM reveals to, per phase. An inline VM
+        // Where a pop-out or fullscreen VM reveals to, one per
+        // ``VMLifecyclePhaseFixtures/all`` entry in its order. An inline VM
         // reveals into the library in every one of them, which the loop asserts
         // alongside.
-        let cases: [(phase: VMLifecyclePhase, detached: VMCapabilityCatalog.RevealSurface)] = [
-            (.stopped, .library),
-            (.initialBoot, .library),
-            (.failed(message: "Boot failed."), .library),
-            (.starting(sessionID: nil), .library),
-            (.starting(sessionID: live), .library),
-            (.installing(sessionID: nil), .library),
-            (.installing(sessionID: live), .library),
-            (.running(sessionID: live), .displayWindow),
-            (.livePaused(sessionID: live), .displayWindow),
-            (.suspended, .displayWindow),
-            (.saving(sessionID: live), .displayWindow),
-            (.capturingLive(sessionID: live), .displayWindow),
-            (.capturingAtRest, .displayWindow),
-            (.restoringSavedState(sessionID: nil), .displayWindow),
-            (.restoringSavedState(sessionID: live), .displayWindow),
-            (.revertingToSnapshot, .displayWindow),
+        let library = VMCapabilityCatalog.RevealSurface.library
+        let window = VMCapabilityCatalog.RevealSurface.displayWindow
+        let detached: [VMCapabilityCatalog.RevealSurface] = [
+            // stopped, initialBoot, failed, suspended, running, livePaused, removed
+            library, library, library, window, window, window, library,
+            // starting (unbound, bound), restoring, setting up, reverting
+            library, library, window, library, window,
+            // pausing, resuming, saving, capturing live, capturing disks
+            window, window, window, window, window,
+            // snapshot delete, USB attach, media reconcile, Force Stop, deleting
+            window, window, window, window, library,
         ]
+        let phases = VMLifecyclePhaseFixtures.all
+        #expect(detached.count == phases.count)
 
-        for (index, expected) in cases.enumerated() {
+        for (index, (phase, expected)) in zip(phases, detached).enumerated() {
             let harness = makeHarness()
             for preference in [VMDisplayPreference.popOut, .fullscreen] {
                 let instance = makeInstance(
-                    in: harness, name: "VM \(index) \(preference)", phase: expected.phase,
+                    in: harness, name: "VM \(index) \(preference)", phase: phase,
                     hostState: VMHostState(displayPreference: preference))
                 #expect(
-                    harness.catalog.revealSurface(for: instance) == expected.detached,
-                    "\(expected.phase) \(preference)")
+                    harness.catalog.revealSurface(for: instance) == expected,
+                    "\(phase) \(preference)")
             }
-            let inline = makeInstance(
-                in: harness, name: "VM \(index) inline", phase: expected.phase)
-            #expect(
-                harness.catalog.revealSurface(for: inline) == .library, "\(expected.phase) inline")
-        }
-
-        // Completeness by containment plus a count, for the reason
-        // `applicabilityByPhase` states: `VMLifecyclePhase` is `Equatable` but
-        // not `Hashable`.
-        #expect(cases.count == VMLifecyclePhaseFixtures.all.count)
-        for phase in VMLifecyclePhaseFixtures.all {
-            #expect(cases.contains { $0.phase == phase }, "\(phase)")
+            let inline = makeInstance(in: harness, name: "VM \(index) inline", phase: phase)
+            #expect(harness.catalog.revealSurface(for: inline) == .library, "\(phase) inline")
         }
     }
 
@@ -668,20 +697,24 @@ struct VMCapabilityCatalogTests {
     }
 
     @Test(
-        "No phase that is already live, or on its way somewhere, has a bring-up owed",
+        "No phase that is already live, or held by an operation, has a bring-up owed",
         arguments: [
-            VMLifecyclePhase.running(sessionID: VMLifecyclePhaseFixtures.session),
+            PhaseFixture.settled(.running(sessionID: VMLifecyclePhaseFixtures.session)),
             // Live-paused: the VZ object is already in memory, so there is
             // nothing to bring up.
-            .livePaused(sessionID: VMLifecyclePhaseFixtures.session),
-            .starting(sessionID: VMLifecyclePhaseFixtures.session),
-            .saving(sessionID: VMLifecyclePhaseFixtures.session),
-            .revertingToSnapshot,
-            .installing(sessionID: VMLifecyclePhaseFixtures.session),
+            .settled(.livePaused(sessionID: VMLifecyclePhaseFixtures.session)),
+            .operating(
+                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped,
+                boundSession: VMLifecyclePhaseFixtures.session),
+            .operating(.saving, from: .running(sessionID: VMLifecyclePhaseFixtures.session)),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
+            .operating(
+                .bringUp(.settingUp(.macOSInstall)), from: .initialBoot,
+                boundSession: VMLifecyclePhaseFixtures.session),
         ])
-    func bringUpVerbRefusesLivePhases(phase: VMLifecyclePhase) {
+    func bringUpVerbRefusesLivePhases(phase: PhaseFixture) {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase)
+        let instance = makeInstance(in: harness, phase: phase.phase)
 
         #expect(harness.catalog.bringUpVerb(for: instance) == nil)
         #expect(harness.catalog.standingBringUp(for: instance) == nil)

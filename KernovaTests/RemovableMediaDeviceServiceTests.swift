@@ -105,30 +105,32 @@ struct RemovableMediaDeviceServiceTests {
 
     // MARK: - VMInstance State Tests
 
-    @Test("tearDownSession clears liveRemovableMedia")
+    @Test("The session's end clears liveRemovableMedia")
     func tearDownClearsRemovableMedia() {
         let instance = makeInstance()
-        let context = instance.beginSessionContext()
+        let context = instance.beginSessionContextForTesting()
 
         context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/a.dmg", readOnly: false))
         context.liveRemovableMedia.append(RemovableMediaDeviceInfo(path: "/tmp/b.dmg", readOnly: true))
         #expect(instance.liveRemovableMedia.count == 2)
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(context.liveRemovableMedia.isEmpty)
     }
 
     @Test(
-        "canAttachRemovableMedia admits a live VM only at a settled phase",
+        "Removable media attach to a VM that presents a settled live session",
         arguments: zip(
             [
-                VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID()),
-                .saving(sessionID: UUID()), .suspended, .stopped,
+                PhaseFixture.settled(.running(sessionID: UUID())),
+                .settled(.livePaused(sessionID: UUID())),
+                .operating(.saving, from: .running(sessionID: UUID())),
+                .settled(.suspended), .settled(.stopped),
             ],
             [true, true, false, false, false]))
-    func canAttachFollowsLiveSession(phase: VMLifecyclePhase, expected: Bool) {
-        let instance = makeInstance(phase: phase)
-        #expect(instance.canAttachRemovableMedia == expected)
+    func canAttachFollowsLiveSession(phase: PhaseFixture, expected: Bool) {
+        let instance = makeInstance(phase: phase.phase)
+        #expect((instance.attachableSessionID != nil) == expected)
     }
 }

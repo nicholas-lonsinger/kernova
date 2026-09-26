@@ -21,7 +21,7 @@ struct ClipboardPasteLimitPolicyPushTests {
             preferences: preferences, mutate: { $0.clipboardSharingEnabled = true })
         // The phase's session identity stands in for a live `VZVirtualMachine`,
         // not for the session context the control service lives in.
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 

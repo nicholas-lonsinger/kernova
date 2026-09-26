@@ -136,7 +136,7 @@ struct VMSettingsStoragePanelTests {
 
         // An arrival cloning this VM locks Storage Disks for a reason the
         // shared "Editable when stopped" would misstate on a stopped VM.
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = viewModel.library.beginGatedArrival(
             .cloning(sourceID: instance.id), named: "Clone", gate: gate)
         reapply(vc, (instance, viewModel))

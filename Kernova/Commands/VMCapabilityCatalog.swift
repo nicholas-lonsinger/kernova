@@ -92,55 +92,74 @@ enum VMCapability: CaseIterable, Hashable {
         }
     }
 
-    /// Whether this capability waits for an operation that is still settling.
-    ///
-    /// Each of these moves VM state or snapshot files and would race an
-    /// operation that is still settling, so it reads as unavailable rather than
-    /// erroring on click. A snapshot's name and note are metadata-only manifest
-    /// writes no operation reads mid-flight, and are not on this list.
-    ///
-    /// Exhaustive rather than `default`, so a new capability has to choose a
-    /// side.
-    var waitsForSettle: Bool {
+    /// The request admission decides for this capability on `instance`, or
+    /// `nil` when the VM's state names none — a capture from a phase no mode
+    /// is taken from.
+    @MainActor
+    func request(on instance: VMInstance) -> VMAdmission.Request? {
         switch self {
-        case .takeSnapshot, .revertToSnapshot, .deleteSnapshot:
-            true
-        case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
-            .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editRemovableMedia,
-            .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
-            .editConfiguration,
-            .editLiveConfiguration, .switchNetworkMode, .clone, .rename, .delete,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
-            false
-        }
-    }
-
-    /// Whether this capability writes, trashes or overwrites the files an
-    /// in-flight clone of this VM is still copying out of its bundle.
-    ///
-    /// Exhaustive rather than `default`, so a new capability has to choose a
-    /// side. Removable media and shared directories are referenced by path,
-    /// never copied, so a live edit of either does not touch anything the clone
-    /// reads; cloning the same source again only reads it too. A start (or a
-    /// start into Recovery) locks too: a booted guest writes `Disk.asif`,
-    /// `AuxiliaryStorage`, `EFIVariableStore` and the additional disks the copy
-    /// is reading, and a revert reached only by starting first (an Ephemeral
-    /// baseline restore) is closed by this rather than needing its own guard.
-    var locksWhileCloned: Bool {
-        switch self {
-        case .start, .startInRecovery, .editStorageDisks, .delete, .revertToSnapshot:
-            true
-        case .info, .ipAddress, .snapshots, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
-            .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editRemovableMedia, .editSharedDirectories, .editUSBAccessories, .forgetUSBPairing,
-            .editConfiguration,
-            .editLiveConfiguration, .switchNetworkMode, .clone, .rename,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleGuestAgentDisk,
-            .toggleSettingsPane:
-            false
+        case .info, .ipAddress, .snapshots, .reveal, .showInFinder:
+            return .affordance(.inspect)
+        case .start:
+            return .start(recovery: false)
+        case .startInRecovery:
+            return .start(recovery: true)
+        case .cancelGuestSetup:
+            return .cancel(.guestSetup)
+        case .stop, .restart:
+            // Virtualization refuses the shutdown request to a paused guest, so
+            // the stop a live-paused VM takes resumes it first.
+            return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
+        case .forceStop:
+            return .sessionAction(.forceStop)
+        case .discardSavedState:
+            return .operation(.discardingSavedState)
+        case .pause:
+            return .operation(.pausing)
+        case .resume:
+            return .resume
+        case .suspend:
+            return .operation(.saving)
+        case .open, .toggleSettingsPane:
+            return .affordance(.display)
+        case .takeSnapshot:
+            guard
+                let mode = VMAdmission.settledCaptureMode(
+                    phase: instance.phase, facts: instance.admissionFacts)
+            else { return nil }
+            return .operation(.capturingSnapshot(mode))
+        case .revertToSnapshot:
+            // Which snapshot does not change the decision.
+            return .operation(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)))
+        case .deleteSnapshot:
+            return .operation(.deletingSnapshot)
+        case .renameSnapshot, .setSnapshotNotes:
+            return .edit(.snapshotMetadata)
+        case .editStorageDisks, .editSharedDirectories, .editConfiguration:
+            return .edit(.machineKeys)
+        case .editRemovableMedia:
+            return .edit(.hotPlugMedia)
+        case .editUSBAccessories:
+            // Which accessory does not change the decision.
+            return .operation(.attachingUSB(registryID: 0))
+        case .forgetUSBPairing:
+            return .edit(.pairingRules)
+        case .editLiveConfiguration:
+            return .edit(.liveKeys)
+        case .switchNetworkMode:
+            return .edit(.networkAttachment)
+        case .clone:
+            return .operation(.copyingOut)
+        case .rename:
+            return .edit(.rename)
+        case .delete:
+            return .operation(.deleting)
+        case .togglePopOut, .toggleFullscreen:
+            return .affordance(.externalDisplay)
+        case .showClipboard:
+            return .affordance(.clipboard)
+        case .toggleGuestAgentDisk:
+            return .affordance(.guestAgentDisk)
         }
     }
 }
@@ -158,127 +177,37 @@ enum VMCapability: CaseIterable, Hashable {
 struct VMCapabilityCatalog {
     let library: VMLibrary
 
+    /// How admission decides `capability` on `instance` right now, in
+    /// `posture`; `nil` when the VM's state names no request for it.
+    ///
+    /// The one reading every level below is taken from, and the same decision
+    /// ``VMActivity`` commits — so what a surface offers and what a verb takes
+    /// agree by construction.
+    func decision(
+        _ capability: VMCapability, on instance: VMInstance, posture: VMAdmission.Posture
+    ) -> VMAdmission.Decision? {
+        capability.request(on: instance).map {
+            instance.activity.decide($0, posture: posture)
+        }
+    }
+
     /// Whether the VM's own state admits `capability` at all — the level a
     /// surface that *hides* an unavailable command reads.
     ///
-    /// Transient blockers are absent: a VM that can be snapshotted still shows
-    /// Take Snapshot while an operation settles, dimmed. Exhaustive rather than
-    /// `default`, so a new capability has to be answered here as well as in
-    /// ``isAvailable(_:on:)`` and ``accepts(_:on:)``.
+    /// An operation holding the VM is no reason to hide one: a VM that can be
+    /// snapshotted still shows Take Snapshot while another operation runs,
+    /// dimmed.
     func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
-        switch capability {
-        case .info, .ipAddress, .snapshots, .reveal, .showInFinder,
-            .deleteSnapshot, .renameSnapshot, .setSnapshotNotes:
-            true
-        case .start:
-            // A VM holding a saved state is offered the Resume that restores
-            // it: a Start names a cold boot, and its bring-up performs none.
-            // Committing one is still taken (``admitsCommit(_:on:)``).
-            instance.canStart && !instance.holdsSuspendedSession
-        case .startInRecovery:
-            instance.canStartInRecovery
-        case .cancelGuestSetup:
-            instance.setupTask != nil
-        case .stop, .restart:
-            instance.canStop
-        case .forceStop:
-            instance.canForceStop
-        case .discardSavedState:
-            instance.holdsSuspendedSession
-        case .pause:
-            instance.canPause
-        case .resume:
-            instance.canResume
-        case .suspend:
-            instance.canSave
-        case .open, .toggleSettingsPane:
-            instance.hasActiveDisplay
-        case .takeSnapshot:
-            instance.canTakeSnapshot
-        case .revertToSnapshot:
-            instance.canRevertToSnapshot
-        case .editStorageDisks:
-            instance.canEditSettings
-        case .editRemovableMedia:
-            // Removable media is hot-pluggable, so a live guest takes an edit
-            // the pinned device set of a stopped VM's saved state cannot.
-            instance.canEditSettings || instance.hasLiveSession
-        case .editSharedDirectories:
-            // A VM's virtiofs device set is fixed at boot, so a share edit lands
-            // only on a VM that can still be reconfigured.
-            instance.canEditSettings
-        case .editUSBAccessories:
-            // Stricter than removable media twice over: a passthrough accessory
-            // has no persisted entry to pre-configure, so it exists only on a
-            // guest already running — and a build that cannot claim an
-            // accessory at all must not name the verb among those a VM accepts.
-            library.supportsUSBAccessories && instance.hasLiveSession
-        case .forgetUSBPairing:
-            // A rule is a preference about what to attach rather than something
-            // the guest holds, so no state pins it — what it names is usually
-            // not even plugged in. Only a build that cannot pass accessories
-            // through has nothing to forget.
-            library.supportsUSBAccessories
-        case .editConfiguration:
-            instance.canEditSettings
-        case .editLiveConfiguration:
-            // The settings this gates are read at moments other than boot — the
-            // Ephemeral flag at power-off, the clipboard flags and the display
-            // policy by the running session — so no state pins them.
-            true
-        case .switchNetworkMode:
-            // While the pane is read-only its Mode picker stays live as the
-            // hot-swap surface: swapping the attachment needs a session and a
-            // device to swap on. None-mode VMs have no device, and devices
-            // cannot be added or removed at runtime.
-            instance.canEditSettings
-                || (instance.configuration.networkEnabled
-                    && (instance.status == .running || instance.isLivePaused))
-        case .clone:
-            instance.canEditSettings
-        case .rename:
-            instance.canRename
-        case .delete:
-            instance.canDelete
-        case .togglePopOut, .toggleFullscreen:
-            instance.canUseExternalDisplay
-        case .showClipboard:
-            instance.canShowClipboard
-        case .toggleGuestAgentDisk:
-            instance.canManageGuestAgentDisk
+        switch decision(capability, on: instance, posture: .offer) {
+        case .admit, .join, .refuse(.busy): true
+        case .refuse, nil: false
         }
     }
 
-    /// Whether `capability` can be invoked right now — applicable, with nothing
-    /// transient in the way.
-    ///
-    /// The level every `isEnabled` and every menu- or toolbar-validation reads.
-    /// Two things are layered over applicability: the settle check for the
-    /// commands an unsettled operation would reject
-    /// (``VMCapability/waitsForSettle``), and the lock a clone still copying
-    /// this VM's files out of its bundle places on the source
-    /// (``VMCapability/locksWhileCloned``).
+    /// Whether `capability` can be invoked right now — the level every
+    /// `isEnabled` and every menu- or toolbar-validation reads.
     func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
-        isApplicable(capability, to: instance)
-            && transientBlockersClear(capability, on: instance)
-    }
-
-    /// The two transient layers ``isAvailable(_:on:)`` and ``accepts(_:on:)``
-    /// share: the clone still copying this VM's files out of its bundle
-    /// (``VMCapability/locksWhileCloned``), and the settle check for the
-    /// commands an unsettled operation would reject
-    /// (``VMCapability/waitsForSettle``).
-    ///
-    /// Only the applicability term separates the two levels, so a capability
-    /// whose commit is wider than its offer widens that term alone and cannot
-    /// escape a blocker by being an exception.
-    private func transientBlockersClear(
-        _ capability: VMCapability, on instance: VMInstance
-    ) -> Bool {
-        guard !(capability.locksWhileCloned && library.hasCloneInFlight(from: instance)) else {
-            return false
-        }
-        return !(capability.waitsForSettle && library.isBusy(instance))
+        decision(capability, on: instance, posture: .offer) == .admit
     }
 
     /// Whether one snapshot's delete is offered, and what bars it when it is
@@ -433,64 +362,30 @@ struct VMCapabilityCatalog {
         return isAvailable(.stop, on: instance) || isAvailable(.discardSavedState, on: instance)
     }
 
+    /// Whether a commit of `capability` would be taken once the VM's saved
+    /// state is discarded — so work that follows a discard is known to be
+    /// admitted before the irreversible step is taken, with every other
+    /// blocker answering exactly as it will answer the verb.
+    func acceptsAsIfSavedStateDiscarded(
+        _ capability: VMCapability, on instance: VMInstance
+    ) -> Bool {
+        guard let request = capability.request(on: instance) else { return false }
+        switch instance.activity.decideAsIfSavedStateDiscarded(request, posture: .commit) {
+        case .admit, .join: return true
+        case .refuse: return false
+        }
+    }
+
     /// Whether a commit of `capability` is taken now — what a verb's own guard
     /// asks, and what a refusal names as accepted.
     ///
-    /// ``isAvailable(_:on:)`` over ``admitsCommit(_:on:)``: the transient
-    /// blockers are the same, and only the state term is wider.
+    /// Wider than ``isAvailable(_:on:)`` only where the commit posture is: a
+    /// Start of a VM holding a saved state restores it, and a Start or Resume
+    /// during the bring-up it asks for joins it.
     func accepts(_ capability: VMCapability, on instance: VMInstance) -> Bool {
-        admitsCommit(capability, on: instance)
-            && transientBlockersClear(capability, on: instance)
-    }
-
-    /// Whether the VM's own state takes a *commit* of `capability` —
-    /// ``isApplicable(_:to:)`` everywhere but the capabilities taken in
-    /// a state they are not offered in.
-    ///
-    /// Exhaustive rather than `default`, so a new capability has to choose a
-    /// side here too.
-    private func admitsCommit(_ capability: VMCapability, on instance: VMInstance) -> Bool {
-        switch capability {
-        case .start:
-            // A start committed against a VM already coming up is asking for the
-            // state that bring-up is producing, so it joins it
-            // (``VMCommandCore/start(_:recovery:)``) rather than refusing a VM
-            // on its way to running. Both bring-up phases count: a boot with a
-            // save file stands in `.restoringSavedState` from the moment it
-            // leaves rest (``VirtualizationService/start(_:bootIntoRecovery:provisioning:)``).
-            // Offering it is the separate question ``isAvailable(_:on:)``
-            // answers.
-            //
-            // A VM holding a saved state is the other widening: the start
-            // restores that state rather than booting over it, so a door asking
-            // for the VM to be running gets it — only the offer names Resume.
-            switch instance.phase {
-            case .starting, .restoringSavedState: return true
-            default: return instance.canStart
-            }
-        case .resume:
-            // The same join, for the one bring-up phase a resume of its own
-            // stands in.
-            if case .restoringSavedState = instance.phase { return true }
-            return isApplicable(.resume, to: instance)
-        case .rename:
-            // Offering a rename and taking one answer to different states. A
-            // rename rewrites the name and nothing a running operation reads,
-            // so a name typed into a field editor that was open when the VM
-            // started or began suspending is kept rather than traded for an
-            // alert — only the revert that will assign a whole configuration
-            // back over this one refuses
-            // (``VMLifecyclePhase/renamePersists``).
-            return instance.renamePersists
-        case .info, .ipAddress, .snapshots, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .suspend, .open, .reveal,
-            .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-            .editStorageDisks, .editRemovableMedia, .editSharedDirectories, .editUSBAccessories,
-            .forgetUSBPairing,
-            .editConfiguration, .editLiveConfiguration, .switchNetworkMode, .clone, .delete,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .toggleGuestAgentDisk, .toggleSettingsPane:
-            return isApplicable(capability, to: instance)
+        switch decision(capability, on: instance, posture: .commit) {
+        case .admit, .join: true
+        case .refuse, nil: false
         }
     }
 }

@@ -143,7 +143,7 @@ struct ClipboardPassthroughCoordinatorTests {
         service.reporter = reports.reporter
         // The clipboard service is session state, so it needs a session to
         // live in.
-        instance.beginSessionContext().clipboardService = service
+        instance.beginSessionContextForTesting().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: reports.reporter,
             pasteboard: pasteboard)
@@ -809,7 +809,7 @@ struct ClipboardPassthroughCoordinatorTests {
             stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
-        instance.beginSessionContext().clipboardService = service
+        instance.beginSessionContextForTesting().clipboardService = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: instance.clipboardTransfers,
             pasteboard: pasteboard)

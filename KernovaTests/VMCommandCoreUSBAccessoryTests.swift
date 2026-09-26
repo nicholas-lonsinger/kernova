@@ -76,7 +76,7 @@ struct VMCommandCoreUSBAccessoryTests {
         let instance = RegisteredVMInstanceFixture.register(
             name: name, phase: .running(sessionID: UUID()), guestOS: .linux,
             library: harness.library, storage: harness.storage, preferences: preferences)
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -261,7 +261,10 @@ struct VMCommandCoreUSBAccessoryTests {
 
     @Test("Only a guest that is already running takes an accessory edit")
     func editNeedsALiveGuest() async throws {
-        for phase: VMLifecyclePhase in [.stopped, .suspended, .starting(sessionID: UUID())] {
+        for phase: VMLifecyclePhase in [
+            .stopped, .suspended,
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+        ] {
             let harness = makeHarness()
             let service = try #require(harness.accessories)
             service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
@@ -665,7 +668,7 @@ struct VMCommandCoreUSBAccessoryTests {
         let accessory = MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")
         _ = try await attach(accessory, to: instance, in: harness)
         let key = try #require(accessory.identity?.key)
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         // A rule names hardware that is usually in a drawer, so requiring a
         // live guest would make the rows that most need removing unremovable.

@@ -5,9 +5,9 @@ import KernovaLogging
 /// The headless implementation of every VM verb, beneath the AppKit UI and
 /// every automation surface.
 ///
-/// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and
-/// ``VMLifecycleCoordinator`` owns per-VM operation serialization — so it is
-/// *not* `@Observable`: there is nothing here for a view to watch.
+/// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and each
+/// VM's ``VMActivity`` decides what it admits — so it is *not* `@Observable`:
+/// there is nothing here for a view to watch.
 ///
 /// It presents nothing and imports no AppKit. Anything a user has to see leaves
 /// as a thrown ``CommandError`` at the call that caused it, or through
@@ -291,22 +291,66 @@ final class VMCommandCore: VMCommanding {
         throw refusal(for: options, on: instance)
     }
 
-    /// What a refused ``require(anyOf:on:)`` throws: an operation still
-    /// settling is what blocks a settle-gated capability, and saying so names
-    /// something the user can wait out rather than a status that reads as
-    /// eligible.
+    /// What a refused ``require(anyOf:on:)`` throws: the refusal admission
+    /// gave the first option, preferring one the user can wait out.
     ///
     /// Internal because a caller that decided a capability's fate somewhere
     /// other than ``require(anyOf:on:)`` still owes the user the refusal that
     /// verb would have raised.
     func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
-        if options.contains(where: \.locksWhileCloned), library.hasCloneInFlight(from: instance) {
-            return .busy(vm: summary(instance), operation: "being cloned")
+        let refusals = options.compactMap { option -> VMAdmission.Refusal? in
+            guard case .refuse(let reason) = capabilities.decision(option, on: instance, posture: .commit)
+            else { return nil }
+            return reason
         }
-        if options.contains(where: \.waitsForSettle), library.isBusy(instance) {
-            return .busy(vm: summary(instance), operation: instance.status.displayName.lowercased())
+        let busy = refusals.first {
+            if case .busy = $0 { return true }
+            return false
         }
-        return invalidState(instance)
+        guard let reason = busy ?? refusals.first else { return invalidState(instance) }
+        return admissionRefusal(reason, on: instance)
+    }
+
+    /// The one mapping from an admission refusal to the command vocabulary.
+    func admissionRefusal(_ reason: VMAdmission.Refusal, on instance: VMInstance) -> CommandError {
+        switch reason {
+        case .busy(let kind):
+            .busy(vm: summary(instance), operation: Self.busyDescription(kind))
+        case .invalidState:
+            invalidState(instance)
+        case .removed:
+            .notFound(.id(instance.id))
+        case .identityConflict(let conflict):
+            .conflict(
+                vm: summary(instance), with: summary(conflict.other),
+                reason: conflict.reason.conflictReason)
+        case .unsupportedByBuild:
+            .unsupportedByBuild(capability: Self.usbAccessoryCapability)
+        }
+    }
+
+    /// What a VM held by an operation of `kind` is busy doing, as a refusal
+    /// reads it out ("is busy \(…)").
+    static func busyDescription(_ kind: VMOperationKind) -> String {
+        switch kind {
+        case .bringUp(.guestStart(.starting)): "starting"
+        case .bringUp(.guestStart(.restoringSavedState)): "restoring its saved state"
+        case .bringUp(.settingUp(.macOSInstall)): "installing macOS"
+        case .bringUp(.settingUp(.linuxImageDownload)): "downloading its installer image"
+        case .bringUp(.reverting): "reverting to a snapshot"
+        case .pausing: "pausing"
+        case .resuming: "resuming"
+        case .saving: "suspending"
+        case .capturingSnapshot: "taking a snapshot"
+        case .deletingSnapshot: "deleting a snapshot"
+        case .attachingUSB: "attaching a USB accessory"
+        case .detachingUSB: "detaching a USB accessory"
+        case .reconcilingMedia: "updating its removable media"
+        case .forceStopping: "force stopping"
+        case .discardingSavedState: "discarding its saved state"
+        case .deleting: "being deleted"
+        case .copyingOut: "being cloned"
+        }
     }
 
     /// The refusal for a verb the VM's current state does not admit.
@@ -391,18 +435,12 @@ final class VMCommandCore: VMCommanding {
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
     ///
-    /// Two carry meaning of their own: the serialization rejection says the VM
-    /// already has an operation, which is exactly ``busy``, and a bring-up
-    /// refused over another live VM's identity is a ``conflict``.
+    /// An admission refusal is mapped by ``admissionRefusal(_:on:)``, and a
+    /// ``CommandError`` a body raised passes through as it is.
     func failure(_ error: Error, verb: VMVerb, on instance: VMInstance) -> CommandError {
-        if case VMLifecycleCoordinator.LifecycleError.operationInProgress = error {
-            return .busy(
-                vm: summary(instance), operation: instance.status.displayName.lowercased())
-        }
-        if let conflict = error as? VMIdentityConflict {
-            return .conflict(
-                vm: summary(instance), with: summary(conflict.other),
-                reason: conflict.reason.conflictReason)
+        if let commandError = error as? CommandError { return commandError }
+        if let refused = error as? VMAdmissionRefusal {
+            return admissionRefusal(refused.refusal, on: instance)
         }
         return .operationFailed(verb: verb, message: error.localizedDescription)
     }
@@ -597,9 +635,9 @@ final class VMCommandCore: VMCommanding {
     /// ``emitLibraryChanges()`` reports a failure for a VM whose new status is
     /// the error status, reading the message off the phase. A transient failure
     /// rests the VM where the attempt began instead, carrying no message
-    /// (``VirtualizationService/restingPhaseAfterStartFailure(_:transientRestingPhase:)``),
-    /// so the diff has nothing to report and a subscriber would see only a
-    /// status change back to where it started. One that does rest in the error
+    /// (``VMOperationKind/restAfterFailure(_:)``), so the diff has nothing to
+    /// report and a subscriber would see only a status change back to where it
+    /// started. One that does rest in the error
     /// status is left to the diff, so either way exactly one failure is
     /// reported. A refusal raised before the work ran gets none: nothing about
     /// the VM moved, and a caller waiting on a state is still owed its wait.

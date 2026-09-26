@@ -26,6 +26,7 @@ struct USBAccessoryCoordinatorTests {
     ) throws -> USBAccessoryCoordinator {
         let writer = pairings ?? StubUSBAccessoryPairingWriter(roster: roster)
         writer.roster = roster
+        roster.supportsUSBAccessories = lifecycle.usbAccessoryService != nil
         return try #require(
             USBAccessoryCoordinator(lifecycle: lifecycle, roster: roster, pairings: writer))
     }
@@ -33,7 +34,7 @@ struct USBAccessoryCoordinatorTests {
     private func makeInstance(sessionID: UUID, named name: String = "USB VM") -> VMInstance {
         let instance = makeStoppedInstance(named: name)
         instance.activity.placeForTesting(.running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -294,8 +295,8 @@ struct USBAccessoryCoordinatorTests {
         #expect(recorder.requests.first?.candidates.map(\.id) == [first.id])
 
         // The library moves on while the second accessory waits its turn.
-        first.tearDownSession(restingAt: .stopped)
-        second.beginSessionContext()
+        first.handleSessionEvent(.guestDidStop)
+        second.beginSessionContextForTesting()
         second.activity.placeForTesting(.running(sessionID: UUID()))
         recorder.requests[0].answer(nil)
 
@@ -317,7 +318,7 @@ struct USBAccessoryCoordinatorTests {
         service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
         service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
         recorder.requests[0].answer(nil)
 
         #expect(recorder.requests.count == 1)
@@ -565,7 +566,7 @@ struct USBAccessoryCoordinatorTests {
         try pair(theirs, with: other)
         service.accessories = [mine, theirs]
 
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
@@ -586,22 +587,22 @@ struct USBAccessoryCoordinatorTests {
         try pair(accessory, with: instance)
         service.accessories = [accessory]
         let sessionID = UUID()
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: sessionID))
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
 
         // Both phases are attachable, so neither transition is an edge.
-        instance.settle(.livePaused(sessionID: sessionID), for: sessionID)
-        instance.settle(.running(sessionID: sessionID), for: sessionID)
+        instance.activity.placeForTesting(.livePaused(sessionID: sessionID))
+        instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs == [1])
     }
 
-    // MARK: - Waiting for the VM to Settle
+    // MARK: - An Operation in Flight
 
-    @Test("An automatic attach waits for the operation already in flight")
-    func anAutomaticAttachWaitsForTheOperationToSettle() async throws {
+    @Test("An automatic attach during another operation is refused, leaving the accessory with the host")
+    func anAutomaticAttachDuringAnOperationIsRefused() async throws {
         let service = MockUSBAccessoryService()
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID)
@@ -613,22 +614,33 @@ struct USBAccessoryCoordinatorTests {
         service.accessories.append(first)
         try pair(second, with: instance)
 
+        let endings = AutoAttachEndings()
+        let ended = AsyncGate()
+        coordinator.autoAttachEndedForTesting = { registryID, error in
+            endings.entries.append((registryID, error))
+            ended.notify()
+        }
+
         service.suspendNextAttach = true
         let held = Task { try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
         await service.attachStarted()
 
-        // The lifecycle rejects a concurrent operation rather than queueing it,
-        // so an attach issued without the wait would be refused outright and
-        // this accessory would never reach the guest.
+        // The attach in flight holds the VM, so the automatic attach this
+        // assignment asks for is refused as busy rather than waiting for it.
         service.assign(second)
+        try await ended.wait { !endings.entries.isEmpty }
         service.resumeAttach()
         _ = try await held.value
 
-        try await waitForChange { instance.liveUSBAccessories.count == 2 }
-        #expect(service.attachedRegistryIDs == [1, 2])
+        #expect(endings.entries.map(\.registryID) == [2])
+        #expect(
+            endings.entries.first?.error as? VMAdmissionRefusal
+                == VMAdmissionRefusal(refusal: .busy(.attachingUSB(registryID: 1))))
+        #expect(service.attachedRegistryIDs == [1])
+        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [1])
     }
 
-    @Test("A guest that goes away under the wait keeps the accessory with the host")
+    @Test("A guest that goes away under an attach keeps the next accessory with the host")
     func aVMThatStopsUnderTheWaitHoldsTheAccessory() async throws {
         let service = MockUSBAccessoryService()
         let sessionID = UUID()
@@ -646,14 +658,19 @@ struct USBAccessoryCoordinatorTests {
         await service.attachStarted()
         service.assign(second)
 
-        // This is what a save does: it ejects every passthrough device and
-        // leaves the VM suspended. The wait is what makes the coordinator see
-        // that rather than the phase the save started from.
-        instance.tearDownSession(restingAt: .suspended)
+        // The guest powers off while the attach still holds the VM.
+        instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         _ = await held.value
 
         try await Task.sleep(for: .milliseconds(200))
         #expect(service.attachedRegistryIDs == [1])
+        #expect(!instance.hasLiveVirtualMachine)
     }
+}
+
+/// How each automatic attach that reached the attach verb ended, in order.
+@MainActor
+private final class AutoAttachEndings {
+    var entries: [(registryID: UInt64, error: (any Error)?)] = []
 }

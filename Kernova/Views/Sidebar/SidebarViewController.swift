@@ -586,9 +586,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
             // Capture `instance` weakly: the cell stores these closures, so a
             // strong capture would keep a deleted VM alive until the cell is
             // recycled.
-            isBusy: { [weak self, weak instance] in
-                guard let self, let instance else { return false }
-                return self.viewModel.isBusy(instance)
+            isBusy: { [weak instance] in
+                instance?.phase.operation != nil
             },
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
@@ -713,6 +712,7 @@ extension SidebarViewController {
                 menu.addItem(dummy)
             }
             let start = item(instance.startAction.label, #selector(menuStart(_:)), instance)
+            start.isEnabled = capabilities.isAvailable(.start, on: instance)
             menu.addItem(start)
             startItem = start
         }
@@ -722,6 +722,7 @@ extension SidebarViewController {
             // so "Start" was just added and immediately precedes this one —
             // required for alternate pairing.
             let recovery = item("Start in Recovery Mode…", #selector(menuStartRecovery(_:)), instance)
+            recovery.isEnabled = capabilities.isAvailable(.startInRecovery, on: instance)
             if !preferences.alwaysShowAdvancedOptions {
                 // Keyless Option-reveal: both items have an empty key equivalent, so the
                 // primary's modifier mask must be cleared to [] (its default is [.command])
@@ -734,22 +735,28 @@ extension SidebarViewController {
             menu.addItem(recovery)
         }
         if capabilities.isApplicable(.pause, to: instance) {
-            menu.addItem(item("Pause", #selector(menuPause(_:)), instance))
+            let pause = item("Pause", #selector(menuPause(_:)), instance)
+            pause.isEnabled = capabilities.isAvailable(.pause, on: instance)
+            menu.addItem(pause)
         }
         if capabilities.isApplicable(.resume, to: instance) {
-            menu.addItem(item("Resume", #selector(menuResume(_:)), instance))
+            let resume = item("Resume", #selector(menuResume(_:)), instance)
+            resume.isEnabled = capabilities.isAvailable(.resume, on: instance)
+            menu.addItem(resume)
         }
         let canStop = capabilities.isApplicable(.stop, to: instance)
         let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
         let stopAction = capabilities.stopAction(for: instance)
         if canStop {
             let stop = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
+            stop.isEnabled = capabilities.isAvailable(.stop, on: instance)
             menu.addItem(stop)
             // An Option-alternate of "Stop". No zero-height anchor is needed: when
             // a graceful stop is offered, a Pause or Resume item always precedes
             // "Stop", so the pair is never at index 0 and the menu can't shift on
             // ⌥-press.
             let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
+            forceStop.isEnabled = capabilities.isAvailable(.forceStop, on: instance)
             if !preferences.alwaysShowAdvancedOptions {
                 stop.keyEquivalentModifierMask = []
                 forceStop.keyEquivalentModifierMask = [.option]
@@ -776,7 +783,9 @@ extension SidebarViewController {
             menu.addItem(.separator())
         }
         if canSuspend {
-            menu.addItem(item("Suspend", #selector(menuSuspend(_:)), instance))
+            let suspend = item("Suspend", #selector(menuSuspend(_:)), instance)
+            suspend.isEnabled = capabilities.isAvailable(.suspend, on: instance)
+            menu.addItem(suspend)
         }
         if canTakeSnapshot {
             let takeSnapshot = item(

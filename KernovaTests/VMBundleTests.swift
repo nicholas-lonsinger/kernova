@@ -508,8 +508,11 @@ struct VMBundleTests {
         let snapshot = VMSnapshot(name: "Captured", macAddress: nil)
         let layout = VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: snapshot.id)
 
-        let plan = try await bundle.prepareSnapshot(snapshot.id, configuration: bundle.configuration)
-        try await bundle.captureDisks(intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
+        let plan = try await withOperation(on: bundle) { context in
+            let plan = try await context.bundle.prepareSnapshot(snapshot.id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
+            return plan
+        }
         try bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
         let sizes = await bundle.snapshotSizes()
 
@@ -525,13 +528,15 @@ struct VMBundleTests {
         let bundle = try makeOnDiskBundle()
         defer { try? FileManager.default.removeItem(at: bundle.url) }
         let id = UUID()
-        try Data("slot".utf8).write(to: bundle.saveFileURL)
-        _ = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
+        try Data("slot".utf8).write(to: VMBundleLayout(bundleURL: bundle.url).saveFileURL)
 
-        try await bundle.captureSuspendSlot(intoSnapshot: id)
+        try await withOperation(on: bundle) { context in
+            _ = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureSuspendSlot(intoSnapshot: id)
+        }
 
         #expect(text(at: VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: id).saveFileURL) == "slot")
-        #expect(text(at: bundle.saveFileURL) == "slot")
+        #expect(text(at: VMBundleLayout(bundleURL: bundle.url).saveFileURL) == "slot")
     }
 
     @Test("A partial capture's directory is removed outright, and a listed one is trashed")
@@ -541,11 +546,14 @@ struct VMBundleTests {
         let layout = VMBundleLayout(bundleURL: bundle.url)
         let partial = UUID()
         let listed = UUID()
-        _ = try await bundle.prepareSnapshot(partial, configuration: bundle.configuration)
-        _ = try await bundle.prepareSnapshot(listed, configuration: bundle.configuration)
 
-        await bundle.removeSnapshotDirectory(partial)
-        try await bundle.discardSnapshot(listed)
+        try await withOperation(on: bundle) { context in
+            _ = try await context.bundle.prepareSnapshot(partial, configuration: bundle.configuration)
+            _ = try await context.bundle.prepareSnapshot(listed, configuration: bundle.configuration)
+
+            await context.bundle.removeSnapshotDirectory(partial)
+            try await context.bundle.discardSnapshot(listed)
+        }
 
         #expect(!exists(layout.snapshotDirectoryURL(id: partial)))
         #expect(fileSystem.trashedURLs == [layout.snapshotDirectoryURL(id: listed)])
@@ -557,14 +565,17 @@ struct VMBundleTests {
         defer { try? FileManager.default.removeItem(at: bundle.url) }
         let layout = VMBundleLayout(bundleURL: bundle.url)
         let id = UUID()
-        let captured = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
-        try await bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
-        try Data("written-since".utf8).write(to: layout.diskImageURL)
 
-        let plan = try await bundle.planRestore(fromSnapshot: id, kind: .cold)
-        try await bundle.stageRestore(fromSnapshot: id, plan: plan)
-        #expect(text(at: layout.diskImageURL) == "written-since")
-        try await bundle.installRestore(plan)
+        try await withOperation(on: bundle) { context in
+            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
+            try Data("written-since".utf8).write(to: layout.diskImageURL)
+
+            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
+            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
+            #expect(text(at: layout.diskImageURL) == "written-since")
+            try await context.bundle.installRestore(plan)
+        }
 
         #expect(text(at: layout.diskImageURL) == "live-disk")
         #expect(!exists(layout.restoreStagingURL))
@@ -576,29 +587,40 @@ struct VMBundleTests {
         defer { try? FileManager.default.removeItem(at: bundle.url) }
         let layout = VMBundleLayout(bundleURL: bundle.url)
         let id = UUID()
-        let captured = try await bundle.prepareSnapshot(id, configuration: bundle.configuration)
-        try await bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
-        try await bundle.stageRestore(
-            fromSnapshot: id, plan: try await bundle.planRestore(fromSnapshot: id, kind: .cold))
-        #expect(exists(layout.restoreStagingURL))
 
-        await bundle.discardRestoreStaging()
+        try await withOperation(on: bundle) { context in
+            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
+            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
+            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
+            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
+            #expect(exists(layout.restoreStagingURL))
+
+            await context.bundle.discardRestoreStaging()
+        }
 
         #expect(!exists(layout.restoreStagingURL))
         #expect(text(at: layout.diskImageURL) == "live-disk")
     }
 
     @Test("Removing the suspend slot deletes it, and a bundle holding none stays without one")
-    func removeSaveFileDeletesTheSlot() throws {
+    func removeSaveFileDeletesTheSlot() async throws {
         let bundle = try makeOnDiskBundle()
         defer { try? FileManager.default.removeItem(at: bundle.url) }
-        try Data("slot".utf8).write(to: bundle.saveFileURL)
+        try Data("slot".utf8).write(to: VMBundleLayout(bundleURL: bundle.url).saveFileURL)
 
-        bundle.removeSaveFile()
-        #expect(!exists(bundle.saveFileURL))
+        try await withOperation(on: bundle) { context in
+            let slotURL = context.bundle.saveFileURL
+            let heldBefore = context.bundle.hasSaveFile
+            #expect(slotURL == VMBundleLayout(bundleURL: bundle.url).saveFileURL)
+            #expect(heldBefore)
+            context.bundle.removeSaveFile()
+            let heldAfter = context.bundle.hasSaveFile
+            #expect(!exists(slotURL))
+            #expect(!heldAfter)
 
-        bundle.removeSaveFile()
-        #expect(!exists(bundle.saveFileURL))
+            context.bundle.removeSaveFile()
+            #expect(!exists(VMBundleLayout(bundleURL: bundle.url).saveFileURL))
+        }
     }
 
     @Test("Ensuring the EFI variable store creates it in the bundle")
@@ -608,7 +630,7 @@ struct VMBundleTests {
         let storeURL = VMBundleLayout(bundleURL: bundle.url).efiVariableStoreURL
         #expect(!exists(storeURL))
 
-        try await bundle.ensureEFIVariableStore()
+        try await withOperation(on: bundle) { try await $0.bundle.ensureEFIVariableStore() }
 
         #expect(exists(storeURL))
     }
@@ -619,7 +641,9 @@ struct VMBundleTests {
         defer { try? FileManager.default.removeItem(at: bundle.url) }
 
         await #expect(throws: ConfigurationBuilderError.self) {
-            _ = try await bundle.createMacPlatformFiles(hardwareModel: Data("not a model".utf8))
+            _ = try await withOperation(on: bundle) { context in
+                try await context.bundle.createMacPlatformFiles(hardwareModel: Data("not a model".utf8))
+            }
         }
 
         #expect(!exists(VMBundleLayout(bundleURL: bundle.url).machineIdentifierURL))

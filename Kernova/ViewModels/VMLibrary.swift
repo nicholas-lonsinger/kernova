@@ -6,9 +6,8 @@ import KernovaLogging
 /// bookkeeping that keeps them in step with the bundles on disk: membership
 /// and sidebar ordering, the one ``adopt(_:)`` every bundle enters the library
 /// through, the policy every write of a VM's settings and pairings passes on
-/// its way to that VM's ``VMBundle``, and the revert registry. The library
-/// read, the directory-watched reconcile and the arrival pipeline live in
-/// `VMLibrary+Membership.swift`.
+/// its way to that VM's ``VMBundle``. The library read, the directory-watched
+/// reconcile and the arrival pipeline live in `VMLibrary+Membership.swift`.
 ///
 /// It also sequences the collaborators it owns — ``macAddresses``,
 /// ``removableMedia`` and ``guestAddresses`` — because only the library knows
@@ -23,7 +22,7 @@ import KernovaLogging
 /// wires them all.
 @MainActor
 @Observable
-final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
+final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmissionPeers {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
@@ -133,49 +132,47 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
     var selectedInstance: VMInstance? { selectedEntry?.vm }
 
     /// Whether anything is doing work that terminating would destroy rather
-    /// than suspend — a bundle still being created, cloned or imported, a VM
-    /// mid-save/restore/start/install, or a revert writing a snapshot's files
-    /// back over the bundle.
+    /// than suspend — a bundle still being created, cloned or imported, or a
+    /// VM held by an operation that shows a status of its own: a start,
+    /// restore, install, save, capture or revert.
     ///
     /// Excludes settled `.running` and `.paused` VMs, which termination
-    /// save-suspends.
+    /// save-suspends, and operations that present the phase they started from.
     var hasUninterruptibleWork: Bool {
-        !arrivals.isEmpty || instances.contains(where: \.isTransitioning)
-            || hasRevertInFlight
+        !arrivals.isEmpty
+            || instances.contains {
+                guard let operation = $0.phase.operation else { return false }
+                return operation.kind.declaration.status != .base
+            }
     }
 
-    /// Whether any VM is mid-save — the one operation an explicit quit has to
-    /// wait out rather than terminate through.
+    /// Whether any VM is mid-save or mid-capture — the operations an explicit
+    /// quit has to wait out rather than terminate through, since
+    /// `saveMachineState` writes its file in place.
     ///
     /// Narrower than ``hasUninterruptibleWork``, which the window reconcile uses
     /// to hold back a quit nobody asked for.
     var hasSaveInFlight: Bool {
-        instances.contains { $0.phase.terminationMustWaitOut }
-    }
-
-    /// Whether `instance` has work in flight that its sidebar row renders as busy.
-    ///
-    /// The lifecycle term is the one a pause or resume shows up in: both hold a
-    /// status that reads as resting — `.running` for a pause, `.paused` for a
-    /// resume — for the whole VZ await, so ``VMStatus`` alone renders nothing
-    /// while one is settling.
-    func isBusy(_ instance: VMInstance) -> Bool {
-        instance.isTransitioning || lifecycle.hasUnsettledOperation(for: instance.id)
-    }
-
-    /// Whether `instance` is at rest with nothing in flight against it — the
-    /// VMs a reconcile may evict once their bundle is gone.
-    func isIdleAtRest(_ instance: VMInstance) -> Bool {
-        instance.isAtRest
-            && !lifecycle.hasActiveOperation(for: instance.id)
-            && !lifecycle.hasUnsettledOperation(for: instance.id)
-            && !hasRevertInFlight(for: instance.id)
+        instances.contains {
+            switch $0.phase.operation?.kind {
+            case .saving?, .capturingSnapshot?: true
+            default: false
+            }
+        }
     }
 
     /// Whether this build can pass a host USB accessory through to a guest at
     /// all — the OS and the signature together, answered once by
     /// ``USBAccessorySupport/makeService(entitlements:)``.
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
+
+    /// The live VM whose identity bringing `instance` up under `configuration`
+    /// would duplicate.
+    func identityConflict(
+        for instance: VMInstance, bringingUp configuration: VMConfiguration
+    ) -> VMIdentityConflict? {
+        liveIdentities.conflict(for: instance, bringingUp: configuration)
+    }
 
     /// `true` from the moment a clone of `instance` registers its arrival until
     /// that arrival leaves the library — a cancelled clone stays until its
@@ -446,53 +443,26 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
         preferences.vmOrder = customOrder
     }
 
-    // MARK: - Revert Registry
+    // MARK: - Reverts
 
-    /// One revert in flight, and the VM whose bundle it rewrites.
-    struct RevertRegistration {
-        let instanceID: UUID
-        let task: Task<Void, Never>
+    /// Whether any VM is held by a revert.
+    var hasRevertInFlight: Bool { instances.contains(where: Self.isReverting) }
+
+    /// Whether `instance` is held by a revert.
+    private static func isReverting(_ instance: VMInstance) -> Bool {
+        guard case .bringUp(.reverting)? = instance.phase.operation?.kind else { return false }
+        return true
     }
 
-    /// Every revert in flight, keyed by a per-request id.
-    ///
-    /// Keyed by the request rather than the VM: two reverts of one VM would
-    /// share a slot and lose one of them, as would two ephemeral VMs powering
-    /// off together under a VM-keyed map. Each registration names its VM, so a
-    /// caller that only cares about one can still ask.
-    ///
-    /// The registry is library state — a revert rewrites the bundle a VM in
-    /// `instances` is built from — while the verb that fills it belongs to the
-    /// command core.
-    var revertTasks: [UUID: RevertRegistration] = [:]
-
-    /// Whether any revert is in flight — requested, whether or not it has
-    /// reached the copy.
-    var hasRevertInFlight: Bool { !revertTasks.isEmpty }
-
-    /// Whether a revert of this VM in particular is in flight.
-    ///
-    /// The signal is set synchronously when the revert is requested, so a
-    /// power-off's baseline revert is visible to anything that looks on the
-    /// very next main-actor turn.
-    func hasRevertInFlight(for instanceID: UUID) -> Bool {
-        revertTasks.values.contains { $0.instanceID == instanceID }
-    }
-
-    /// Waits until no revert is in flight, including any a running revert
-    /// starts.
+    /// Waits until no VM is held by a revert, including any a running revert's
+    /// power-off admits.
     ///
     /// Unbounded, matching the termination pass's other waits: a revert
-    /// interrupted mid-write is what the wait exists to prevent.
-    ///
-    /// A revert of a live VM resumes it once the files are in place, and the
-    /// wait spans that resume rather than ending at the copy — so the VM the
-    /// revert hands back live is save-suspended by the pass, which is what
-    /// termination does with any live VM. Ending at the copy would need a
-    /// second signal beside this registry and would leave the guest to die
-    /// inside `restoreMachineStateFrom`.
+    /// interrupted mid-write is what the wait exists to prevent. A revert of a
+    /// live VM resumes it inside the same operation, so the wait spans that
+    /// resume and the VM it hands back live is save-suspended by the pass.
     func waitForRevertsToSettle() async {
-        while let registration = revertTasks.values.first { await registration.task.value }
+        await waitForObservedChange { [self] in !hasRevertInFlight }
     }
 
     // MARK: - Guest Account
@@ -554,10 +524,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting {
             return self.updateSettings(
                 of: instance, configuration: configuration, hostState: hostState)
         }
-        instance.activity.liveIdentityConflict = { [weak self, weak instance] in
-            guard let self, let instance else { return nil }
-            return self.liveIdentities.conflict(for: instance)
-        }
+        instance.peers = self
         // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.
         instance.onAgentBecameCurrent = { [weak self, weak instance] in

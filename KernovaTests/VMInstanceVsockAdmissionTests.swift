@@ -29,7 +29,7 @@ struct VMInstanceVsockAdmissionTests {
             name: "Admission VM", guestOS: .macOS, mutate: mutate)
         // Every service below is session state, so it needs a session to live
         // in — the boot paths open one before any listener is wired.
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         return instance
     }
 
@@ -335,7 +335,7 @@ struct VMInstanceVsockAdmissionTests {
             #expect(
                 instance.sessionContext?.vsock.service(for: descriptor) != nil,
                 "\(descriptor.name): no service installed")
-            instance.tearDownSession(restingAt: .stopped)
+            instance.handleSessionEvent(.guestDidStop)
         }
     }
 
@@ -365,12 +365,12 @@ struct VMInstanceVsockAdmissionTests {
             // The user stops the VM before the queued hand-off gets its turn on
             // main. Resting at a phase that names no session is what releases
             // the identity the hand-off is checked against.
-            instance.tearDownSession(restingAt: .stopped)
+            instance.handleSessionEvent(.guestDidStop)
             // A successor session opens before the hand-off is drained, so the
             // assertions below read a live context the guard must still keep
             // the old hand-off out of.
             instance.activity.placeForTesting(.running(sessionID: UUID()))
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
 
             await drainMainQueue()
 
@@ -384,13 +384,14 @@ struct VMInstanceVsockAdmissionTests {
         }
     }
 
-    @Test("Tearing the session down clears the gate")
+    @Test("The session's end clears the gate")
     func tearDownSessionClearsGate() {
         let instance = makeInstance()
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(handshakeComplete: true))
 
-        instance.tearDownSession(restingAt: .stopped)
+        instance.handleSessionEvent(.guestDidStop)
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
     }

@@ -56,11 +56,6 @@ final class VMInstance: VMActivityOwner {
     /// or a Linux installer image being fetched and verified.
     var setupState: GuestSetupState?
 
-    /// The guest-setup pipeline in flight, owned by `VMCommandCore` — armed for
-    /// exactly the setup phase, so its presence is also `allowedVerbs(for:)`'s
-    /// gate for offering `.cancelGuestSetup`.
-    var setupTask: Task<Void, Never>?
-
     /// The named restore points this VM's bundle holds, as committed to
     /// `Snapshots/manifest.json`.
     var snapshotManifest: VMSnapshotManifest { bundle.snapshotManifest }
@@ -354,40 +349,8 @@ final class VMInstance: VMActivityOwner {
     var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
     var serialLogURL: URL { bundleLayout.serialLogURL }
 
-    /// `true` while `savedStateReadsAsDiscarded` is standing in for the file —
-    /// see ``answeringAsIfSavedStateDiscarded(_:)``.
-    @ObservationIgnored private var savedStateReadsAsDiscarded = false
-
     /// Whether the bundle holds a suspend slot.
-    ///
-    /// Reads the file, except inside ``answeringAsIfSavedStateDiscarded(_:)``.
-    var hasSaveFile: Bool { !savedStateReadsAsDiscarded && bundleLayout.hasSaveFile }
-
-    /// Answers `body` as this VM will stand once its saved state is discarded.
-    ///
-    /// What a caller about to discard one asks the ordinary capability gate
-    /// inside, so the work that follows the discard is known to be admitted
-    /// before the irreversible step is taken. Asking the real gate — rather
-    /// than a second spelling of its terms — is what keeps the two in step
-    /// when either changes.
-    ///
-    /// `body` cannot suspend, so no other main-actor work observes the VM
-    /// through the window where this answer stands in for the file. It decides
-    /// and nothing more: an effect taken inside would be taken against a VM
-    /// that is not the one on disk, and a refusal built inside would name what
-    /// the VM would accept rather than what it does.
-    func answeringAsIfSavedStateDiscarded<T>(_ body: () throws -> T) rethrows -> T {
-        guard !savedStateReadsAsDiscarded else {
-            #log(
-                Self.logger, .fault,
-                "Nested counterfactual read of the saved state of '\(self.name, privacy: .public)'")
-            assertionFailure("answeringAsIfSavedStateDiscarded(_:) is not re-entrant")
-            return try body()
-        }
-        savedStateReadsAsDiscarded = true
-        defer { savedStateReadsAsDiscarded = false }
-        return try body()
-    }
+    var hasSaveFile: Bool { bundleLayout.hasSaveFile }
 
     // MARK: - Machine Identity
 
@@ -417,36 +380,6 @@ final class VMInstance: VMActivityOwner {
     /// One entry per item in `configuration.removableMedia` while the VM is
     /// running; cleared on stop/teardown.
     var liveRemovableMedia: [RemovableMediaDeviceInfo] { sessionContext?.liveRemovableMedia ?? [] }
-
-    /// Whether the live session has a removable-media edit queued that the
-    /// reconciler has not yet driven onto the XHCI controller.
-    ///
-    /// Read through ``VMActivity/sessionContext``, so an observed wait on it wakes both
-    /// when the pass drains and when the session is torn down — the two ways
-    /// the debt is settled.
-    var hasRemovableMediaReconcileOwed: Bool {
-        sessionContext?.removableMediaReconcileOwed ?? false
-    }
-
-    /// Records that the session `sessionID` names owes a removable-media
-    /// reconcile pass.
-    ///
-    /// Dropped and logged when that session is no longer the live one — see
-    /// ``recordAttachedMedia(_:for:)``.
-    func markRemovableMediaReconcileOwed(for sessionID: UUID) {
-        guard let context = sessionWriteTarget(for: sessionID, "reconcile-owed mark") else { return }
-        context.removableMediaReconcileOwed = true
-    }
-
-    /// Records that the reconcile pass for the session `sessionID` names has
-    /// drained every queued edit.
-    ///
-    /// Dropped and logged when that session is no longer the live one — see
-    /// ``recordAttachedMedia(_:for:)``.
-    func clearRemovableMediaReconcileOwed(for sessionID: UUID) {
-        guard let context = sessionWriteTarget(for: sessionID, "reconcile-owed clear") else { return }
-        context.removableMediaReconcileOwed = false
-    }
 
     /// Records a device that was just attached, live, on the session
     /// `sessionID` names.
@@ -565,9 +498,7 @@ final class VMInstance: VMActivityOwner {
     var isLivePaused: Bool { activity.isLivePaused }
     var holdsLiveIdentity: Bool { activity.holdsLiveIdentity }
     var isAtRest: Bool { activity.isAtRest }
-    var isActive: Bool { activity.isActive }
     var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
-    var isTransitioning: Bool { activity.isTransitioning }
     var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
     var onPoweredOff: (@MainActor () -> Void)? {
@@ -580,7 +511,7 @@ final class VMInstance: VMActivityOwner {
         set { activity.onSessionBecameAttachable = newValue }
     }
 
-    func restingPhase(withoutSlot fallback: VMLifecyclePhase) -> VMLifecyclePhase {
+    func restingPhase(withoutSlot fallback: VMRestPhase) -> VMLifecyclePhase {
         activity.restingPhase(withoutSlot: fallback)
     }
 
@@ -592,46 +523,47 @@ final class VMInstance: VMActivityOwner {
         activity.handleSessionEvent(event)
     }
 
-    func enter(_ phase: VMLifecyclePhase) {
-        activity.enter(phase)
+    func adoptBuildResult(
+        _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
+    ) {
+        activity.adoptBuildResult(bringUp, result)
     }
 
-    @discardableResult
-    func settle(_ phase: VMLifecyclePhase, for sessionID: UUID) -> Bool {
-        activity.settle(phase, for: sessionID)
+    // MARK: - Admission Facts
+
+    /// What the library contributes to this VM's admission — wired by
+    /// `VMLibrary.wireHooks(for:)`. An instance outside a library has no
+    /// peers, no clone in flight, and no USB passthrough.
+    @ObservationIgnored weak var peers: (any VMAdmissionPeers)?
+
+    var admissionFacts: VMAdmission.Facts {
+        VMAdmission.Facts(
+            hasSaveFile: hasSaveFile,
+            hasSnapshots: !snapshotManifest.isEmpty,
+            guestOS: configuration.guestOS,
+            networkEnabled: configuration.networkEnabled,
+            clipboardSharingEnabled: configuration.clipboardSharingEnabled,
+            hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
+            usbSupported: peers?.supportsUSBAccessories ?? false,
+            cloneInFlight: peers?.hasCloneInFlight(from: self) ?? false,
+            identityConflict: nil)
     }
 
-    func beginBringUp(_ bringUp: VMBringUpPhase) throws(VMIdentityConflict) {
-        try activity.beginBringUp(bringUp)
+    func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
+        peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
     }
 
-    func endGuestSetup() {
-        activity.endGuestSetup()
-    }
-
-    func adoptBuildResult(_ result: ConfigurationBuilder.BuildResult) {
-        activity.adoptBuildResult(result)
-    }
-
-    func tearDownSession(restingAt phase: VMLifecyclePhase) {
-        activity.tearDownSession(restingAt: phase)
-    }
-
-    func restAfterPowerOff() {
-        activity.restAfterPowerOff()
-    }
-
-    // MARK: - Capabilities
-
-    var canAttachRemovableMedia: Bool { attachableSessionID != nil }
-
-    /// `true` when the bundled guest-agent installer disk can be attached to or
-    /// ejected from this VM.
-    ///
-    /// macOS guests only: the disk carries a `.app` and an `install.command`
-    /// that stages a user LaunchAgent, neither of which a Linux guest can run.
-    var canManageGuestAgentDisk: Bool {
-        canAttachRemovableMedia && configuration.guestOS == .macOS
+    /// The configuration `kind` puts in front of VZ: this VM's own, except for
+    /// a revert, which lands the snapshot's address
+    /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
+    /// identity across).
+    private func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
+        guard case .reverting(let snapshotID, _) = kind,
+            let snapshot = snapshotManifest.snapshot(id: snapshotID)
+        else { return configuration }
+        var landing = configuration
+        landing.macAddress = snapshot.macAddress
+        return landing
     }
 
     /// `true` when the bundle holds a saved state and nothing is live — the VM
@@ -640,75 +572,13 @@ final class VMInstance: VMActivityOwner {
     ///
     /// The file rather than the phase, because the two can disagree: a
     /// bring-up that gives up before the restore leaves the slot exactly as it
-    /// found it, however that failure was classified. A saved state loads back
-    /// only into the configuration it was written under, so this is also what
-    /// pins the VM's settings (``canEditSettings``).
+    /// found it, however that failure was classified.
     var holdsSuspendedSession: Bool { isAtRest && hasSaveFile }
 
-    /// Whether a bring-up can begin — the state term
-    /// ``VirtualizationService/start(_:bootIntoRecovery:provisioning:)`` guards
-    /// on.
-    ///
-    /// A VM holding a saved state is included: its start restores that state
-    /// rather than booting over it. Which of the two verbs a *surface* offers
-    /// is ``VMCapabilityCatalog``'s question.
-    var canStart: Bool { isAtRest }
-
-    var canStop: Bool { phase.canStop }
-
-    var canPause: Bool { phase.canPause }
-
-    /// Whether Resume applies — a hot resume from memory, or a cold one that
-    /// restores the bundle's suspend slot.
-    var canResume: Bool { isLivePaused || holdsSuspendedSession }
-
-    var canSave: Bool { phase.canSave }
-
-    /// Whether the VM's configuration can be edited.
-    ///
-    /// A live VM's hardware is pinned by its `VZVirtualMachine`, and a saved
-    /// state's by the file: VZ restores one only into the configuration it was
-    /// written under, so an edit taken while the slot is on disk strands it.
-    var canEditSettings: Bool { isAtRest && !hasSaveFile }
-
-    var canRename: Bool { phase.canRename }
-
-    /// Whether a rename committed now survives — see
-    /// ``VMLifecyclePhase/renamePersists``.
-    var renamePersists: Bool { phase.renamePersists }
-
-    /// How a capture started right now would be taken — the one place that
-    /// choice is made — or `nil` when the VM is in no state to capture.
-    ///
-    /// The bundle's suspend slot decides the at-rest cases: a VM holding one
-    /// captures it, and disks alone are captured only from a plainly stopped
-    /// VM — `.initialBoot` holds disks with no installed guest, so a revert
-    /// would land the VM stopped over an unbootable one, and `.failed` says the
-    /// last operation did not finish. Every transitional phase (`.starting`,
-    /// `.saving`, `.capturingLive`, …) is excluded too — a capture
-    /// mid-operation would race the operation itself.
+    /// How a capture started right now would be taken, or `nil` when the VM is
+    /// in no state to capture — see ``VMAdmission/captureMode(phase:facts:)``.
     var snapshotCaptureMode: VMSnapshotCaptureMode? {
-        if canSave {
-            .live
-        } else if holdsSuspendedSession {
-            .suspended
-        } else if phase == .stopped {
-            .stopped
-        } else {
-            nil
-        }
-    }
-
-    /// `true` when a snapshot can be captured in some form.
-    var canTakeSnapshot: Bool { snapshotCaptureMode != nil }
-
-    /// `true` when this VM has a snapshot to go back to and is settled enough
-    /// to be taken there.
-    ///
-    /// A live VM qualifies: the revert discards the running session, which is
-    /// what the confirmation asks the user to accept.
-    var canRevertToSnapshot: Bool {
-        !phase.isTransitioning && !snapshotManifest.isEmpty
+        VMAdmission.captureMode(phase: phase, facts: admissionFacts)
     }
 
     // MARK: - Wire Projection
@@ -761,63 +631,52 @@ final class VMInstance: VMActivityOwner {
         ephemeralBaselineSnapshot?.id == snapshot.id
     }
 
-    /// `true` when the VM is eligible for forceful termination — see
-    /// ``VMLifecyclePhase/canForceStop``.
-    var canForceStop: Bool { phase.canForceStop }
-
-    /// `true` when the VM can be deleted — nothing live in memory and no
-    /// transitional phase.
-    ///
-    /// A saved state is no bar: it is a file inside the bundle and goes with
-    /// it, so no discard step is needed first.
-    var canDelete: Bool { isAtRest }
-
-    /// `true` when the VM can be cold-booted into macOS Recovery.
-    ///
-    /// Stopped macOS guests only — Virtualization.framework has no recovery
-    /// start option for Linux/EFI guests, and a bundle holding a suspend slot
-    /// takes the restore that slot names rather than any cold boot, Recovery
-    /// included (``GuestStartRoute/init(startOf:bootIntoRecovery:)``).
-    var canStartInRecovery: Bool {
-        phase == .stopped && !hasSaveFile && configuration.guestOS == .macOS
-    }
-
-    var canUseExternalDisplay: Bool { hasLiveSession }
-
     var isInFullscreen: Bool { displayMode == .fullscreen }
 
     /// `true` when the display is not hosted inline — pop-out, fullscreen, or
     /// closed-while-headless (`.hidden`), all of which offer "Pop In".
     var isDisplayDetached: Bool { displayMode != .inline }
 
-    var canShowClipboard: Bool {
-        configuration.clipboardSharingEnabled && hasLiveSession
-    }
-
     // MARK: - Session Lifecycle
 
-    /// Opens the context one boot attempt's session state lives in, replacing
-    /// any prior one, and takes the security scopes its configuration build
-    /// needs.
+    /// Opens the context one boot attempt's session state lives in, and takes
+    /// the security scopes its configuration build needs.
     ///
     /// Called at the top of every bring-up — including an install-time build,
     /// where a pre-install VM can already carry bookmarked external attachments
     /// from settings. The two are one call because a scope with no context to
     /// hold it is a leak, and a context with no scopes cannot build.
     @discardableResult
-    func beginSessionContext(bootedIntoRecovery: Bool = false) -> VMSessionContext {
-        activity.beginSessionContext {
-            let context = VMSessionContext(
-                label: name,
-                bootedIntoRecovery: bootedIntoRecovery,
-                vsock: VsockFeatureCoordinator(
-                    instance: self,
-                    admissionGate: vsockAdmissionGate,
-                    clipboardDataSink: clipboardDataSink,
-                    dropDataSink: dropDataSink))
-            openRuntimeFileAccess(into: context)
-            return context
+    func beginSessionContext(
+        _ bringUp: borrowing VMBringUpContext, bootedIntoRecovery: Bool = false
+    ) -> VMSessionContext {
+        activity.beginSessionContext(bringUp) {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
         }
+    }
+
+    #if DEBUG
+    /// ``beginSessionContext(_:bootedIntoRecovery:)`` with no bring-up behind
+    /// it, replacing and releasing any prior context; tests only.
+    @discardableResult
+    func beginSessionContextForTesting(bootedIntoRecovery: Bool = false) -> VMSessionContext {
+        activity.installSessionContextForTesting {
+            makeSessionContext(bootedIntoRecovery: bootedIntoRecovery)
+        }
+    }
+    #endif
+
+    private func makeSessionContext(bootedIntoRecovery: Bool) -> VMSessionContext {
+        let context = VMSessionContext(
+            label: name,
+            bootedIntoRecovery: bootedIntoRecovery,
+            vsock: VsockFeatureCoordinator(
+                instance: self,
+                admissionGate: vsockAdmissionGate,
+                clipboardDataSink: clipboardDataSink,
+                dropDataSink: dropDataSink))
+        openRuntimeFileAccess(into: context)
+        return context
     }
 
     /// Brings a built configuration all the way up: adopts its pipes and media,
@@ -828,11 +687,13 @@ final class VMInstance: VMActivityOwner {
     /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
     /// install path stops short of the vsock listeners and stays hand-wired.
     ///
-    /// `nil` for the same reason ``attachSession(from:)`` returns `nil`, and the
-    /// caller must not proceed to start anything.
-    func bringUpSession(with result: ConfigurationBuilder.BuildResult) async -> VMSession? {
-        adoptBuildResult(result)
-        guard let session = await attachSession(from: result) else { return nil }
+    /// `nil` for the same reason ``attachSession(_:from:)`` returns `nil`, and
+    /// the caller must not proceed to start anything.
+    func bringUpSession(
+        _ context: borrowing VMBringUpContext, with result: ConfigurationBuilder.BuildResult
+    ) async -> VMSession? {
+        adoptBuildResult(context, result)
+        guard let session = await attachSession(context, from: result) else { return nil }
         startSerialReading()
         startClipboardService()
         await startVsockServices()
@@ -840,12 +701,14 @@ final class VMInstance: VMActivityOwner {
     }
 
     /// Attaches the session created from `result`
-    /// (``VMActivity/attachSession(from:)``) and builds the network-attachment
+    /// (``VMActivity/beginSession(_:from:)``) and builds the network-attachment
     /// coordinator for network-enabled configurations.
     ///
-    /// `nil` exactly when ``VMActivity/attachSession(from:)`` is.
-    func attachSession(from result: ConfigurationBuilder.BuildResult) async -> VMSession? {
-        guard let attached = await activity.attachSession(from: result) else { return nil }
+    /// `nil` exactly when ``VMActivity/beginSession(_:from:)`` is.
+    func attachSession(
+        _ context: borrowing VMBringUpContext, from result: ConfigurationBuilder.BuildResult
+    ) async -> VMSession? {
+        guard let attached = await activity.beginSession(context, from: result) else { return nil }
         await setupNetworkAttachmentCoordinator(
             for: attached.session, in: attached.context, vmnetNetworks: result.vmnetNetworks,
             entitlements: result.entitlements)
@@ -895,58 +758,22 @@ final class VMInstance: VMActivityOwner {
         detailPaneMode = .display
     }
 
-    // MARK: - Saved State
-
-    /// Ends the suspension the bundle holds: the saved state goes, and the VM
-    /// rests stopped.
-    ///
-    /// The two are one call because a suspension whose slot is gone is a dead
-    /// end — Resume has nothing to load and the settings stay locked behind a
-    /// file that is not there. A restore *consuming* the slot on its way to
-    /// running calls ``VMBundle/removeSaveFile()`` instead, and leaves the
-    /// phase to the bring-up.
-    ///
-    /// Refuses a VM that is not at rest, rather than deleting a slot a
-    /// bring-up already in flight is reading: a caller that means to end a
-    /// suspension has to hold a VM that is still resting on it.
-    ///
-    /// - Returns: whether the bundle is now without a saved state. A removal the
-    ///   file system turned down leaves the VM resting on the slot it still
-    ///   holds, so nothing claims a suspension ended that did not — a caller
-    ///   whose own work depended on the discard reads this and says so.
-    @discardableResult
-    func discardSavedState() -> Bool {
-        guard isAtRest else {
-            #log(
-                Self.logger, .fault,
-                "Refusing to discard the saved state of '\(self.name, privacy: .public)': it is \(self.status.rawValue, privacy: .public), not at rest"
-            )
-            assertionFailure("discardSavedState() on a VM that is not at rest")
-            return !hasSaveFile
+    func operationDidSettleRunning(_ kind: VMOperationKind) {
+        switch kind {
+        case .bringUp(.guestStart(.starting)), .resuming:
+            activateNetworkAttachment()
+            startAgentPostStartWatchdog()
+        case .bringUp(.guestStart(.restoringSavedState)), .bringUp(.reverting):
+            // Arms no watchdog: a restore resumes whatever guest state was
+            // frozen, which may be a Recovery session that never runs the
+            // agent, and no host-side flag survives the save to say which.
+            // The accept path arms once a control channel actually shows up.
+            activateNetworkAttachment()
+        case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
+            .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
+            .discardingSavedState, .deleting, .copyingOut:
+            break
         }
-        bundle.removeSaveFile()
-        enter(restingPhase(withoutSlot: .stopped))
-        return !hasSaveFile
-    }
-
-    /// Drops a suspend slot a save is still part-way through writing, and
-    /// nothing else.
-    ///
-    /// `VZVirtualMachine.saveMachineStateTo` writes the slot in place
-    /// (``VMLifecyclePhase/terminationMustWaitOut``), so a save that threw or
-    /// lost its guest left a truncated file behind — and
-    /// ``VMLibrary/initialPhase(for:layout:)`` would offer it after a relaunch
-    /// as a resumable session that cannot restore.
-    ///
-    /// The phase is the whole of the test, and it is the save's own window:
-    /// the slot is written under ``VMLifecyclePhase/saving`` and the VM leaves
-    /// that phase only once the write has returned, so a guest failure
-    /// delivered in the gap between the two drops a slot that was in fact
-    /// complete. Losing a session VZ has just finished writing beats offering
-    /// one that may be half a session.
-    func dropTruncatedSaveFile() {
-        guard case .saving = phase else { return }
-        bundle.removeSaveFile()
     }
 
     // MARK: - Serial Console I/O
@@ -1178,7 +1005,7 @@ final class VMInstance: VMActivityOwner {
     /// Recovery (which never runs the agent), an agent has been seen before on
     /// this VM, the agent isn't already connected, no install is in progress,
     /// and no watchdog is already armed. Cancelled by any inbound Hello, by a
-    /// pause, and by `tearDownSession`.
+    /// pause, and by the session's teardown.
     func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
         guard let context = sessionContext else { return }
         guard configuration.guestOS == .macOS else { return }

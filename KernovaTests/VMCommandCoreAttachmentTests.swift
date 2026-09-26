@@ -545,7 +545,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness(diskImages: diskImages)
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID))
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         let destination = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(UUID().uuidString).asif")
 
@@ -556,7 +556,7 @@ struct VMCommandCoreAttachmentTests {
             }
         }
         try await diskImages.parked.wait { diskImages.isParked }
-        instance.activity.placeForTesting(.saving(sessionID: sessionID))
+        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: sessionID)))
         diskImages.resumeCreateDiskImage()
         let refusal = await creation.value
 
@@ -604,7 +604,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("A suspend issued right after an eject lands the detach before the save")
+    @Test("A suspend issued right after an eject is refused busy until the detach lands")
     func suspendAfterEjectLandsTheDetachFirst() async throws {
         let harness = makeHarness()
         let sessionID = UUID()
@@ -612,17 +612,20 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID)) {
             $0.removableMedia = [item]
         }
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
         instance.recordAttachedMedia(
             RemovableMediaDeviceInfo(id: item.id, path: item.path, readOnly: true), for: sessionID)
 
         try harness.core.ejectRemovableMedia(.id(instance.id), item: item.id)
-        try await harness.core.suspend(.id(instance.id))
+        // The eject's reconcile holds the VM, so the save cannot tear the
+        // session down under the detach.
+        let refusal = await commandError { try await harness.core.suspend(.id(instance.id)) }
+        #expect(refusal?.isBusy == true)
 
-        // A save that ran first would have torn the session down under the
-        // queued detach, which would then have been dropped as stale.
+        try await waitForChange { instance.phase.operation == nil }
         #expect(harness.removableMediaDevices.detachCallCount == 1)
         #expect(instance.configuration.removableMedia == nil)
+        try await harness.core.suspend(.id(instance.id))
         #expect(instance.phase == .suspended)
     }
 
@@ -842,7 +845,8 @@ struct VMCommandCoreAttachmentTests {
         // can land in the suspension the sharing resolve opens — this is that
         // keystroke, landing there deterministically.
         harness.core.afterSharingResolveForTesting = {
-            instance.activity.placeForTesting(.starting(sessionID: UUID()))
+            instance.activity.placeForTesting(
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
         let refusal = await commandError {
@@ -850,10 +854,9 @@ struct VMCommandCoreAttachmentTests {
                 .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
         }
 
-        guard case .invalidState = try #require(refusal) else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
+        // The bring-up holds the VM, and the removal is what the VM takes
+        // once it rests again.
+        #expect(try #require(refusal).isBusy)
         // Neither the entry nor the file moved: the disk is still the VM's.
         #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -868,7 +871,8 @@ struct VMCommandCoreAttachmentTests {
         // Removable media is hot-pluggable, so the state that refuses is a VM
         // still coming up: no live session to attach to yet.
         harness.core.afterSharingResolveForTesting = {
-            instance.activity.placeForTesting(.starting(sessionID: UUID()))
+            instance.activity.placeForTesting(
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
         }
 
         let refusal = await commandError {
@@ -876,10 +880,9 @@ struct VMCommandCoreAttachmentTests {
                 .id(instance.id), item: item.id, trashFile: true, confirmed: true)
         }
 
-        guard case .invalidState = try #require(refusal) else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
+        // The bring-up holds the VM, and the removal is what the VM takes
+        // once it rests again.
+        #expect(try #require(refusal).isBusy)
         #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
@@ -927,7 +930,7 @@ struct VMCommandCoreAttachmentTests {
     @Test("A bundle still being copied refuses every attachment edit as busy")
     func arrivalRefusesEveryEdit() async throws {
         let harness = makeHarness()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
             .cloning(sourceID: UUID()), named: "Copying", gate: gate)
 
@@ -953,7 +956,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
         let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: source.id), named: "Source Copy", gate: gate)
         defer {
@@ -1076,11 +1079,13 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let sessionID = UUID()
         let instance = makeInstance(
-            in: harness, phase: .capturingLive(sessionID: sessionID), guestOS: .macOS
+            in: harness,
+            phase: .operating(.capturingSnapshot(.live), from: .running(sessionID: sessionID)),
+            guestOS: .macOS
         ) {
             $0.removableMedia = [RemovableMediaItem(path: installerPath, readOnly: true)]
         }
-        instance.beginSessionContext()
+        instance.beginSessionContextForTesting()
 
         instance.onAgentBecameCurrent?()
 
@@ -1277,11 +1282,11 @@ struct VMCommandCoreAttachmentTests {
     @Test(
         "A start-failed removal the VM can no longer take keeps both the saved state and the entry",
         arguments: [
-            VMLifecyclePhase.restoringSavedState(sessionID: nil),
-            .starting(sessionID: nil),
-            .running(sessionID: VMLifecyclePhaseFixtures.session),
+            PhaseFixture.operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
+            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped),
+            .settled(.running(sessionID: VMLifecyclePhaseFixtures.session)),
         ])
-    func aStartFailedRemovalRefusedByTheVMsStateKeepsEverything(phase: VMLifecyclePhase) async throws {
+    func aStartFailedRemovalRefusedByTheVMsStateKeepsEverything(phase: PhaseFixture) async throws {
         let harness = makeHarness()
         let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
@@ -1292,7 +1297,8 @@ struct VMCommandCoreAttachmentTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A bring-up another door issued while the alert was up — the slot is
         // still on disk, and VZ has not finished loading it.
-        instance.activity.placeForTesting(phase)
+        let placed = phase.phase
+        instance.activity.placeForTesting(placed)
 
         await #expect(throws: CommandError.self) {
             try await harness.core.removeStartFailedAttachment(
@@ -1305,7 +1311,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.hasSaveFile)
         #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
-        #expect(instance.phase == phase)
+        #expect(instance.phase == placed)
     }
 
     /// The discard is the last thing the recovery does, so everything that can
@@ -1348,7 +1354,7 @@ struct VMCommandCoreAttachmentTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A clone reading this VM's files locks a storage-disk edit, and the
         // discard cannot clear that.
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         let clone = harness.library.beginGatedArrival(
             .cloning(sourceID: instance.id), named: "Clone of it", gate: gate)
         defer {

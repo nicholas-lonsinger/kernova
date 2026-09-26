@@ -23,9 +23,30 @@ enum VMSnapshotCaptureMode: Sendable, Equatable {
     var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
 }
 
-/// One named restore point as `Snapshots/manifest.json` records it — what a
-/// capture is asked to take, before there is a configuration it was taken
-/// under.
+/// What a capture is asked to take. The kind is not part of it: the capture
+/// operation's ``VMSnapshotCaptureMode`` decides it.
+struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
+    var id: UUID
+    var name: String
+    var createdAt: Date
+    /// Free-form user note, empty when none was entered.
+    var notes: String
+
+    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), notes: String = "") {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+        self.notes = notes
+    }
+
+    /// The manifest record of this request captured in `mode`.
+    func record(capturedIn mode: VMSnapshotCaptureMode) -> VMSnapshotRecord {
+        VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: mode.kind)
+    }
+}
+
+/// One named restore point as `Snapshots/manifest.json` records it, before
+/// there is a configuration it was taken under.
 struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
     var id: UUID
     var name: String

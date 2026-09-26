@@ -29,7 +29,7 @@ struct VMInstanceDisplayDropTests {
             }
             // The services below are session state, so they need a session to
             // live in — the boot paths open one before any listener is wired.
-            instance.beginSessionContext()
+            instance.beginSessionContextForTesting()
         }
 
         /// Installs a started control service and hands back the guest end, so a
@@ -220,7 +220,7 @@ struct VMInstanceDisplayDropTests {
         // The toggle closes the Clipboard window and disables the toolbar item
         // that carries the ring, which is why the menu-bar status item — driven
         // by this report alone — is where the drop has to show.
-        #expect(!instance.canShowClipboard)
+        #expect(!instance.activity.admits(.affordance(.clipboard), posture: .offer))
 
         let operation = ClipboardTransferOperation(
             gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,

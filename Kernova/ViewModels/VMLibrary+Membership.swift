@@ -288,15 +288,15 @@ extension VMLibrary {
             // Keyed on the listing rather than on what was read, so a bundle
             // whose configuration is momentarily unreadable keeps its VM.
             let listed = Set(diskBundles.compactMap(storageService.bundleIdentity(at:)))
-            for instance in instances where isIdleAtRest(instance) {
+            for instance in instances {
                 if let identity = storageService.bundleIdentity(at: instance.bundleURL),
                     listed.contains(identity)
                 {
                     continue
                 }
-                // Cancel any in-flight setup task before evicting — otherwise it keeps
-                // mutating an orphan instance the library no longer knows about.
-                instance.setupTask?.cancel()
+                // Only a VM at rest is evicted: one an operation holds keeps
+                // its row until the operation ends, and the next pass finds it.
+                guard (try? instance.activity.remove()) != nil else { continue }
                 evict(instance)
                 #log(
                     Self.logger, .info,
@@ -358,14 +358,14 @@ extension VMLibrary {
     /// the scan could not see says nothing about the slot inside it.
     private func normalizeEmptiedSuspensions(inBundles bundlesOnDisk: Set<UUID>) {
         for instance in instances
-        where bundlesOnDisk.contains(instance.id) && instance.isColdPaused
+        where bundlesOnDisk.contains(instance.id) && instance.phase == .suspended
             && !instance.hasSaveFile
         {
             #log(
                 Self.logger, .notice,
                 "Resting '\(instance.name, privacy: .public)' stopped: its suspend slot is no longer in the bundle"
             )
-            instance.enter(.stopped)
+            instance.activity.reconcileRest()
         }
     }
 

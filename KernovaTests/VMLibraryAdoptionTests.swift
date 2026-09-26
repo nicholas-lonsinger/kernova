@@ -212,7 +212,7 @@ struct VMLibraryAdoptionTests {
     @Test("A cancel during the write discards the staged tree and never publishes")
     func aCancelDuringTheWriteDiscardsTheStagedTreeAndNeverPublishes() async throws {
         let library = makeLibrary()
-        let gate = GatedArrivalWrite()
+        let gate = GatedStep()
         // A discard that fails still leaves nothing a reconcile can adopt: the
         // staged tree is under the hidden staging directory.
         storage.discardStagedBundleError = CocoaError(.fileWriteNoPermission)
