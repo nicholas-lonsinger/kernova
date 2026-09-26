@@ -636,6 +636,7 @@ struct USBAccessoryCoordinatorTests {
         // The delete's ending admitted it, so nothing else was decided between.
         #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 2))
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        try await service.attachStarted()
         service.resumeAttach()
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
         #expect(service.attachedRegistryIDs == [2])
