@@ -1008,7 +1008,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
 
         let error = try #require(await commandError { try await harness.core.pause(.id(arrival.id)) })
         guard case .busy(let vm, let operation) = error else {
@@ -1729,7 +1729,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
 
         let error = try #require(
             commandError {
@@ -2050,7 +2050,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
 
         #expect(
             commandError { try harness.core.rename(.id(arrival.id), to: "After") }?.isBusy == true)
@@ -2081,20 +2081,34 @@ struct VMCommandCoreTests {
         #expect(harness.library.arrivals.isEmpty)
     }
 
-    @Test("A clone's arrival names its source until the copy settles")
-    func cloneArrivalNamesItsSource() async throws {
+    @Test("A clone holds its source from its registration until its copy ends, and no longer")
+    func cloneHoldsItsSourceForTheCopyAlone() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        let hold = DispatchSemaphore(value: 0)
-        harness.storage.cloneHold = hold
+        let copyHold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = copyHold
+        let publishHold = DispatchSemaphore(value: 0)
+        harness.storage.publishHold = publishHold
 
         let summary = try await harness.core.clone(
             .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         let arrival = try #require(harness.library.arrivals.first)
         #expect(arrival.id == summary.id)
-        #expect(arrival.kind == .cloning(sourceID: instance.id))
-        hold.signal()
+        #expect(arrival.kind == .cloning)
+        // Held in the step that registered the arrival, before the copy began.
+        #expect(instance.phase.operation?.kind == .copyingOut)
+        try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
+        #expect(
+            await commandError { try await harness.core.start(instance) }?.isBusy == true)
+
+        copyHold.signal()
+        try await harness.storage.publishLanded.wait { harness.storage.publishBundleCallCount == 1 }
+        // The clone is still publishing, and its source is already free.
+        #expect(instance.phase == .stopped)
+        #expect(harness.library.arrivals.map(\.id) == [summary.id])
+
+        publishHold.signal()
         await arrival.settle()
         #expect(harness.library.instances.count == 2)
     }
@@ -2103,9 +2117,10 @@ struct VMCommandCoreTests {
     func deleteRefusesASourceBeingCloned() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
-        let gate = GatedStep()
-        let clone = harness.library.beginGatedArrival(
-            .cloning(sourceID: instance.id), named: "Source Copy", gate: gate)
+        let hold = DispatchSemaphore(value: 0)
+        harness.storage.cloneHold = hold
+        let clone = try await harness.core.clone(
+            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
 
         let deleteError = try #require(
             await commandError {
@@ -2119,9 +2134,8 @@ struct VMCommandCoreTests {
         #expect(vm.id == instance.id)
         #expect(operation == "being cloned")
         #expect(harness.library.instances.contains { $0.id == instance.id })
-        _ = clone.requestCancel()
-        gate.release()
-        await clone.settle()
+        hold.signal()
+        await harness.library.arrivals.first { $0.id == clone.id }?.settle()
     }
 
     @Test("delete trashes the bundle and drops the row")
@@ -2250,7 +2264,7 @@ struct VMCommandCoreTests {
             .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try VMBundleFiles(url: url, access: CoordinatedBundleFileAccess())
+        try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
             .writeInitial(VMConfiguration(name: name, guestOS: .linux, bootMode: .efi))
         return url
     }
@@ -2283,7 +2297,7 @@ struct VMCommandCoreTests {
         let pairing = USBAccessoryPairing(
             key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
             receptacleLabel: nil)
-        try VMBundleFiles(url: source, access: CoordinatedBundleFileAccess()).update(.usbPairings) {
+        try VMStagedBundle.fixtureForTesting(at: source, access: CoordinatedBundleFileAccess()).update(.usbPairings) {
             $0 = USBAccessoryPairingSet(pairings: [pairing])
         }
 
@@ -2461,7 +2475,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Cloning", gate: gate)
+            .cloning, named: "Cloning", gate: gate)
 
         var events = VMLibraryEventReader(harness.core.events())
         gate.release()
@@ -2583,7 +2597,7 @@ struct VMCommandCoreTests {
 
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(
-            .cloning(sourceID: UUID()), named: "Copying", gate: gate)
+            .cloning, named: "Copying", gate: gate)
         let error = try #require(
             commandError { try harness.core.rename(.id(arrival.id), to: "Later") })
         #expect(error.isBusy)

@@ -113,7 +113,6 @@ struct VMSettingsStoragePanelTests {
                 && [
                     groupedFormLockHintText,
                     VMSettingsStoragePanelViewController.removableMediaLockHintText,
-                    VMSettingsStoragePanelViewController.cloneLockHintText,
                 ].contains($0.toolTip ?? "")
         }
         .compactMap(\.toolTip)
@@ -124,32 +123,6 @@ struct VMSettingsStoragePanelTests {
     /// each suite's helper closes over its own controller triple shape.
     private func reapply(_ vc: VMSettingsViewController, _ pair: (VMInstance, VMLibraryViewModel)) {
         vc.reconfigure(instance: pair.0, viewModel: pair.1, isReadOnly: false)
-    }
-
-    @Test("The Storage Disks hint names an in-flight clone of this VM, and clears once the clone settles")
-    func storageLockHintNamesAnInFlightClone() async throws {
-        let cloneHintText = VMSettingsStoragePanelViewController.cloneLockHintText
-        #expect(cloneHintText != groupedFormLockHintText)
-
-        let (vc, instance, viewModel) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(visibleLockHints(in: vc.view).isEmpty)
-
-        // An arrival cloning this VM locks Storage Disks for a reason the
-        // shared "Editable when stopped" would misstate on a stopped VM.
-        let gate = GatedStep()
-        let clone = viewModel.library.beginGatedArrival(
-            .cloning(sourceID: instance.id), named: "Clone", gate: gate)
-        reapply(vc, (instance, viewModel))
-        #expect(visibleLockHints(in: vc.view) == [cloneHintText])
-
-        // The copy settles and the arrival's row is gone — the hint reverts to
-        // the shared wording rather than staying stuck on the clone-specific
-        // one.
-        _ = clone.requestCancel()
-        gate.release()
-        await clone.settle()
-        reapply(vc, (instance, viewModel))
-        #expect(visibleLockHints(in: vc.view).isEmpty)
     }
 
     // MARK: - Per-row delete confirmation prompt

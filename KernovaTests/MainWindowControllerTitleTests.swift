@@ -19,12 +19,9 @@ struct MainWindowControllerTitleTests {
 
     @Test("A selected arrival titles the window with its name")
     func selectedArrivalTitlesTheWindow() {
-        let arrival = VMArrival(
-            id: UUID(), kind: .importing,
-            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi),
-            destinationURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("Arriving.kernova", isDirectory: true)
-        ) { _ in throw CancellationError() }
+        let arrival = VMArrival.inert(
+            .importing,
+            configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi))
         #expect(MainWindowController.windowTitle(for: .arriving(arrival)) == "Kernova — Arriving")
     }
 }

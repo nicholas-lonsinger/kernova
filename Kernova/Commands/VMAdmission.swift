@@ -85,8 +85,6 @@ enum VMAdmission {
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
         var usbSupported: Bool
-        /// A clone copying this VM's files out of its bundle.
-        var cloneInFlight: Bool
         /// The live VM whose identity bringing this one up would duplicate —
         /// supplied only when deciding a bring-up.
         var identityConflict: VMIdentityConflict?
@@ -297,9 +295,6 @@ enum VMAdmission {
             guard editClasses(settledAt: phase, facts: facts).isSuperset(of: classes) else {
                 return .refuse(.invalidState)
             }
-            if classes.contains(.machineKeys), facts.cloneInFlight {
-                return .refuse(.busy(.copyingOut))
-            }
             return .admit
         case .sessionAction:
             return live ? .admit : .refuse(.invalidState)
@@ -355,12 +350,6 @@ enum VMAdmission {
             admitted = atRest && !facts.hasSaveFile
         }
         guard admitted else { return .refuse(.invalidState) }
-        switch kind {
-        case .bringUp, .deleting, .creatingStorageDisk, .removingStorageDisk:
-            if facts.cloneInFlight { return .refuse(.busy(.copyingOut)) }
-        default:
-            break
-        }
         if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
             return identityChecked(facts)
         }
@@ -399,8 +388,8 @@ enum VMAdmission {
         case .cancel(let family):
             if holder.belongs(to: family) { return .admit }
         case .edit(let classes):
-            // A tolerated edit still answers to every settled rule — the clone
-            // lock and a build without USB among them.
+            // A tolerated edit still answers to every settled rule — a build
+            // without USB among them.
             if tolerated(declaration.edits, from: basis, facts: facts).isSuperset(of: classes) {
                 return decideSettled(request, posture: posture, phase: basis, facts: facts)
             }
@@ -536,9 +525,6 @@ protocol VMAdmissionPeers: AnyObject {
 
     /// Whether the app's termination has begun.
     var isTerminating: Bool { get }
-
-    /// Whether a clone is copying `instance`'s files out of its bundle.
-    func hasCloneInFlight(from instance: VMInstance) -> Bool
 
     /// Which VM holds each USB accessory passed through to a guest.
     var accessoryHolders: VMAccessoryHolders { get }

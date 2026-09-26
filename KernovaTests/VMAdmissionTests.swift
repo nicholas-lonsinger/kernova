@@ -30,7 +30,6 @@ struct VMAdmissionTests {
     private struct Variant: Sendable, CustomStringConvertible {
         var guestOS: VMGuestOS = .macOS
         var pendingSetup = false
-        var clone = false
         var usbSupported = true
         var networkEnabled = true
         var clipboardSharing = true
@@ -39,14 +38,12 @@ struct VMAdmissionTests {
         static let linux = Variant(guestOS: .linux)
         static let pendingSetup = Variant(pendingSetup: true)
         static let linuxPendingSetup = Variant(guestOS: .linux, pendingSetup: true)
-        static let clone = Variant(clone: true)
-        static let cloneWithPendingSetup = Variant(pendingSetup: true, clone: true)
         static let noUSB = Variant(usbSupported: false)
         static let noNetwork = Variant(networkEnabled: false)
         static let noClipboard = Variant(clipboardSharing: false)
 
         var description: String {
-            "\(guestOS) setup=\(pendingSetup) clone=\(clone) usb=\(usbSupported) "
+            "\(guestOS) setup=\(pendingSetup) usb=\(usbSupported) "
                 + "network=\(networkEnabled) clipboard=\(clipboardSharing)"
         }
     }
@@ -59,26 +56,22 @@ struct VMAdmissionTests {
             networkEnabled: variant.networkEnabled,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
-            cloneInFlight: variant.clone, identityConflict: nil, accessoryHolder: nil,
-            terminating: terminating)
+            identityConflict: nil, accessoryHolder: nil, terminating: terminating)
     }
 
-    private static func facts(
-        slot: Bool = false, pendingSetup: Bool = false, clone: Bool = false
-    ) -> VMAdmission.Facts {
-        facts(slot: slot, Variant(pendingSetup: pendingSetup, clone: clone))
+    private static func facts(slot: Bool = false, pendingSetup: Bool = false) -> VMAdmission.Facts {
+        facts(slot: slot, Variant(pendingSetup: pendingSetup))
     }
 
-    /// One cell: `A` admit, `J` join, `B` busy with the held kind, `b` busy
-    /// with a clone copying the VM out, `I` invalid state, `R` removed, `U`
-    /// unsupported by this build, `C` an identity conflict, `H` an accessory
-    /// another attach holds, `T` refused by the app's termination.
+    /// One cell: `A` admit, `J` join, `B` busy with the held kind, `I`
+    /// invalid state, `R` removed, `U` unsupported by this build, `C` an
+    /// identity conflict, `H` an accessory another attach holds, `T` refused
+    /// by the app's termination.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
         case .join: "J"
         case .refuse(.busy(let kind)) where kind == held: "B"
-        case .refuse(.busy(.copyingOut)): "b"
         case .refuse(.busy): "?"
         case .refuse(.invalidState): "I"
         case .refuse(.removed): "R"
@@ -176,25 +169,6 @@ struct VMAdmissionTests {
         (.noUSB, .operation(.detachingUSB(deviceID: session)), "UUUUUUR"),
         (.noUSB, .edit(.hotPlugMedia), "AAAIAAR"),
         (.noNetwork, .edit(.networkAttachment), "AAAIIIR"),
-        // A clone copying the VM's files out holds every bring-up — whatever
-        // Start or Resume resolved it to — the delete, and every machine-key
-        // edit as busy; a hot resume and the rest do not touch those files.
-        (.clone, .start(recovery: false), "bbbbIIR"),
-        (.clone, .start(recovery: true), "bIIIIIR"),
-        (.clone, .resume, "IIIbIAR"),
-        (.clone, .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "bbbbbbR"),
-        (.clone, .operation(.deleting), "bbbbIIR"),
-        (.clone, .edit(.machineKeys), "bbbIIIR"),
-        (.clone, .edit(.liveKeys), "AAAAAAR"),
-        (.clone, .operation(.copyingOut), "AAAIIIR"),
-        (.clone, .operation(.deletingSnapshot), "AAAAAAR"),
-        // A disk created in, or trashed from, the bundle is a machine-key
-        // write; removable media lives outside it.
-        (.clone, .operation(.creatingStorageDisk), "bbbIIIR"),
-        (.clone, .operation(.removingStorageDisk), "bbbIIIR"),
-        (.clone, .operation(.creatingRemovableMedia), "AAAIAAR"),
-        (.cloneWithPendingSetup, .start(recovery: false), "bbbbIIR"),
-        (.cloneWithPendingSetup, .operation(.bringUp(.settingUp(.macOSInstall))), "bbbIIIR"),
     ]
 
     @Test(
@@ -477,11 +451,6 @@ struct VMAdmissionTests {
 
         // Facts varied under a held operation.
 
-        // A clone's lock on the files outlasts the operation, so what it
-        // holds is busy with the clone — a tolerated machine-key edit too.
-        HeldRow(
-            kind: .deletingSnapshot, startedFrom: .stopped, variant: .clone,
-            expected: "bbI IIIIII BIIB Bbb bbB bABAAABAA IIIB AIIII"),
         // A build without USB passthrough refuses it as unsupported whatever
         // holds the VM.
         HeldRow(
@@ -631,28 +600,24 @@ struct VMAdmissionTests {
         "Start and Resume decide as the operation they resolve to, over every settled phase and fact",
         arguments: [false, true], [false, true])
     func startAndResumeDecideAsTheirOperation(slot: Bool, pendingSetup: Bool) {
-        for clone in [false, true] {
-            for guestOS in [VMGuestOS.macOS, .linux] {
-                var facts = Self.facts(slot: slot, pendingSetup: pendingSetup, clone: clone)
-                facts.guestOS = guestOS
-                for column in Self.settledColumns where column.phase != .removed {
-                    for request: VMAdmission.Request in [
-                        .start(recovery: false), .start(recovery: true), .resume,
-                    ] {
-                        let decided = VMAdmission.decide(
-                            request, posture: .commit, phase: column.phase, facts: facts)
-                        let kind = VMAdmission.operationKind(
-                            for: request, phase: column.phase, facts: facts)
-                        let expected =
-                            kind.map {
-                                VMAdmission.decide(
-                                    .operation($0), posture: .commit, phase: column.phase,
-                                    facts: facts)
-                            } ?? .refuse(.invalidState)
-                        #expect(
-                            decided == expected,
-                            "\(request) \(column.phase) clone=\(clone) \(guestOS)")
-                    }
+        for guestOS in [VMGuestOS.macOS, .linux] {
+            var facts = Self.facts(slot: slot, pendingSetup: pendingSetup)
+            facts.guestOS = guestOS
+            for column in Self.settledColumns where column.phase != .removed {
+                for request: VMAdmission.Request in [
+                    .start(recovery: false), .start(recovery: true), .resume,
+                ] {
+                    let decided = VMAdmission.decide(
+                        request, posture: .commit, phase: column.phase, facts: facts)
+                    let kind = VMAdmission.operationKind(
+                        for: request, phase: column.phase, facts: facts)
+                    let expected =
+                        kind.map {
+                            VMAdmission.decide(
+                                .operation($0), posture: .commit, phase: column.phase,
+                                facts: facts)
+                        } ?? .refuse(.invalidState)
+                    #expect(decided == expected, "\(request) \(column.phase) \(guestOS)")
                 }
             }
         }

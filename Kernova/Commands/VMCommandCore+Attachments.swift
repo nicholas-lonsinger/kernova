@@ -638,8 +638,8 @@ extension VMCommandCore {
     /// On a VM resting on its saved state the removal is a write of the discard
     /// operation itself, committed *before* the saved state goes — the step
     /// nothing can undo: the alert is window-modal and every other door stays
-    /// live behind it, so a bring-up, a clone or a copy can take the VM between
-    /// the offer and the click — and the configuration write can refuse or fail
+    /// live behind it, so a bring-up or a copy can take the VM between the
+    /// offer and the click — and the configuration write can refuse or fail
     /// to reach disk. Every one of those leaves the VM with both its session
     /// and its attachment, and tells the caller why. A VM holding no saved
     /// state — a bring-up consumed it while the alert was up, or a live session
@@ -674,8 +674,8 @@ extension VMCommandCore {
             }
         // Decided as the VM will stand once the discard lands, so only the term
         // that discard clears is lifted and every other blocker — a bring-up in
-        // flight, a clone reading this bundle, a copy still writing it —
-        // answers exactly as it will answer the verb.
+        // flight, a copy still writing it — answers exactly as it will answer
+        // the verb.
         // The refusal names what this VM really accepts rather than what it
         // would accept after a discard that is not going to happen.
         guard capabilities.acceptsAsIfSavedStateDiscarded(capability, on: instance) else {

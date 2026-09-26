@@ -126,6 +126,8 @@ struct VMCommandCoreArrivalTests {
         #expect(row.status == VMStatus.preparingWireName)
         let arrival = try #require(harness.library.arrivals.first)
         await arrival.settle()
+        // The failed copy let go of its source where it found it.
+        #expect(source.phase == .stopped)
 
         try await harness.reports.changed.wait { !harness.reports.failures.isEmpty }
         try await events.changed.wait { !events.failures.isEmpty }
@@ -165,6 +167,8 @@ struct VMCommandCoreArrivalTests {
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
         try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        // The copy cannot be interrupted, so its source stays held until it ends.
+        #expect(source.phase.operation?.kind == .copyingOut)
         hold.signal()
 
         let outcome = await waiter.result
@@ -177,6 +181,7 @@ struct VMCommandCoreArrivalTests {
         }
         #expect(message.contains("cancelled"))
         #expect(harness.reports.failures.isEmpty)
+        #expect(source.phase == .stopped)
         #expect(harness.library.instances.map(\.id) == [source.id])
         #expect(storage.publishBundleCallCount == 0)
         #expect(storage.discardedStagedURLs.count == 1)

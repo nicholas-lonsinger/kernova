@@ -497,7 +497,7 @@ final class VMInstance {
 
     /// What the library contributes to this VM's admission — wired by
     /// `VMLibrary.wireHooks(for:)`. An instance outside a library has no
-    /// peers, no clone in flight, no USB passthrough, and no termination.
+    /// peers, no USB passthrough, and no termination.
     @ObservationIgnored weak var peers: (any VMAdmissionPeers)?
 
     var admissionFacts: VMAdmission.Facts {
@@ -509,7 +509,6 @@ final class VMInstance {
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbSupported: peers?.supportsUSBAccessories ?? false,
-            cloneInFlight: peers?.hasCloneInFlight(from: self) ?? false,
             identityConflict: nil,
             accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false)

@@ -105,24 +105,32 @@ final class VMBundle {
 
     // MARK: - State files
 
+    /// What ``VMBundleFiles/update(_:_:_:)`` asks for, so only a bundle's
+    /// own commits — reached only through a permit — write a bundle a
+    /// ``VMBundle`` holds: the initializer is `fileprivate`, which
+    /// `@testable import` does not open.
+    struct CommitKey {
+        fileprivate init() {}
+    }
+
     fileprivate func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
-        publish(try files.update(.configuration, change), to: \.configuration)
+        publish(try files.update(.configuration, CommitKey(), change), to: \.configuration)
     }
 
     fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
-        publish(try files.update(.hostState, change), to: \.hostState)
+        publish(try files.update(.hostState, CommitKey(), change), to: \.hostState)
     }
 
     fileprivate func commitSnapshotManifest(
         _ change: (inout VMSnapshotManifest) throws -> Void
     ) throws {
-        publish(try files.update(.snapshotManifest, change), to: \.snapshotManifest)
+        publish(try files.update(.snapshotManifest, CommitKey(), change), to: \.snapshotManifest)
     }
 
     fileprivate func commitUSBPairings(
         _ change: (inout USBAccessoryPairingSet) throws -> Void
     ) throws {
-        publish(try files.update(.usbPairings, change), to: \.usbPairings)
+        publish(try files.update(.usbPairings, CommitKey(), change), to: \.usbPairings)
     }
 
     // MARK: - Machine files
