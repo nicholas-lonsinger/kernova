@@ -80,9 +80,9 @@ protocol USBAccessoryProviding: AnyObject {
     func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
         async -> USBAccessoryInfo?
 
-    /// Attaches the accessory `registryID` names to `instance`'s live USB
-    /// controller.
-    func attach(_ registryID: UInt64, to instance: VMInstance) async throws -> AttachedUSBAccessory
+    /// Attaches the accessory `reservation` names to the live USB controller
+    /// of the VM it is reserved for.
+    func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory
 
     /// Detaches the passthrough device `deviceID` names.
     func detach(deviceID: UUID, from instance: VMInstance) async throws

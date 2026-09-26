@@ -417,35 +417,11 @@ final class VMInstance {
 
     // MARK: - Runtime USB Accessories
 
-    /// Host USB accessories passed through to this VM's guest; cleared on
-    /// stop/teardown.
-    var liveUSBAccessories: [AttachedUSBAccessory] { sessionContext?.liveUSBAccessories ?? [] }
-
-    /// Records an accessory that was just attached, live, on the session
-    /// `sessionID` names.
-    ///
-    /// Dropped and logged once that session is no longer the live one — see
-    /// ``recordAttachedMedia(_:for:)`` for why that is a normal bail.
-    func recordAttachedAccessory(_ attached: AttachedUSBAccessory, for sessionID: UUID) {
-        guard
-            let context = sessionWriteTarget(
-                for: sessionID, deviceID: attached.deviceID, "attached-accessory record")
-        else { return }
-        context.liveUSBAccessories.append(attached)
-    }
-
-    /// Drops an accessory's tracking entry — on detach, on a surprise unplug,
-    /// or before a save.
-    ///
-    /// A no-op, logged, when `sessionID` no longer names the live session.
-    /// Unlike removable media there is no security-scoped grant to release:
-    /// the user's assignment is macOS's to hold, not Kernova's.
-    func forgetAttachedAccessory(deviceID: UUID, for sessionID: UUID) {
-        guard
-            let context = sessionWriteTarget(
-                for: sessionID, deviceID: deviceID, "detached-accessory record")
-        else { return }
-        context.liveUSBAccessories.removeAll { $0.deviceID == deviceID }
+    /// Host USB accessories passed through to this VM's guest, in the order
+    /// they were attached — what the library's
+    /// ``VMAdmissionPeers/accessoryHolders`` records against this VM.
+    var liveUSBAccessories: [AttachedUSBAccessory] {
+        peers?.accessoryHolders.attached(to: self) ?? []
     }
 
     /// The context a live-session write issued against `sessionID` belongs to,
@@ -535,6 +511,7 @@ final class VMInstance {
             usbSupported: peers?.supportsUSBAccessories ?? false,
             cloneInFlight: peers?.hasCloneInFlight(from: self) ?? false,
             identityConflict: nil,
+            accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false)
     }
 

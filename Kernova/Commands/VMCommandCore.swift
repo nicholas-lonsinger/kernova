@@ -95,8 +95,8 @@ final class VMCommandCore: VMCommanding {
     var requestQuit: (() -> Void)?
 
     /// Reports an accessory the user has just placed on a guest, so that guest
-    /// takes it back on its own from now on — a pairing edit, under the permit
-    /// for the guest's VM.
+    /// takes it back on its own from now on — a pairing write, under the
+    /// permit of the attach operation still holding the guest's VM.
     ///
     /// A hook rather than a call: what an attach *means* for the future is the
     /// accessory coordinator's policy, and a build that cannot pass accessories
@@ -114,7 +114,8 @@ final class VMCommandCore: VMCommanding {
     var onUserDetachingAccessory: ((VMInstance, USBAccessoryInfo) -> Void)?
 
     /// Reports an accessory the user has just taken back by hand, which ends
-    /// that pairing.
+    /// that pairing — under the permit of the detach operation still holding
+    /// the guest's VM.
     var onUserReleasedAccessory: ((borrowing VMEditPermit, USBAccessoryInfo) throws -> Void)?
 
     /// Measures the window or screen a starting VM's display is about to occupy,
@@ -325,6 +326,10 @@ final class VMCommandCore: VMCommanding {
             .conflict(
                 vm: summary(instance), with: summary(conflict.other),
                 reason: conflict.reason.conflictReason)
+        case .accessoryHeld(let holder):
+            .operationFailed(
+                verb: .editUSBAccessory,
+                message: "That USB accessory is in use by \u{201C}\(holder.name)\u{201D}.")
         case .unsupportedByBuild:
             .unsupportedByBuild(capability: Self.usbAccessoryCapability)
         case .terminating:

@@ -227,7 +227,9 @@ final class USBAccessoryService: USBAccessoryProviding {
 
     // MARK: - Attach and Detach
 
-    func attach(_ registryID: UInt64, to instance: VMInstance) async throws -> AttachedUSBAccessory {
+    func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory {
+        let registryID = reservation.registryID
+        let instance = reservation.instance
         guard let session = instance.session else { throw USBAccessoryError.noVirtualMachine }
         guard session.hasUSBController else { throw USBAccessoryError.noUSBController }
         guard let accessory = held[registryID],

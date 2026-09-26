@@ -64,52 +64,77 @@ struct VirtualizationServiceTests {
 
     // MARK: - Detaching passthrough accessories before a save
 
-    /// A live session holding `count` passthrough accessories.
-    private func instanceHoldingAccessories(_ count: Int) -> (VMInstance, UUID, [UUID]) {
+    /// A VM in a library whose live session holds `count` passthrough
+    /// accessories, attached the way every attach is.
+    private struct AccessoryFixture {
+        /// Kept for the test's length: the VM reads what it holds from it.
+        let library: VMLibrary
+        let instance: VMInstance
+        let deviceIDs: [UUID]
+
+        /// Runs the sweep inside a save operation holding the VM, as both save
+        /// paths do, leaving the guest live whatever the sweep did so what it
+        /// still holds can be read.
+        @MainActor
+        func sweep(_ session: MockSnapshotSession) async throws {
+            try await instance.activity.perform(.saving) { context in
+                do {
+                    try await VirtualizationService.detachUSBAccessories(context, session: session)
+                    return .rest(.asStarted, ())
+                } catch {
+                    return .failed(.asStarted, error)
+                }
+            }
+        }
+    }
+
+    private func instanceHoldingAccessories(_ count: Int) async throws -> AccessoryFixture {
+        let accessories = MockUSBAccessoryService()
+        let lifecycle = makeTestLifecycle(usbAccessoryService: accessories)
+        let library = makeWiredLibrary(lifecycle: lifecycle)
         let sessionID = UUID()
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: sessionID))
-        let context = instance.beginSessionContextForTesting()
+        let instance = library.registerFixture(phase: .running(sessionID: sessionID))
+        instance.beginSessionContextForTesting()
         var deviceIDs: [UUID] = []
         for index in 0..<count {
+            let registryID = UInt64(index + 1)
+            accessories.accessories.append(
+                MockUSBAccessoryService.accessory(registryID: registryID, serial: "SER\(index)"))
             let deviceID = UUID()
+            accessories.nextDeviceID = deviceID
+            try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
             deviceIDs.append(deviceID)
-            context.liveUSBAccessories.append(
-                AttachedUSBAccessory(
-                    deviceID: deviceID,
-                    accessory: MockUSBAccessoryService.accessory(
-                        registryID: UInt64(index + 1), serial: "SER\(index)")))
         }
-        return (instance, sessionID, deviceIDs)
+        return AccessoryFixture(library: library, instance: instance, deviceIDs: deviceIDs)
     }
 
-    @Test("Every passthrough accessory is detached, and its tracking entry cleared")
+    @Test("Every passthrough accessory is detached, and released from the VM")
     func detachesEveryAccessoryBeforeSaving() async throws {
-        let (instance, sessionID, deviceIDs) = instanceHoldingAccessories(2)
+        let fixture = try await instanceHoldingAccessories(2)
         let session = MockSnapshotSession(guestState: .running)
 
-        try await VirtualizationService.detachUSBAccessories(
-            from: instance, session: session, for: sessionID)
+        try await fixture.sweep(session)
 
         let detached = await session.detachedUSBDeviceIDs
-        #expect(detached == deviceIDs)
-        #expect(instance.liveUSBAccessories.isEmpty)
+        #expect(detached == fixture.deviceIDs)
+        #expect(fixture.instance.liveUSBAccessories.isEmpty)
+        #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
     }
 
-    @Test("A device the controller already lost clears its entry and does not fail the save")
+    @Test("A device the controller already lost is released and does not fail the save")
     func anAlreadyDetachedDeviceIsNotAFailure() async throws {
-        let (instance, sessionID, _) = instanceHoldingAccessories(1)
+        let fixture = try await instanceHoldingAccessories(1)
         let session = MockSnapshotSession(guestState: .running)
         await session.setDetachError(VMSessionError.usbDeviceNotFound)
 
-        try await VirtualizationService.detachUSBAccessories(
-            from: instance, session: session, for: sessionID)
+        try await fixture.sweep(session)
 
-        #expect(instance.liveUSBAccessories.isEmpty)
+        #expect(fixture.instance.liveUSBAccessories.isEmpty)
     }
 
     @Test("A detach that fails for any other reason stops the save rather than writing state")
-    func aFailedDetachStopsTheSave() async {
-        let (instance, sessionID, _) = instanceHoldingAccessories(1)
+    func aFailedDetachStopsTheSave() async throws {
+        let fixture = try await instanceHoldingAccessories(1)
         let session = MockSnapshotSession(guestState: .running)
         await session.setDetachError(VMSessionError.usbControllerUnavailable)
 
@@ -117,57 +142,39 @@ struct VirtualizationServiceTests {
         // passthrough device — a file `VZErrorRestore` refuses and nothing can
         // recover, produced by an operation that reported success.
         await #expect(throws: VMSessionError.self) {
-            try await VirtualizationService.detachUSBAccessories(
-                from: instance, session: session, for: sessionID)
+            try await fixture.sweep(session)
         }
 
         let calls = await session.calls
         #expect(!calls.contains("saveMachineState"))
-        #expect(instance.liveUSBAccessories.count == 1)
+        #expect(fixture.instance.liveUSBAccessories.count == 1)
     }
 
     @Test("A sweep that throws part-way leaves only what it never reached attached")
-    func aPartialSweepClearsWhatItEjected() async {
-        let (instance, sessionID, deviceIDs) = instanceHoldingAccessories(2)
+    func aPartialSweepClearsWhatItEjected() async throws {
+        let fixture = try await instanceHoldingAccessories(2)
         let session = MockSnapshotSession(guestState: .running)
         await session.setDetachError(
-            VMSessionError.usbControllerUnavailable, forDeviceID: deviceIDs[1])
+            VMSessionError.usbControllerUnavailable, forDeviceID: fixture.deviceIDs[1])
 
         await #expect(throws: VMSessionError.self) {
-            try await VirtualizationService.detachUSBAccessories(
-                from: instance, session: session, for: sessionID)
+            try await fixture.sweep(session)
         }
 
         // What the instance still holds is what the sweep never got to, which
         // is how the put-back after a failed capture knows what was ejected.
-        #expect(instance.liveUSBAccessories.map(\.deviceID) == [deviceIDs[1]])
+        #expect(fixture.instance.liveUSBAccessories.map(\.deviceID) == [fixture.deviceIDs[1]])
     }
 
     @Test("A session holding nothing asks VZ for no detach at all")
     func noAccessoriesMeansNoDetachCalls() async throws {
-        let (instance, sessionID, _) = instanceHoldingAccessories(0)
+        let fixture = try await instanceHoldingAccessories(0)
         let session = MockSnapshotSession(guestState: .running)
 
-        try await VirtualizationService.detachUSBAccessories(
-            from: instance, session: session, for: sessionID)
+        try await fixture.sweep(session)
 
         let calls = await session.calls
         #expect(calls.isEmpty)
-    }
-
-    @Test("A detach for a session that is no longer live leaves the live one alone")
-    func detachForAStaleSessionDropsItsWrites() async throws {
-        let (instance, _, _) = instanceHoldingAccessories(1)
-        let session = MockSnapshotSession(guestState: .running)
-
-        try await VirtualizationService.detachUSBAccessories(
-            from: instance, session: session, for: UUID())
-
-        // The device still left the controller — VZ was asked — but the record
-        // belongs to whichever session is live now, so it is untouched.
-        let detached = await session.detachedUSBDeviceIDs
-        #expect(detached.count == 1)
-        #expect(instance.liveUSBAccessories.count == 1)
     }
 
     // MARK: - A bring-up that fails before its session is live

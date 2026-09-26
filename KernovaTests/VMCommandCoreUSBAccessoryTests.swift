@@ -55,7 +55,8 @@ struct VMCommandCoreUSBAccessoryTests {
             preferences: preferences
         )
         let pairingCoordinator = USBAccessoryCoordinator(
-            lifecycle: lifecycle, roster: library, pairings: library)
+            lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
+            pairings: library)
         core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
             try pairingCoordinator?.userAttached(accessory, permit)
         }
@@ -443,8 +444,37 @@ struct VMCommandCoreUSBAccessoryTests {
         // A guest captures an accessory exclusively, so the second attach could
         // otherwise only fail inside VZ.
         #expect(refusal?.isOperationFailure == true)
+        #expect(refusal?.message == "That USB accessory is in use by \u{201C}Holder\u{201D}.")
         #expect(other.liveUSBAccessories.isEmpty)
         #expect(holder.liveUSBAccessories.count == 1)
+    }
+
+    @Test("Two guests attaching one accessory: the second is refused while the first is in flight")
+    func aSecondAttachDuringTheFirstIsRefused() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.accessories)
+        let first = makeRunningInstance(in: harness, name: "First")
+        let second = makeRunningInstance(in: harness, name: "Second")
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 5))
+        service.suspendNextAttach = true
+
+        async let attach: Void = {
+            try? await harness.core.attachUSBAccessory(.id(first.id), accessory: 5)
+        }()
+        try await service.attachStarted()
+        let refusal = await commandError {
+            try await harness.core.attachUSBAccessory(.id(second.id), accessory: 5)
+        }
+        service.resumeAttach()
+        await attach
+
+        // The first attach holds the accessory from its admission, not from
+        // the moment VZ has captured it — so the second is refused before VZ
+        // is asked twice for one device.
+        #expect(refusal?.message == "That USB accessory is in use by \u{201C}First\u{201D}.")
+        #expect(service.attachedRegistryIDs == [5])
+        #expect(first.liveUSBAccessories.map(\.accessory.registryID) == [5])
+        #expect(second.liveUSBAccessories.isEmpty)
     }
 
     // MARK: - What the Edits Remember

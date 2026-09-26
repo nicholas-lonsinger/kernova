@@ -49,6 +49,7 @@ final class USBAccessoryCoordinator {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "USBAccessoryCoordinator")
 
     private let roster: any VMInstanceRoster
+    private let holders: VMAccessoryHolders
     private let pairings: any USBAccessoryPairingWriting
     private let lifecycle: VMLifecycleCoordinator
     private let service: any USBAccessoryProviding
@@ -87,11 +88,13 @@ final class USBAccessoryCoordinator {
     init?(
         lifecycle: VMLifecycleCoordinator,
         roster: any VMInstanceRoster,
+        holders: VMAccessoryHolders,
         pairings: any USBAccessoryPairingWriting
     ) {
         guard let service = lifecycle.usbAccessoryService else { return nil }
         self.lifecycle = lifecycle
         self.roster = roster
+        self.holders = holders
         self.pairings = pairings
         self.service = service
 
@@ -177,16 +180,12 @@ final class USBAccessoryCoordinator {
     /// callback did not arrive.
     private func reconcile(_ info: USBAccessoryInfo) {
         guard let identity = info.identity else { return }
-        for instance in roster.instances {
-            guard let sessionID = instance.liveSessionID else { continue }
-            for stale in instance.liveUSBAccessories
-            where stale.accessory.identity == identity {
-                instance.forgetAttachedAccessory(deviceID: stale.deviceID, for: sessionID)
-                #log(
-                    Self.logger, .notice,
-                    "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again, and VZ did not report the disconnect"
-                )
-            }
+        for (instance, stale) in holders.attachedEntries where stale.accessory.identity == identity {
+            instance.activity.accessoryLeftGuest(deviceID: stale.deviceID)
+            #log(
+                Self.logger, .notice,
+                "Dropped '\(instance.name, privacy: .public)' record of USB accessory \(stale.accessory.displayName, privacy: .public): the host has it again, and VZ did not report the disconnect"
+            )
         }
     }
 
@@ -198,7 +197,7 @@ final class USBAccessoryCoordinator {
     /// Wired to ``VMActivity/onSessionBecameAttachable``, so it runs once per
     /// session rather than on every arrival at a live phase.
     func sessionBecameAttachable(_ instance: VMInstance) {
-        let held = Set(accessoriesHeldByGuests().map(\.registryID))
+        let held = holders.heldRegistryIDs
         let owed = service.accessories.filter { accessory in
             guard !held.contains(accessory.registryID), let identity = accessory.identity else {
                 return false
@@ -239,9 +238,7 @@ final class USBAccessoryCoordinator {
         }
         guard let accessory = service.accessories.first(where: { $0.registryID == registryID })
         else { return }
-        guard !accessoriesHeldByGuests().contains(where: { $0.registryID == registryID }) else {
-            return
-        }
+        guard !holders.heldRegistryIDs.contains(registryID) else { return }
         do {
             _ = try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
             #log(
@@ -335,7 +332,7 @@ final class USBAccessoryCoordinator {
             // Unplugged, handed to another app, or placed on a guest by hand
             // while this waited its turn: there is nothing left to ask about.
             guard let info = service.accessories.first(where: { $0.registryID == registryID }),
-                !accessoriesHeldByGuests().contains(where: { $0.registryID == registryID })
+                !holders.heldRegistryIDs.contains(registryID)
             else {
                 #log(
                     Self.logger, .notice,
@@ -403,7 +400,7 @@ final class USBAccessoryCoordinator {
     // MARK: - Support
 
     private func accessoriesHeldByGuests() -> [USBAccessoryInfo] {
-        roster.instances.flatMap { $0.liveUSBAccessories.map(\.accessory) }
+        holders.attachedEntries.map(\.attached.accessory)
     }
 
     /// How many VMs in the library claim `identity`.

@@ -18,6 +18,8 @@ final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
 
     var isTerminating = false
 
+    let accessoryHolders = VMAccessoryHolders()
+
     init(_ instances: [VMInstance] = []) {
         self.instances = instances
         wirePeers()

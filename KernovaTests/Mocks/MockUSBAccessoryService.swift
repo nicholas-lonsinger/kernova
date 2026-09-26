@@ -135,14 +135,14 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
     var suspendNextAttach = false
 
     private var suspendedContinuation: CheckedContinuation<Void, Never>?
-    private var suspendedNotification: CheckedContinuation<Void, Never>?
 
-    /// Waits until a suspended `attach` has actually reached its suspension.
-    func attachStarted() async {
-        if suspendedContinuation != nil { return }
-        await withCheckedContinuation { continuation in
-            suspendedNotification = continuation
-        }
+    /// Fired as an attach parks in `suspendIfNeeded()`.
+    private let suspended = AsyncGate()
+
+    /// Waits until a suspended `attach` has actually reached its suspension,
+    /// throwing at the backstop if none does.
+    func attachStarted() async throws {
+        try await suspended.wait { suspendedContinuation != nil }
     }
 
     /// Lets the suspended `attach` finish.
@@ -157,12 +157,12 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         precondition(suspendedContinuation == nil, "Only one attach can be suspended at a time")
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             suspendedContinuation = continuation
-            suspendedNotification?.resume()
-            suspendedNotification = nil
+            suspended.notify()
         }
     }
 
-    func attach(_ registryID: UInt64, to instance: VMInstance) async throws -> AttachedUSBAccessory {
+    func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory {
+        let registryID = reservation.registryID
         attachedRegistryIDs.append(registryID)
         await suspendIfNeeded()
         if let attachError { throw attachError }
