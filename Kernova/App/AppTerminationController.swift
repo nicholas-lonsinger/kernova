@@ -20,16 +20,10 @@ final class AppTerminationController: NSObject {
     private let viewModel: VMLibraryViewModel
     /// Where a downgraded quit closes the GUI.
     private let residency: any SoftQuitHosting
-    /// The launch work a quit cancels, handed over by
-    /// ``registerLaunchWork(_:)``.
-    ///
-    /// One slot: the launch cluster arms the pass once per process, so a
-    /// registration can never drop live work.
-    private var cancellableLaunchWork: Task<Void, Never>?
 
     /// Latched once a termination save pass has started, so a second quit can't
-    /// start a second one: its `trySave` would come back as
-    /// `operationInProgress` and the catch would force-stop a VM mid-save.
+    /// start a second one: its save would be refused as busy on the VM the
+    /// first is saving, and the catch would force-stop it mid-save.
     ///
     /// Never reset, matching the quit flags below: every later quit joins the
     /// pass, which always ends by terminating the app.
@@ -71,17 +65,6 @@ final class AppTerminationController: NSObject {
     init(viewModel: VMLibraryViewModel, residency: any SoftQuitHosting) {
         self.viewModel = viewModel
         self.residency = residency
-    }
-
-    /// Takes ownership of a launch task the gate cancels on the way out.
-    ///
-    /// The auto-start pass outlives the library read, and left running it would
-    /// keep starting *further* guests behind the termination save pass.
-    /// Cancelling bounds the pass to the VMs it has already reached — the one
-    /// inside VZ at that moment still finishes, and a quit does not wait on a
-    /// `.starting` VM.
-    func registerLaunchWork(_ task: Task<Void, Never>) {
-        cancellableLaunchWork = task
     }
 
     // MARK: - Quit Classification
@@ -268,25 +251,18 @@ final class AppTerminationController: NSObject {
         case deferToSavePass
         /// Nothing to save and nothing to wait out.
         case terminateNow
-        /// Reply later: wait out every in-flight save and revert, then
+        /// Reply later: wait out whatever a quit must not exit through, then
         /// save-suspend whatever is still live.
         case saveThenTerminate
     }
 
     /// Decides the termination gate's reply.
     ///
-    /// A save already in flight forces the deferred reply even when the gate has
-    /// nothing of its own to save: `VZVirtualMachine.saveMachineStateTo` writes
-    /// the save file in place, so exiting through it truncates the file. The
-    /// window reconcile answers a different question with
-    /// `hasUninterruptibleWork` — it may defer a quit nobody asked for
-    /// indefinitely, where an explicit quit may only wait out what termination
-    /// would corrupt.
-    ///
-    /// A revert in flight forces the deferred reply for the same reason: it
-    /// writes the bundle's disks, and can bring the VM back live once they are
-    /// in place — with no live session to save, the gate would otherwise reply
-    /// `.terminateNow` and exit straight through the write.
+    /// `quitMustWaitOut` forces the deferred reply even when the gate has
+    /// nothing of its own to save — ``VMLibrary/quitMustWaitOut``. The window
+    /// reconcile answers a different question with `hasUninterruptibleWork`: it
+    /// may defer a quit nobody asked for indefinitely, where an explicit quit
+    /// may only wait out what termination would corrupt.
     ///
     /// A running save pass outranks the soft-quit downgrade: the app is already
     /// on its way out, so closing the GUI and telling the user it stays resident
@@ -299,14 +275,13 @@ final class AppTerminationController: NSObject {
         hasCompletedSavePass: Bool,
         shouldTerminateAgent: Bool,
         isSavePassRunning: Bool,
-        hasSaveInFlight: Bool,
-        hasRevertInFlight: Bool,
+        quitMustWaitOut: Bool,
         hasInstancesToSave: Bool
     ) -> TerminationOutcome {
         if hasCompletedSavePass { return .terminateNow }
         if isSavePassRunning { return .deferToSavePass }
         guard shouldTerminateAgent else { return .closeGUI }
-        if hasSaveInFlight || hasRevertInFlight || hasInstancesToSave { return .saveThenTerminate }
+        if quitMustWaitOut || hasInstancesToSave { return .saveThenTerminate }
         return .terminateNow
     }
 
@@ -325,8 +300,7 @@ final class AppTerminationController: NSObject {
             hasCompletedSavePass: hasCompletedTerminationSavePass,
             shouldTerminateAgent: shouldTerminateOnQuit,
             isSavePassRunning: isRunningTerminationSavePass,
-            hasSaveInFlight: viewModel.hasSaveInFlight,
-            hasRevertInFlight: viewModel.hasRevertInFlight,
+            quitMustWaitOut: viewModel.quitMustWaitOut,
             hasInstancesToSave: viewModel.instances.contains(where: \.hasLiveSession)
         ) {
         case .closeGUI:
@@ -352,14 +326,10 @@ final class AppTerminationController: NSObject {
             return .terminateLater
 
         case .terminateNow:
-            cancellableLaunchWork?.cancel()
             viewModel.abandonArrivalsForTermination()
             return .terminateNow
 
         case .saveThenTerminate:
-            // Before the save pass, so it never has to chase a guest the launch
-            // pass brings up behind it.
-            cancellableLaunchWork?.cancel()
             // macOS quits and relaunches the app when a TCC permission is revoked, and
             // its built-in relaunch times out while VMs are saving. Mark for relaunch
             // so `applicationWillTerminate` launches the helper after saves complete.
@@ -407,9 +377,6 @@ final class AppTerminationController: NSObject {
         }
         #log(Self.logger, .notice, "User-requested full quit — saving live guests, then terminating")
         isRunningTerminationSavePass = true
-        // Before the save pass, so it never has to chase a guest the launch
-        // pass brings up behind it.
-        cancellableLaunchWork?.cancel()
         runSavePassThenEndTermination()
     }
 
@@ -428,7 +395,13 @@ final class AppTerminationController: NSObject {
     /// quit the app initiated, and one the gate started for a termination
     /// AppKit began. They differ only in the ending, which
     /// ``owesDeferredTerminationReply`` decides.
+    ///
+    /// Begins the library's termination first, so from then on admission
+    /// refuses every operation the pass did not ask for — the launch
+    /// auto-start's next guest, a create's start-after-create, a user's verb —
+    /// and the pass never has to chase a guest brought up behind it.
     private func runSavePassThenEndTermination() {
+        viewModel.beginTermination()
         viewModel.abandonArrivalsForTermination()
         Task { @MainActor in
             await self.runTerminationSavePass()
@@ -467,133 +440,52 @@ final class AppTerminationController: NSObject {
 
     // MARK: - Save Pass
 
-    /// What the termination save pass does with one VM it has selected.
-    enum TerminationSaveStep: Equatable {
-        /// Hold until the lifecycle operation on this VM finishes, then re-decide.
-        case waitForOperation
-        /// Save-suspend it now.
-        case save
-        /// Leave it alone.
-        case skip
-    }
-
-    /// Decides the pass's next move for one VM.
+    /// Waits out whatever a quit must not exit through, then save-suspends
+    /// every VM settled live, one session at a time.
     ///
-    /// ``VMStatus`` cannot tell a settling pause or resume from a settled VM —
-    /// both present `.running` / `.paused` for the whole `vm.pause()` /
-    /// `vm.resume()` await — so the operation holding the VM is what decides,
-    /// and a save issued against a held VM is refused as busy.
+    /// The wait comes first on every iteration because the pass's own work
+    /// can start more of what it waits for: a save's force-stop fallback powers
+    /// an Ephemeral VM off, which admits its baseline revert. Nothing else can:
+    /// the library's termination has begun, so admission refuses every other
+    /// operation — which is also why a VM selected here is still settled live
+    /// when its save is decided, in the same main-actor turn.
     ///
-    /// `hasLiveSession` is what bounds the wait: `.installing`, `.starting` and
-    /// `.restoring` all fail it, so the operations that run for minutes are
-    /// skipped rather than waited on and can never hold a quit.
-    nonisolated static func terminationSaveStep(
-        hasLiveSession: Bool,
-        hasUnsettledOperation: Bool
-    ) -> TerminationSaveStep {
-        guard hasLiveSession else { return .skip }
-        return hasUnsettledOperation ? .waitForOperation : .save
-    }
-
-    /// Waits out every in-flight save and revert, then save-suspends whatever is
-    /// still live.
-    ///
-    /// One instance per iteration, tracked by id: a failed force-stop leaves the
-    /// VM live, so re-selecting on state alone would loop forever, and marking a
-    /// VM handled *before* its wait keeps that guarantee when a user-initiated
-    /// operation keeps re-taking the lock.
-    ///
-    /// The wait at the top of each iteration covers a save or revert the user
-    /// starts on another VM while the pass runs — neither a `.saving` VM nor a
-    /// reverting one is selectable here (both fail `hasLiveSession`), so nothing
-    /// else would stop the loop from breaking out and letting the process exit
-    /// mid-write. The per-VM wait below covers the selected VM's own settling
-    /// operation, per ``terminationSaveStep(hasLiveSession:hasUnsettledOperation:)``.
-    ///
-    /// The revert wait sits at the top of the loop for two reasons: this pass's
-    /// own force-stop fallback powers an Ephemeral VM off and admits a revert
-    /// mid-pass, and a revert that brings its VM back live re-enters selection,
-    /// so that VM is save-suspended rather than killed running.
+    /// Each session is saved at most once: a force stop that failed leaves the
+    /// same session live, and re-selecting it would loop forever, while a VM
+    /// brought back live by a revert holds a new session and is saved again.
     private func runTerminationSavePass() async {
         var handled: Set<UUID> = []
         var savedCount = 0
         var failedCount = 0
-        var skippedCount = 0
         while true {
-            // Both predicates are re-tested after either wait: each suspends,
-            // and a save the user starts during the revert wait — or a revert a
-            // save's power-off registers — would otherwise reach the guard
-            // below unnoticed, break the pass out, and let the process exit
-            // mid-write.
-            while viewModel.hasSaveInFlight || viewModel.hasRevertInFlight {
-                if viewModel.hasSaveInFlight {
-                    #log(Self.logger, .notice, "Termination waiting on an in-flight save to settle")
-                    await waitForObservedChange { [viewModel] in !viewModel.hasSaveInFlight }
-                }
-                if viewModel.hasRevertInFlight {
-                    #log(
-                        Self.logger, .notice,
-                        "Termination waiting on an in-flight snapshot revert to settle")
-                    await viewModel.waitForRevertsToSettle()
-                }
+            if viewModel.quitMustWaitOut {
+                #log(Self.logger, .notice, "Termination waiting on work a quit must not exit through")
+                await waitForObservedChange { [viewModel] in !viewModel.quitMustWaitOut }
             }
-            guard
-                let instance = viewModel.instances.first(where: {
-                    $0.hasLiveSession && !handled.contains($0.id)
-                })
-            else { break }
-            handled.insert(instance.id)
-
-            if step(for: instance) == .waitForOperation {
-                #log(
-                    Self.logger, .notice,
-                    "Termination waiting on a lifecycle operation for '\(instance.name, privacy: .public)' to settle"
-                )
-                // The liveness escape ends the wait when the operation leaves the
-                // VM unsaveable — a failed pause landing on `.error`, or a Force
-                // Stop that ended the session the operation is still holding.
-                await waitForObservedChange {
-                    instance.phase.operation == nil || !instance.hasLiveSession
-                }
-            }
-
-            // Re-decided after the wait: a VM that is no longer live must not
-            // reach `trySave`, whose generic failure path force-stops.
-            switch step(for: instance) {
-            case .save:
-                if await saveForTermination(instance) {
-                    savedCount += 1
-                } else {
-                    failedCount += 1
-                }
-            case .skip:
-                #log(
-                    Self.logger, .notice,
-                    "Termination skipping '\(instance.name, privacy: .public)': it is no longer a live session this pass can save"
-                )
-                skippedCount += 1
-            case .waitForOperation:
-                // A second operation took the lock while the first was being
-                // waited out. One attempt per VM, so this one is not re-waited.
-                #log(
-                    Self.logger, .warning,
-                    "Termination skipping '\(instance.name, privacy: .public)': another lifecycle operation took it"
-                )
-                skippedCount += 1
+            guard let (instance, sessionID) = nextSessionToSave(excluding: handled) else { break }
+            handled.insert(sessionID)
+            if await saveForTermination(instance) {
+                savedCount += 1
+            } else {
+                failedCount += 1
             }
         }
         #log(
             Self.logger, .notice,
-            "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
+            "Termination save complete: \(savedCount, privacy: .public) saved, \(failedCount, privacy: .public) failed"
         )
     }
 
-    /// The pass's move for `instance`, read from live state.
-    private func step(for instance: VMInstance) -> TerminationSaveStep {
-        Self.terminationSaveStep(
-            hasLiveSession: instance.hasLiveSession,
-            hasUnsettledOperation: instance.phase.operation != nil
-        )
+    /// The first VM settled live on a session not in `handled`, and that
+    /// session.
+    private func nextSessionToSave(excluding handled: Set<UUID>) -> (VMInstance, UUID)? {
+        for instance in viewModel.instances {
+            guard instance.phase.isSettledLive, let sessionID = instance.phase.sessionID,
+                !handled.contains(sessionID)
+            else { continue }
+            return (instance, sessionID)
+        }
+        return nil
     }
 
     /// Save-suspends one VM for termination, force-stopping it when the save
@@ -604,24 +496,11 @@ final class AppTerminationController: NSObject {
     /// which is why the termination is asked for only where a Force Stop is
     /// still admitted: the VM it is owed to is one handed back live.
     ///
-    /// The pass waits an in-flight lifecycle operation out before calling this,
-    /// so a rejection here is the residual race where a user-initiated operation
-    /// takes the VM in between. It is left alone rather than force-stopped:
-    /// force-stopping would abort an operation that is about to finish and
-    /// discard the very guest state the pass exists to save, where letting the
-    /// process exit costs the same RAM and nothing more.
-    ///
     /// - Returns: `true` when the state was saved.
     private func saveForTermination(_ instance: VMInstance) async -> Bool {
         do {
-            try await viewModel.trySave(instance)
+            try await viewModel.saveForTermination(instance)
             return true
-        } catch let error as CommandError where error.isBusy {
-            #log(
-                Self.logger, .warning,
-                "Skipped saving '\(instance.name, privacy: .public)' during termination: another lifecycle operation holds it"
-            )
-            return false
         } catch {
             #log(
                 Self.logger, .error,

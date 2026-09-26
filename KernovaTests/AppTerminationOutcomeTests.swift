@@ -11,23 +11,21 @@ struct AppTerminationOutcomeTests {
         hasCompletedSavePass: Bool = false,
         shouldTerminateAgent: Bool = true,
         isSavePassRunning: Bool = false,
-        hasSaveInFlight: Bool = false,
-        hasRevertInFlight: Bool = false,
+        quitMustWaitOut: Bool = false,
         hasInstancesToSave: Bool = false
     ) -> AppTerminationController.TerminationOutcome {
         AppTerminationController.terminationOutcome(
             hasCompletedSavePass: hasCompletedSavePass,
             shouldTerminateAgent: shouldTerminateAgent,
             isSavePassRunning: isSavePassRunning,
-            hasSaveInFlight: hasSaveInFlight,
-            hasRevertInFlight: hasRevertInFlight,
+            quitMustWaitOut: quitMustWaitOut,
             hasInstancesToSave: hasInstancesToSave)
     }
 
     @Test("a soft quit closes the GUI whatever the VMs are doing")
     func softQuitClosesTheGUI() {
         #expect(outcome(shouldTerminateAgent: false) == .closeGUI)
-        #expect(outcome(shouldTerminateAgent: false, hasSaveInFlight: true) == .closeGUI)
+        #expect(outcome(shouldTerminateAgent: false, quitMustWaitOut: true) == .closeGUI)
         #expect(outcome(shouldTerminateAgent: false, hasInstancesToSave: true) == .closeGUI)
     }
 
@@ -51,9 +49,7 @@ struct AppTerminationOutcomeTests {
         // Even the soft-quit downgrade: the process is already leaving.
         #expect(
             outcome(hasCompletedSavePass: true, shouldTerminateAgent: false) == .terminateNow)
-        #expect(
-            outcome(hasCompletedSavePass: true, hasSaveInFlight: true, hasRevertInFlight: true)
-                == .terminateNow)
+        #expect(outcome(hasCompletedSavePass: true, quitMustWaitOut: true) == .terminateNow)
     }
 
     @Test("an idle library terminates immediately")
@@ -66,35 +62,18 @@ struct AppTerminationOutcomeTests {
         #expect(outcome(hasInstancesToSave: true) == .saveThenTerminate)
     }
 
-    // MARK: - In-flight save
+    // MARK: - Work a quit waits out
 
-    @Test("a save already in flight defers the reply with nothing else to save")
-    func saveInFlightAloneDefersTermination() {
-        // The regression: a VM mid-save is neither `.running` nor `.paused`, so the
-        // gate used to see an empty save set and terminate through the write,
-        // truncating the save file `saveMachineStateTo` writes in place.
-        #expect(outcome(hasSaveInFlight: true) == .saveThenTerminate)
+    @Test("work a quit must wait out defers the reply with nothing else to save")
+    func waitOutAloneDefersTermination() {
+        // A VM mid-save or mid-revert has no live session to save, so without
+        // this the gate would reply `.terminateNow` and exit through the write.
+        #expect(outcome(quitMustWaitOut: true) == .saveThenTerminate)
     }
 
-    @Test("a save in flight alongside a live VM defers the reply")
-    func saveInFlightWithOtherLiveVMs() {
-        #expect(outcome(hasSaveInFlight: true, hasInstancesToSave: true) == .saveThenTerminate)
-    }
-
-    // MARK: - In-flight revert
-
-    @Test("a revert in flight defers the reply with nothing else to save")
-    func revertInFlightAloneDefersTermination() {
-        // The regression: an Ephemeral VM's power-off revert leaves no live
-        // session behind, so the gate saw an empty save set, replied
-        // `.terminateNow`, and exited through the copy writing the bundle's disks.
-        #expect(outcome(hasRevertInFlight: true) == .saveThenTerminate)
-    }
-
-    @Test("a soft quit during a revert still closes the GUI")
-    func softQuitDuringRevertClosesTheGUI() {
-        // The app stays resident, so the revert finishes on its own.
-        #expect(outcome(shouldTerminateAgent: false, hasRevertInFlight: true) == .closeGUI)
+    @Test("work a quit must wait out alongside a live VM defers the reply")
+    func waitOutWithOtherLiveVMs() {
+        #expect(outcome(quitMustWaitOut: true, hasInstancesToSave: true) == .saveThenTerminate)
     }
 
     // MARK: - Re-entrancy
@@ -103,8 +82,8 @@ struct AppTerminationOutcomeTests {
         "a quit arriving during the save pass defers to it",
         arguments: [true, false])
     func quitDuringSavePassDefersToIt(hasInstancesToSave: Bool) {
-        // A second pass would hit `operationInProgress` on the VM already saving
-        // and force-stop it mid-write.
+        // A second pass would be refused as busy on the VM already saving, and
+        // force-stop it mid-write.
         #expect(
             outcome(isSavePassRunning: true, hasInstancesToSave: hasInstancesToSave)
                 == .deferToSavePass)
@@ -115,41 +94,5 @@ struct AppTerminationOutcomeTests {
         // Closing the windows would pop the "still running in the menu bar"
         // reminder seconds before the pass's reply exits the process.
         #expect(outcome(shouldTerminateAgent: false, isSavePassRunning: true) == .deferToSavePass)
-    }
-}
-
-/// Unit tests for `AppTerminationController.terminationSaveStep` — what the termination save
-/// pass does with one VM it has selected (#807).
-@Suite("AppTerminationController save step", .admissionGated)
-struct AppTerminationSaveStepTests {
-    private func step(
-        hasLiveSession: Bool = true,
-        hasUnsettledOperation: Bool = false
-    ) -> AppTerminationController.TerminationSaveStep {
-        AppTerminationController.terminationSaveStep(
-            hasLiveSession: hasLiveSession,
-            hasUnsettledOperation: hasUnsettledOperation)
-    }
-
-    @Test("a settled live VM is saved")
-    func settledLiveVMIsSaved() {
-        #expect(step() == .save)
-    }
-
-    @Test("a live VM holding a lifecycle operation is waited out, not skipped")
-    func settlingLiveVMIsWaitedOut() {
-        // The regression: a pause holds `.running` and a resume holds `.paused`
-        // for the whole VZ await, so the pass reached `trySave` on a VM the
-        // coordinator had locked, took `operationInProgress`, and exited with the
-        // guest live — an unclean power loss instead of a suspend.
-        #expect(step(hasUnsettledOperation: true) == .waitForOperation)
-    }
-
-    @Test("a VM with no live session is skipped whatever it is doing")
-    func nonLiveVMIsSkipped() {
-        // `.installing`, `.starting` and `.restoring` all fail `hasLiveSession`,
-        // which is what keeps an install — tens of minutes — from holding a quit.
-        #expect(step(hasLiveSession: false) == .skip)
-        #expect(step(hasLiveSession: false, hasUnsettledOperation: true) == .skip)
     }
 }

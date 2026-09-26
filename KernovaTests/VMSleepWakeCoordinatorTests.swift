@@ -167,9 +167,55 @@ struct VMSleepWakeCoordinatorTests {
         #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
     }
 
+    @Test("pauseAllForSleep reports a running VM an operation holds")
+    func pauseAllForSleepReportsAHeldVM() async {
+        let (coordinator, roster, virtService) = makeCoordinator()
+        let attaching = VMInstanceFixture.make(name: "Attaching")
+        attaching.activity.placeForTesting(
+            .operating(.attachingUSB(registryID: 1), from: .running(sessionID: UUID())))
+        roster.instances = [attaching]
+
+        await coordinator.pauseAllForSleep()
+
+        // The guest is executing, so sleep owed it a pause the operation
+        // refused as busy.
+        #expect(virtService.pauseCallCount == 0)
+        #expect(coordinator.sleepPausedInstanceIDs.isEmpty)
+        #expect(failures.errorMessage?.contains("Attaching") == true)
+    }
+
+    @Test("A sleep pause the termination refuses is not reported")
+    func sleepDuringTerminationIsNotReported() async {
+        let (coordinator, roster, virtService) = makeCoordinator()
+        let running = VMInstanceFixture.make(name: "Running")
+        running.activity.placeForTesting(.running(sessionID: UUID()))
+        roster.instances = [running]
+        roster.isTerminating = true
+
+        await coordinator.pauseAllForSleep()
+
+        #expect(virtService.pauseCallCount == 0)
+        #expect(running.status == .running)
+        #expect(failures.showError == false)
+    }
+
+    @Test("resumeAllAfterWake tries, and reports, a sleep-paused VM an operation holds")
+    func resumeAllAfterWakeReportsAHeldVM() async throws {
+        let (coordinator, roster, virtService) = makeCoordinator()
+        let instance = await makeSleepPaused(coordinator, roster: roster, name: "Held")
+        let session = try #require(instance.liveSessionID)
+        instance.activity.placeForTesting(
+            .operating(.deletingSnapshot, from: .livePaused(sessionID: session)))
+
+        await coordinator.resumeAllAfterWake()
+
+        #expect(virtService.resumeCallCount == 0)
+        #expect(failures.errorMessage?.contains("Held") == true)
+    }
+
     /// Wake's resume is a hot one: a VM that came to rest on its slot while
     /// the host slept is not restored behind the user's back.
-    @Test("A wake-time resume of a VM that came to rest on its slot is refused, keeping the slot")
+    @Test("A wake passes over a VM that came to rest on its slot, keeping the slot")
     func wakeColdResumeOntoALiveIdentityIsRefused() async throws {
         let virtService = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtService, fileSystem: fileSystem)
@@ -204,6 +250,7 @@ struct VMSleepWakeCoordinatorTests {
         #expect(sleeper.phase == .suspended)
         #expect(sleeper.hasSaveFile)
         #expect(twin.status == .running)
-        #expect(failures.errorMessage?.contains("Sleeper") == true)
+        // No hot resume is owed a VM that is no longer live-paused.
+        #expect(failures.showError == false)
     }
 }

@@ -18,7 +18,7 @@ extension CommandError {
         case .timedOut:
             Int(errAETimeout)
         case .invalidState, .unsupported, .unsupportedByBuild, .conflict, .confirmationRequired,
-            .guestAccountPasswordRequired, .busy, .operationFailed:
+            .guestAccountPasswordRequired, .busy, .terminating, .operationFailed:
             Int(errAEEventFailed)
         }
     }

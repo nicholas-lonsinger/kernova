@@ -326,6 +326,8 @@ final class VMCommandCore: VMCommanding {
                 reason: conflict.reason.conflictReason)
         case .unsupportedByBuild:
             .unsupportedByBuild(capability: Self.usbAccessoryCapability)
+        case .terminating:
+            .terminating
         }
     }
 
@@ -624,8 +626,17 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Failure Surfacing
 
-    /// Hands a failure that no command call is waiting on to ``onFailure``.
+    /// Hands a failure that no command call is waiting on to ``onFailure`` —
+    /// except a refusal the app's own termination raised, which nobody is
+    /// told about: the app is on its way out.
     func report(_ failure: CommandError, on instance: VMInstance?) {
+        guard failure != .terminating else {
+            #log(
+                Self.logger, .notice,
+                "Not reporting a refusal on '\(instance?.name ?? "", privacy: .public)': the app is terminating"
+            )
+            return
+        }
         onFailure?(failure, instance)
     }
 

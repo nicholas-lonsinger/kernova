@@ -168,7 +168,9 @@ extension VMCommandCore {
     ///
     /// The manifest's current marker is written inside the revert operation,
     /// once the snapshot's files are in the bundle.
-    func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) throws -> VMOutcome {
+    func startRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin = .newWork
+    ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
                 Self.logger, .notice,
@@ -186,7 +188,7 @@ extension VMCommandCore {
         let outcome: VMOutcome
         do {
             outcome = try lifecycle.startRevert(
-                instance, to: snapshot, resumesAfter: resumesAfter,
+                instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
                 commitConfiguration: { [library] plan in
                     try library.commitRevertedConfiguration(plan, on: instance)
                 },
@@ -233,7 +235,7 @@ extension VMCommandCore {
         )
         let outcome: VMOutcome
         do {
-            outcome = try startRevert(instance, to: baseline)
+            outcome = try startRevert(instance, to: baseline, origin: .powerOffRevert)
         } catch {
             report(failure(error, verb: .revertToSnapshot, on: instance), on: instance)
             return

@@ -533,7 +533,7 @@ final class VMInstance: VMActivityOwner {
 
     /// What the library contributes to this VM's admission — wired by
     /// `VMLibrary.wireHooks(for:)`. An instance outside a library has no
-    /// peers, no clone in flight, and no USB passthrough.
+    /// peers, no clone in flight, no USB passthrough, and no termination.
     @ObservationIgnored weak var peers: (any VMAdmissionPeers)?
 
     var admissionFacts: VMAdmission.Facts {
@@ -546,7 +546,8 @@ final class VMInstance: VMActivityOwner {
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbSupported: peers?.supportsUSBAccessories ?? false,
             cloneInFlight: peers?.hasCloneInFlight(from: self) ?? false,
-            identityConflict: nil)
+            identityConflict: nil,
+            terminating: peers?.isTerminating ?? false)
     }
 
     func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {

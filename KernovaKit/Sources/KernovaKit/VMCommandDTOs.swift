@@ -386,6 +386,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case itemNotFoundOnHost(item: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
+    /// The app is quitting, and takes nothing new on.
+    case terminating
     /// The guest had not powered off `seconds` after the shutdown request, so
     /// the verb stopped waiting and left the VM as it was.
     case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
@@ -414,7 +416,7 @@ extension CommandErrorDTO {
     public var title: String {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .unsupported,
-            .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument:
+            .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument, .terminating:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -483,6 +485,8 @@ extension CommandErrorDTO {
             "This build of Kernova does not support \(capability)."
         case .conflict(let vm, let other, let reason):
             Self.conflictMessage(vm: vm.name, other: other.name, reason: reason)
+        case .terminating:
+            "Kernova is quitting."
         case .timedOut(let vm, let verb, let seconds):
             // Only what the expiry observed. What state the VM is in is a
             // separate read, and any sentence guessing it here is wrong for

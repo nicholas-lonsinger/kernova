@@ -146,19 +146,26 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             }
     }
 
-    /// Whether any VM is mid-save or mid-capture — the operations an explicit
-    /// quit has to wait out rather than terminate through, since
-    /// `saveMachineState` writes its file in place.
+    /// Whether a quit has to wait before the process may exit: a VM held by an
+    /// operation whose kind declares ``VMOperationDeclaration/Quit/waitOut``,
+    /// or an arrival publishing or withdrawing its bundle.
     ///
     /// Narrower than ``hasUninterruptibleWork``, which the window reconcile uses
     /// to hold back a quit nobody asked for.
-    var hasSaveInFlight: Bool {
-        instances.contains {
-            switch $0.phase.operation?.kind {
-            case .saving?, .capturingSnapshot?: true
-            default: false
-            }
-        }
+    var quitMustWaitOut: Bool {
+        arrivals.contains { $0.stage == .publishing || $0.stage == .withdrawing }
+            || instances.contains { $0.phase.operation?.kind.declaration.quit == .waitOut }
+    }
+
+    /// Whether the app's termination has begun — from then on, admission
+    /// refuses every operation the termination did not ask for.
+    ///
+    /// Never cleared: a termination always ends the process.
+    private(set) var isTerminating = false
+
+    /// Begins the app's termination.
+    func beginTermination() {
+        isTerminating = true
     }
 
     /// Whether this build can pass a host USB accessory through to a guest at
@@ -441,28 +448,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     func persistOrder() {
         customOrder = entries.map(\.id)
         preferences.vmOrder = customOrder
-    }
-
-    // MARK: - Reverts
-
-    /// Whether any VM is held by a revert.
-    var hasRevertInFlight: Bool { instances.contains(where: Self.isReverting) }
-
-    /// Whether `instance` is held by a revert.
-    private static func isReverting(_ instance: VMInstance) -> Bool {
-        guard case .bringUp(.reverting)? = instance.phase.operation?.kind else { return false }
-        return true
-    }
-
-    /// Waits until no VM is held by a revert, including any a running revert's
-    /// power-off admits.
-    ///
-    /// Unbounded, matching the termination pass's other waits: a revert
-    /// interrupted mid-write is what the wait exists to prevent. A revert of a
-    /// live VM resumes it inside the same operation, so the wait spans that
-    /// resume and the VM it hands back live is save-suspended by the pass.
-    func waitForRevertsToSettle() async {
-        await waitForObservedChange { [self] in !hasRevertInFlight }
     }
 
     // MARK: - Guest Account

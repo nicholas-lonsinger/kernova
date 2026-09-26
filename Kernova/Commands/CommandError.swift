@@ -60,6 +60,8 @@ enum CommandError: Error, Sendable, Equatable {
     case unsupportedByBuild(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)
+    /// The app is quitting, and takes nothing new on.
+    case terminating
     /// The guest had not powered off `seconds` after the shutdown request, so
     /// the verb stopped waiting and left the VM as it was.
     case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
@@ -133,6 +135,8 @@ extension CommandError {
             .unsupportedByBuild(capability: capability)
         case .conflict(let vm, let other, let reason):
             .conflict(vm: vm, with: other, reason: reason)
+        case .terminating:
+            .terminating
         case .timedOut(let vm, let verb, let seconds):
             .timedOut(vm: vm, verb: verb, seconds: seconds)
         case .operationFailed(let verb, let title, let message, let recovery):

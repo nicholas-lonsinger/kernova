@@ -422,6 +422,28 @@ struct VMCapabilityCatalogTests {
         try await resume.value
     }
 
+    // MARK: - During the termination
+
+    @Test("Once the termination has begun, operations stay shown but go unavailable")
+    func operationsAreDimmedDuringTheTermination() {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()),
+            snapshots: [VMSnapshot(name: "Clean install", macAddress: nil)])
+
+        harness.library.beginTermination()
+
+        for capability in [VMCapability.pause, .suspend, .takeSnapshot, .revertToSnapshot] {
+            #expect(harness.catalog.isApplicable(capability, to: instance), "\(capability)")
+            #expect(!harness.catalog.isAvailable(capability, on: instance), "\(capability)")
+            #expect(!harness.catalog.accepts(capability, on: instance), "\(capability)")
+        }
+        // A session action is the user's way to interrupt a guest, and a
+        // plain edit starts nothing.
+        #expect(harness.catalog.isAvailable(.forceStop, on: instance))
+        #expect(harness.catalog.isAvailable(.rename, on: instance))
+    }
+
     // MARK: - Bring-up: offer versus accept
 
     @Test("A start is taken during the bring-up it would begin, and offered during none")

@@ -133,7 +133,8 @@ final class VMActivity {
     /// The catalog's answers and every commit below read this, so an offer and
     /// the commit it leads to agree.
     func decide(
-        _ request: VMAdmission.Request, posture: VMAdmission.Posture
+        _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
+        posture: VMAdmission.Posture
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
         var facts = owner.admissionFacts
@@ -143,7 +144,8 @@ final class VMActivity {
         {
             facts.identityConflict = owner.identityConflict(for: kind)
         }
-        return VMAdmission.decide(request, posture: posture, phase: phase, facts: facts)
+        return VMAdmission.decide(
+            request, origin: origin, posture: posture, phase: phase, facts: facts)
     }
 
     /// How `request` would be decided once the saved state is discarded — so
@@ -162,9 +164,11 @@ final class VMActivity {
     /// Throws the refusal unless `request` is admitted outright, answering the
     /// VM it was admitted on.
     @discardableResult
-    private func requireAdmitted(_ request: VMAdmission.Request) throws -> any VMActivityOwner {
+    private func requireAdmitted(
+        _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork
+    ) throws -> any VMActivityOwner {
         guard let owner else { throw refusal(.invalidState, for: request) }
-        switch decide(request, posture: .commit) {
+        switch decide(request, origin: origin, posture: .commit) {
         case .admit:
             return owner
         case .join:
@@ -192,13 +196,13 @@ final class VMActivity {
     /// A body that throws rests the VM where its kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func perform<T>(
-        _ kind: VMOperationKind,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
         _ body: (borrowing VMOperationContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        try await run(kind, { $0 }, body)
+        try await run(kind, origin: origin, { $0 }, body)
     }
 
-    /// ``perform(_:_:)`` for a bring-up, whose body alone may create a session.
+    /// ``perform(_:origin:_:)`` for a bring-up, whose body alone may create a session.
     func bringUp<T>(
         _ kind: VMBringUpKind,
         _ body: (borrowing VMBringUpContext) async throws -> VMOperationEnding<T>
@@ -217,7 +221,7 @@ final class VMActivity {
             { VMGuestStartContext(bringUp: VMBringUpContext(operation: $0), kind: kind) }, body)
     }
 
-    /// ``perform(_:_:)`` for a snapshot capture, whose body learns the mode it
+    /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
     /// was admitted in from its context.
     func captureSnapshot<T>(
         _ mode: VMSnapshotCaptureMode,
@@ -230,11 +234,11 @@ final class VMActivity {
     /// Admits `kind`, commits it, runs `body` under the context `makeContext`
     /// builds from the operation's, and commits where the body leaves the VM.
     private func run<Context: ~Copyable, T>(
-        _ kind: VMOperationKind,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
         _ makeContext: (consuming VMOperationContext) -> Context,
         _ body: (borrowing Context) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        let owner = try requireAdmitted(.operation(kind))
+        let owner = try requireAdmitted(.operation(kind), origin: origin)
         let outcome = commitOperation(kind)
         let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
         let ending: VMOperationEnding<T>
@@ -246,7 +250,7 @@ final class VMActivity {
         return try finish(ending, outcome: outcome).get()
     }
 
-    /// ``perform(_:_:)`` for an operation no caller waits on: admitted and
+    /// ``perform(_:origin:_:)`` for an operation no caller waits on: admitted and
     /// committed before this returns, its body run in a task the operation
     /// owns, and its end reported through the outcome.
     ///
@@ -276,13 +280,13 @@ final class VMActivity {
     /// guest at its end when `resumesAfter`.
     @discardableResult
     func launchRevert(
-        to snapshot: VMSnapshot, resumesAfter: Bool,
+        to snapshot: VMSnapshot, resumesAfter: Bool, origin: VMRequestOrigin = .newWork,
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)? = nil,
         _ body: @escaping @MainActor (borrowing VMRevertContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
             .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)),
-            whenEnded: whenEnded,
+            origin: origin, whenEnded: whenEnded,
             {
                 VMRevertContext(
                     bringUp: VMBringUpContext(operation: $0), snapshot: snapshot,
@@ -290,14 +294,14 @@ final class VMActivity {
             }, body)
     }
 
-    /// ``run(_:_:_:)`` in a task the operation owns.
+    /// ``run(_:origin:_:_:)`` in a task the operation owns.
     private func launchRun<Context: ~Copyable>(
-        _ kind: VMOperationKind,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
         whenEnded: (@MainActor (Result<Void, any Error>) -> Void)?,
         _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let owner = try requireAdmitted(.operation(kind))
+        let owner = try requireAdmitted(.operation(kind), origin: origin)
         let outcome = commitOperation(kind)
         outcome.task = Task { @MainActor in
             let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
@@ -312,7 +316,7 @@ final class VMActivity {
         return outcome
     }
 
-    /// ``perform(_:_:)`` for an operation with nothing to await.
+    /// ``perform(_:origin:_:)`` for an operation with nothing to await.
     func performNow<T>(
         _ kind: VMOperationKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
@@ -898,7 +902,7 @@ struct VMCaptureContext: ~Copyable, Sendable {
 }
 
 /// The authority a revert's body acts with: a bring-up admitted to revert to
-/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:whenEnded:_:)``.
+/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:whenEnded:_:)``.
 struct VMRevertContext: ~Copyable, Sendable {
     let bringUp: VMBringUpContext
     let snapshot: VMSnapshot

@@ -40,12 +40,18 @@ enum VMAdmission {
         case identityConflict(VMIdentityConflict)
         /// This build cannot do what was asked at all.
         case unsupportedByBuild
+        /// The app is terminating, and the request would begin an operation
+        /// the termination did not ask for.
+        ///
+        /// Raised only where the VM would otherwise admit the request, so a
+        /// surface reads it as applicable.
+        case terminating
 
         static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
             case (.busy(let l), .busy(let r)): l == r
             case (.invalidState, .invalidState), (.removed, .removed),
-                (.unsupportedByBuild, .unsupportedByBuild):
+                (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason
@@ -79,6 +85,8 @@ enum VMAdmission {
         /// The live VM whose identity bringing this one up would duplicate —
         /// supplied only when deciding a bring-up.
         var identityConflict: VMIdentityConflict?
+        /// The app's termination has begun.
+        var terminating: Bool
 
         /// These facts as they will stand once the saved state is discarded.
         func discardingSavedState() -> Facts {
@@ -91,6 +99,36 @@ enum VMAdmission {
     // MARK: - Decide
 
     static func decide(
+        _ request: Request, origin: VMRequestOrigin = .newWork, posture: Posture,
+        phase: VMLifecyclePhase, facts: Facts
+    ) -> Decision {
+        let decision = decideRegardlessOfTermination(request, posture: posture, phase: phase, facts: facts)
+        guard decision == .admit, facts.terminating, !origin.exempts(request),
+            beginsOperation(request, phase: phase)
+        else { return decision }
+        return .refuse(.terminating)
+    }
+
+    /// Whether admitting `request` in `phase` commits an operation: a Start, a
+    /// Resume or an operation, and a hot-plug edit on a settled live VM, which
+    /// starts the media reconcile.
+    ///
+    /// A session action is not one: it is how a user interrupts a guest, and
+    /// the Force Stop it may commit is one a quit waits out.
+    private static func beginsOperation(_ request: Request, phase: VMLifecyclePhase) -> Bool {
+        switch request {
+        case .start, .resume, .operation:
+            return true
+        case .edit(let classes):
+            return classes.contains(.hotPlugMedia) && phase.isSettledLive
+        case .affordance(.guestAgentDisk):
+            return phase.isSettledLive
+        case .sessionAction, .cancel, .evict, .affordance:
+            return false
+        }
+    }
+
+    private static func decideRegardlessOfTermination(
         _ request: Request, posture: Posture, phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         if case .affordance(let affordance) = request {
@@ -420,9 +458,41 @@ enum VMAdmission {
             guard facts.guestOS == .macOS, phase.hasLiveSession else {
                 return .refuse(.invalidState)
             }
-            return decide(.edit(.hotPlugMedia), posture: posture, phase: phase, facts: facts)
+            return decideRegardlessOfTermination(
+                .edit(.hotPlugMedia), posture: posture, phase: phase, facts: facts)
         }
         return admitted ? .admit : .refuse(.invalidState)
+    }
+}
+
+/// Whose request admission is deciding, as the termination reads it.
+///
+/// Each exempt origin names the one request it exempts, and
+/// ``exempts(_:)`` holds that pairing: any other request made under it is
+/// decided as new work, so no caller can carry an exemption onto a request
+/// it was not made for.
+enum VMRequestOrigin: Sendable, Equatable {
+    /// A person's verb, or work the app starts on its own — refused an
+    /// operation once the termination has begun.
+    case newWork
+    /// The save pass's suspend of a VM settled live.
+    case terminationSave
+    /// The baseline revert an Ephemeral Mode VM owes each power-off, which a
+    /// quit waits out rather than refuses — so a guest that powers off during
+    /// one never rests on the disks the mode discards.
+    case powerOffRevert
+
+    /// Whether this origin exempts `request` from the termination's refusal.
+    func exempts(_ request: VMAdmission.Request) -> Bool {
+        switch self {
+        case .newWork:
+            return false
+        case .terminationSave:
+            return request == .operation(.saving)
+        case .powerOffRevert:
+            guard case .operation(.bringUp(.reverting)) = request else { return false }
+            return true
+        }
     }
 }
 
@@ -449,6 +519,9 @@ struct VMAdmissionRefusal: Error, Equatable {
 protocol VMAdmissionPeers: AnyObject {
     /// Whether this build can pass a host USB accessory through to a guest.
     var supportsUSBAccessories: Bool { get }
+
+    /// Whether the app's termination has begun.
+    var isTerminating: Bool { get }
 
     /// Whether a clone is copying `instance`'s files out of its bundle.
     func hasCloneInFlight(from instance: VMInstance) -> Bool

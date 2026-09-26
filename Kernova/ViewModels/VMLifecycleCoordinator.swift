@@ -140,8 +140,8 @@ final class VMLifecycleCoordinator {
     /// The accessories the write ejects stay off, on both outcomes: the guest
     /// is going away, and a suspend that fails takes the session down with it,
     /// so there is no guest left to put anything back on.
-    func save(_ instance: VMInstance) async throws {
-        try await instance.activity.perform(.saving) { context in
+    func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
+        try await instance.activity.perform(.saving, origin: origin) { context in
             try await virtualizationService.save(instance, context)
         }
     }
@@ -322,10 +322,13 @@ final class VMLifecycleCoordinator {
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
+        origin: VMRequestOrigin = .newWork,
         commitConfiguration: @escaping @MainActor (VMSnapshotRestorePlan) throws -> Void,
         landed: @escaping @MainActor () throws -> Void
     ) throws -> VMOutcome {
-        try instance.activity.launchRevert(to: snapshot, resumesAfter: resumesAfter) {
+        try instance.activity.launchRevert(
+            to: snapshot, resumesAfter: resumesAfter, origin: origin
+        ) {
             [virtualizationService] context in
             let ending = try await virtualizationService.revertToSnapshot(
                 instance, context, commitConfiguration: commitConfiguration)

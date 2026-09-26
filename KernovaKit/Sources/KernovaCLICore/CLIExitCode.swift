@@ -34,7 +34,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .busy: "The VM has work in flight the verb would race."
         case .timedOut: "A deadline expired before the state arrived."
         case .authorizationRefused: "The app would not accept this process as a peer."
-        case .unavailable: "There is no app to talk to, or this build cannot talk to one."
+        case .unavailable: "The app is not running, is quitting, or cannot talk to this build."
         }
     }
 
@@ -54,6 +54,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
             self = .refusedByState
         case .invalidArgument: self = .usage
         case .busy: self = .busy
+        case .terminating: self = .unavailable
         case .timedOut: self = .timedOut
         case .operationFailed: self = .operationFailed
         }

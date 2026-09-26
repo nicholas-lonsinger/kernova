@@ -80,9 +80,9 @@ final class VMLibraryViewModel {
 
     var hasUninterruptibleWork: Bool { library.hasUninterruptibleWork }
 
-    var hasSaveInFlight: Bool { library.hasSaveInFlight }
+    var quitMustWaitOut: Bool { library.quitMustWaitOut }
 
-    var hasRevertInFlight: Bool { library.hasRevertInFlight }
+    func beginTermination() { library.beginTermination() }
 
     func hasCloneInFlight(from instance: VMInstance) -> Bool {
         library.hasCloneInFlight(from: instance)
@@ -99,8 +99,6 @@ final class VMLibraryViewModel {
     func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
         library.moveEntries(fromOffsets: source, toOffset: destination)
     }
-
-    func waitForRevertsToSettle() async { await library.waitForRevertsToSettle() }
 
     func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
         library.macAddresses.vmNamesSharingMACAddress(with: instance)
@@ -873,12 +871,13 @@ final class VMLibraryViewModel {
         await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
     }
 
-    /// Saves VM state, throwing on failure (used by suspend-on-quit in AppDelegate).
-    func trySave(_ instance: VMInstance) async throws {
-        try await commands.suspend(.id(instance.id))
+    /// Suspends a VM for the termination save pass, throwing on failure.
+    func saveForTermination(_ instance: VMInstance) async throws {
+        try await core.suspend(instance, origin: .terminationSave)
     }
 
-    /// Force-stops a VM, throwing on failure (used by suspend-on-quit fallback in AppDelegate).
+    /// Force-stops a VM, throwing on failure — the termination save pass's
+    /// fallback for a save that failed and left the guest live.
     func tryForceStop(_ instance: VMInstance) async throws {
         try await commands.stop(.id(instance.id), disposition: .force, confirmed: true)
     }
@@ -1298,8 +1297,8 @@ final class VMLibraryViewModel {
     /// Per-VM failures are logged and surfaced by those two methods; the pass
     /// carries on to the next VM either way.
     ///
-    /// Cancelling stops it between VMs — a start already inside VZ is left to
-    /// finish, since abandoning one mid-flight is worse than completing it.
+    /// A termination stops it between VMs: from then on admission refuses the
+    /// next start, and the one already inside VZ is left to finish.
     ///
     /// Nobody is at the machine for this, so it selects and focuses nothing: it
     /// goes through the verbs rather than the in-app door, and the library is
@@ -1317,12 +1316,6 @@ final class VMLibraryViewModel {
         var skippedCount = 0
         var failedCount = 0
         for instance in marked {
-            // A quit cancels the pass; anything left is the terminating app's
-            // business, not this one's.
-            if Task.isCancelled {
-                #log(Self.logger, .notice, "Launch auto-start cancelled — the app is terminating")
-                break
-            }
             // A boot takes long enough for the user to delete or evict a later
             // VM meanwhile, and `marked` still holds that instance. Starting it
             // would open a display window over a bundle no longer in the library.

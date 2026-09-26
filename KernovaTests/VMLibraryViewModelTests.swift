@@ -3075,10 +3075,10 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
-    // MARK: - trySave / tryForceStop
+    // MARK: - saveForTermination / tryForceStop
 
-    @Test("trySave throws on failure")
-    func trySaveThrows() async {
+    @Test("saveForTermination throws on failure")
+    func saveForTerminationThrows() async {
         let virtService = MockVirtualizationService()
         virtService.saveError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -3087,8 +3087,30 @@ struct VMLibraryViewModelTests {
         viewModel.library.admitForTesting(instance)
 
         await #expect(throws: CommandError.self) {
-            try await viewModel.trySave(instance)
+            try await viewModel.saveForTermination(instance)
         }
+    }
+
+    @Test("Once the termination has begun, its own suspend is admitted and a user's is refused")
+    func terminationSuspendIsItsOwn() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let user = VMInstanceFixture.make(name: "User")
+        let quit = VMInstanceFixture.make(name: "Quit")
+        for instance in [user, quit] {
+            instance.activity.placeForTesting(.running(sessionID: UUID()))
+            instance.peers = viewModel.library
+        }
+        viewModel.library.admitForTesting([user, quit])
+
+        viewModel.beginTermination()
+
+        await #expect(throws: CommandError.terminating) {
+            try await viewModel.commands.suspend(.id(user.id))
+        }
+        #expect(user.status == .running)
+        try await viewModel.saveForTermination(quit)
+        #expect(virtService.saveCallCount == 1)
+        #expect(quit.status == .paused)
     }
 
     @Test("tryForceStop throws on failure")
@@ -3918,37 +3940,46 @@ struct VMLibraryViewModelTests {
         #expect(!viewModel.hasUninterruptibleWork)
     }
 
-    @Test("hasSaveInFlight covers a saving VM alone")
-    func hasSaveInFlightCoversSavingOnly() {
+    @Test("quitMustWaitOut covers exactly the operations that declare a quit waits them out")
+    func quitMustWaitOutCoversWaitOutKinds() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = VMInstanceFixture.make()
         viewModel.library.admitForTesting([instance])
 
+        for phase in VMLifecyclePhaseFixtures.all {
+            instance.activity.placeForTesting(phase)
+            let waitsOut = phase.operation?.kind.declaration.quit == .waitOut
+            #expect(viewModel.quitMustWaitOut == waitsOut, "\(phase)")
+        }
+        // Spelled out, so the declarations above cannot drift unnoticed: a
+        // quit exits through a bring-up and a copy out, and waits out the
+        // writes a snapshot trash, a delete and a revert make.
         let live = VMLifecyclePhase.running(sessionID: UUID())
-        instance.activity.placeForTesting(.operating(.saving, from: live))
-        #expect(viewModel.hasSaveInFlight)
-        // A capture writes files too, so it waits out alongside a suspend.
-        instance.activity.placeForTesting(.operating(.capturingSnapshot(.live), from: live))
-        #expect(viewModel.hasSaveInFlight)
-        instance.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
-        #expect(viewModel.hasSaveInFlight)
-        // Every other transition is one an explicit quit may terminate through.
+        for phase in [
+            VMLifecyclePhase.operating(.saving, from: live),
+            .operating(.capturingSnapshot(.live), from: live),
+            .operating(.deletingSnapshot, from: live),
+            .operating(.deleting, from: .stopped),
+            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
+            .operating(.forceStopping, from: live),
+        ] {
+            instance.activity.placeForTesting(phase)
+            #expect(viewModel.quitMustWaitOut, "\(phase)")
+        }
         for phase in [
             VMLifecyclePhase.operating(
                 .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
-            .operating(
-                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
-            .running(sessionID: UUID()), .livePaused(sessionID: UUID()), .suspended, .stopped,
+            .operating(.copyingOut, from: .stopped),
+            live, .suspended, .stopped,
         ] {
             instance.activity.placeForTesting(phase)
-            #expect(!viewModel.hasSaveInFlight, "\(phase)")
+            #expect(!viewModel.quitMustWaitOut, "\(phase)")
         }
     }
 
-    @Test("hasSaveInFlight finds a saving VM among settled ones")
-    func hasSaveInFlightFindsAnyInstance() {
+    @Test("quitMustWaitOut finds a waited-out VM among settled ones")
+    func quitMustWaitOutFindsAnyInstance() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let running = VMInstanceFixture.make()
         running.activity.placeForTesting(.running(sessionID: UUID()))
@@ -3956,13 +3987,37 @@ struct VMLibraryViewModelTests {
         saving.activity.placeForTesting(.operating(.saving, from: .running(sessionID: UUID())))
         viewModel.library.admitForTesting([running, saving])
 
-        #expect(viewModel.hasSaveInFlight)
+        #expect(viewModel.quitMustWaitOut)
     }
 
-    @Test("hasSaveInFlight is false for an empty library")
-    func hasSaveInFlightIsFalseWhenEmpty() {
+    @Test("quitMustWaitOut is false for an empty library")
+    func quitMustWaitOutIsFalseWhenEmpty() {
         let (viewModel, _, _, _, _) = makeViewModel()
-        #expect(!viewModel.hasSaveInFlight)
+        #expect(!viewModel.quitMustWaitOut)
+    }
+
+    @Test("quitMustWaitOut covers an arrival publishing or withdrawing, not one still writing")
+    func quitMustWaitOutCoversPublication() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let gate = GatedStep()
+        let arrival = viewModel.library.beginGatedArrival(named: "Publishing", gate: gate)
+        try await gate.waitUntilEntered()
+
+        // Still writing under the staging directory: the quit abandons it.
+        #expect(!viewModel.quitMustWaitOut)
+
+        #expect(arrival.beginPublishing())
+        #expect(viewModel.quitMustWaitOut)
+        // A cancel taken during the rename withdraws the published bundle, and
+        // a quit exiting through that would leave it for the next launch to
+        // adopt.
+        #expect(arrival.requestCancel() == .withdrawn)
+        #expect(arrival.stage == .withdrawing)
+        #expect(viewModel.quitMustWaitOut)
+
+        gate.release()
+        await arrival.settle()
+        #expect(!viewModel.quitMustWaitOut)
     }
 
     /// A pause presents `.running` until the VZ call returns, so no
@@ -4392,17 +4447,18 @@ struct VMLibraryViewModelTests {
         #expect(failures == [suspended.id])
     }
 
-    @Test("startAutomaticVMsForLaunch stops between VMs once cancelled")
-    func autoStartHonorsCancellation() async {
+    @Test("startAutomaticVMsForLaunch starts no further VM once the termination has begun")
+    func autoStartStopsAtTermination() async {
         let (viewModel, suspending) = makeSuspendingViewModel()
         let first = makeAutoStartInstance(name: "First")
         let second = makeAutoStartInstance(name: "Second")
+        for instance in [first, second] { instance.peers = viewModel.library }
         viewModel.library.admitForTesting([first, second])
 
         let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
         // Suspended inside the first VM's start — the quit lands here.
         await suspending.waitUntilSuspended()
-        pass.cancel()
+        viewModel.beginTermination()
         suspending.shouldSuspendOnStart = false
         suspending.resumeSuspended()
         await pass.value
