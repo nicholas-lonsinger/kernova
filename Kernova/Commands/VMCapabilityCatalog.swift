@@ -196,10 +196,10 @@ struct VMCapabilityCatalog {
     ///
     /// An operation holding the VM is no reason to hide one: a VM that can be
     /// snapshotted still shows Take Snapshot while another operation runs,
-    /// dimmed.
+    /// dimmed. Nor is the app's termination.
     func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
-        case .admit, .join, .refuse(.busy): true
+        case .admit, .join, .refuse(.busy), .refuse(.terminating): true
         case .refuse, nil: false
         }
     }

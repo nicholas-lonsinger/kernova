@@ -265,6 +265,31 @@ struct VMCommandCoreArrivalTests {
         #expect(harness.reports.failures.isEmpty)
     }
 
+    @Test("A create publishing when the termination begins is adopted, and its start is refused unreported")
+    func aCreatePublishingAtTerminationStartsNothing() async throws {
+        let harness = makeHarness()
+        let hold = DispatchSemaphore(value: 0)
+        storage.publishHold = hold
+        let configuration = VMConfiguration(name: "Quitting", guestOS: .linux, bootMode: .efi)
+
+        try harness.core.create(
+            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+        let arrival = try #require(harness.library.arrivals.first)
+        try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
+        #expect(arrival.stage == .publishing)
+
+        harness.library.beginTermination()
+        hold.signal()
+
+        let instance = try #require(await arrival.settle())
+        // The start-after-create follows the adoption on the main actor; once
+        // the queue drains it has been decided.
+        await drainMainQueue()
+        #expect(instance.phase == .stopped)
+        #expect(harness.virtualization.startCallCount == 0)
+        #expect(harness.reports.failures.isEmpty)
+    }
+
     @Test("A waiter on an arrival cancelled during its rename receives the cancel, not the VM")
     func aWaiterOnAnArrivalCancelledDuringItsRenameReceivesTheCancel() async throws {
         let harness = makeHarness()

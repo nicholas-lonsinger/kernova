@@ -840,9 +840,9 @@ extension VMCommandCore {
         try await suspend(try resolve(selector))
     }
 
-    func suspend(_ instance: VMInstance) async throws {
+    func suspend(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         do {
-            try await lifecycle.save(instance)
+            try await lifecycle.save(instance, origin: origin)
         } catch {
             #log(
                 Self.logger, .error,

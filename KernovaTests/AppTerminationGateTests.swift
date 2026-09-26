@@ -8,12 +8,12 @@ import Testing
 /// terminate the agent and which downgrade to a GUI close — and the latch
 /// discipline behind ``AppTerminationController/shouldTerminateOnQuit``.
 ///
-/// Safe in a shared test host because the fixture's library is empty and no save
-/// or revert is in flight, so ``AppTerminationController/terminationOutcome(shouldTerminateAgent:isSavePassRunning:hasSaveInFlight:hasRevertInFlight:hasInstancesToSave:)``
-/// can never return `.saveThenTerminate` — the one branch that calls
-/// `reply(toApplicationShouldTerminate:)` and would take the process down. For
-/// the same reason no case here calls `requestFullQuit()` or delivers a quit
-/// Apple Event: both call `NSApp.terminate`.
+/// Safe in a shared test host because a case whose library holds anything a quit
+/// saves or waits out sets `terminationEndingForTesting` first, so the
+/// `.saveThenTerminate` branch never reaches
+/// `reply(toApplicationShouldTerminate:)` and takes the process down. For the
+/// same reason no case delivers a quit Apple Event, and every
+/// `requestFullQuit()` goes through that seam: both call `NSApp.terminate`.
 ///
 /// The `.closeGUI` branch is exercised against a spy rather than a real
 /// ``AppResidencyController``, whose `closeGUIForSoftQuit()` reaches
@@ -132,6 +132,113 @@ struct AppTerminationGateTests {
         // AppKit is waiting on that reply, so the pass answers it rather than
         // asking for a second termination.
         #expect(spy.endings == [.deferredReply])
+    }
+
+    // MARK: - What a Quit Waits Out
+
+    /// A full quit whose pass records how it ended, over a library that
+    /// holds `instances`, each wired to it.
+    private func makeFullQuit(
+        holding instances: [VMInstance] = []
+    ) -> (AppTerminationController, VMLibraryViewModel, EndingSpy) {
+        let (controller, viewModel) = makeController()
+        viewModel.keepInMenuBarOnQuit = true
+        for instance in instances { instance.peers = viewModel.library }
+        viewModel.library.admitForTesting(instances)
+        let spy = EndingSpy()
+        controller.terminationEndingForTesting = { ending in spy.record(ending, reply: nil) }
+        return (controller, viewModel, spy)
+    }
+
+    /// Asks for a full quit and lets its pass run as far as it gets without
+    /// anything else happening: the pass is a main-actor task enqueued by the
+    /// request, so once the main queue has drained it has either ended or is
+    /// parked on what it waits out.
+    private func requestFullQuitAndLetItRun(_ controller: AppTerminationController) async {
+        controller.requestFullQuit()
+        await drainMainQueue()
+    }
+
+    @Test("R6: a quit waits out a snapshot trash")
+    func quitWaitsOutASnapshotTrash() async throws {
+        let instance = VMInstanceFixture.make(name: "Trashing")
+        instance.activity.placeForTesting(.stopped)
+        let (controller, viewModel, spy) = makeFullQuit(holding: [instance])
+        let gate = GatedStep()
+        let trash = try instance.activity.launch(.deletingSnapshot) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+
+        await requestFullQuitAndLetItRun(controller)
+        #expect(viewModel.library.isTerminating)
+        #expect(spy.endings.isEmpty)
+
+        gate.release()
+        try await trash.value()
+        try await spy.ended.wait { spy.endings.count == 1 }
+        #expect(spy.endings == [.terminate])
+    }
+
+    @Test("R6: a quit waits out a delete's trashes")
+    func quitWaitsOutADelete() async throws {
+        let instance = VMInstanceFixture.make(name: "Deleting")
+        instance.activity.placeForTesting(.stopped)
+        let (controller, _, spy) = makeFullQuit(holding: [instance])
+        let gate = GatedStep()
+        let delete = Task { try await instance.activity.delete { _ in try await gate.pass() } }
+        try await gate.waitUntilEntered()
+
+        await requestFullQuitAndLetItRun(controller)
+        #expect(spy.endings.isEmpty)
+
+        gate.release()
+        try await delete.value
+        try await spy.ended.wait { spy.endings.count == 1 }
+        #expect(instance.phase == .removed)
+    }
+
+    @Test("A quit waits out an arrival withdrawing the bundle a cancel took back")
+    func quitWaitsOutAWithdrawal() async throws {
+        let (controller, viewModel, spy) = makeFullQuit()
+        let gate = GatedStep()
+        let arrival = viewModel.library.beginGatedArrival(named: "Withdrawn", gate: gate)
+        try await gate.waitUntilEntered()
+        #expect(arrival.beginPublishing())
+        #expect(arrival.requestCancel() == .withdrawn)
+
+        await requestFullQuitAndLetItRun(controller)
+        #expect(spy.endings.isEmpty)
+
+        gate.release()
+        await arrival.settle()
+        try await spy.ended.wait { spy.endings.count == 1 }
+    }
+
+    @Test("A quit saves each live VM once its trash is waited out")
+    func quitSavesTheLiveVMAfterItsWait() async throws {
+        let instance = VMInstanceFixture.make(name: "Live")
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        defer { VMInstanceFixture.removeBundle(of: instance) }
+        let (controller, _, spy) = makeFullQuit(holding: [instance])
+        let gate = GatedStep()
+        let trash = try instance.activity.launch(.deletingSnapshot) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+
+        await requestFullQuitAndLetItRun(controller)
+        // Waited out rather than refused: the save is decided once the trash
+        // has rested the VM live again.
+        #expect(instance.phase.operation?.kind == .deletingSnapshot)
+        #expect(spy.endings.isEmpty)
+
+        gate.release()
+        try await trash.value()
+        try await spy.ended.wait { spy.endings.count == 1 }
+        #expect(instance.phase == .suspended)
     }
 
     @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")

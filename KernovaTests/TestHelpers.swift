@@ -100,6 +100,20 @@ func makeWiredLibrary(
 }
 
 extension VMLibrary {
+    /// Whether any VM is held by a revert.
+    var hasRevertInFlight: Bool {
+        instances.contains {
+            guard case .bringUp(.reverting)? = $0.phase.operation?.kind else { return false }
+            return true
+        }
+    }
+
+    /// Waits until no VM is held by a revert, including any a running revert's
+    /// power-off admits.
+    func waitForRevertsToSettle() async {
+        await waitForObservedChange { [self] in !hasRevertInFlight }
+    }
+
     /// Adds each of `instances`, in order, unwired and unread.
     func admitForTesting(_ instances: [VMInstance]) {
         for instance in instances {

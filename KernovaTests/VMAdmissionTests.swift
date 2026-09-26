@@ -51,13 +51,15 @@ struct VMAdmissionTests {
         }
     }
 
-    private static func facts(slot: Bool, _ variant: Variant) -> VMAdmission.Facts {
+    private static func facts(
+        slot: Bool, _ variant: Variant, terminating: Bool = false
+    ) -> VMAdmission.Facts {
         VMAdmission.Facts(
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
-            cloneInFlight: variant.clone, identityConflict: nil)
+            cloneInFlight: variant.clone, identityConflict: nil, terminating: terminating)
     }
 
     private static func facts(
@@ -68,7 +70,8 @@ struct VMAdmissionTests {
 
     /// One cell: `A` admit, `J` join, `B` busy with the held kind, `b` busy
     /// with a clone copying the VM out, `I` invalid state, `R` removed, `U`
-    /// unsupported by this build, `C` an identity conflict.
+    /// unsupported by this build, `C` an identity conflict, `T` refused by the
+    /// app's termination.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -80,6 +83,7 @@ struct VMAdmissionTests {
         case .refuse(.removed): "R"
         case .refuse(.unsupportedByBuild): "U"
         case .refuse(.identityConflict): "C"
+        case .refuse(.terminating): "T"
         }
     }
 
@@ -191,15 +195,97 @@ struct VMAdmissionTests {
         #expect(Self.settledCells(request, variant) == expected, "\(request) \(variant)")
     }
 
-    private static func settledCells(_ request: VMAdmission.Request, _ variant: Variant) -> String {
+    private static func settledCells(
+        _ request: VMAdmission.Request, _ variant: Variant, terminating: Bool = false,
+        origin: VMRequestOrigin = .newWork
+    ) -> String {
         String(
             settledColumns.map { column in
                 code(
                     VMAdmission.decide(
-                        request, posture: .commit, phase: column.phase,
-                        facts: facts(slot: column.slot, variant)),
+                        request, origin: origin, posture: .commit, phase: column.phase,
+                        facts: facts(slot: column.slot, variant, terminating: terminating)),
                     held: nil)
             })
+    }
+
+    // MARK: - Termination
+
+    /// The settled columns once the app's termination has begun, for new
+    /// work: every request that would commit an operation is refused, and
+    /// everything else answers as it did.
+    nonisolated private static let terminatingTable: [(VMAdmission.Request, String)] = [
+        (.start(recovery: false), "TTTTIIR"),
+        (.start(recovery: true), "TIIIIIR"),
+        (.resume, "IIITITR"),
+        (.operation(.pausing), "IIIITIR"),
+        (.operation(.saving), "IIIITTR"),
+        (.operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
+        (.operation(.deletingSnapshot), "TTTTTTR"),
+        (.operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "TTTTTTR"),
+        (.operation(.attachingUSB(registryID: 7)), "IIIITTR"),
+        (.operation(.forceStopping), "IIIITTR"),
+        (.operation(.discardingSavedState), "IIITIIR"),
+        (.operation(.deleting), "TTTTIIR"),
+        (.operation(.copyingOut), "TTTIIIR"),
+        // A hot-plug edit commits the media reconcile only on a live VM; at
+        // rest it is a write like any other.
+        (.edit(.hotPlugMedia), "AAAITTR"),
+        (.affordance(.guestAgentDisk), "IIIITTR"),
+        (.edit(.machineKeys), "AAAIIIR"),
+        (.edit(.liveKeys), "AAAAAAR"),
+        (.edit(.rename), "AAAAAAR"),
+        // A session action is how a user interrupts a guest.
+        (.sessionAction(.requestStop), "IIIIAAR"),
+        (.sessionAction(.forceStop), "IIIIAAR"),
+        (.evict, "AAAAIIR"),
+        (.affordance(.display), "IIIAAAR"),
+    ]
+
+    @Test(
+        "Once the termination has begun, new work that would commit an operation is refused",
+        arguments: terminatingTable.indices)
+    func terminatingRefusesNewOperations(row: Int) {
+        let (request, expected) = Self.terminatingTable[row]
+        #expect(Self.settledCells(request, .plain, terminating: true) == expected, "\(request)")
+    }
+
+    @Test(
+        "The termination's own work and a power-off's revert decide as though nothing were terminating",
+        arguments: settledTable.indices)
+    func terminationWorkIsUnrefused(row: Int) {
+        let (request, expected) = Self.settledTable[row]
+        for origin in [VMRequestOrigin.termination, .powerOff] {
+            #expect(
+                Self.settledCells(request, .plain, terminating: true, origin: origin) == expected,
+                "\(request) \(origin)")
+        }
+    }
+
+    @Test("During an operation, the termination refuses nothing the operation tolerates or joins")
+    func terminatingLeavesToleratedRequests() {
+        let facts = Self.facts(slot: false, .plain, terminating: true)
+        func decide(
+            _ request: VMAdmission.Request, during kind: VMOperationKind,
+            from startedFrom: VMLifecyclePhase
+        ) -> VMAdmission.Decision {
+            VMAdmission.decide(
+                request, posture: .commit,
+                phase: .operating(kind, from: startedFrom, boundSession: nil), facts: facts)
+        }
+        // An edit the running reconcile coalesces starts no operation of its own.
+        #expect(decide(.edit(.hotPlugMedia), during: .reconcilingMedia, from: Self.live) == .admit)
+        #expect(decide(.sessionAction(.forceStop), during: .pausing, from: Self.live) == .admit)
+        #expect(
+            decide(.operation(.saving), during: .pausing, from: Self.live)
+                == .refuse(.busy(.pausing)))
+        let start = decide(
+            .start(recovery: false), during: .bringUp(.guestStart(.starting(recovery: false))),
+            from: .stopped)
+        guard case .join = start else {
+            Issue.record("A Start during a start should join it, got \(start)")
+            return
+        }
     }
 
     // MARK: - Held kinds × requests

@@ -143,6 +143,13 @@ enum VMLifecyclePhase: Sendable, Equatable {
         return false
     }
 
+    /// Whether the presented phase has the guest executing: settled running,
+    /// or held by an operation that presents it running.
+    var guestIsExecuting: Bool {
+        if case .running = presented { return true }
+        return false
+    }
+
     /// Whether the VM counts as holding its machine identity and MAC address
     /// against another VM's bring-up and a live network-mode switch.
     var holdsLiveIdentity: Bool {

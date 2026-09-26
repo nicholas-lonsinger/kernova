@@ -110,7 +110,7 @@ struct VMLibraryViewModelEphemeralTests {
 
     /// Awaits every revert a power-off started, if it started any.
     private func settleEphemeralRevert(_ harness: Harness) async {
-        await harness.viewModel.waitForRevertsToSettle()
+        await harness.viewModel.library.waitForRevertsToSettle()
     }
 
     // MARK: - Power-off
@@ -176,12 +176,26 @@ struct VMLibraryViewModelEphemeralTests {
         // No await in between: the termination gate reads this on the very next
         // main-actor turn, so a revert registered only once its task body ran
         // would let a quit exit through the copy.
-        #expect(harness.viewModel.hasRevertInFlight)
+        #expect(harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.viewModel.quitMustWaitOut)
         #expect(harness.viewModel.hasUninterruptibleWork)
 
         await settleEphemeralRevert(harness)
 
-        #expect(!harness.viewModel.hasRevertInFlight)
+        #expect(!harness.viewModel.quitMustWaitOut)
+        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
+    }
+
+    @Test("A power-off during the termination still admits the baseline revert, which the quit waits out")
+    func powerOffDuringTerminationReverts() async throws {
+        let harness = try await makeHarness()
+        harness.viewModel.beginTermination()
+
+        harness.instance.handleSessionEvent(.guestDidStop)
+
+        #expect(harness.viewModel.library.hasRevertInFlight)
+        #expect(harness.viewModel.quitMustWaitOut)
+        await settleEphemeralRevert(harness)
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
     }
 
@@ -212,7 +226,7 @@ struct VMLibraryViewModelEphemeralTests {
         // The operation keeps the VM; nothing asks for the revert yet.
         #expect(instance.phase.operation?.kind == .deletingSnapshot)
         #expect(observed.count == 0)
-        #expect(!harness.viewModel.hasRevertInFlight)
+        #expect(!harness.viewModel.library.hasRevertInFlight)
 
         gate.release()
         try await outcome.value()

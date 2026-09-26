@@ -225,11 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func armAutoStartPass() {
         guard !hasArmedAutoStartPass else { return }
         hasArmedAutoStartPass = true
-        termination.registerLaunchWork(
-            Task { @MainActor in
-                await self.libraryLoad?.value
-                await self.viewModel.startAutomaticVMsForLaunch()
-            })
+        Task { @MainActor in
+            await self.libraryLoad?.value
+            await self.viewModel.startAutomaticVMsForLaunch()
+        }
     }
 
     /// Never. The `willClose` reconcile decides between the Dock icon, a

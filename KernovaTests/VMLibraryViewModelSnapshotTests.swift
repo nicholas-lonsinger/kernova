@@ -410,7 +410,7 @@ struct VMLibraryViewModelSnapshotTests {
         // The snapshot is kept, unlike the suspend slot.
         #expect(instance.snapshotManifest.snapshots.count == 2)
         // Nothing is left holding a quit back once the call returns.
-        #expect(!harness.viewModel.hasRevertInFlight)
+        #expect(!harness.viewModel.quitMustWaitOut)
     }
 
     @Test("Reverting to an unlisted snapshot does nothing")

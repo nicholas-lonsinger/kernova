@@ -6,8 +6,8 @@ import Foundation
 /// reads the roster can be driven without one.
 ///
 /// Like the library, it is its instances' ``VMAdmissionPeers``: no clone in
-/// flight, no identity conflict, and USB passthrough only once a test says the
-/// build offers it.
+/// flight, no identity conflict, and USB passthrough or a termination only
+/// once a test says so.
 @MainActor
 final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
     var instances: [VMInstance] {
@@ -15,6 +15,8 @@ final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
     }
 
     var supportsUSBAccessories = false
+
+    var isTerminating = false
 
     init(_ instances: [VMInstance] = []) {
         self.instances = instances
