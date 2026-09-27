@@ -171,10 +171,11 @@ final class VMLifecycleCoordinator {
     /// A warm capture takes every passthrough accessory off before it writes
     /// the guest's state, because a saved state carrying one cannot be
     /// restored. Unlike a suspend the guest is still running afterwards, so
-    /// each one is owed back to it
-    /// (``VMCaptureContext/oweReturnsOfAttachedAccessories()``): the capture's
-    /// detach resets the device, macOS assigns it back after a delay nothing
-    /// bounds, and that arrival follows the attach to this VM. `record` that
+    /// each one is owed back to it as it goes
+    /// (``VirtualizationService/detachUSBAccessories(owingReturns:session:)``):
+    /// the capture's detach resets the device, macOS assigns it back after a
+    /// delay nothing bounds, and that arrival follows the attach to this VM.
+    /// `record` that
     /// throws leaves nothing behind: unlisted files are files no surface can
     /// reach or remove, so the capture is undone.
     func takeSnapshot(
@@ -182,13 +183,6 @@ final class VMLifecycleCoordinator {
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         try await instance.activity.captureSnapshot(mode) { context in
-            for item in instance.liveUSBAccessories where item.accessory.identity == nil {
-                #log(
-                    Self.logger, .warning,
-                    "USB accessory \(item.accessory.displayName, privacy: .public) will not go back on '\(instance.name, privacy: .public)' after the capture: nothing durable identifies it"
-                )
-            }
-            context.oweReturnsOfAttachedAccessories()
             let ending = try await virtualizationService.takeSnapshot(
                 instance, context, snapshot: snapshot)
             guard case .rest(let rest, let captured) = ending else { return ending }

@@ -645,9 +645,9 @@ struct VMActivityTests {
     private func followUp(
         _ label: String, _ kind: VMOperationKind, on instance: VMInstance,
         scope: VMFollowUp.Scope = .vm, rank: VMFollowUp.Rank = .ordinary,
-        joins: VMAdmission.Request? = nil, gate: GatedStep? = nil, order: FollowUpOrder
+        request: VMAdmission.Request? = nil, gate: GatedStep? = nil, order: FollowUpOrder
     ) -> VMFollowUp {
-        VMFollowUp(scope: scope, rank: rank, joins: joins) { outcome in
+        VMFollowUp(scope: scope, rank: rank, request: request) { outcome in
             try instance.activity.launch(kind, resolving: outcome) { _ in
                 try await gate?.pass()
                 return .rest(.asStarted, ())
@@ -878,7 +878,7 @@ struct VMActivityTests {
         let pass = try launchGated(.reconcilingMedia, on: instance, gate: gate)
         let joining = followUp(
             "reconcile", .reconcilingMedia, on: instance, scope: .session(session),
-            joins: .operation(.reconcilingMedia), order: order)
+            request: .operation(.reconcilingMedia), order: order)
         let queued = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
 
         instance.activity.follow(joining)
@@ -902,12 +902,14 @@ struct VMActivityTests {
         let holdGate = GatedStep()
         let hold = try launchGated(.pausing, on: instance, gate: holdGate)
         let passGate = GatedStep()
+        // Scoped differently, so the second queues rather than joining the
+        // first in the queue.
         let first = followUp(
-            "first", .reconcilingMedia, on: instance, scope: .session(session),
-            joins: .operation(.reconcilingMedia), gate: passGate, order: order)
+            "first", .reconcilingMedia, on: instance, scope: .vm,
+            request: .operation(.reconcilingMedia), gate: passGate, order: order)
         let second = followUp(
             "second", .reconcilingMedia, on: instance, scope: .session(session),
-            joins: .operation(.reconcilingMedia), order: order)
+            request: .operation(.reconcilingMedia), order: order)
         instance.activity.follow(first)
         instance.activity.follow(second)
         #expect(instance.activity.queuedFollowUpCountForTesting == 2)
@@ -922,6 +924,43 @@ struct VMActivityTests {
         try await second.outcome.value()
         #expect(order.admitted == ["first"])
         #expect(instance.phase == .running(sessionID: session))
+    }
+
+    @Test("A follow-up making a queued one's request in its scope joins it rather than queueing twice")
+    func aDuplicateFollowUpJoinsTheQueuedOne() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        let request = VMAdmission.Request.operation(.attachingUSB(registryID: 7))
+        let passGate = GatedStep()
+        let first = followUp(
+            "first", .pausing, on: instance, scope: .session(session), request: request,
+            gate: passGate, order: order)
+        let duplicate = followUp(
+            "duplicate", .pausing, on: instance, scope: .session(session), request: request,
+            order: order)
+        let elsewhere = followUp(
+            "elsewhere", .pausing, on: instance, scope: .vm, request: request, order: order)
+
+        instance.activity.follow(first)
+        instance.activity.follow(duplicate)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        // The same request in another scope is another follow-up.
+        instance.activity.follow(elsewhere)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
+        instance.activity.withdraw(elsewhere)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        passGate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await first.outcome.value() }
+        await #expect(throws: Probe.self) { try await duplicate.outcome.value() }
+        #expect(order.admitted == ["first"])
     }
 
     @Test("A power-off during a USB detach runs the revert after the detach and before a queued follow-up")

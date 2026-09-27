@@ -9,8 +9,8 @@ import Foundation
 /// of the operation that attaches it, settled as that attach lands, and
 /// released at the operation's ending when it never landed, by a detach, by an
 /// unplug, and by the teardown of the holder's session. A return is owed from
-/// the capture that ejects the accessory until its next arrival spends it, or
-/// the teardown of that VM's session drops it. Every write takes an
+/// just before a capture detaches the accessory until its next arrival spends
+/// it, the detach fails, or the teardown of that VM's session drops it. Every write takes an
 /// ``AccessoryHoldersKey``, which only `VMActivity.swift` can make.
 @MainActor
 @Observable
@@ -122,17 +122,20 @@ final class VMAccessoryHolders {
         return nil
     }
 
-    /// Records every accessory `instance`'s guest holds that something durable
-    /// identifies as owed back to it.
-    func oweReturnsOfAttached(to instance: VMInstance, _ key: AccessoryHoldersKey) {
-        for attached in attached(to: instance) {
-            guard let identity = attached.accessory.identity else { continue }
-            owedReturns[identity] = instance
-        }
+    /// Records `attached` as owed back to `instance`, when `instance`'s guest
+    /// holds it and something durable identifies it.
+    func oweReturn(
+        of attached: AttachedUSBAccessory, to instance: VMInstance, _ key: AccessoryHoldersKey
+    ) {
+        guard let identity = attached.accessory.identity,
+            self.attached(to: instance).contains(where: { $0.deviceID == attached.deviceID })
+        else { return }
+        owedReturns[identity] = instance
     }
 
     /// Spends the return of `identity` owed to `instance`, answering whether
     /// one was.
+    @discardableResult
     func spendOwedReturn(
         of identity: USBAccessoryIdentity, to instance: VMInstance, _ key: AccessoryHoldersKey
     ) -> Bool {

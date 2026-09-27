@@ -103,7 +103,8 @@ final class VMActivity {
     ///
     /// One scoped to a session that is no longer live ends refused as
     /// ``VMAdmission/Refusal/invalidState`` without being queued, and one the
-    /// operation holding the VM joins takes that operation's outcome instead.
+    /// operation holding the VM joins, or one making the request a queued
+    /// follow-up already makes, takes that outcome instead.
     func follow(_ followUp: VMFollowUp) {
         enqueue([followUp])
         drain()
@@ -129,7 +130,7 @@ final class VMActivity {
                 item.outcome.resolve(.failure(followUpRefusal(.invalidState, for: item)))
                 continue
             }
-            if joinsHolder(item) { continue }
+            if joinsHolder(item) || joinsQueued(item) { continue }
             let index = followUps.firstIndex { $0.rank > item.rank } ?? followUps.endIndex
             followUps.insert(item, at: index)
         }
@@ -163,16 +164,33 @@ final class VMActivity {
     }
 
     /// Hands `followUp` the outcome of the operation holding the VM when
-    /// admission decides its ``VMFollowUp/joins`` request joins that
-    /// operation, answering whether it did.
+    /// admission decides its ``VMFollowUp/request`` joins that operation,
+    /// answering whether it did.
     private func joinsHolder(_ followUp: VMFollowUp) -> Bool {
-        guard let request = followUp.joins, let holder = phase.operation,
+        guard let request = followUp.request, let holder = phase.operation,
             case .join(let running) = decide(request, posture: .commit)
         else { return false }
         running.forward(to: followUp.outcome)
         #log(
             Self.logger, .notice,
             "A follow-up on '\(self.name, privacy: .public)' joined the \(String(describing: holder.kind), privacy: .public) holding it"
+        )
+        return true
+    }
+
+    /// Hands `followUp` the outcome of the queued follow-up making the same
+    /// ``VMFollowUp/request`` in the same scope, answering whether one was
+    /// queued.
+    private func joinsQueued(_ followUp: VMFollowUp) -> Bool {
+        guard let request = followUp.request,
+            let queued = followUps.first(where: {
+                $0.request == request && $0.scope == followUp.scope
+            })
+        else { return false }
+        queued.outcome.forward(to: followUp.outcome)
+        #log(
+            Self.logger, .notice,
+            "A follow-up on '\(self.name, privacy: .public)' joined the queued one making the same request"
         )
         return true
     }
@@ -1343,13 +1361,21 @@ struct VMCaptureContext: ~Copyable, Sendable {
         self.mode = mode
     }
 
-    /// Records every accessory the guest holds that something durable
-    /// identifies as owed back to this VM, for its next arrival to take there
-    /// — before the capture ejects them, since macOS can assign one back
-    /// before the detach returns.
-    @MainActor func oweReturnsOfAttachedAccessories() {
+    /// Records `item`, which the guest holds, as owed back to this VM, for
+    /// its next arrival to take there — nothing when nothing durable
+    /// identifies it.
+    @MainActor func oweReturn(of item: AttachedUSBAccessory) {
         let instance = operation.instance
-        instance.peers?.accessoryHolders.oweReturnsOfAttached(to: instance, AccessoryHoldersKey())
+        instance.peers?.accessoryHolders.oweReturn(of: item, to: instance, AccessoryHoldersKey())
+    }
+
+    /// Takes back the return ``oweReturn(of:)`` recorded for `item`, whose
+    /// detach failed and which the guest still holds.
+    @MainActor func forgiveReturn(of item: AttachedUSBAccessory) {
+        guard let identity = item.accessory.identity else { return }
+        let instance = operation.instance
+        instance.peers?.accessoryHolders.spendOwedReturn(
+            of: identity, to: instance, AccessoryHoldersKey())
     }
 }
 

@@ -65,8 +65,17 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         detachErrorDeviceID = deviceID
     }
 
+    /// Runs as each detach begins, before it can throw — the moment a sweep
+    /// has committed to taking that device off.
+    private var beforeDetach: (@Sendable (UUID) async -> Void)?
+
+    func setBeforeDetach(_ work: @escaping @Sendable (UUID) async -> Void) {
+        beforeDetach = work
+    }
+
     func detachUSBDevice(uuid: UUID) async throws {
         calls.append("detachUSBDevice")
+        await beforeDetach?(uuid)
         if let detachError, detachErrorDeviceID == nil || detachErrorDeviceID == uuid {
             throw detachError
         }

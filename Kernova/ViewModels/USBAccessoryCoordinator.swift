@@ -245,7 +245,10 @@ final class USBAccessoryCoordinator {
         as reason: AutoAttachReason
     ) -> VMFollowUp {
         let registryID = accessory.registryID
-        return VMFollowUp(scope: .session(sessionID), rank: .ordinary) {
+        return VMFollowUp(
+            scope: .session(sessionID), rank: .ordinary,
+            request: .operation(.attachingUSB(registryID: registryID))
+        ) {
             [lifecycle, service, weak instance] outcome in
             guard let instance else { throw CancellationError() }
             guard service.accessories.contains(where: { $0.registryID == registryID }) else {

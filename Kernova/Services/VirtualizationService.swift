@@ -337,7 +337,7 @@ final class VirtualizationService {
                 throw VirtualizationError.noVirtualMachine
             }
             return try await Self.captureWarmSnapshot(
-                instance, context.operation, snapshot: request, session: session)
+                instance, context, snapshot: request, session: session)
         case .suspended:
             return try await takeSuspendedSnapshot(instance, context.operation, snapshot: snapshot)
         case .stopped:
@@ -353,39 +353,37 @@ final class VirtualizationService {
     /// there — is reachable without the virtualization entitlement a real
     /// `VZVirtualMachine` needs.
     static func captureWarmSnapshot(
-        _ instance: VMInstance, _ context: borrowing VMOperationContext,
+        _ instance: VMInstance, _ capture: borrowing VMCaptureContext,
         snapshot request: VMSnapshotCaptureRequest, session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        guard let sessionID = context.sessionID else { throw VirtualizationError.noVirtualMachine }
+        guard let sessionID = capture.operation.sessionID else { throw VirtualizationError.noVirtualMachine }
         let snapshot = request.record(capturedIn: .live)
         let wasRunning = instance.phase.operation?.startedFrom == .running(sessionID: sessionID)
         let configuration = instance.configuration
         let snapshotID = snapshot.id
 
         do {
-            let prepared = try await context.bundle.prepareSnapshot(snapshotID, configuration: configuration)
+            let prepared = try await capture.operation.bundle.prepareSnapshot(snapshotID, configuration: configuration)
 
-            // The guest is still there afterwards, so each of these is owed
-            // back to it — see ``VMCaptureContext/oweReturnsOfAttachedAccessories()``.
-            try await detachUSBAccessories(context, session: session)
+            try await detachUSBAccessories(owingReturns: capture, session: session)
             try await captureLiveState(
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
             ) {
-                try await context.bundle.captureDisks(
+                try await capture.operation.bundle.captureDisks(
                     intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
             }
         } catch {
-            await context.bundle.removeSnapshotDirectory(snapshotID)
+            await capture.operation.bundle.removeSnapshotDirectory(snapshotID)
             #log(
                 logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             let guest = await guestAfterFailedWarmCapture(
-                instance, context, session: session, wasRunning: wasRunning)
+                instance, capture.operation, session: session, wasRunning: wasRunning)
             return .failed(.live(guest), error)
         }
 
-        if context.sessionID == nil {
+        if capture.operation.sessionID == nil {
             // The guest went away while its disks were copied. The saved state
             // and the disks were both written before that happened, so the
             // snapshot is complete and the caller records it.
@@ -471,8 +469,9 @@ final class VirtualizationService {
     /// then — a mismatch VZ reports as `VZErrorRestore`, failing the whole
     /// restore with nothing the user can remove to recover. Nothing persists an
     /// attachment, so dropping them before the write makes that unreachable
-    /// rather than merely unlikely. Both save paths call this, and a new one
-    /// must too.
+    /// rather than merely unlikely. Both save paths call this — the warm
+    /// capture through ``detachUSBAccessories(owingReturns:session:)`` — and a
+    /// new one must too.
     ///
     /// A device the controller no longer holds is a success — an unplug got
     /// there first, and the post-condition already holds. Anything else throws:
@@ -486,25 +485,59 @@ final class VirtualizationService {
     static func detachUSBAccessories(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
     ) async throws {
-        let instance = context.instance
+        for item in context.instance.liveUSBAccessories {
+            try await detachUSBAccessory(item, context, session: session)
+        }
+    }
+
+    /// ``detachUSBAccessories(_:session:)`` for a warm capture, whose guest
+    /// is still running afterwards: each accessory is owed back to it
+    /// (``VMCaptureContext/oweReturn(of:)``) just before its own detach —
+    /// macOS can assign it back before the detach returns — and forgiven if
+    /// that detach throws, so what is owed is exactly what the sweep took off.
+    static func detachUSBAccessories(
+        owingReturns capture: borrowing VMCaptureContext, session: any VMSnapshotSessionOperating
+    ) async throws {
+        let instance = capture.operation.instance
         for item in instance.liveUSBAccessories {
-            do {
-                try await session.detachUSBDevice(uuid: item.deviceID)
-                // A .notice because it is an irreversible action on the user's
-                // own hardware: the device resets and the host takes it back,
-                // and nothing else in the log says a save did that.
+            if item.accessory.identity == nil {
                 #log(
-                    logger, .notice,
-                    "Took USB accessory \(item.accessory.displayName, privacy: .public) off '\(instance.name, privacy: .public)' before writing its state"
-                )
-            } catch VMSessionError.usbDeviceNotFound {
-                #log(
-                    logger, .notice,
-                    "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
+                    logger, .warning,
+                    "USB accessory \(item.accessory.displayName, privacy: .public) will not go back on '\(instance.name, privacy: .public)' after the capture: nothing durable identifies it"
                 )
             }
-            context.releaseAccessory(deviceID: item.deviceID)
+            capture.oweReturn(of: item)
+            do {
+                try await detachUSBAccessory(item, capture.operation, session: session)
+            } catch {
+                capture.forgiveReturn(of: item)
+                throw error
+            }
         }
+    }
+
+    /// Takes `item` off the VM `context` holds and releases it.
+    private static func detachUSBAccessory(
+        _ item: AttachedUSBAccessory, _ context: borrowing VMOperationContext,
+        session: any VMSnapshotSessionOperating
+    ) async throws {
+        let instance = context.instance
+        do {
+            try await session.detachUSBDevice(uuid: item.deviceID)
+            // A .notice because it is an irreversible action on the user's
+            // own hardware: the device resets and the host takes it back,
+            // and nothing else in the log says a save did that.
+            #log(
+                logger, .notice,
+                "Took USB accessory \(item.accessory.displayName, privacy: .public) off '\(instance.name, privacy: .public)' before writing its state"
+            )
+        } catch VMSessionError.usbDeviceNotFound {
+            #log(
+                logger, .notice,
+                "USB accessory \(item.accessory.displayName, privacy: .public) was already off '\(instance.name, privacy: .public)' before the save"
+            )
+        }
+        context.releaseAccessory(deviceID: item.deviceID)
     }
 
     /// Writes the guest's live state into `saveFileURL`, copies the disks

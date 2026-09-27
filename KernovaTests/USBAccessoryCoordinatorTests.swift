@@ -454,17 +454,14 @@ struct USBAccessoryCoordinatorTests {
 
     // MARK: - Owed Returns
 
-    /// Runs a warm capture on `instance` as the lifecycle does: owes back what
-    /// the guest holds, then ejects it, and macOS withdraws each stick while
-    /// the reset runs. Parks on `gate`, when given, before ending.
+    /// Runs a warm capture's sweep on `instance`, and macOS withdraws each
+    /// stick while the reset runs. Parks on `gate`, when given, before ending.
     private func capture(
         _ instance: VMInstance, service: MockUSBAccessoryService, gate: GatedStep? = nil
     ) async throws {
         try await instance.activity.captureSnapshot(.live) { context in
-            context.oweReturnsOfAttachedAccessories()
-            for item in context.operation.instance.liveUSBAccessories {
-                context.operation.releaseAccessory(deviceID: item.deviceID)
-            }
+            try await VirtualizationService.detachUSBAccessories(
+                owingReturns: context, session: MockSnapshotSession(guestState: .running))
             service.accessories.removeAll()
             try await gate?.pass()
             return .rest(.asStarted, ())
