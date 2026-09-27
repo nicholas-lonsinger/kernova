@@ -307,6 +307,8 @@ enum VMSessionEnd: Sendable, Equatable {
 final class VMOutcome: Sendable, Equatable {
     private var result: Result<Void, any Error>?
     private var waiters: [CheckedContinuation<Result<Void, any Error>, Never>] = []
+    /// Outcomes that resolve as this one does — ``forward(to:)``.
+    private var forwarded: [VMOutcome] = []
 
     /// The task a launched operation runs its body in, which cancelling the
     /// operation cancels.
@@ -321,6 +323,19 @@ final class VMOutcome: Sendable, Equatable {
         let waiting = waiters
         waiters = []
         for waiter in waiting { waiter.resume(returning: result) }
+        let joined = forwarded
+        forwarded = []
+        for outcome in joined { outcome.resolve(result) }
+    }
+
+    /// Resolves `other` as this outcome resolves, in the same step — at once
+    /// when it already has.
+    func forward(to other: VMOutcome) {
+        guard let result else {
+            forwarded.append(other)
+            return
+        }
+        other.resolve(result)
     }
 
     /// Waits for the operation to end and rethrows how it failed.
@@ -511,6 +526,10 @@ struct VMOperationDeclaration: Sendable, Equatable {
     enum Join: Sendable, Equatable {
         case start
         case resume
+        /// A removable-media reconcile, which a reconcile already holding the
+        /// VM carries: each of its passes reads the list the configuration
+        /// holds.
+        case reconcile
     }
 
     let status: Status
@@ -550,8 +569,7 @@ extension VMOperationKind {
         case .pausing, .resuming, .attachingUSB, .detachingUSB:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
-                toleratedSessionActions: stoppable, edits: .baseExcept(.hotPlugMedia),
-                joinedBy: [])
+                toleratedSessionActions: stoppable, edits: .baseExcept([]), joinedBy: [])
         case .saving:
             return .init(
                 status: .shows(.saving), holdsIdentity: .viaSession, quit: .waitOut,
@@ -566,11 +584,12 @@ extension VMOperationKind {
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
                 toleratedSessionActions: stoppable,
-                edits: .baseExcept([.hotPlugMedia, .snapshotMetadata]), joinedBy: [])
+                edits: .baseExcept(.snapshotMetadata), joinedBy: [])
         case .reconcilingMedia:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
-                toleratedSessionActions: stoppable, edits: .baseExcept([]), joinedBy: [])
+                toleratedSessionActions: stoppable, edits: .baseExcept([]),
+                joinedBy: [.reconcile])
         case .forceStopping:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
@@ -591,7 +610,7 @@ extension VMOperationKind {
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
                 toleratedSessionActions: stoppable,
-                edits: .baseExcept([.machineKeys, .hotPlugMedia]), joinedBy: [])
+                edits: .baseExcept(.machineKeys), joinedBy: [])
         case .copyingOut:
             return .init(
                 status: .base, holdsIdentity: .never, quit: .interrupt, display: .base,

@@ -645,9 +645,9 @@ struct VMActivityTests {
     private func followUp(
         _ label: String, _ kind: VMOperationKind, on instance: VMInstance,
         scope: VMFollowUp.Scope = .vm, rank: VMFollowUp.Rank = .ordinary,
-        gate: GatedStep? = nil, order: FollowUpOrder
+        joins: VMAdmission.Request? = nil, gate: GatedStep? = nil, order: FollowUpOrder
     ) -> VMFollowUp {
-        VMFollowUp(scope: scope, rank: rank) { outcome in
+        VMFollowUp(scope: scope, rank: rank, joins: joins) { outcome in
             try instance.activity.launch(kind, resolving: outcome) { _ in
                 try await gate?.pass()
                 return .rest(.asStarted, ())
@@ -861,6 +861,62 @@ struct VMActivityTests {
         try await hold.value()
         #expect(order.admitted.isEmpty)
         #expect(instance.phase == .stopped)
+    }
+
+    @Test("A follow-up the operation holding the VM joins takes that operation's outcome instead of queueing")
+    func aJoiningFollowUpTakesTheHoldersOutcome() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let gate = GatedStep()
+        let pass = try launchGated(.reconcilingMedia, on: instance, gate: gate)
+        let joining = followUp(
+            "reconcile", .reconcilingMedia, on: instance, scope: .session(session),
+            joins: .operation(.reconcilingMedia), order: order)
+        let queued = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
+
+        instance.activity.follow(joining)
+        instance.activity.follow(queued)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(instance.phase.operation?.outcome === pass)
+
+        gate.release(throwing: Probe())
+        await #expect(throws: Probe.self) { try await pass.value() }
+        await #expect(throws: Probe.self) { try await joining.outcome.value() }
+        try await queued.outcome.value()
+        #expect(order.admitted == ["pause"])
+    }
+
+    @Test("Follow-ups queued behind one the drain admits join it where its operation declares the join")
+    func queuedFollowUpsJoinTheDrainedOne() async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+        let order = FollowUpOrder()
+        let holdGate = GatedStep()
+        let hold = try launchGated(.pausing, on: instance, gate: holdGate)
+        let passGate = GatedStep()
+        let first = followUp(
+            "first", .reconcilingMedia, on: instance, scope: .session(session),
+            joins: .operation(.reconcilingMedia), gate: passGate, order: order)
+        let second = followUp(
+            "second", .reconcilingMedia, on: instance, scope: .session(session),
+            joins: .operation(.reconcilingMedia), order: order)
+        instance.activity.follow(first)
+        instance.activity.follow(second)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
+
+        holdGate.release()
+        try await hold.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        expectQueueHeldByAnOperation(instance)
+
+        passGate.release()
+        try await second.outcome.value()
+        #expect(order.admitted == ["first"])
+        #expect(instance.phase == .running(sessionID: session))
     }
 
     @Test("A power-off during a USB detach runs the revert after the detach and before a queued follow-up")

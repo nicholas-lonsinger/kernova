@@ -15,7 +15,10 @@ final class NoLibraryConfigurationPolicy: VMConfigurationPolicy {
         nil
     }
 
-    func committed(on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration) {}
+    func committed(
+        on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration,
+        under authority: VMEditPermit.Authority
+    ) {}
 }
 
 extension VMBundle.Factory {

@@ -234,8 +234,10 @@ protocol VMConfigurationPolicy: AnyObject, Sendable {
     ) -> (any Error)?
 
     /// Carries a commit that moved `instance`'s configuration from `old` to
-    /// `new` to whatever acts on it.
-    func committed(on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration)
+    /// `new` under `authority` to whatever acts on it.
+    func committed(
+        on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration,
+        under authority: VMEditPermit.Authority)
 }
 
 extension VMBundle {
@@ -285,7 +287,7 @@ extension VMBundle {
             }
             let new = bundle.configuration
             if new != old {
-                policy.committed(on: owner, from: old, to: new)
+                policy.committed(on: owner, from: old, to: new, under: authority)
             }
         }
 

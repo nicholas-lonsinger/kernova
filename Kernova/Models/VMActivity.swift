@@ -102,7 +102,8 @@ final class VMActivity {
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
     /// One scoped to a session that is no longer live ends refused as
-    /// ``VMAdmission/Refusal/invalidState`` without being queued.
+    /// ``VMAdmission/Refusal/invalidState`` without being queued, and one the
+    /// operation holding the VM joins takes that operation's outcome instead.
     func follow(_ followUp: VMFollowUp) {
         enqueue([followUp])
         drain()
@@ -125,6 +126,7 @@ final class VMActivity {
                 item.outcome.resolve(.failure(followUpRefusal(.invalidState, for: item)))
                 continue
             }
+            if joinsHolder(item) { continue }
             let index = followUps.firstIndex { $0.rank > item.rank } ?? followUps.endIndex
             followUps.insert(item, at: index)
         }
@@ -134,7 +136,8 @@ final class VMActivity {
     /// afresh against the phase it meets: an admitted follow-up holds the VM,
     /// which ends the drain, and a refused one resolves its outcome with the
     /// refusal. A removed VM refuses every one as
-    /// ``VMAdmission/Refusal/removed``.
+    /// ``VMAdmission/Refusal/removed``. Whatever is still queued once a
+    /// follow-up holds the VM joins it where its operation declares the join.
     private func drain() {
         while phase.isSettled, !followUps.isEmpty {
             let head = followUps.removeFirst()
@@ -148,6 +151,27 @@ final class VMActivity {
                 head.outcome.resolve(.failure(error))
             }
         }
+        guard phase.operation != nil else { return }
+        var waiting: [VMFollowUp] = []
+        for item in followUps where !joinsHolder(item) {
+            waiting.append(item)
+        }
+        followUps = waiting
+    }
+
+    /// Hands `followUp` the outcome of the operation holding the VM when
+    /// admission decides its ``VMFollowUp/joins`` request joins that
+    /// operation, answering whether it did.
+    private func joinsHolder(_ followUp: VMFollowUp) -> Bool {
+        guard let request = followUp.joins, let holder = phase.operation,
+            case .join(let running) = decide(request, posture: .commit)
+        else { return false }
+        running.forward(to: followUp.outcome)
+        #log(
+            Self.logger, .notice,
+            "A follow-up on '\(self.name, privacy: .public)' joined the \(String(describing: holder.kind), privacy: .public) holding it"
+        )
+        return true
     }
 
     /// Ends every follow-up scoped to a session, as the one live session ends.
@@ -417,14 +441,14 @@ final class VMActivity {
     /// awaits the outcome finds its work done.
     @discardableResult
     func launch(
-        _ kind: VMOperationKind, resolving outcome: VMOutcome = VMOutcome(),
-        whenEnded: WhenEnded? = nil,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
+        resolving outcome: VMOutcome = VMOutcome(), whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        try launchRun(kind, outcome: outcome, whenEnded: whenEnded, { $0 }, body)
+        try launchRun(kind, origin: origin, outcome: outcome, whenEnded: whenEnded, { $0 }, body)
     }
 
-    /// ``launch(_:resolving:whenEnded:_:)`` for a bring-up — a guest setup.
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a bring-up — a guest setup.
     @discardableResult
     func launchBringUp(
         _ kind: VMBringUpKind,
@@ -436,7 +460,7 @@ final class VMActivity {
             { VMBringUpContext(operation: $0) }, body)
     }
 
-    /// ``launch(_:resolving:whenEnded:_:)`` for a revert to `snapshot`,
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a revert to `snapshot`,
     /// resuming the guest at its end when `resumesAfter`.
     @discardableResult
     func launchRevert(
@@ -454,7 +478,7 @@ final class VMActivity {
             }, body)
     }
 
-    /// ``launch(_:resolving:whenEnded:_:)`` for the attach of the accessory
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for the attach of the accessory
     /// `registryID` names — ``attachUSBAccessory(_:_:)`` in a task the
     /// operation owns.
     @discardableResult

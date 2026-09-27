@@ -443,12 +443,14 @@ final class AppTerminationController: NSObject {
     /// Waits out whatever a quit must not exit through, then save-suspends
     /// every VM settled live, one session at a time.
     ///
-    /// The wait comes first on every iteration because the pass's own work
-    /// can start more of what it waits for: a save's force-stop fallback powers
-    /// an Ephemeral VM off, which admits its baseline revert. Nothing else can:
-    /// the library's termination has begun, so admission refuses every other
-    /// operation — which is also why a VM selected here is still settled live
-    /// when its save is decided, in the same main-actor turn.
+    /// The wait comes first on every iteration because more of what it waits
+    /// for can follow: an Ephemeral VM's power-off — a save's force-stop
+    /// fallback among them — admits its baseline revert, and an operation's
+    /// end admits the reconcile an edit admitted before the quit owes that
+    /// VM. Nothing else can: the library's termination has begun, so
+    /// admission refuses every other operation — which is also why a VM
+    /// selected here is still settled live when its save is decided, in the
+    /// same main-actor turn.
     ///
     /// Each session is saved at most once: a force stop that failed leaves the
     /// same session live, and re-selecting it would loop forever, while a VM
