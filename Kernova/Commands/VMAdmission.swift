@@ -145,9 +145,9 @@ enum VMAdmission {
     }
 
     /// Whether a removable-media change on a VM in `phase` owes a reconcile
-    /// of its own: the VM has a live session, and no operation holding it
-    /// joins a reconcile — at once on a settled VM, and otherwise once the
-    /// operation holding it ends.
+    /// operation of its own — run at once on a settled VM, and once the
+    /// operation holding it ends otherwise: the VM has a live session, and no
+    /// reconcile already holding it carries the change.
     static func owesMediaReconcile(_ phase: VMLifecyclePhase) -> Bool {
         guard phase.sessionID != nil else { return false }
         guard let operation = phase.operation else { return true }

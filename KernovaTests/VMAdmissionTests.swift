@@ -561,7 +561,7 @@ struct VMAdmissionTests {
         // …and failed after Virtualization stopped the guest with an error.
         HeldRow(
             kind: .pausing, startedFrom: live, sessionEnd: .stoppedWithError(message: "boom"),
-            expected: "BII IIIIII IIIB BBB BBB AABAAAAAA IIIB AIIII"),
+            expected: "BII IIIIII IIIB BBB BBB AAAAAAAAA IIIB AIIII"),
     ]
 
     @Test(

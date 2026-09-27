@@ -615,7 +615,7 @@ struct VMCommandCoreAttachmentTests {
         }
     }
 
-    @Test("R1(c): a Suspend during a live removable-disk creation is refused; the disk is attached after")
+    @Test("R1(c): a Suspend during a live removable-disk creation is refused; an edit is taken and both land")
     func createRemovableMediaHoldsALiveVM() async throws {
         let diskImages = MockDiskImageService()
         diskImages.holdCreateDiskImage()
@@ -635,21 +635,24 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.status == .running)
         let suspend = await commandError { try await harness.core.suspend(.id(instance.id)) }
         #expect(suspend?.isBusy == true)
-        let edit = await commandError {
-            try harness.core.attachRemovableMedia(
-                .id(instance.id), paths: [PickedFile(path: externalPath("other.iso"), bookmark: nil)])
-        }
-        #expect(edit?.isBusy == true)
+        let other = externalPath("other.iso")
+        try harness.core.attachRemovableMedia(
+            .id(instance.id), paths: [PickedFile(path: other, bookmark: nil)])
+        #expect(instance.configuration.removableMedia?.map(\.path) == [other])
+        #expect(harness.removableMediaDevices.attachCallCount == 0)
 
         diskImages.resumeCreateDiskImage()
         try await creation.value
+        // The reconcile the edit owed runs once the creation lets the VM go.
+        try await waitForChange { instance.phase == .running(sessionID: sessionID) }
 
         let path = destination.path(percentEncoded: false)
-        #expect(instance.configuration.removableMedia?.map(\.path) == [path])
-        // Attached by the creation itself, before it let the VM go.
-        #expect(harness.removableMediaDevices.attachCallCount == 1)
-        #expect(instance.liveRemovableMedia.map(\.path) == [path])
-        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(instance.configuration.removableMedia?.map(\.path) == [other, path])
+        // Both attached by the creation's own pass, before it let the VM go;
+        // the edit's reconcile found nothing left to do.
+        #expect(harness.removableMediaDevices.attachCallCount == 2)
+        #expect(harness.removableMediaDevices.detachCallCount == 0)
+        #expect(Set(instance.liveRemovableMedia.map(\.path)) == [other, path])
         try await harness.core.suspend(.id(instance.id))
         #expect(instance.phase == .suspended)
     }
