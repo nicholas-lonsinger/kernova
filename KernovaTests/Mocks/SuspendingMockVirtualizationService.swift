@@ -58,6 +58,12 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// The account the last `start` was handed.
     private(set) var lastStartProvisioning: GuestProvisioningCredentials?
 
+    /// Error `pause` throws once it is let through.
+    var pauseError: (any Error)?
+
+    /// Number of hot `resume` calls that reached the mock.
+    private(set) var resumeCallCount = 0
+
     // MARK: - Suspension Mechanism
 
     /// Continuation that, when resumed, unblocks the suspended operation.
@@ -135,12 +141,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         if shouldSuspendOnPause {
             await suspendIfNeeded()
         }
+        if let pauseError { throw pauseError }
         return .rest(.live(.paused), ())
     }
 
     func resume(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
+        resumeCallCount += 1
         if shouldSuspendOnResume {
             await suspendIfNeeded()
         }
