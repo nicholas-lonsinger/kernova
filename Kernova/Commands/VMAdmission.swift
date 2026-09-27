@@ -151,7 +151,7 @@ enum VMAdmission {
     static func owesMediaReconcile(_ phase: VMLifecyclePhase) -> Bool {
         guard phase.sessionID != nil else { return false }
         guard let operation = phase.operation else { return true }
-        return !operation.kind.declaration.joinedBy.contains(.reconcile)
+        return !joins(.operation(.reconcilingMedia), operation)
     }
 
     /// How the VM's own phase and facts answer `request`, before the app's
@@ -395,15 +395,12 @@ enum VMAdmission {
         // A session a Force Stop is terminating is held as `.forceStopping`: a
         // second Force Stop joins the first — offered, it reads as busy, like
         // every join — and the rest is answered as that kind declares.
-        let stop = operation.session?.stopping
-        if let stop, request == .sessionAction(.forceStop) {
+        if let stop = operation.session?.stopping, request == .sessionAction(.forceStop) {
             return posture == .commit ? .join(stop) : .refuse(.busy(.forceStopping))
         }
-        let holder = stop == nil ? operation.kind : .forceStopping
+        let holder = holder(of: operation)
         let declaration = holder.declaration
-        if posture == .commit, let join = join(for: request),
-            declaration.joinedBy.contains(join)
-        {
+        if posture == .commit, joins(request, operation) {
             return .join(operation.outcome)
         }
         switch request {
@@ -440,6 +437,20 @@ enum VMAdmission {
         case .refuse(let refusal):
             return .refuse(refusal)
         }
+    }
+
+    /// The kind whose declaration answers a request during `operation`: the
+    /// operation's own, or ``VMOperationKind/forceStopping`` while a Force
+    /// Stop is terminating its session.
+    private static func holder(of operation: VMOperation) -> VMOperationKind {
+        operation.session?.stopping == nil ? operation.kind : .forceStopping
+    }
+
+    /// Whether committing `request` during `operation` joins it — the one
+    /// statement of the join rule.
+    private static func joins(_ request: Request, _ operation: VMOperation) -> Bool {
+        guard let join = join(for: request) else { return false }
+        return holder(of: operation).declaration.joinedBy.contains(join)
     }
 
     private static func join(for request: Request) -> VMOperationDeclaration.Join? {

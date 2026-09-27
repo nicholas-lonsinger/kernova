@@ -407,6 +407,32 @@ struct VMAdmissionTests {
         }
     }
 
+    @Test("Whether a media change owes a reconcile is exactly whether the reconcile would not join")
+    func owedReconcileAgreesWithTheJoin() {
+        let facts = Self.facts(slot: false, .plain)
+        let stoppingReconcile = VMLifecyclePhase.operating(
+            VMOperation(
+                kind: .reconcilingMedia, startedFrom: Self.live,
+                sessionState: .live(
+                    VMOperationSession(id: Self.session, guest: .running, stopping: VMOutcome())),
+                outcome: VMOutcome()))
+        let phases: [VMLifecyclePhase] =
+            VMLifecyclePhaseFixtures.all + [stoppingReconcile]
+        for phase in phases where phase.sessionID != nil {
+            let decision = VMAdmission.decide(
+                .operation(.reconcilingMedia), posture: .commit, phase: phase, facts: facts)
+            let joins: Bool
+            if case .join = decision { joins = true } else { joins = false }
+            #expect(VMAdmission.owesMediaReconcile(phase) == !joins, "\(phase)")
+        }
+        // A Force Stop terminating a reconcile's session holds the VM as
+        // `.forceStopping`, which carries no change: the reconcile is owed, not
+        // joined.
+        #expect(VMAdmission.owesMediaReconcile(stoppingReconcile))
+        #expect(
+            !VMAdmission.owesMediaReconcile(.operating(.reconcilingMedia, from: Self.live)))
+    }
+
     // MARK: - Held kinds × requests
 
     /// Columns, grouped as each row's expectation spaces them:
