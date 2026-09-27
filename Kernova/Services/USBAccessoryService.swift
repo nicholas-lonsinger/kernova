@@ -13,7 +13,7 @@ import Virtualization
 @MainActor
 final class USBAccessoryService: USBAccessoryProviding {
     private(set) var accessories: [USBAccessoryInfo] = []
-    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo, USBAccessoryArrival) -> Void)?
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
     var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
     /// The live `AAUSBAccessory` behind each entry in `accessories`. VZ needs
@@ -26,15 +26,6 @@ final class USBAccessoryService: USBAccessoryProviding {
 
     /// Where the durable half of an accessory's description comes from.
     private let registry: any USBAccessoryRegistryReading
-
-    /// Callers waiting for a particular unit to be assigned again, keyed by a
-    /// token so a backstop and an arrival cannot both answer one of them.
-    private var pendingMatches: [UUID: PendingMatch] = [:]
-
-    private struct PendingMatch {
-        let identity: USBAccessoryIdentity
-        let continuation: CheckedContinuation<USBAccessoryInfo?, Never>
-    }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "USBAccessoryService")
 
@@ -107,12 +98,7 @@ final class USBAccessoryService: USBAccessoryProviding {
             Self.logger, .notice,
             "USB accessory assigned to Kernova: \(info.displayName, privacy: .public) (\(registryID), \(Self.identityText(info), privacy: .public))"
         )
-        // Answered first, so the arrival says whether somebody was already
-        // waiting for this exact unit rather than leaving that to a guess
-        // about timing.
-        let arrival: USBAccessoryArrival =
-            resolvePendingMatches(with: info) ? .awaitedReturn : .fresh
-        onAccessoryAssigned?(info, arrival)
+        onAccessoryAssigned?(info)
     }
 
     /// Drops an accessory macOS took back.
@@ -174,55 +160,6 @@ final class USBAccessoryService: USBAccessoryProviding {
         case .serialNumber: "identity \(identity.key)"
         case .receptacle: "identity \(identity.key), by port"
         }
-    }
-
-    // MARK: - Waiting for a Re-Assignment
-
-    func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
-        async -> USBAccessoryInfo?
-    {
-        if let already = accessories.first(where: { $0.identity == identity }) { return already }
-
-        let token = UUID()
-        let backstop = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.resolvePendingMatch(token, with: nil)
-        }
-        defer { backstop.cancel() }
-
-        // Cancellation ends the wait at once rather than at the backstop: the
-        // caller that cancels has stopped having anywhere to put the accessory,
-        // and a parked continuation would hold its operation open until the
-        // deadline. The in-line check covers a caller already cancelled when it
-        // arrived, whose handler has run before the continuation exists.
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                guard !Task.isCancelled else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                pendingMatches[token] = PendingMatch(identity: identity, continuation: continuation)
-            }
-        } onCancel: {
-            Task { @MainActor [weak self] in self?.resolvePendingMatch(token, with: nil) }
-        }
-    }
-
-    /// Answers every caller waiting for the unit `info` is, reporting whether
-    /// any was.
-    private func resolvePendingMatches(with info: USBAccessoryInfo) -> Bool {
-        guard let identity = info.identity else { return false }
-        let tokens = pendingMatches.filter { $0.value.identity == identity }.keys
-        for token in tokens {
-            resolvePendingMatch(token, with: info)
-        }
-        return !tokens.isEmpty
-    }
-
-    private func resolvePendingMatch(_ token: UUID, with info: USBAccessoryInfo?) {
-        guard let pending = pendingMatches.removeValue(forKey: token) else { return }
-        pending.continuation.resume(returning: info)
     }
 
     // MARK: - Attach and Detach

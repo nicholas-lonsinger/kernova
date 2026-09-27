@@ -22,17 +22,6 @@ final class VMLifecycleCoordinator {
     /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
     let usbAccessoryService: (any USBAccessoryProviding)?
 
-    /// How long a capture waits for the accessories it ejected to be assigned
-    /// again before putting back whichever of them arrived.
-    ///
-    /// One bound over the whole put-back rather than one per accessory: the
-    /// waits run together. It covers the event arriving late — a detach's
-    /// re-assignment lands in well under a second — and does not outlast an
-    /// accessory that is not coming back, because the capture operation holds
-    /// the VM for the whole wait and a start arriving behind it is refused as
-    /// busy.
-    private let usbAccessoryReturnTimeout: Duration
-
     /// Trashes an image that failed verification.
     private let fileSystem: any FileSystemOperating
 
@@ -53,7 +42,6 @@ final class VMLifecycleCoordinator {
         // process-wide AccessoryAccess listener. Absent is the capability
         // being absent, which every surface already reads as such.
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
-        usbAccessoryReturnTimeout: Duration = .seconds(5),
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating = FileManager.default,
@@ -66,7 +54,6 @@ final class VMLifecycleCoordinator {
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
         self.usbAccessoryService = usbAccessoryService
-        self.usbAccessoryReturnTimeout = usbAccessoryReturnTimeout
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService
         self.fileSystem = fileSystem
@@ -179,31 +166,31 @@ final class VMLifecycleCoordinator {
     // MARK: - Snapshots
 
     /// Captures `snapshot` in `mode` and lists it with `record`, inside one
-    /// capture operation.
+    /// capture operation, which ends once the snapshot's files are written.
     ///
     /// A warm capture takes every passthrough accessory off before it writes
     /// the guest's state, because a saved state carrying one cannot be
     /// restored. Unlike a suspend the guest is still running afterwards, so
-    /// they go back on — on the path where the capture threw part-way as well,
-    /// since it ejected the same hardware up to wherever it stopped. `record`
-    /// that throws leaves nothing behind: unlisted files are files no surface
-    /// can reach or remove, so the capture is undone.
+    /// each one is owed back to it
+    /// (``VMCaptureContext/oweReturnsOfAttachedAccessories()``): the capture's
+    /// detach resets the device, macOS assigns it back after a delay nothing
+    /// bounds, and that arrival follows the attach to this VM. `record` that
+    /// throws leaves nothing behind: unlisted files are files no surface can
+    /// reach or remove, so the capture is undone.
     func takeSnapshot(
         _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         try await instance.activity.captureSnapshot(mode) { context in
-            // Read before the capture, since the capture is what clears them.
-            let held = instance.liveUSBAccessories
-            let ending: VMOperationEnding<VMSnapshot>
-            do {
-                ending = try await virtualizationService.takeSnapshot(
-                    instance, context, snapshot: snapshot)
-            } catch {
-                await reattachUSBAccessories(ejectedFrom: held, context.operation)
-                throw error
+            for item in instance.liveUSBAccessories where item.accessory.identity == nil {
+                #log(
+                    Self.logger, .warning,
+                    "USB accessory \(item.accessory.displayName, privacy: .public) will not go back on '\(instance.name, privacy: .public)' after the capture: nothing durable identifies it"
+                )
             }
-            await reattachUSBAccessories(ejectedFrom: held, context.operation)
+            context.oweReturnsOfAttachedAccessories()
+            let ending = try await virtualizationService.takeSnapshot(
+                instance, context, snapshot: snapshot)
             guard case .rest(let rest, let captured) = ending else { return ending }
             do {
                 try record(context.operation.permit, captured)
@@ -213,135 +200,6 @@ final class VMLifecycleCoordinator {
             }
             return ending
         }
-    }
-
-    /// Puts back the accessories a capture took off its VM, inside the
-    /// capture `context` holds the VM for.
-    ///
-    /// `held` is what the guest was holding before the capture ran; what it
-    /// still holds is what the capture never reached, so the difference is what
-    /// was ejected — on the path where the capture succeeded and on the one
-    /// where its detach sweep threw part-way through, having already ejected
-    /// and forgotten the items ahead of the failure.
-    ///
-    /// Each one has to be found again before it can be attached: the capture's
-    /// detach reset the device, so the `registryID` it went off under names
-    /// nothing, and macOS assigns the same stick back under a new one. Matching
-    /// is on the durable identity and the wait is event-driven — see
-    /// ``USBAccessoryProviding/accessory(matching:appearingWithin:)``.
-    ///
-    /// Each goes back under a reservation of its own
-    /// (``VMOperationContext/withAccessoryReservation(_:_:)``), so one another
-    /// VM took while it was off the guest stays with that VM.
-    ///
-    /// Guarded on the session at every step: a guest that went away under the
-    /// capture has no controller to attach to. Failures are logged and
-    /// swallowed — the snapshot the user asked for is already written, and an
-    /// accessory that will not go back on leaves the guest exactly where a
-    /// surprise unplug would.
-    private func reattachUSBAccessories(
-        ejectedFrom held: [AttachedUSBAccessory], _ context: borrowing VMOperationContext
-    ) async {
-        let instance = context.instance
-        guard let usbAccessoryService, !held.isEmpty, let sessionID = context.sessionID
-        else { return }
-        let stillHeld = Set(instance.liveUSBAccessories.map(\.deviceID))
-        let ejected = held.filter { !stillHeld.contains($0.deviceID) }
-        guard !ejected.isEmpty else { return }
-
-        let returned = await returningAccessories(ejected, on: instance, for: sessionID)
-        for item in ejected {
-            guard let accessory = returned[item.deviceID] else { continue }
-            guard context.sessionID == sessionID else { return }
-            do {
-                try await context.withAccessoryReservation(accessory.registryID) { reservation in
-                    let reattached = try await usbAccessoryService.attach(reservation)
-                    // The guest went away under the attach, which released the
-                    // reservation: VZ captured the device for a session nothing
-                    // holds, so it goes back rather than being stranded.
-                    guard reservation.hold(reattached) else {
-                        try? await usbAccessoryService.detach(
-                            deviceID: reattached.deviceID, from: instance)
-                        return
-                    }
-                }
-            } catch {
-                #log(
-                    Self.logger, .warning,
-                    "Could not put USB accessory \(item.accessory.displayName, privacy: .public) back on '\(instance.name, privacy: .public)' after the capture: \(error.localizedDescription, privacy: .public)"
-                )
-            }
-        }
-    }
-
-    /// One accessory being waited for, and the attachment it went off under.
-    private struct PendingUSBReturn {
-        let item: AttachedUSBAccessory
-        let wait: Task<USBAccessoryInfo?, Never>
-    }
-
-    /// The accessories `ejected` names, as macOS has assigned them back, keyed
-    /// by the attachment each went off under.
-    ///
-    /// Every wait is started before any is awaited, so the deadline they carry
-    /// bounds the put-back once rather than once per accessory: the
-    /// re-assignments are independent and arrive when macOS is ready, while a
-    /// sequential wait would hold the capture operation for the timeout
-    /// multiplied by however many accessories the guest had, with the last
-    /// one's budget starting only once the first had given up.
-    ///
-    /// The guest going away cancels them, because nothing can be put back on a
-    /// session that is gone and the deadline would otherwise keep the capture
-    /// holding the VM past a stop the user is waiting on.
-    private func returningAccessories(
-        _ ejected: [AttachedUSBAccessory], on instance: VMInstance, for sessionID: UUID
-    ) async -> [UUID: USBAccessoryInfo] {
-        let timeout = usbAccessoryReturnTimeout
-        let pending = ejected.compactMap { item -> PendingUSBReturn? in
-            guard let identity = item.accessory.identity else {
-                #log(
-                    Self.logger, .warning,
-                    "Cannot put USB accessory \(item.accessory.displayName, privacy: .public) back after the capture: nothing durable identifies it"
-                )
-                return nil
-            }
-            return PendingUSBReturn(
-                item: item,
-                wait: Task { @MainActor [weak self] in
-                    guard let service = self?.usbAccessoryService else { return nil }
-                    return await service.accessory(matching: identity, appearingWithin: timeout)
-                })
-        }
-        guard !pending.isEmpty else { return [:] }
-
-        let sessionWatch = observeRecurring(
-            track: { _ = instance.liveSessionID },
-            apply: {
-                guard instance.liveSessionID != sessionID else { return }
-                for entry in pending { entry.wait.cancel() }
-            })
-        defer { sessionWatch.cancel() }
-
-        var found: [UUID: USBAccessoryInfo] = [:]
-        for entry in pending {
-            let returned = await entry.wait.value
-            guard instance.liveSessionID == sessionID else {
-                #log(
-                    Self.logger, .notice,
-                    "'\(instance.name, privacy: .public)' went away before the USB accessories the capture took off came back, so they stay with the host"
-                )
-                return [:]
-            }
-            guard let returned else {
-                #log(
-                    Self.logger, .warning,
-                    "USB accessory \(entry.item.accessory.displayName, privacy: .public) was not assigned back to Kernova after the capture, so it stayed off the guest"
-                )
-                continue
-            }
-            found[entry.item.deviceID] = returned
-        }
-        return found
     }
 
     /// Starts the revert of `instance` to `snapshot` as an operation no caller

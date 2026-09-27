@@ -365,9 +365,8 @@ final class VirtualizationService {
         do {
             let prepared = try await context.bundle.prepareSnapshot(snapshotID, configuration: configuration)
 
-            // The guest is still there afterwards, so these are put back once
-            // the capture is done — see
-            // ``VMLifecycleCoordinator/takeSnapshot(_:snapshot:record:)``.
+            // The guest is still there afterwards, so each of these is owed
+            // back to it — see ``VMCaptureContext/oweReturnsOfAttachedAccessories()``.
             try await detachUSBAccessories(context, session: session)
             try await captureLiveState(
                 session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
@@ -483,9 +482,7 @@ final class VirtualizationService {
     ///
     /// Each accessory is released as its device leaves, and the one that threw
     /// is kept, so what the guest still holds afterwards is exactly what this
-    /// never reached — which is how the put-back knows what a sweep that threw
-    /// part-way ejected. See
-    /// ``VMLifecycleCoordinator/reattachUSBAccessories(ejectedFrom:_:)``.
+    /// never reached.
     static func detachUSBAccessories(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating
     ) async throws {

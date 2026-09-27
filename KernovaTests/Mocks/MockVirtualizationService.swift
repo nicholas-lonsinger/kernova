@@ -64,6 +64,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// Runs once the capture operation holds the VM, so a test can reproduce
     /// what the real capture does to the instance while it runs.
     var onTakeSnapshot: (@MainActor (borrowing VMOperationContext) -> Void)?
+    /// Parks a capture after ``onTakeSnapshot`` and before it writes, so a
+    /// test can act while the capture holds the VM.
+    var takeSnapshotGate: GatedStep?
     var revertToSnapshotError: (any Error)?
 
     // MARK: - Snapshot call tracking
@@ -159,6 +162,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         // notably taking every passthrough accessory off before it writes the
         // guest's state.
         onTakeSnapshot?(context.operation)
+        try await takeSnapshotGate?.pass()
         if let error = takeSnapshotError {
             guard mode == .live else { throw error }
             return .failed(.asStarted, error)

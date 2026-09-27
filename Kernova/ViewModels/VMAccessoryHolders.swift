@@ -2,12 +2,15 @@ import Foundation
 
 /// Which VM holds each USB accessory passed through to a guest — the library's
 /// one record of it, keyed by the accessory, so one accessory has at most one
-/// holder.
+/// holder — and which VM is owed back each accessory a warm capture took off
+/// its guest.
 ///
 /// Written only by ``VMActivity``: an accessory is reserved in the admission
 /// of the operation that attaches it, settled as that attach lands, and
 /// released at the operation's ending when it never landed, by a detach, by an
-/// unplug, and by the teardown of the holder's session. Every write takes an
+/// unplug, and by the teardown of the holder's session. A return is owed from
+/// the capture that ejects the accessory until its next arrival spends it, or
+/// the teardown of that VM's session drops it. Every write takes an
 /// ``AccessoryHoldersKey``, which only `VMActivity.swift` can make.
 @MainActor
 @Observable
@@ -31,6 +34,14 @@ final class VMAccessoryHolders {
     /// Keyed by `registryID`.
     private var holders: [UInt64: Holder] = [:]
     @ObservationIgnored private var nextSequence: UInt64 = 0
+
+    /// Keyed by durable identity rather than `registryID`: the capture's
+    /// detach resets the device, and macOS assigns it back under a new one.
+    ///
+    /// Not a hold. Nothing is reserved while the accessory is off the guest,
+    /// so another VM may take it meanwhile, and the owed attach is then
+    /// refused as held.
+    @ObservationIgnored private var owedReturns: [USBAccessoryIdentity: VMInstance] = [:]
 
     // MARK: - Reads
 
@@ -56,6 +67,12 @@ final class VMAccessoryHolders {
             guard case .attached(let attached) = holder.state else { return nil }
             return (holder.instance, attached)
         }
+    }
+
+    /// The VM owed the return of the accessory carrying `identity`, or `nil`
+    /// when none is.
+    func owedReturn(of identity: USBAccessoryIdentity) -> VMInstance? {
+        owedReturns[identity]
     }
 
     // MARK: - Writes
@@ -85,17 +102,6 @@ final class VMAccessoryHolders {
         return true
     }
 
-    /// Releases `instance`'s reservation for `registryID` if its attach never
-    /// landed.
-    func releaseReservation(
-        _ registryID: UInt64, of instance: VMInstance, _ key: AccessoryHoldersKey
-    ) {
-        guard let holder = holders[registryID], holder.instance === instance,
-            holder.state == .attaching
-        else { return }
-        holders[registryID] = nil
-    }
-
     /// Releases every reservation `instance` holds whose attach never landed.
     func releaseReservations(of instance: VMInstance, _ key: AccessoryHoldersKey) {
         holders = holders.filter { $0.value.instance !== instance || $0.value.state != .attaching }
@@ -116,8 +122,28 @@ final class VMAccessoryHolders {
         return nil
     }
 
-    /// Releases everything `instance` holds.
+    /// Records every accessory `instance`'s guest holds that something durable
+    /// identifies as owed back to it.
+    func oweReturnsOfAttached(to instance: VMInstance, _ key: AccessoryHoldersKey) {
+        for attached in attached(to: instance) {
+            guard let identity = attached.accessory.identity else { continue }
+            owedReturns[identity] = instance
+        }
+    }
+
+    /// Spends the return of `identity` owed to `instance`, answering whether
+    /// one was.
+    func spendOwedReturn(
+        of identity: USBAccessoryIdentity, to instance: VMInstance, _ key: AccessoryHoldersKey
+    ) -> Bool {
+        guard owedReturns[identity] === instance else { return false }
+        owedReturns[identity] = nil
+        return true
+    }
+
+    /// Releases everything `instance` holds, and every return owed to it.
     func releaseAll(of instance: VMInstance, _ key: AccessoryHoldersKey) {
         holders = holders.filter { $0.value.instance !== instance }
+        owedReturns = owedReturns.filter { $0.value !== instance }
     }
 }
