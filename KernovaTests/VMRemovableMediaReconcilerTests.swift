@@ -758,7 +758,9 @@ struct VMRemovableMediaReconcilerTests {
 
     @Test("A media edit during a pause is admitted, and its reconcile runs in the step the pause ends")
     func editDuringAPauseReconcilesAfterIt() async throws {
-        let mock = MockRemovableMediaDeviceService()
+        // Suspending, so the pass is still holding the VM when the pause's
+        // awaiter resumes.
+        let mock = SuspendingMockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let (instance, sessionID) = makeRunningInstance(in: harness)
         let gate = GatedStep()
@@ -781,6 +783,8 @@ struct VMRemovableMediaReconcilerTests {
         #expect(pass.startedFrom == .livePaused(sessionID: sessionID))
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
 
+        try await mock.waitUntilSuspended()
+        mock.resumeSuspended()
         try await pass.outcome.value()
         #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/A.iso"])
         #expect(instance.liveRemovableMedia.map(\.id) == configA.removableMedia?.map(\.id))

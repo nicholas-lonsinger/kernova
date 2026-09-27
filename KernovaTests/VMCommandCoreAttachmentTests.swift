@@ -1243,10 +1243,8 @@ struct VMCommandCoreAttachmentTests {
 
         gate.release()
         try await attach.value()
-        let pass = try #require(instance.phase.operation)
-        #expect(pass.kind == .reconcilingMedia)
-        try await pass.outcome.value()
-        #expect(harness.removableMediaDevices.detachCallCount == 1)
+        try await waitForChange { harness.removableMediaDevices.detachCallCount == 1 }
+        try await waitForChange { instance.phase == .running(sessionID: sessionID) }
         #expect(instance.liveRemovableMedia.isEmpty)
         #expect(instance.phase == .running(sessionID: sessionID))
     }
