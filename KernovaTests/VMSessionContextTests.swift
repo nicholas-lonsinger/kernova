@@ -189,7 +189,7 @@ struct VMSessionContextTests {
     @Test("A bring-up that tries again releases the previous attempt's context before opening the next")
     func retriedAttemptReleasesThePriorContext() async throws {
         let instance = makeInstance(phase: .stopped)
-        try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             let first = instance.beginSessionContext(context)
             first.serialInputPipe = Pipe()
 
@@ -217,7 +217,7 @@ struct VMSessionContextTests {
         let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
         let result = Self.buildResult(coldRemovableMedia: [media])
 
-        try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             let session = instance.beginSessionContext(context)
             instance.adoptBuildResult(context, result)
 
@@ -286,7 +286,7 @@ struct VMSessionContextTests {
         // Force stop, then a restart whose cold boot re-registers the same item.
         instance.handleSessionEvent(.guestDidStop)
         let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
-        try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             instance.beginSessionContext(context)
             instance.adoptBuildResult(context, Self.buildResult(coldRemovableMedia: [coldBooted]))
             context.bindSessionForTesting(UUID())

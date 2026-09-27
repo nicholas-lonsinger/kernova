@@ -390,10 +390,10 @@ final class VMActivity {
     /// A body that throws rests the VM where its kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
     func perform<T>(
-        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
+        _ kind: VMNonBringUpKind, origin: VMRequestOrigin = .newWork,
         _ body: (borrowing VMOperationContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
-        try await run(kind, origin: origin, { $0 }, body)
+        try await run(kind.operationKind, origin: origin, { $0 }, body)
     }
 
     /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
@@ -459,22 +459,24 @@ final class VMActivity {
     /// awaits the outcome finds its work done.
     @discardableResult
     func launch(
-        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
+        _ kind: VMNonBringUpKind, origin: VMRequestOrigin = .newWork,
         resolving outcome: VMOutcome = VMOutcome(), whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMOperationContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        try launchRun(kind, origin: origin, outcome: outcome, whenEnded: whenEnded, { $0 }, body)
+        try launchRun(
+            kind.operationKind, origin: origin, outcome: outcome, whenEnded: whenEnded, { $0 }, body)
     }
 
-    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a bring-up — a guest setup.
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a bring-up that starts
+    /// no guest — a guest setup.
     @discardableResult
     func launchBringUp(
-        _ kind: VMBringUpKind,
+        _ kind: VMNonStartBringUpKind,
         whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
-            .bringUp(kind), outcome: VMOutcome(), whenEnded: whenEnded,
+            .bringUp(kind.bringUpKind), outcome: VMOutcome(), whenEnded: whenEnded,
             { VMBringUpContext(operation: $0) }, body)
     }
 
@@ -544,9 +546,10 @@ final class VMActivity {
 
     /// ``perform(_:origin:_:)`` for an operation with nothing to await.
     func performNow<T>(
-        _ kind: VMOperationKind,
+        _ nonBringUp: VMNonBringUpKind,
         _ body: (borrowing VMOperationContext) throws -> VMOperationEnding<T>
     ) throws -> T {
+        let kind = nonBringUp.operationKind
         let outcome = VMOutcome()
         let owner = try admit(kind, origin: .newWork, outcome: outcome)
         let context = VMOperationContext(activity: self, kind: kind, owner: owner)
