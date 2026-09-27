@@ -99,6 +99,11 @@ final class VMActivity {
     /// arrival order.
     @ObservationIgnored private var followUps: [VMFollowUp] = []
 
+    /// The follow-ups owed once a session ends, each with the session it
+    /// waits on, in arrival order — queued by the step that settles the VM
+    /// after that session is gone.
+    @ObservationIgnored private var sessionEndFollowUps: [(session: UUID, followUp: VMFollowUp)] = []
+
     /// Queues `followUp` and, on a settled VM, drains it at once.
     ///
     /// One scoped to a session that is no longer live ends refused as
@@ -110,16 +115,45 @@ final class VMActivity {
         drain()
     }
 
-    /// Takes `followUp` off the queue, resolving its outcome with
-    /// `CancellationError`, answering whether it was still queued — nothing,
-    /// once it has drained.
+    /// Owes `followUp` to the end of the session `sessionID` names: the step
+    /// that settles the VM once that session is gone queues it — behind a
+    /// restoration its power-off owes — and drains it, before any other
+    /// request can be decided against the VM.
+    ///
+    /// Ends refused as ``VMAdmission/Refusal/invalidState`` at once when that
+    /// session is not live.
+    func follow(_ followUp: VMFollowUp, whenSessionEnds sessionID: UUID) {
+        guard sessionID == liveSessionID else {
+            followUp.outcome.resolve(.failure(followUpRefusal(.invalidState, for: followUp)))
+            return
+        }
+        sessionEndFollowUps.append((sessionID, followUp))
+    }
+
+    /// Takes `followUp` off the queue, or off what a session end owes,
+    /// resolving its outcome with `CancellationError` — answering whether it
+    /// did, which it does not once the follow-up has drained.
     @discardableResult
     func withdraw(_ followUp: VMFollowUp) -> Bool {
-        guard let index = followUps.firstIndex(where: { $0.outcome === followUp.outcome }) else {
-            return false
+        if let index = followUps.firstIndex(where: { $0.outcome === followUp.outcome }) {
+            followUps.remove(at: index).outcome.resolve(.failure(CancellationError()))
+            return true
         }
-        followUps.remove(at: index).outcome.resolve(.failure(CancellationError()))
-        return true
+        if let index = sessionEndFollowUps.firstIndex(where: { $0.followUp.outcome === followUp.outcome }) {
+            sessionEndFollowUps.remove(at: index).followUp.outcome.resolve(.failure(CancellationError()))
+            return true
+        }
+        return false
+    }
+
+    /// Takes off what the sessions that are no longer live owe — for the
+    /// step settling the VM to queue.
+    private func takeSessionEndFollowUps() -> [VMFollowUp] {
+        let live = liveSessionID
+        let due = sessionEndFollowUps.filter { $0.session != live }
+        guard !due.isEmpty else { return [] }
+        sessionEndFollowUps.removeAll { $0.session != live }
+        return due.map(\.followUp)
     }
 
     /// Queues `items` behind every follow-up of their rank or better, without
@@ -370,17 +404,6 @@ final class VMActivity {
         try await run(.bringUp(kind), { VMBringUpContext(operation: $0) }, body)
     }
 
-    /// ``bringUp(_:_:)`` for a guest start, whose body learns which start it
-    /// was admitted as from its context.
-    func startGuest<T>(
-        _ kind: VMGuestStartKind,
-        _ body: (borrowing VMGuestStartContext) async throws -> VMOperationEnding<T>
-    ) async throws -> T {
-        try await run(
-            .bringUp(.guestStart(kind)),
-            { VMGuestStartContext(bringUp: VMBringUpContext(operation: $0), kind: kind) }, body)
-    }
-
     /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
     /// was admitted in from its context.
     func captureSnapshot<T>(
@@ -461,6 +484,18 @@ final class VMActivity {
         try launchRun(
             .bringUp(kind), outcome: VMOutcome(), whenEnded: whenEnded,
             { VMBringUpContext(operation: $0) }, body)
+    }
+
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a guest start, whose
+    /// body learns which start it was admitted as from its context.
+    @discardableResult
+    func launchStartGuest(
+        _ kind: VMGuestStartKind, resolving outcome: VMOutcome = VMOutcome(),
+        _ body: @escaping @MainActor (borrowing VMGuestStartContext) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        try launchRun(
+            .bringUp(.guestStart(kind)), outcome: outcome, whenEnded: nil,
+            { VMGuestStartContext(bringUp: VMBringUpContext(operation: $0), kind: kind) }, body)
     }
 
     /// ``launch(_:origin:resolving:whenEnded:_:)`` for a revert to `snapshot`,
@@ -773,14 +808,17 @@ final class VMActivity {
 
     /// The tail of every step that settles the VM — out of an operation or a
     /// session, or into removal: fires ``onPoweredOff`` when the guest powered
-    /// off, drains the follow-ups, then lets go of the run lock unless the VM
-    /// no longer rests — so an operation the drain admitted, the Ephemeral
-    /// revert among them, runs under the lock the ending held.
+    /// off, queues what the sessions that ended owe
+    /// (``follow(_:whenSessionEnds:)``), drains the follow-ups, then lets go
+    /// of the run lock unless the VM no longer rests — so an operation the
+    /// drain admitted, the Ephemeral revert among them, runs under the lock
+    /// the ending held.
     private func settled(poweredOff: Bool) {
         if poweredOff {
             owner?.guestDidPowerOff()
             enqueue(onPoweredOff?() ?? [])
         }
+        enqueue(takeSessionEndFollowUps())
         drain()
         releaseRunLockIfAtRest()
     }
@@ -1339,7 +1377,7 @@ struct VMBringUpContext: ~Copyable, Sendable {
 }
 
 /// The authority a guest start's body acts with: a bring-up admitted as
-/// `kind`, minted only by ``VMActivity/startGuest(_:_:)``.
+/// `kind`, minted only by ``VMActivity/launchStartGuest(_:resolving:_:)``.
 struct VMGuestStartContext: ~Copyable, Sendable {
     let bringUp: VMBringUpContext
     let kind: VMGuestStartKind

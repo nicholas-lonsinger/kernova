@@ -115,11 +115,11 @@ struct VMActivityTests {
     @Test("Each typed entry point commits its kind and hands the body what it was admitted with")
     func typedEntryPointsCarryTheirKind() async throws {
         let (starting, startRecorder) = makeInstance(.stopped)
-        try await starting.activity.startGuest(.starting(recovery: false)) { context in
+        try await starting.activity.launchStartGuest(.starting(recovery: false)) { context in
             startRecorder.operation = starting.phase.operation
             startRecorder.guestStart = context.kind
             return .rest(.asStarted, ())
-        }
+        }.value()
         #expect(startRecorder.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         #expect(startRecorder.guestStart == .starting(recovery: false))
 
@@ -725,9 +725,9 @@ struct VMActivityTests {
             instance.activity.decide(.start(recovery: false), posture: .commit)
                 == .refuse(.busy(.copyingOut)))
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut))) {
-            try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 .rest(.asStarted, ())
-            }
+            }.value()
         }
         gate.release()
         try await owed.outcome.value()

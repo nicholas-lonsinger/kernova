@@ -1304,16 +1304,21 @@ final class VMLibraryViewModel {
     /// the duplicate machine-ID and MAC refusal every bring-up is admitted past
     /// (``VMAdmission/Facts/identityConflict``) counts a VM still coming up as
     /// live, so a twin checked beside it would be refused by a boot that may
-    /// yet fail.
+    /// yet fail. Each start is a follow-up on its VM, awaited before the next:
+    /// one another operation holds — a snapshot a relaunching command is
+    /// taking, say — starts when that operation frees the VM, decided afresh
+    /// then, and the pass waits for it.
     ///
-    /// Per-VM failures are logged and surfaced by those two methods; the pass
-    /// carries on to the next VM either way.
+    /// Each is a standing start (``VMCommandCore/StartPolicy/standing``), so a
+    /// VM whose state takes none is passed over rather than failed. A failure
+    /// is reported by the start itself, and the pass carries on to the next VM
+    /// either way.
     ///
     /// A termination stops it between VMs: from then on admission refuses the
     /// next start, and the one already inside VZ is left to finish.
     ///
     /// Nobody is at the machine for this, so it selects and focuses nothing: it
-    /// goes through the verbs rather than the in-app door, and the library is
+    /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch() async {
         let marked = instances.filter { $0.hostState.startsAutomaticallyOnLaunch }
@@ -1331,60 +1336,33 @@ final class VMLibraryViewModel {
             // A boot takes long enough for the user to delete or evict a later
             // VM meanwhile, and `marked` still holds that instance. Starting it
             // would open a display window over a bundle no longer in the library.
-            guard instances.contains(where: { $0 === instance }) else {
+            // The marking is re-read at the moment of acting: it is this pass's
+            // own criterion, and the user can clear it while the pass runs.
+            guard instances.contains(where: { $0 === instance }),
+                instance.hostState.startsAutomaticallyOnLaunch
+            else {
                 #log(
                     Self.logger, .debug,
-                    "Launch auto-start: '\(instance.name, privacy: .public)' left the library before its turn"
+                    "Launch auto-start: '\(instance.name, privacy: .public)' left the library or its marking before its turn"
                 )
                 skippedCount += 1
                 continue
             }
-            // Re-read at the moment of acting rather than trusting the snapshot:
-            // the user can start a VM by hand while this pass runs, and the
-            // previous iteration's boot is what can make the next one a
-            // duplicate-identity conflict. The marking is this pass's own
-            // criterion; what the VM's state admits is the catalog's.
-            guard instance.hostState.startsAutomaticallyOnLaunch,
-                let step = capabilities.standingBringUp(for: instance)
-            else {
-                if capabilities.owesGuestAccountAnswer(instance) {
-                    // A login launch has no window to ask in and leaves no
-                    // other trace, so this is the only place the user can find
-                    // out why a VM they marked did not come up.
-                    #log(
-                        Self.logger, .notice,
-                        "Launch auto-start: '\(instance.name, privacy: .public)' was not started — it creates a macOS account on its first boot and the password for it is only ever held in memory. Start it by hand to enter the password, or to skip setting up the account"
-                    )
+            let start = core.startFollowUp(instance, policy: .standing)
+            instance.activity.follow(start)
+            do {
+                try await start.outcome.value()
+            } catch {
+                if VMCommandCore.standingStartPassedOver(error) {
+                    logPassedOver(instance, error)
+                    skippedCount += 1
                 } else {
-                    #log(
-                        Self.logger, .debug,
-                        "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
-                    )
+                    failedCount += 1
                 }
-                skippedCount += 1
                 continue
             }
-            // Through the verbs rather than the in-app door: a failure still
-            // buffers for the status item, and nothing is selected or focused.
-            //
-            // Reported rather than merely presented, because a bring-up that
-            // leaves the VM resting back on its saved state moves no field
-            // ``VMCommandCore/events()`` diffs into a failure — the same reason
-            // a transient one does not. Nobody is at the machine for this pass,
-            // so a client reading the stream is the one surface that can say a
-            // marked VM did not come up.
-            do {
-                switch step {
-                case .start: try await commands.start(.id(instance.id), recovery: false)
-                case .resume: try await commands.resume(.id(instance.id))
-                }
-            } catch {
-                let verb: VMVerb = step == .resume ? .resume : .start
-                core.reportUnattendedFailure(
-                    error as? CommandError
-                        ?? .operationFailed(verb: verb, message: error.localizedDescription),
-                    on: instance)
-            }
+            // A start that succeeded can still leave the VM down — a guest that
+            // powered off the moment it came up.
             if instance.isKeepingAppAlive {
                 startedCount += 1
             } else {
@@ -1396,6 +1374,24 @@ final class VMLibraryViewModel {
             Self.logger, .notice,
             "Launch auto-start finished — \(startedCount, privacy: .public) running, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
         )
+    }
+
+    /// Records why the launch pass passed `instance` over.
+    private func logPassedOver(_ instance: VMInstance, _ error: any Error) {
+        if case .guestAccountPasswordRequired? = error as? CommandError {
+            // A login launch has no window to ask in and leaves no other
+            // trace, so this is the only place the user can find out why a VM
+            // they marked did not come up.
+            #log(
+                Self.logger, .notice,
+                "Launch auto-start: '\(instance.name, privacy: .public)' was not started — it creates a macOS account on its first boot and the password for it is only ever held in memory. Start it by hand to enter the password, or to skip setting up the account"
+            )
+        } else {
+            #log(
+                Self.logger, .debug,
+                "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
+            )
+        }
     }
 
     // MARK: - Error Handling

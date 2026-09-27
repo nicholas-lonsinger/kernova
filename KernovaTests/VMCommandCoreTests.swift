@@ -3350,6 +3350,34 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.lastStartProvisioning == nil)
     }
 
+    @Test("A setup's ending admits the boot it chains in the same step, so a clone asked for then is busy")
+    func setupEndingAdmitsTheChainedBoot() async throws {
+        let harness = makeSuspendingHarness()
+        let instance = makeInstance(
+            in: harness, name: "Installing", phase: .initialBoot, guestOS: .macOS
+        ) {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
+        }
+
+        try await harness.core.start(instance)
+        let setup = try #require(instance.setupOperationTask)
+        // The setup's task ends with its ending commit, so nothing has run
+        // against the VM between that commit and here but the boot it chained.
+        await setup.value
+
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+        let clone = commandError {
+            _ = try harness.core.beginClone(.id(instance.id), machineIdentity: .keep)
+        }
+        #expect(clone?.isBusy == true)
+
+        await harness.virtualization.waitUntilSuspended()
+        harness.virtualization.resumeSuspended()
+        try await waitForChange { instance.status == .running }
+        #expect(harness.library.arrivals.isEmpty)
+    }
+
     // MARK: - Create
 
     @available(macOS 27.0, *)
@@ -3563,6 +3591,37 @@ struct VMCommandCoreTests {
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
+    @Test("A restart's boot is owed to the power-off and admitted in the step that rests the VM")
+    func restartQueuesItsBootAtThePowerOff() async throws {
+        let virtualization = MockVirtualizationService()
+        // The guest takes its time, so the power-off is delivered by hand.
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let session = UUID()
+        let instance = makeInstance(
+            in: harness, name: "Rebooting", phase: .running(sessionID: session))
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: 60)
+        }
+        // The parked sleep is the power-off deadline: the restart is waiting.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+        // Owed to the session's end rather than queued: the running VM holds
+        // nothing back.
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(instance.phase == .running(sessionID: session))
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        // The step that rested the VM admitted the boot, so no other request
+        // could be decided against the stopped VM first.
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+
+        try await restart.value
+        #expect(virtualization.startCallCount == 1)
         #expect(instance.status == .running)
     }
 
