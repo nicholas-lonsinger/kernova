@@ -28,28 +28,47 @@ final class VMRemovableMediaReconciler {
         self.lifecycle = lifecycle
     }
 
-    /// Starts the reconcile a committed `removableMedia` change asks of a
-    /// settled live VM, in the same step as the commit.
+    /// Owes the VM's live session the reconcile an edit's committed
+    /// `removableMedia` change asks for, in the same step as the commit: a
+    /// follow-up that runs at once on a settled VM, joins a reconcile already
+    /// holding it, and otherwise runs when the operation holding it frees it.
     ///
-    /// No-ops when the list is unchanged, when the VM has no session to attach
-    /// to — a VM at rest picks the list up at its next start — and when a
-    /// reconcile already holds the VM, which drives it to this list before it
-    /// ends.
-    func apply(for instance: VMInstance, old: VMConfiguration, new: VMConfiguration) {
-        guard VMConfiguration.removableMediaChanged(old: old, new: new),
-            instance.phase.isSettledLive
+    /// No-ops when the list is unchanged, when an operation made the write —
+    /// the operation drives its own change in, or settles on the live list —
+    /// and when the VM has no session: a VM at rest picks the list up at its
+    /// next start.
+    func apply(
+        for instance: VMInstance, old: VMConfiguration, new: VMConfiguration,
+        under authority: VMEditPermit.Authority
+    ) {
+        guard case .edit = authority, VMConfiguration.removableMediaChanged(old: old, new: new),
+            let sessionID = instance.activity.liveSessionID
         else { return }
-        do {
-            try instance.activity.launch(.reconcilingMedia) { [weak self] context in
+        instance.activity.follow(reconcileFollowUp(of: instance, for: sessionID))
+    }
+
+    /// The follow-up that runs a `.reconcilingMedia` pass on `instance` for as
+    /// long as the session `sessionID` names lasts.
+    ///
+    /// Exempt from the termination's refusal: the edit that owes it was
+    /// admitted first, and a quit waits a reconcile out.
+    private func reconcileFollowUp(of instance: VMInstance, for sessionID: UUID) -> VMFollowUp {
+        VMFollowUp(
+            scope: .session(sessionID), rank: .ordinary, joins: .operation(.reconcilingMedia)
+        ) { [weak self, weak instance] outcome in
+            guard let self, let instance else { throw CancellationError() }
+            try instance.activity.launch(
+                .reconcilingMedia, origin: .mediaEditReconcile, resolving: outcome
+            ) { [weak self] context in
                 await self?.reconcile(context)
                 return .rest(.asStarted, ())
             }
-        } catch {
+        }
+        .reportingFailure { [weak instance] error in
             #log(
                 Self.logger, .fault,
-                "A removable-media reconcile of '\(instance.name, privacy: .public)' was refused on a settled live VM: \(error.localizedDescription, privacy: .public)"
+                "The removable-media reconcile owed to '\(instance?.name ?? "", privacy: .public)' was refused: \(error.localizedDescription, privacy: .public)"
             )
-            assertionFailure("A settled live VM refused its removable-media reconcile")
         }
     }
 

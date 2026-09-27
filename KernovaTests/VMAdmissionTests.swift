@@ -324,6 +324,11 @@ struct VMAdmissionTests {
         (.powerOffRevert, .operation(.capturingSnapshot(.stopped)), "TIIIIIR"),
         (.powerOffRevert, .operation(.deletingSnapshot), "TTTTTTR"),
         (.powerOffRevert, .operation(.discardingSavedState), "IIITIIR"),
+        (.mediaEditReconcile, .operation(.reconcilingMedia), "IIIIAAR"),
+        (.mediaEditReconcile, .start(recovery: false), "TTTTIIR"),
+        (.mediaEditReconcile, .operation(.pausing), "IIIITIR"),
+        (.mediaEditReconcile, .operation(.saving), "IIIITTR"),
+        (.mediaEditReconcile, .edit(.hotPlugMedia), "AAAITTR"),
     ]
 
     @Test(
@@ -342,7 +347,8 @@ struct VMAdmissionTests {
     func exemptOriginWidensNothingElse(row: Int) {
         let (request, _) = Self.settledTable[row]
         let asNewWork = Self.settledCells(request, .plain, terminating: true)
-        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert] where !origin.exempts(request) {
+        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert, .mediaEditReconcile]
+        where !origin.exempts(request) {
             #expect(
                 Self.settledCells(request, .plain, terminating: true, origin: origin) == asNewWork,
                 "\(request) \(origin)")
@@ -352,12 +358,12 @@ struct VMAdmissionTests {
     @Test("Outside the termination, an origin changes no decision", arguments: settledTable.indices)
     func originIsInertOutsideTheTermination(row: Int) {
         let (request, expected) = Self.settledTable[row]
-        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert] {
+        for origin in [VMRequestOrigin.terminationSave, .powerOffRevert, .mediaEditReconcile] {
             #expect(Self.settledCells(request, .plain, origin: origin) == expected, "\(request) \(origin)")
         }
     }
 
-    @Test("During an operation, the termination refuses nothing the operation tolerates or joins")
+    @Test("During an operation, the termination refuses what it tolerates only when that owes an operation")
     func terminatingLeavesToleratedRequests() {
         let facts = Self.facts(slot: false, .plain, terminating: true)
         func decide(
@@ -368,8 +374,26 @@ struct VMAdmissionTests {
                 request, posture: .commit,
                 phase: .operating(kind, from: startedFrom, boundSession: nil), facts: facts)
         }
-        // An edit the running reconcile coalesces starts no operation of its own.
+        // An edit the running reconcile coalesces starts no operation of its
+        // own, and the reconcile it would owe joins that one.
         #expect(decide(.edit(.hotPlugMedia), during: .reconcilingMedia, from: Self.live) == .admit)
+        #expect(
+            decide(.affordance(.guestAgentDisk), during: .reconcilingMedia, from: Self.live) == .admit)
+        let reconcile = decide(.operation(.reconcilingMedia), during: .reconcilingMedia, from: Self.live)
+        guard case .join = reconcile else {
+            Issue.record("A reconcile during a reconcile should join it, got \(reconcile)")
+            return
+        }
+        // One a pause tolerates owes a reconcile once the pause ends.
+        #expect(
+            decide(.edit(.hotPlugMedia), during: .pausing, from: Self.live)
+                == .refuse(.terminating))
+        #expect(
+            decide(.affordance(.guestAgentDisk), during: .pausing, from: Self.live)
+                == .refuse(.terminating))
+        // At rest nothing is live to reconcile, so the edit is a write like any
+        // other.
+        #expect(decide(.edit(.hotPlugMedia), during: .deletingSnapshot, from: .stopped) == .admit)
         #expect(decide(.sessionAction(.forceStop), during: .pausing, from: Self.live) == .admit)
         #expect(
             decide(.operation(.saving), during: .pausing, from: Self.live)
@@ -455,12 +479,14 @@ struct VMAdmissionTests {
             kind: .bringUp(.reverting(snapshotID: session, resumesAfter: false)),
             startedFrom: .stopped,
             expected: "BBI IIIIII BIIB BBB BBB BBBBABAAA IIIB AAIII"),
+        // A removable-media edit, the guest-agent disk among them, is taken,
+        // and the reconcile it owes waits for the operation to end.
         HeldRow(
             kind: .pausing, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         HeldRow(
             kind: .resuming, startedFrom: .livePaused(sessionID: session),
-            expected: "IIB IBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+            expected: "IIB IBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         HeldRow(
             kind: .saving, startedFrom: live,
             expected: "III BBBBBB IIII BBI IIB IBBBAAAAA BBII AAIII"),
@@ -475,18 +501,18 @@ struct VMAdmissionTests {
             expected: "BIB IIIIII IBBI BBB III IBIIAAAAA IIIB AAIII"),
         HeldRow(
             kind: .deletingSnapshot, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IABAAABAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAABAA AAII AAAAA"),
         HeldRow(
             kind: .attachingUSB(registryID: 7), startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         HeldRow(
             kind: .detachingUSB(deviceID: session), startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         // Removable-media edits, the guest-agent disk among them, coalesce
-        // into the pass.
+        // into the pass, and so does the reconcile one owes.
         HeldRow(
             kind: .reconcilingMedia, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
+            expected: "III BBBBJB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         // Answered as the powered-off VM will answer, with a second Force Stop
         // joining the first and presentation and metadata edits taken; the
         // guest is presented until its session ends.
@@ -509,10 +535,10 @@ struct VMAdmissionTests {
         // attached.
         HeldRow(
             kind: .creatingRemovableMedia, startedFrom: live,
-            expected: "III BBBBBB IIII BBI IIB IABAAAAAA AAII AAAAB"),
+            expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAA"),
         HeldRow(
             kind: .creatingRemovableMedia, startedFrom: .stopped,
-            expected: "BBI IIIIII BIIB BBB BBB BABAAAAAA IIIB AIIII"),
+            expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
         HeldRow(
             kind: .copyingOut, startedFrom: .stopped,
             expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
@@ -523,7 +549,7 @@ struct VMAdmissionTests {
         // holds the VM.
         HeldRow(
             kind: .deletingSnapshot, startedFrom: live, variant: .noUSB,
-            expected: "III BBBUBB IIII BBI IIB IABAAABUA AAII AAAAB"),
+            expected: "III BBBUBB IIII BBI IIB IAAAAABUA AAII AAAAA"),
         HeldRow(
             kind: .deleting, startedFrom: .stopped, variant: .noUSB,
             expected: "BBI IIIUII BIIB BBB BBB BBBBBBBUB IIIB AIIII"),

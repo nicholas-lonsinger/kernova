@@ -249,9 +249,9 @@ struct VMSettingsStoragePanelTests {
                 StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
             ]
         }
-        // A snapshot delete tolerates a machine-key edit, but holds the VM
-        // against every other operation — a disk's creation and trash among
-        // them.
+        // A snapshot delete tolerates machine-key and removable-media edits,
+        // but holds the VM against every other operation — a disk's creation
+        // and trash among them.
         instance.activity.placeForTesting(.operating(.deletingSnapshot, from: .stopped))
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: false)
@@ -265,9 +265,7 @@ struct VMSettingsStoragePanelTests {
         #expect(creates.allSatisfy { !$0.isEnabled })
         let attaches = buttons.filter { $0.title == "Attach Disk\u{2026}" }
         #expect(attaches.count == 2)
-        // The disk list's attach is a machine-key edit the delete tolerates;
-        // the removable list's is a hot-plug edit it does not.
-        #expect(attaches.filter { $0.isEnabled }.count == 1)
+        #expect(attaches.allSatisfy { $0.isEnabled })
 
         let menu = allSubviews(AttachmentRowView.self, in: vc.view).first?.contextMenu?()
         #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == true)
@@ -281,6 +279,24 @@ struct VMSettingsStoragePanelTests {
                 .filter { $0.title == "Create New Disk\u{2026}" }.allSatisfy { $0.isEnabled })
         let rested = allSubviews(AttachmentRowView.self, in: vc.view).first?.contextMenu?()
         #expect(rested?.items.first { $0.title == "Remove\u{2026}" }?.isEnabled == true)
+    }
+
+    @Test("A live VM's snapshot delete keeps removable media editable and the disks pinned")
+    func removableMediaStaysEditableUnderALiveSnapshotDelete() {
+        let viewModel = makeViewModel()
+        let instance = makeSettingsInstance(guestOS: .linux) { _ in }
+        instance.activity.placeForTesting(
+            .operating(.deletingSnapshot, from: .running(sessionID: UUID())))
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: true)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+
+        let attaches = allSubviews(NSButton.self, in: vc.view)
+            .filter { $0.title == "Attach Disk\u{2026}" }
+        #expect(attaches.count == 2)
+        #expect(attaches.filter { $0.isEnabled }.count == 1)
+        #expect(visibleLockHints(in: vc.view) == [groupedFormLockHintText])
     }
 
     @Test("A VM's only disk offers no Remove\u{2026}")

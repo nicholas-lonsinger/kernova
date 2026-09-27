@@ -126,8 +126,8 @@ enum VMAdmission {
     }
 
     /// Whether admitting `request` in `phase` commits an operation: a Start, a
-    /// Resume or an operation, and a hot-plug edit on a settled live VM, which
-    /// starts the media reconcile.
+    /// Resume or an operation, and a hot-plug edit that owes a live session
+    /// the media reconcile (``owesMediaReconcile(_:)``).
     ///
     /// A session action is not one: it is how a user interrupts a guest, and
     /// the Force Stop it may commit is one a quit waits out.
@@ -136,12 +136,22 @@ enum VMAdmission {
         case .start, .resume, .operation:
             return true
         case .edit(let classes):
-            return classes.contains(.hotPlugMedia) && phase.isSettledLive
+            return classes.contains(.hotPlugMedia) && owesMediaReconcile(phase)
         case .affordance(.guestAgentDisk):
-            return phase.isSettledLive
+            return owesMediaReconcile(phase)
         case .sessionAction, .cancel, .evict, .affordance:
             return false
         }
+    }
+
+    /// Whether a removable-media change on a VM in `phase` owes a reconcile
+    /// of its own: the VM has a live session, and no operation holding it
+    /// joins a reconcile — at once on a settled VM, and otherwise once the
+    /// operation holding it ends.
+    static func owesMediaReconcile(_ phase: VMLifecyclePhase) -> Bool {
+        guard phase.sessionID != nil else { return false }
+        guard let operation = phase.operation else { return true }
+        return !operation.kind.declaration.joinedBy.contains(.reconcile)
     }
 
     /// How the VM's own phase and facts answer `request`, before the app's
@@ -436,6 +446,7 @@ enum VMAdmission {
         switch request {
         case .start(recovery: false): .start
         case .resume: .resume
+        case .operation(.reconcilingMedia): .reconcile
         default: nil
         }
     }
@@ -496,6 +507,11 @@ enum VMRequestOrigin: Sendable, Equatable {
     /// quit waits out rather than refuses — so a guest that powers off during
     /// one never rests on the disks the mode discards.
     case powerOffRevert
+    /// The reconcile a removable-media edit admitted before the termination
+    /// owes a live session, which a quit waits out rather than refuses — so
+    /// the save that follows never pins a device list the configuration has
+    /// left.
+    case mediaEditReconcile
 
     /// Whether this origin exempts `request` from the termination's refusal.
     func exempts(_ request: VMAdmission.Request) -> Bool {
@@ -507,6 +523,8 @@ enum VMRequestOrigin: Sendable, Equatable {
         case .powerOffRevert:
             guard case .operation(.bringUp(.reverting)) = request else { return false }
             return true
+        case .mediaEditReconcile:
+            return request == .operation(.reconcilingMedia)
         }
     }
 }

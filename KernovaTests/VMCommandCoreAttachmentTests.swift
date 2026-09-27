@@ -24,7 +24,10 @@ struct VMCommandCoreAttachmentTests {
         let virtualization: MockVirtualizationService
     }
 
-    private func makeHarness(diskImages: MockDiskImageService = MockDiskImageService()) -> Harness {
+    private func makeHarness(
+        diskImages: MockDiskImageService = MockDiskImageService(),
+        usbAccessoryService: (any USBAccessoryProviding)? = nil
+    ) -> Harness {
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
         let removableMediaDevices = MockRemovableMediaDeviceService()
@@ -32,6 +35,7 @@ struct VMCommandCoreAttachmentTests {
         let lifecycle = makeTestLifecycle(
             virtualization: virtualization,
             removableMedia: removableMediaDevices,
+            usbAccessoryService: usbAccessoryService,
             fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage,
@@ -1204,6 +1208,44 @@ struct VMCommandCoreAttachmentTests {
         instance.activity.placeForTesting(.running(sessionID: sessionID))
         try harness.core.unmountGuestAgentDisk(.id(instance.id))
         #expect(instance.configuration.removableMedia == nil)
+    }
+
+    @Test("An agent handshake during a USB attach ejects the installer once the attach ends")
+    func autoEjectDuringAnAttachLandsAfterIt() async throws {
+        let installerPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let installer = RemovableMediaItem(path: installerPath, readOnly: true)
+        let harness = makeHarness(usbAccessoryService: MockUSBAccessoryService())
+        let sessionID = UUID()
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS
+        ) {
+            $0.removableMedia = [installer]
+        }
+        instance.beginSessionContextForTesting()
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: installer.id, path: installerPath, readOnly: true),
+            for: sessionID)
+        let gate = GatedStep()
+        let attach = try instance.activity.launch(.attachingUSB(registryID: 7)) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+
+        instance.onAgentBecameCurrent?()
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(harness.removableMediaDevices.detachCallCount == 0)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        gate.release()
+        try await attach.value()
+        let pass = try #require(instance.phase.operation)
+        #expect(pass.kind == .reconcilingMedia)
+        try await pass.outcome.value()
+        #expect(harness.removableMediaDevices.detachCallCount == 1)
+        #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(instance.phase == .running(sessionID: sessionID))
     }
 
     @Test("A VM with no live session to look inside refuses the guest agent disk")
