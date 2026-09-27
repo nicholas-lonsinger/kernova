@@ -131,7 +131,7 @@ struct VMCapabilityAgreementTests {
     }
 
     /// Whether `error` is the refusal admission gives, in the command
-    /// vocabulary ``VMCommandCore/admissionRefusal(_:on:)`` maps it into.
+    /// vocabulary ``VMCommandCore/admissionRefusal(_:on:verb:)`` maps it into.
     private func isAdmissionRefusal(_ error: CommandError) -> Bool {
         switch error {
         case .busy, .invalidState, .notFound, .conflict, .unsupportedByBuild, .terminating,

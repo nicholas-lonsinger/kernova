@@ -13,12 +13,13 @@ import Testing
 @MainActor
 func makeSettingsViewModel(
     preferences: AppPreferences,
+    storage: MockVMStorageService = MockVMStorageService(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
-        storageService: MockVMStorageService(),
+        storageService: storage,
         diskImageService: MockDiskImageService(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),

@@ -42,7 +42,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// every appear.
     ///
     /// The label is grayed in step with a disabled switch.
-    private var vmSwitches: [(instance: VMInstance, control: NSSwitch, label: NSTextField)] = []
+    private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
     /// Explains the disabled per-VM rows while the app-wide switch is off.
     private var vmCaption = NSTextField()
     private var vmOverrideCaption = NSTextField()
@@ -311,10 +311,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             toggle.controlSize = .small
             toggle.target = self
             toggle.action = #selector(vmReminderToggled(_:))
-            var rowLabel = NSTextField()
-            let row = makeGroupedFormCardRow(
-                instance.name, control: toggle, titleLabel: { rowLabel = $0 })
-            vmSwitches.append((instance, toggle, rowLabel))
+            let row = makeGroupedFormCardRow(instance.name, control: toggle)
+            vmSwitches.append((instance, toggle))
             rows.append(row)
         }
 
@@ -342,12 +340,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
         vmOverrideCaption.isHidden = !showOverrideCaption
 
-        for (instance, toggle, label) in vmSwitches {
+        for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
-            toggle.isEnabled = !overridden
-            // AppKit fades the disabled switch but not its label, which leaves
-            // the row half-lit; gray the text in step so the row reads as inert.
-            label.textColor = overridden ? .disabledControlTextColor : .labelColor
+            applyGroupedFormRowEnabled(!overridden, control: toggle)
         }
 
         if wasShowingOverrideCaption != showOverrideCaption { rearmScrollFlash() }

@@ -90,15 +90,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     // Startup
     private var autoStartSwitch = NSSwitch()
-    /// The auto-start row's title label, grayed in step with its switch.
-    private var autoStartLabel = NSTextField()
     /// Holds the banner naming how many macOS guests are marked to start at
     /// launch, when that exceeds what macOS runs at once.
     private var autoStartWarningContainer = NSStackView()
     private var ephemeralSwitch = NSSwitch()
-    /// The Ephemeral Mode row's title label, retained so `refreshStartup` can
-    /// gray it in step with a switch a VM without snapshots can't use.
-    private var ephemeralLabel = NSTextField()
     private var ephemeralBaselinePopUp = NSPopUpButton()
     /// The Ephemeral Mode row and its Baseline snapshot sub-option, retained so
     /// the sub-option shows only while the mode is on.
@@ -232,8 +227,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let ephemeralGroup = makeGroupedFormSubOptionGroup(
             primary: makeGroupedFormRowWithInfo(
                 "Ephemeral Mode", control: ephemeralSwitch,
-                paragraphs: EphemeralModeCopy.popoverParagraphs,
-                titleLabel: { [weak self] in self?.ephemeralLabel = $0 }),
+                paragraphs: EphemeralModeCopy.popoverParagraphs),
             subOption: makeGroupedFormCardRow(
                 "Baseline snapshot", control: ephemeralBaselinePopUp))
         self.ephemeralGroup = ephemeralGroup
@@ -248,8 +242,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                     .body(
                         "Turn on Open at Login in Settings → General to have it running after you log in."
                     ),
-                ],
-                titleLabel: { [weak self] in self?.autoStartLabel = $0 }),
+                ]),
             ephemeralGroup,
         ])
 
@@ -292,6 +285,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private func refreshGeneral() {
         let canRename = viewModel.capabilities.isAvailable(.rename, on: instance)
         nameLabel.update(text: instance.name, controlsEnabled: canRename)
+        applyGroupedFormRowTitleEnabled(canRename, of: nameLabel)
         // A borderless button grays its own title when disabled and a label does
         // not, so the unavailable-rename appearance is applied here. Never over
         // an open box: what is being typed is not disabled.
@@ -319,7 +313,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         autoStartSwitch.state = autoStarts ? .on : .off
         applyGroupedFormRowEnabled(
             isAvailable(VMConfigurationKeyRegistry.autoStart, writing: String(!autoStarts)),
-            control: autoStartSwitch, label: autoStartLabel)
+            control: autoStartSwitch)
         refreshEphemeralMode()
 
         let message = resolved.warnings[.general]
@@ -345,11 +339,12 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let key = VMConfigurationKeyRegistry.ephemeral
         ephemeralSwitch.state = enabled ? .on : .off
         applyGroupedFormRowEnabled(
-            isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch,
-            label: ephemeralLabel)
-        ephemeralBaselinePopUp.isEnabled = isAvailable(
-            VMConfigurationKeyRegistry.ephemeralBaseline,
-            writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? "")
+            isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch)
+        applyGroupedFormRowEnabled(
+            isAvailable(
+                VMConfigurationKeyRegistry.ephemeralBaseline,
+                writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
+            control: ephemeralBaselinePopUp)
         ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
         ephemeralGroup?.isSubOptionHidden = !enabled
 

@@ -114,9 +114,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // Guest Agent
     private var logForwardingSwitch = NSSwitch()
     private var installReminderSwitch = NSSwitch()
-    /// The install-reminder row's title label, retained so `refreshGuestAgent`
-    /// can gray it in step with the switch.
-    private var installReminderLabel = NSTextField()
     /// Explains the disabled install-reminder row while the prompt is off
     /// app-wide; hidden otherwise.
     private var installReminderOverrideCaption = NSView()
@@ -134,9 +131,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
-    /// The passthrough row's title label, retained so `refreshClipboard` can gray
-    /// it in step with the switch.
-    private var clipboardPassthroughLabel = NSTextField()
     private var clipboardCaption = NSView()
 
     // MARK: Shared Directories
@@ -280,8 +274,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     ]),
                 subOption: makeGroupedFormRowWithInfo(
                     "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                    paragraphs: Self.passthroughInfoParagraphs,
-                    titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 })),
+                    paragraphs: Self.passthroughInfoParagraphs)),
             makeGroupedFormRowWithInfo(
                 "Drag and drop files", control: dropFilesSwitch,
                 paragraphs: [
@@ -295,8 +288,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     .body(
                         "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
                     )
-                ],
-                titleLabel: { [weak self] in self?.installReminderLabel = $0 }),
+                ]),
         ])
         let overrideCaption = makeGroupedFormCaption(Self.installPromptDisabledCaption)
         overrideCaption.isHidden = true
@@ -332,8 +324,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
                     subOption: makeGroupedFormRowWithInfo(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                        paragraphs: Self.passthroughInfoParagraphs,
-                        titleLabel: { [weak self] in self?.clipboardPassthroughLabel = $0 }))
+                        paragraphs: Self.passthroughInfoParagraphs))
             ]),
             clipboardCaption,
         ])
@@ -343,12 +334,14 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         guard isGuestAgentSectionVisible(guestOS: instance.configuration.guestOS) else { return }
         let forwardsLogs = instance.configuration.agentLogForwardingEnabled
         logForwardingSwitch.state = forwardsLogs ? .on : .off
-        logForwardingSwitch.isEnabled = isAvailable(
-            VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs))
+        applyGroupedFormRowEnabled(
+            isAvailable(VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs)),
+            control: logForwardingSwitch)
         let dropsFiles = instance.configuration.dropFilesEnabled
         dropFilesSwitch.state = dropsFiles ? .on : .off
-        dropFilesSwitch.isEnabled = isAvailable(
-            VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles))
+        applyGroupedFormRowEnabled(
+            isAvailable(VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles)),
+            control: dropFilesSwitch)
         // The per-VM flag keeps its value while the app-wide preference overrides
         // it, so the switch still shows what this VM reverts to when the
         // preference is turned back on — it just can't be changed from here.
@@ -358,20 +351,21 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         applyGroupedFormRowEnabled(
             !overridden
                 && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
-            control: installReminderSwitch, label: installReminderLabel)
+            control: installReminderSwitch)
         installReminderOverrideCaption.isHidden = !overridden
     }
 
     private func refreshClipboard() {
         let shares = instance.configuration.clipboardSharingEnabled
         clipboardSwitch.state = shares ? .on : .off
-        clipboardSwitch.isEnabled = isAvailable(
-            VMConfigurationKeyRegistry.clipboardSharing, writing: String(!shares))
+        applyGroupedFormRowEnabled(
+            isAvailable(VMConfigurationKeyRegistry.clipboardSharing, writing: String(!shares)),
+            control: clipboardSwitch)
         let passthroughOn = instance.configuration.clipboardPassthroughEnabled
         clipboardPassthroughSwitch.state = passthroughOn ? .on : .off
         applyGroupedFormRowEnabled(
             isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
-            control: clipboardPassthroughSwitch, label: clipboardPassthroughLabel)
+            control: clipboardPassthroughSwitch)
         // The "takes effect on next start" caption is built only by the Linux
         // standalone section, so gate it here.
         guard instance.configuration.guestOS == .linux else { return }

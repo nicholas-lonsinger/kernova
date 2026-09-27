@@ -462,8 +462,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // differ until the next boot materializes the trio.
         displayHiDPISwitch.state = displayHiDPIIntent ? .on : .off
         displayAutoResizeSwitch.state = config.displayAutoResizes ? .on : .off
-        displayAutoResizeSwitch.isEnabled = isAvailable(
-            Keys.displayAutoResize, writing: String(!config.displayAutoResizes))
+        applyGroupedFormRowEnabled(
+            isAvailable(Keys.displayAutoResize, writing: String(!config.displayAutoResizes)),
+            control: displayAutoResizeSwitch)
         displayWidthField.show(String(base.width))
         displayHeightField.show(String(base.height))
 
@@ -547,7 +548,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private func refreshInput() {
         let forwarding = instance.configuration.systemKeyForwarding
         select(forwarding, in: systemKeysPopUp, named: "system keys")
-        systemKeysPopUp.isEnabled = isAvailable(Keys.inputSystemKeys, writing: forwarding.rawValue)
+        applyGroupedFormRowEnabled(
+            isAvailable(Keys.inputSystemKeys, writing: forwarding.rawValue), control: systemKeysPopUp)
         guard instance.configuration.guestOS == .macOS else { return }
         select(instance.configuration.inputDeviceMode, in: inputDevicesPopUp, named: "input device")
     }
@@ -571,7 +573,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private func refreshSerialRelay() {
         let relays = instance.configuration.serialSocketRelayEnabled
         serialRelaySwitch.state = relays ? .on : .off
-        serialRelaySwitch.isEnabled = isAvailable(Keys.serialSocket, writing: String(!relays))
+        applyGroupedFormRowEnabled(
+            isAvailable(Keys.serialSocket, writing: String(!relays)), control: serialRelaySwitch)
         probeSerialLog()
     }
 

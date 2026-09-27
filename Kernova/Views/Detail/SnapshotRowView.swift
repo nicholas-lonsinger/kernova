@@ -8,6 +8,8 @@ struct SnapshotRowModel: Identifiable, Equatable {
     /// `true` for the snapshot Ephemeral Mode returns this VM to.
     let isBaseline: Bool
     let canRevert: Bool
+    let canRename: Bool
+    let canSetNotes: Bool
     /// What this row's Delete is offered as, which decides both its enablement
     /// and the tooltip explaining a bar.
     let deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
@@ -62,7 +64,7 @@ final class SnapshotRowView: NSView {
 
     init(snapshotID: UUID, target: AnyObject, revertAction: Selector, moreAction: Selector) {
         self.snapshotID = snapshotID
-        self.titleView = EditableRowTitleView(itemID: snapshotID, name: "", controlsEnabled: true)
+        self.titleView = EditableRowTitleView(itemID: snapshotID, name: "", controlsEnabled: false)
         self.revertButton = makeLinkButton("Revert", target: target, action: revertAction)
         super.init(frame: .zero)
         buildLayout(target: target, moreAction: moreAction)
@@ -76,7 +78,8 @@ final class SnapshotRowView: NSView {
     /// Updates what the row displays in place, without a teardown/rebuild.
     func update(_ model: SnapshotRowModel, subtitle: String) {
         titleView.update(
-            name: model.snapshot.name, notes: model.snapshot.notes, controlsEnabled: true)
+            name: model.snapshot.name, notes: model.snapshot.notes,
+            nameEditable: model.canRename, notesEditable: model.canSetNotes)
         subtitleField.stringValue = subtitle
         markerLabel.stringValue = model.markerText
         markerLabel.toolTip = model.markerToolTip

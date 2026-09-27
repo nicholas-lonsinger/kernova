@@ -397,7 +397,7 @@ extension VMCommandCore {
         do {
             try permit.bundle.commitSnapshotManifest(change)
         } catch let refused as VMAdmissionRefusal {
-            throw admissionRefusal(refused.refusal, on: instance)
+            throw admissionRefusal(refused.refusal, on: instance, verb: verb)
         } catch {
             #log(
                 Self.logger, .error,

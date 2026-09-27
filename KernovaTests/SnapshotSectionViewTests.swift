@@ -69,7 +69,7 @@ struct SnapshotSectionViewTests {
     private func render(
         _ view: SnapshotSectionView, manifest: VMSnapshotManifest, canTakeSnapshot: Bool,
         canRevert: Bool, delete: VMCapabilityCatalog.SnapshotDeleteOffer = .offered,
-        barring baseline: VMSnapshot? = nil
+        barring baseline: VMSnapshot? = nil, canEditMetadata: Bool = true
     ) {
         let offers = manifest.snapshots.reduce(
             into: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]()
@@ -78,6 +78,7 @@ struct SnapshotSectionViewTests {
         }
         view.update(
             manifest: manifest, canTakeSnapshot: canTakeSnapshot, canRevert: canRevert,
+            canRename: canEditMetadata, canSetNotes: canEditMetadata,
             deleteOffers: offers, baselineID: baseline?.id)
     }
 
@@ -376,7 +377,8 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
             canRevert: true)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, deleteOffer: .offered)
+        let menu = view.makeRowMenu(
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
 
         #expect(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
@@ -392,7 +394,8 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
             canRevert: false)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: false, deleteOffer: .offered)
+        let menu = view.makeRowMenu(
+            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .offered)
 
         #expect(menu.items.first { $0.title == "Revert" }?.isEnabled == false)
     }
@@ -405,7 +408,8 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
             canRevert: true)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, deleteOffer: .offered)
+        let menu = view.makeRowMenu(
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
         let delete = menu.items.first { $0.title == "Delete\u{2026}" }
         delete.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -420,7 +424,8 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
             canRevert: true)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: true, deleteOffer: .offered)
+        let menu = view.makeRowMenu(
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
         let info = menu.items.first { $0.title == "Get Info" }
         info.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -572,11 +577,15 @@ struct SnapshotSectionViewTests {
             canRevert: true, delete: .unavailable)
 
         #expect(
-            view.makeRowMenu(for: snapshot, canRevert: true, deleteOffer: .unavailable)
-                .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
+            view.makeRowMenu(
+                for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .unavailable
+            )
+            .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
         #expect(
-            view.makeRowMenu(for: snapshot, canRevert: false, deleteOffer: .unavailable)
-                .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
+            view.makeRowMenu(
+                for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .unavailable
+            )
+            .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
     }
 
     @Test("Edit Notes on a row with no note starts an edit that commits what is typed")
@@ -614,7 +623,24 @@ struct SnapshotSectionViewTests {
 
     // MARK: - Editing gate
 
-    @Test("The row menu's Rename stays enabled with the gate closed; only Delete follows it")
+    @Test("A row whose metadata the VM refuses offers no Rename or Edit Notes, and no click-to-edit")
+    func metadataEditsFollowTheirCapabilities() {
+        let (view, _) = makeSection()
+        let snapshot = makeSnapshot("One", notes: "A note")
+        render(
+            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
+            canRevert: false, delete: .unavailable, canEditMetadata: false)
+
+        let menu = view.makeRowMenu(forRowWith: snapshot.id)
+        #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
+        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == false)
+        #expect(menu?.items.first { $0.title == "Get Info" }?.isEnabled == true)
+        let labels = allSubviews(InlineEditableLabel.self, in: view)
+        #expect(!labels.isEmpty)
+        #expect(labels.allSatisfy { !$0.controlsEnabled })
+    }
+
+    @Test("The row menu's Rename stays enabled with the revert and delete gate closed")
     func rowMenuEditingFollowsTheGate() {
         let (view, _) = makeSection()
         let snapshot = makeSnapshot("One")
@@ -622,7 +648,8 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
             canRevert: false, delete: .unavailable)
 
-        let menu = view.makeRowMenu(for: snapshot, canRevert: false, deleteOffer: .unavailable)
+        let menu = view.makeRowMenu(
+            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .unavailable)
 
         #expect(menu.items.first { $0.title == "Rename" }?.isEnabled == true)
         #expect(menu.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == false)

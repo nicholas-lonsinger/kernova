@@ -165,52 +165,68 @@ private func makeGroupedFormRowTitle(_ text: String) -> NSTextField {
     return label
 }
 
+/// A card row naming the control it holds: its leading title, then the
+/// control pushed to the trailing edge.
+///
+/// The title is the row's own, so ``applyGroupedFormRowEnabled(_:control:)``
+/// grays it with any control inside the row.
+@MainActor
+class GroupedFormControlRow: NSStackView {
+    let titleLabel: NSTextField
+
+    fileprivate init(
+        titleLabel: NSTextField, views: [NSView], alignment: NSLayoutConstraint.Attribute,
+        spacing: CGFloat
+    ) {
+        self.titleLabel = titleLabel
+        super.init(frame: .zero)
+        setViews(views, in: .leading)
+        orientation = .horizontal
+        self.alignment = alignment
+        self.spacing = spacing
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormControlRow does not support NSCoder")
+    }
+}
+
 /// Builds a full-width card row: a leading label and a control/value pushed to
 /// the trailing edge — for steppers, switches, popups, and read-only values. An
 /// input that fills the row is a ``GroupedFormFieldRow``.
-///
-/// `titleLabel` hands the freshly-built label back to the caller, for rows
-/// whose text has to be restyled later.
 @MainActor
 func makeGroupedFormCardRow(
     _ labelText: String,
     control: NSView,
-    alignment: NSLayoutConstraint.Attribute = .centerY,
-    titleLabel: ((NSTextField) -> Void)? = nil
-) -> NSView {
+    alignment: NSLayoutConstraint.Attribute = .centerY
+) -> GroupedFormControlRow {
     let label = makeGroupedFormRowTitle(labelText)
-    titleLabel?(label)
 
     let spacer = NSView()
     spacer.translatesAutoresizingMaskIntoConstraints = false
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [label, spacer, control])
-    row.orientation = .horizontal
-    row.alignment = alignment
-    row.spacing = Spacing.standard
-    return row
+    return GroupedFormControlRow(
+        titleLabel: label, views: [label, spacer, control], alignment: alignment,
+        spacing: Spacing.standard)
 }
 
 /// A card row whose control fills the space after its label — a text field or
 /// an editor — starting at the label column ``makeGroupedFormCard(rows:)``
 /// gives its field rows.
 @MainActor
-final class GroupedFormFieldRow: NSStackView {
-    fileprivate let titleLabel: NSTextField
-
+final class GroupedFormFieldRow: GroupedFormControlRow {
     init(
         _ labelText: String, control: NSView,
         alignment: NSLayoutConstraint.Attribute = .centerY
     ) {
-        titleLabel = makeGroupedFormRowTitle(labelText)
-        super.init(frame: .zero)
+        let titleLabel = makeGroupedFormRowTitle(labelText)
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        setViews([titleLabel, control], in: .leading)
-        orientation = .horizontal
-        self.alignment = alignment
-        spacing = Spacing.standard
+        super.init(
+            titleLabel: titleLabel, views: [titleLabel, control], alignment: alignment,
+            spacing: Spacing.standard)
     }
 
     @available(*, unavailable)
@@ -380,23 +396,30 @@ func makeGroupedFormSubOptionGroup(
 
 // MARK: - Row enablement
 
-/// Applies an enabled/disabled appearance to a form row's control and the label
-/// beside it, for a row whose enablement is decided per-refresh rather than by
-/// the pane's read-only lock.
+/// Enables or disables `control` with the appearance that says so, graying the
+/// title of the ``GroupedFormControlRow`` holding it — the one way a control
+/// whose enablement is decided per-refresh, rather than by the pane's
+/// read-only lock, is enabled.
 ///
 /// `isEnabled` alone is not enough: AppKit draws a disabled `NSSwitch` that is
 /// **on** at about 0.7 opacity of its accent fill (measured on macOS 27.0
-/// 26A428), fainter than the pane lock's `Alpha.disabled`, so the row dims the
-/// control to match the locked rows, and grays the label to keep the pair
-/// consistent — AppKit never fades a plain `NSTextField` for a neighboring
-/// control.
+/// 26A428), fainter than the pane lock's `Alpha.disabled`, and never fades a
+/// plain `NSTextField` for a neighboring control.
 @MainActor
-func applyGroupedFormRowEnabled(
-    _ isEnabled: Bool, control: NSControl, label: NSTextField?
-) {
+func applyGroupedFormRowEnabled(_ isEnabled: Bool, control: NSControl) {
     control.isEnabled = isEnabled
     control.alphaValue = isEnabled ? 1 : Alpha.disabled
-    label?.textColor = isEnabled ? .labelColor : .disabledControlTextColor
+    applyGroupedFormRowTitleEnabled(isEnabled, of: control)
+}
+
+/// Grays the title of the ``GroupedFormControlRow`` holding `view` unless it
+/// takes input — for a control that says so its own way, such as an inline
+/// label whose click-to-edit is disarmed.
+@MainActor
+func applyGroupedFormRowTitleEnabled(_ isEnabled: Bool, of view: NSView) {
+    let row = sequence(first: view, next: \.superview).lazy
+        .compactMap { $0 as? GroupedFormControlRow }.first
+    row?.titleLabel.textColor = isEnabled ? .labelColor : .disabledControlTextColor
 }
 
 // MARK: - Labels
@@ -681,19 +704,14 @@ func makeGroupedFormSwitch(target: AnyObject, action: Selector) -> NSSwitch {
 }
 
 /// Builds a row: title, info button, and a trailing control.
-///
-/// `titleLabel` hands the freshly-built label back to the caller, for rows whose
-/// text has to be restyled later.
 @MainActor
 func makeGroupedFormRowWithInfo(
-    _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph],
-    titleLabel: ((NSTextField) -> Void)? = nil
-) -> NSView {
+    _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph]
+) -> GroupedFormControlRow {
     let label = NSTextField(labelWithString: title)
     label.font = Typography.body
     label.isSelectable = false
     label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-    titleLabel?(label)
 
     let info = InfoButtonView()
     info.configure(label: title, paragraphs: paragraphs)
@@ -702,11 +720,9 @@ func makeGroupedFormRowWithInfo(
     spacer.translatesAutoresizingMaskIntoConstraints = false
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-    let row = NSStackView(views: [label, info, spacer, control])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = Spacing.small
-    return row
+    return GroupedFormControlRow(
+        titleLabel: label, views: [label, info, spacer, control], alignment: .centerY,
+        spacing: Spacing.small)
 }
 
 /// A numeric field, its stepper, and the unit that follows them.

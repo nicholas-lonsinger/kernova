@@ -323,12 +323,8 @@ extension VMBundle {
                 try bundle.commit(
                     file, to: keyPath, holdingRunLock: activity.holdsRunLock, change)
             } catch let refused as VMAdmissionRefusal where refused.refusal == .heldByAnotherCopy {
-                let name = owner.name
-                let fileName = file.fileName
-                #log(
-                    VMBundle.logger, .notice,
-                    "Refused a write to \(fileName, privacy: .public) of '\(name, privacy: .public)': another copy of Kernova holds it"
-                )
+                // The hold's discovery is logged where it is recorded, and the
+                // refusal by whoever reports it.
                 activity.recordOtherCopyHold(heldElsewhere: true)
                 throw refused
             }

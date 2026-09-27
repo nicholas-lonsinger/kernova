@@ -64,7 +64,8 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// width that would stretch the pane.
     private var editWidth: NSLayoutConstraint?
     private var originalText: String
-    private var controlsEnabled: Bool
+    /// Whether click-to-edit is armed, and a programmatic edit taken.
+    private(set) var controlsEnabled: Bool
     private let clickHandling: ClickHandling
 
     private(set) var isEditing = false

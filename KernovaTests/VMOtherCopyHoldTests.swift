@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import KernovaTestSupport
 import Testing
 
@@ -242,7 +243,7 @@ struct VMOtherCopyHoldTests {
                 continue
             }
             let inProcess = try #require(conflict.errorDescription)
-            let overTheWire = harness.core.admissionRefusal(refusal, on: copy).dto.message
+            let overTheWire = harness.core.commandError(for: refusal, on: copy).dto.message
             for message in [inProcess, overTheWire] {
                 #expect(
                     message.contains("\u{201C}Source\u{201D}, which another copy of Kernova is using") == held,
@@ -415,6 +416,157 @@ struct VMOtherCopyHoldTests {
             #expect(!toggles.isEmpty)
             #expect(toggles.allSatisfy { !$0.isEnabled }, "\(category)")
         }
+    }
+
+    // MARK: - Records
+
+    /// Every log record naming `vmName` while installed, through the logger's
+    /// forwarding sink.
+    ///
+    /// The sink is process-wide, so this suite runs `.serialized` and each test
+    /// names its VM uniquely: a record another suite emits meanwhile names a
+    /// VM of its own.
+    private final class LogCapture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [String] = []
+        private let vmName: String
+
+        init(naming vmName: String) {
+            self.vmName = vmName
+            KernovaLogger.forwardingSink = { [self] _, subsystem, _, segments in
+                let text = segments.map(\.text).joined()
+                guard subsystem.hasPrefix("app.kernova"), text.contains("'\(self.vmName)'") else {
+                    return
+                }
+                lock.withLock { recorded.append(text) }
+            }
+        }
+
+        func uninstall() {
+            KernovaLogger.forwardingSink = nil
+        }
+
+        var messages: [String] { lock.withLock { recorded } }
+
+        /// The records a refused verb leaves.
+        var refusals: [String] { messages.filter { $0.hasPrefix("Refused ") } }
+
+        /// The records a change of another copy's hold leaves.
+        var holdTransitions: [String] {
+            messages.filter {
+                $0.hasPrefix("Found '\(vmName)' held by another copy")
+                    || $0.hasPrefix("Another copy of Kernova no longer holds")
+            }
+        }
+    }
+
+    private static func uniqueName(_ base: String) -> String {
+        "\(base) \(UUID().uuidString.prefix(8))"
+    }
+
+    @Test("A refused set records one refusal, naming the verb, and the hold it found once")
+    func refusedSetRecordsOnce() throws {
+        let harness = makeCore()
+        let name = Self.uniqueName("Held set")
+        let instance = harness.library.registerFixture(name: name)
+        harness.store.holdElsewhere(instance.bundleURL)
+        let capture = LogCapture(naming: name)
+        defer { capture.uninstall() }
+
+        #expect(throws: CommandError.self) {
+            try harness.core.setConfiguration(
+                .id(instance.id),
+                assignments: [ConfigurationEntry(key: "serial.socket", value: "true")],
+                confirmed: true)
+        }
+
+        #expect(capture.refusals.count == 1, "\(capture.messages)")
+        #expect(capture.refusals.first?.hasPrefix("Refused setConfiguration for '\(name)'") == true)
+        #expect(capture.holdTransitions.count == 1, "\(capture.messages)")
+        #expect(!capture.messages.contains { $0.contains("rawValue") }, "\(capture.messages)")
+    }
+
+    @Test("A refused revert records one refusal, and names no snapshot")
+    func refusedRevertRecordsOnce() async throws {
+        let harness = makeCore()
+        let name = Self.uniqueName("Held revert")
+        let snapshot = VMSnapshot(name: "Only", kind: .cold, macAddress: nil)
+        let instance = harness.library.registerFixture(
+            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
+        harness.store.holdElsewhere(instance.bundleURL)
+        let capture = LogCapture(naming: name)
+        defer { capture.uninstall() }
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.revertToSnapshot(
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, confirmed: true)
+        }
+
+        #expect(capture.refusals.count == 1, "\(capture.messages)")
+        #expect(capture.refusals.first?.hasPrefix("Refused revertToSnapshot for '\(name)'") == true)
+        let uuid = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/
+        #expect(!capture.messages.contains { $0.contains(uuid) }, "\(capture.messages)")
+    }
+
+    @Test("A refused delete records one refusal")
+    func refusedDeleteRecordsOnce() async throws {
+        let harness = makeCore()
+        let name = Self.uniqueName("Held delete")
+        let instance = harness.library.registerFixture(name: name)
+        harness.store.holdElsewhere(instance.bundleURL)
+        let capture = LogCapture(naming: name)
+        defer { capture.uninstall() }
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.delete(
+                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+        }
+
+        #expect(capture.refusals.count == 1, "\(capture.messages)")
+        #expect(capture.refusals.first?.hasPrefix("Refused delete for '\(name)'") == true)
+    }
+
+    @Test("A start refused for a twin's identity records one refusal")
+    func refusedTwinStartRecordsOnce() async throws {
+        let harness = makeCore()
+        let name = Self.uniqueName("Twin")
+        func twin(_ config: inout VMConfiguration) {
+            config.networkEnabled = true
+            config.macAddress = Self.sharedMAC
+        }
+        let source = harness.library.registerFixture(name: Self.uniqueName("Source"), mutate: twin)
+        let copy = harness.library.registerFixture(name: name, mutate: twin)
+        harness.store.holdElsewhere(source.bundleURL)
+        let capture = LogCapture(naming: name)
+        defer { capture.uninstall() }
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.start(.id(copy.id), recovery: false)
+        }
+
+        #expect(capture.refusals.count == 1, "\(capture.messages)")
+        #expect(capture.refusals.first?.hasPrefix("Refused start for '\(name)'") == true)
+    }
+
+    @Test("Only a change of another copy's hold is recorded, not a probe that finds it unchanged")
+    func unchangedHoldRecordsNothing() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let name = Self.uniqueName("Probed")
+        let instance = library.registerFixture(name: name)
+        let capture = LogCapture(naming: name)
+        defer { capture.uninstall() }
+
+        storage.files.holdElsewhere(instance.bundleURL)
+        library.refreshFromOtherCopies()
+        library.refreshFromOtherCopies()
+        #expect(capture.holdTransitions == ["Found '\(name)' held by another copy of Kernova"])
+
+        storage.files.releaseElsewhere(instance.bundleURL)
+        library.refreshFromOtherCopies()
+        library.refreshFromOtherCopies()
+        #expect(capture.holdTransitions.count == 2, "\(capture.messages)")
+        #expect(capture.holdTransitions.last == "Another copy of Kernova no longer holds '\(name)'")
     }
 
     // MARK: - Harness

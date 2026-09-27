@@ -54,7 +54,7 @@ extension VMCommandCore {
         case .saved:
             return
         case .refused(let refusal):
-            throw refusalError(refusal, on: instance)
+            throw refusalError(refusal, on: instance, verb: .rename)
         case .notSaved:
             throw CommandError.operationFailed(
                 verb: .rename,
