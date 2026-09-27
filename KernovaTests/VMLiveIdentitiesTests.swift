@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMLiveIdentities Tests", .admissionGated)
+@Suite("VMLiveIdentities Tests", .caseScoped)
 @MainActor
 struct VMLiveIdentitiesTests {
     @Test("A bring-up in flight holds its identity against its twin")

@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("DataFormatters Tests", .admissionGated)
+@Suite("DataFormatters Tests", .caseScoped)
 struct DataFormattersTests {
     // MARK: - formatBytes
 

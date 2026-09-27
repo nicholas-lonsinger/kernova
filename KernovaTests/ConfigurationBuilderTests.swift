@@ -4,7 +4,7 @@ import KernovaTestSupport
 import Virtualization
 @testable import Kernova
 
-@Suite("ConfigurationBuilder Tests", .admissionGated)
+@Suite("ConfigurationBuilder Tests", .caseScoped)
 struct ConfigurationBuilderTests {
     // MARK: - Helpers
 

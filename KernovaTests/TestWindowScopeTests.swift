@@ -9,7 +9,7 @@ import Testing
 ///
 /// Each test opens its own scope and closes it before asserting, standing in for
 /// the trait's teardown at the end of a case.
-@Suite("TestWindowScope", .serialized, .admissionGated)
+@Suite("TestWindowScope", .serialized, .caseScoped)
 @MainActor
 struct TestWindowScopeTests {
     /// What the alerts under test were answered with.

@@ -8,7 +8,7 @@ import Testing
 
 /// The app's request to be brought forward, as the tool meets it on a real
 /// socket: answered by pid, and never mistaken for the verb's answer.
-@Suite("CLI activation", .admissionGated)
+@Suite("CLI activation", .caseScoped)
 struct CLIActivationTests {
     /// The pids the client asked to bring forward, in order.
     private final class Activations {

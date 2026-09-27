@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("DownloadBundle Tests", .admissionGated)
+@Suite("DownloadBundle Tests", .caseScoped)
 struct DownloadBundleTests {
     /// Creates a unique temp directory for a single test and returns it.
     ///
@@ -253,7 +253,7 @@ struct DownloadBundleTests {
     }
 }
 
-@Suite("DownloadSpeedSmoother Tests", .admissionGated)
+@Suite("DownloadSpeedSmoother Tests", .caseScoped)
 struct DownloadSpeedSmootherTests {
     @Test("First sample returns zero speed")
     func firstSampleReturnsZero() {

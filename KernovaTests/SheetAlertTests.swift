@@ -11,7 +11,7 @@ import Testing
 /// two pure helpers it delegates to (`configureNSAlertButton` and
 /// `dispatchAction(for:buttons:)`) are testable in isolation and carry
 /// the logic worth verifying.
-@Suite("SheetAlert Tests", .admissionGated)
+@Suite("SheetAlert Tests", .caseScoped)
 @MainActor
 struct SheetAlertTests {
     // MARK: - configureNSAlertButton

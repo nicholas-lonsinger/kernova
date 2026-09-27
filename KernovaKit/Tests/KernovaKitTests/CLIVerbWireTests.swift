@@ -7,7 +7,7 @@ import Testing
 
 /// What each verb whose whole request its command line decides actually puts on
 /// the wire, against a real socket.
-@Suite("CLI verb wire", .admissionGated)
+@Suite("CLI verb wire", .caseScoped)
 struct CLIVerbWireTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),

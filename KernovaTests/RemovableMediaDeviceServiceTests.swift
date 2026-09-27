@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("RemovableMediaDeviceService Tests", .admissionGated)
+@Suite("RemovableMediaDeviceService Tests", .caseScoped)
 @MainActor
 struct RemovableMediaDeviceServiceTests {
     private func makeInstance(phase: VMLifecyclePhase = .running(sessionID: UUID()))

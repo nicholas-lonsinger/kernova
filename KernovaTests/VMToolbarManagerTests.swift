@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMToolbarManager Tests", .admissionGated, .scopedWindows)
+@Suite("VMToolbarManager Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct VMToolbarManagerTests {
     // MARK: - Factories
@@ -437,7 +437,6 @@ struct VMToolbarManagerTests {
     @Test("Play button shows 'Resume' for a VM holding a saved state")
     func playLabelResumeWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)
@@ -482,7 +481,6 @@ struct VMToolbarManagerTests {
     @Test("Play (resume) and stop enabled when paused")
     func resumeStopEnabledWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(manager: manager)

@@ -7,7 +7,7 @@ import Testing
 
 /// What `kernova wait` does with the frames a subscription delivers, against a
 /// real socket.
-@Suite("CLI wait", .admissionGated)
+@Suite("CLI wait", .caseScoped)
 struct CLIWaitTests {
     private let alpha = UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID()
     private let beta = UUID(uuidString: "99999999-8888-7777-6666-555555555555") ?? UUID()

@@ -14,7 +14,7 @@ import Virtualization
 /// What is asserted is the mapping — which field a refusal belongs to, that the
 /// reason the framework wrote for the person typing survives to the surface
 /// that shows it, and what stands in when it wrote none.
-@Suite("macOS Guest Provisioning", .admissionGated)
+@Suite("macOS Guest Provisioning", .caseScoped)
 struct MacOSGuestProvisioningTests {
     private func makeCredentials(
         fullName: String = "Ada Lovelace",

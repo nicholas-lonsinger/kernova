@@ -1,11 +1,12 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
 /// The one classification of which edit classes may write each stored field
 /// of a VM's state files.
-@Suite("VMStateFieldClasses Tests")
+@Suite("VMStateFieldClasses Tests", .caseScoped)
 struct VMStateFieldClassesTests {
     /// Fails for a stored property of `value`'s type the classification does
     /// not name, for a name it holds that is no stored property, and for an

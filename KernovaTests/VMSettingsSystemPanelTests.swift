@@ -8,7 +8,7 @@ import Virtualization
 @testable import Kernova
 
 /// The System panel's own behavior, drilled into through the shell.
-@Suite("VM Settings System Panel Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("VM Settings System Panel Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMSettingsSystemPanelTests {
     private let preferences = makeTestPreferences()
@@ -628,10 +628,7 @@ struct VMSettingsSystemPanelTests {
         "A machine edit committed after the VM suspended is refused and changes nothing",
         arguments: MachineEdit.allCases)
     func machineEditCommittedAfterASuspendIsRefused(_ edit: MachineEdit) throws {
-        var pinned: VMInstance?
-        defer { pinned.map(VMInstanceFixture.removeBundle(of:)) }
         try expectRefusedAfterPinning(edit) { instance in
-            pinned = instance
             // The saved state is what pins the machine: resume restores only
             // into the configuration it was suspended from.
             try VMInstanceFixture.writeSaveFile(for: instance)

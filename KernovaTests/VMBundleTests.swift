@@ -8,7 +8,7 @@ import Testing
 /// against real files: what memory holds after a write lands or fails, what a
 /// write does to a field another process changed, and what each file's coding
 /// preserves.
-@Suite("VMBundle Tests", .admissionGated)
+@Suite("VMBundle Tests", .caseScoped)
 @MainActor
 struct VMBundleTests {
     // MARK: - Fixtures

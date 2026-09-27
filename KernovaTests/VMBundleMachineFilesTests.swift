@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMBundleMachineFiles Tests", .admissionGated)
+@Suite("VMBundleMachineFiles Tests", .caseScoped)
 struct VMBundleMachineFilesTests {
     /// A throwaway bundle directory holding the files a snapshot captures.
     private struct Fixture {

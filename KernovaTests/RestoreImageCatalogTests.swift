@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("RestoreImageCatalogEntry Tests", .admissionGated)
+@Suite("RestoreImageCatalogEntry Tests", .caseScoped)
 struct RestoreImageCatalogEntryTests {
     private func host(_ major: Int, _ minor: Int, _ patch: Int) -> OperatingSystemVersion {
         OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
@@ -116,7 +116,7 @@ struct RestoreImageCatalogEntryTests {
     }
 }
 
-@Suite("RestoreImageCatalogService Tests", .admissionGated)
+@Suite("RestoreImageCatalogService Tests", .caseScoped)
 struct RestoreImageCatalogServiceTests {
     private func json(images: String) -> Data {
         Data(

@@ -7,7 +7,7 @@ import Virtualization
 
 @testable import Kernova
 
-@Suite("VMLibraryViewModel Tests", .serialized, .admissionGated)
+@Suite("VMLibraryViewModel Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryViewModelTests {
     private let presenter = MockVMLibraryPresenting()
@@ -187,7 +187,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, suspending) = makeSuspendingViewModel(storage: storage)
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -936,7 +935,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         await viewModel.resume(instance)
@@ -1362,7 +1360,6 @@ struct VMLibraryViewModelTests {
         // Cold-paused: paused with no `virtualMachine`, so the resume would build
         // a fresh one and claim the identity.
         resuming.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: resuming) }
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -1381,7 +1378,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
         resuming.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: resuming) }
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.blockDuplicateMachineIDBoot = false
@@ -1605,7 +1601,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMACAddressPair(to: viewModel)
         resuming.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: resuming) }
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
@@ -2417,7 +2412,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         let instance = viewModel.library.admitFixture(phase: .suspended) { $0.removableMedia = [item] }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A resume restoring a saved state assembles the same configuration a
         // boot does, so it fails over the same entry.
@@ -2454,7 +2448,6 @@ struct VMLibraryViewModelTests {
         let instance = makeInstanceWithDisks(in: viewModel.library, phase: verb == .resume ? .suspended : .stopped) {
             [installer, StorageDisk.mainDisk(layout: $0)]
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         if verb == .resume { try VMInstanceFixture.writeSaveFile(for: instance) }
         let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
         let failure = way.storageDisk(
@@ -2707,7 +2700,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         await viewModel.resumeAndStop(instance)
@@ -2832,7 +2824,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         await viewModel.save(instance)
@@ -4212,7 +4203,6 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let saved = makeAutoStartInstance(in: viewModel.library, name: "Suspended")
         saved.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: saved) }
         try VMInstanceFixture.writeSaveFile(for: saved)
 
         await viewModel.startAutomaticVMsForLaunch()
@@ -4463,7 +4453,6 @@ struct VMLibraryViewModelTests {
         let inline = makeAutoStartInstance(in: viewModel.library, name: "Inline")
         let saved = makeAutoStartInstance(in: viewModel.library, name: "Suspended")
         saved.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: saved) }
         try VMInstanceFixture.writeSaveFile(for: saved)
         viewModel.selectedID = inline.id
         var readied: [UUID] = []

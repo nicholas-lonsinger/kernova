@@ -7,7 +7,7 @@ import Testing
 
 /// What the configuration verbs actually put on the wire, and what they do with
 /// the answer, against a real socket.
-@Suite("CLI configuration wire", .admissionGated)
+@Suite("CLI configuration wire", .caseScoped)
 struct CLIConfigurationWireTests {
     private let settings = [
         ConfigurationEntry(key: "cpus", value: "4"),

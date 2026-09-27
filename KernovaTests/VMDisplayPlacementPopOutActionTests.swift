@@ -10,7 +10,7 @@ import Testing
 /// An open window always pops back in, whatever the mode says. Without one,
 /// only the headless `.hidden` mode pops *in* (it has a detached display and no
 /// window to close); every other mode pops out.
-@Suite("VMDisplayPlacementController.popOutAction", .admissionGated)
+@Suite("VMDisplayPlacementController.popOutAction", .caseScoped)
 struct VMDisplayPlacementPopOutActionTests {
     @Test(
         "An open display window is closed, whatever mode it is in",
@@ -37,7 +37,7 @@ struct VMDisplayPlacementPopOutActionTests {
 }
 
 /// What a placement transition persists.
-@Suite("VMDisplayPlacementController placement persistence", .serialized, .admissionGated)
+@Suite("VMDisplayPlacementController placement persistence", .serialized, .caseScoped)
 @MainActor
 struct VMDisplayPlacementPersistenceTests {
     private let preferences = makeTestPreferences()

@@ -9,7 +9,7 @@ import Testing
 /// What the tool resolves as the app to start, how it asks for it, and how long
 /// it waits for it — all decided without driving `NSWorkspace`, which no test
 /// does.
-@Suite("CLI app launch", .admissionGated)
+@Suite("CLI app launch", .caseScoped)
 struct CLIAppLaunchTests {
     private func locate(_ path: String) -> String? {
         EnclosingAppBundle.locate(executable: URL(fileURLWithPath: path))?.path

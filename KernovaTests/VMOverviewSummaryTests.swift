@@ -1,10 +1,11 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("VMOverviewSummary Tests")
+@Suite("VMOverviewSummary Tests", .caseScoped)
 @MainActor
 struct VMOverviewSummaryTests {
     private func makeInstance(

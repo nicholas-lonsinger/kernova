@@ -7,7 +7,7 @@ import Testing
 
 /// `kernova quit` against a real socket: the tool has to stay until the app has
 /// gone, not until the app has said it will go.
-@Suite("CLI quit", .admissionGated)
+@Suite("CLI quit", .caseScoped)
 struct CLIQuitTests {
     @Test("The tool returns from a quit only once the app closes the connection")
     func quitWaitsForTheConnectionToClose() throws {

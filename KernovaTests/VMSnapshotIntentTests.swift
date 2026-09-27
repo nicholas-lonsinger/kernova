@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -10,7 +11,7 @@ import Testing
 ///
 /// Driven through the gateway rather than through the intents, which resolve
 /// their `@Dependency` only inside a live intent session.
-@Suite("VM Snapshot Intent Tests")
+@Suite("VM Snapshot Intent Tests", .caseScoped)
 @MainActor
 struct VMSnapshotIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {

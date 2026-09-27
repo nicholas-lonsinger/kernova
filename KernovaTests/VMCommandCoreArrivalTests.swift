@@ -9,7 +9,7 @@ import Testing
 /// no VM, whose outcome belongs to the call that waits on it — or, with nobody
 /// waiting, to the unattended failure hook — and whose cancel is decided
 /// before its rename.
-@Suite("VMCommandCore arrivals", .serialized, .admissionGated)
+@Suite("VMCommandCore arrivals", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreArrivalTests {
     private let preferences = makeTestPreferences()
@@ -216,6 +216,9 @@ struct VMCommandCoreArrivalTests {
         }
         #expect(isBusy(writeRefusal))
         #expect(storage.saveConfigurationCallCount == savesBefore)
+        let arrival = try #require(harness.library.arrivals.first)
+        hold.signal()
+        await arrival.settle()
     }
 
     @Test("An arrival's address and snapshots refuse as busy")
@@ -237,6 +240,9 @@ struct VMCommandCoreArrivalTests {
             try harness.core.snapshots(of: .id(row.id))
         }
         #expect(isBusy(snapshotsRefusal))
+        let arrival = try #require(harness.library.arrivals.first)
+        hold.signal()
+        await arrival.settle()
     }
 
     // MARK: - F14: Cancel Around the Rename

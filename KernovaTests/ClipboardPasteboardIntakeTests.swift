@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 @testable import Kernova
 
-@Suite("ClipboardPasteboardIntake", .admissionGated)
+@Suite("ClipboardPasteboardIntake", .caseScoped)
 @MainActor
 struct ClipboardPasteboardIntakeTests {
     /// Fresh uniquely-named pasteboard so tests never touch `.general`.

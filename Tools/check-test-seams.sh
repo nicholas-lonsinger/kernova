@@ -57,6 +57,13 @@
 # is listed in `test_only_calls`, and outside test code it may appear only in
 # its own `func` declaration.
 #
+# The fourth gate runs over the second one's files. A test case's admission and
+# its scratch removal come from the `.caseScoped` trait, and a case outside it
+# has neither: a `TestScratchDirectory` it mints stops the process. A nested
+# suite inherits the trait, so the finding is a top-level `@Suite` attribute —
+# one starting a line, alone or after other attributes, read to its closing
+# parenthesis — that does not name it.
+#
 # Line comments are stripped before matching, so prose may name what it forbids.
 # A string literal is not stripped, and reads as a reference.
 #
@@ -211,6 +218,41 @@ store_findings=$(git ls-files '*.swift' \
     ')
 store_scan_status=$?
 
+suite_findings=$(git ls-files '*.swift' \
+    | grep -E "$test_paths" \
+    | tr '\n' '\0' \
+    | xargs -0 awk '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+
+        function settle() {
+            if (attribute !~ /(^|[^A-Za-z0-9_])\.caseScoped([^A-Za-z0-9_]|$)/) {
+                printf "%s:%d — %s\n", file, start, trim(first)
+            }
+            reading = 0
+        }
+
+        FNR == 1 { if (reading) settle() }
+
+        {
+            code = $0
+            sub(/\/\/.*$/, "", code)
+            if (!reading) {
+                if (code !~ /^(@[A-Za-z_][A-Za-z0-9_.]*(\([^()]*\))?[[:space:]]+)*@Suite([^A-Za-z0-9_]|$)/) next
+                reading = 1; attribute = ""; depth = 0; opened = 0
+                file = FILENAME; start = FNR; first = code
+            }
+            attribute = attribute " " code
+            opens = gsub(/\(/, "(", code)
+            closes = gsub(/\)/, ")", code)
+            depth += opens - closes
+            if (opens) opened = 1
+            if (!opened || depth <= 0) settle()
+        }
+
+        END { if (reading) settle() }
+    ')
+suite_scan_status=$?
+
 call_findings=$(git ls-files '*.swift' \
     | grep -vE "$test_paths" \
     | tr '\n' '\0' \
@@ -239,22 +281,28 @@ if [ -n "$store_findings" ]; then
         "$store_findings"
 fi
 
+if [ -n "$suite_findings" ]; then
+    report 'test-scope finding(s): a top-level @Suite without the .caseScoped trait, whose cases run unadmitted and cannot mint scratch' \
+        "$suite_findings"
+fi
+
 if [ -n "$call_findings" ]; then
     report 'test-only-call finding(s): code outside a test target naming a seam only tests may call' \
         "$call_findings"
 fi
 
-for scan in "$scan_status" "$store_scan_status" "$call_scan_status"; do
+for scan in "$scan_status" "$store_scan_status" "$suite_scan_status" "$call_scan_status"; do
     if [ "$scan" -ne 0 ]; then
         echo "check-test-seams: a scan exited $scan — at least one tracked Swift file went unread, so a finding in it would not appear above" >&2
         exit 1
     fi
 done
 
-if [ -n "$findings" ] || [ -n "$store_findings" ] || [ -n "$call_findings" ]; then
+if [ -n "$findings" ] || [ -n "$store_findings" ] || [ -n "$suite_findings" ] || [ -n "$call_findings" ]; then
     exit 1
 fi
 
 pass "test seams: every ForTesting declaration is inside #if DEBUG"
 pass "test stores: no test reaches the process-wide UserDefaults"
+pass "test scopes: every top-level @Suite carries the .caseScoped trait"
 pass "test-only calls: no code outside a test target calls a seam only tests may call"

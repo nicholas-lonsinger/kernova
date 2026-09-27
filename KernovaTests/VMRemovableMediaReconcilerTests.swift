@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMRemovableMediaReconciler Tests", .serialized, .admissionGated)
+@Suite("VMRemovableMediaReconciler Tests", .serialized, .caseScoped)
 @MainActor
 struct VMRemovableMediaReconcilerTests {
     /// What the reconciler asked a user to be told, in place of a presenter.

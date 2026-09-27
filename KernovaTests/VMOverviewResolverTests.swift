@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VM Overview Resolver Tests", .serialized, .admissionGated)
+@Suite("VM Overview Resolver Tests", .serialized, .caseScoped)
 @MainActor
 struct VMOverviewResolverTests {
     private let preferences = makeTestPreferences()

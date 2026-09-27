@@ -7,7 +7,7 @@ import Testing
 
 /// The one derivation of the `VZVirtualMachineView` properties a VM's display
 /// carries, which both display hosts read.
-@Suite("VMInstance display view settings", .admissionGated)
+@Suite("VMInstance display view settings", .caseScoped)
 @MainActor
 struct VMInstanceDisplayViewSettingsTests {
     private func makeInstance(

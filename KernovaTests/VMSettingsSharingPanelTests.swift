@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Sharing panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Sharing Panel Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("VM Settings Sharing Panel Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMSettingsSharingPanelTests {
     private let preferences = makeTestPreferences()

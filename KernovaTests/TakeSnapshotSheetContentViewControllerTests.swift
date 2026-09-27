@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("TakeSnapshotSheet Tests", .admissionGated)
+@Suite("TakeSnapshotSheet Tests", .caseScoped)
 @MainActor
 struct TakeSnapshotSheetContentViewControllerTests {
     private final class Recorder: TakeSnapshotSheetContentViewControllerDelegate {

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 @testable import Kernova
 
-@Suite("ClipboardContentDescriber", .admissionGated)
+@Suite("ClipboardContentDescriber", .caseScoped)
 struct ClipboardContentDescriberTests {
     /// Real encoded PNG so `imagePixelSize` has a header to read.
     private func makePNG(width: Int, height: Int) throws -> Data {

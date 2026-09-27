@@ -6,7 +6,7 @@ import Testing
 
 /// What the coordinator does with an assignment: reconcile the guests' records,
 /// then route it — back to the VM it is paired with, to a prompt, or nowhere.
-@Suite("USB Accessory Coordinator Tests", .admissionGated)
+@Suite("USB Accessory Coordinator Tests", .caseScoped)
 @MainActor
 struct USBAccessoryCoordinatorTests {
     private func makeLifecycle(_ service: MockUSBAccessoryService) -> VMLifecycleCoordinator {

@@ -6,7 +6,7 @@ import vmnet
 
 @testable import Kernova
 
-@Suite("VmnetNetworkService Tests", .admissionGated)
+@Suite("VmnetNetworkService Tests", .caseScoped)
 struct VmnetNetworkServiceTests {
     @Test("The first request creates the network, and every later one returns it")
     func theNetworkIsCreatedOnceAndHeld() throws {

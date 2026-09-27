@@ -8,7 +8,7 @@ import Testing
 /// The one ``VMLibrary/adopt(_:)`` every bundle enters the library through —
 /// at launch, at a reconcile, and at an arrival's publication — and the cancel
 /// an arrival decides before its rename.
-@Suite("VMLibrary adoption", .serialized, .admissionGated)
+@Suite("VMLibrary adoption", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryAdoptionTests {
     private let preferences = makeTestPreferences()
@@ -65,12 +65,12 @@ struct VMLibraryAdoptionTests {
         edited.name = "Edited on Disk"
         let onDisk = edited
         let files = storage.files
-        storage.afterPublish = { files.setConfiguration(onDisk, at: destination) }
-
-        let arrival = library.beginArrival(
-            kind: .creating, configuration: config, destination: destination,
-            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
-        let instance = try await arrival.settled.value
+        let instance = try await storage.withAfterPublish({ files.setConfiguration(onDisk, at: destination) }) {
+            let arrival = library.beginArrival(
+                kind: .creating, configuration: config, destination: destination,
+                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+            return try await arrival.settled.value
+        }
 
         #expect(instance.name == "Edited on Disk")
         #expect(library.instances.map(\.name) == ["Edited on Disk"])
@@ -82,15 +82,15 @@ struct VMLibraryAdoptionTests {
         let config = configuration("Raced")
         let destination = try storage.bundleURL(for: config)
         let reconciledEntries = Captured<[LibraryEntry]>([])
-        storage.afterPublish = {
+        let (arrival, instance) = try await storage.withAfterPublish({
             library.reconcileWithDisk()
             reconciledEntries.value = library.entries
+        }) {
+            let arrival = library.beginArrival(
+                kind: .creating, configuration: config, destination: destination,
+                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+            return (arrival, try await arrival.settled.value)
         }
-
-        let arrival = library.beginArrival(
-            kind: .creating, configuration: config, destination: destination,
-            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
-        let instance = try await arrival.settled.value
 
         // Only the arrival's own pipeline turns its row into a VM, since it
         // alone knows whether a cancel withdrew the bundle.
@@ -237,17 +237,18 @@ struct VMLibraryAdoptionTests {
         let decision = Captured<VMArrival.CancelDecision?>(nil)
         let reconciledEntries = Captured<[LibraryEntry]>([])
         let arrivalRef = Captured<VMArrival?>(nil)
-        storage.afterPublish = {
+        let arrival = try await storage.withAfterPublish({
             decision.value = arrivalRef.value?.requestCancel()
             library.reconcileWithDisk()
             reconciledEntries.value = library.entries
+        }) {
+            let arrival = library.beginArrival(
+                kind: .creating, configuration: config, destination: destination,
+                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+            arrivalRef.value = arrival
+            await #expect(throws: CancellationError.self) { try await arrival.settled.value }
+            return arrival
         }
-
-        let arrival = library.beginArrival(
-            kind: .creating, configuration: config, destination: destination,
-            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
-        arrivalRef.value = arrival
-        await #expect(throws: CancellationError.self) { try await arrival.settled.value }
 
         #expect(decision.value == .withdrawn)
         #expect(reconciledEntries.value.first?.arrival === arrival)

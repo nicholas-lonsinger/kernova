@@ -6,7 +6,7 @@ import Virtualization
 
 @testable import Kernova
 
-@Suite("VMSettingsViewController Tests", .serialized, .admissionGated)
+@Suite("VMSettingsViewController Tests", .serialized, .caseScoped)
 @MainActor
 struct VMSettingsViewControllerTests {
     private let preferences = makeTestPreferences()

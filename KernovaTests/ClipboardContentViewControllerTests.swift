@@ -101,7 +101,7 @@ private func beginClipboardSession(_ instance: VMInstance) -> VMInstance {
 /// than `.general`, and to an injected fresh registry, so the test exercises the
 /// real write/promise path without touching the developer's clipboard or
 /// leaking state across tests.
-@Suite("ClipboardContentViewController Copy-to-Mac retention", .admissionGated)
+@Suite("ClipboardContentViewController Copy-to-Mac retention", .caseScoped)
 @MainActor
 struct ClipboardContentViewControllerRetentionTests {
     private let stagingRoot = TestStagingRoot()
@@ -219,7 +219,7 @@ struct ClipboardContentViewControllerRetentionTests {
 /// Verifies the editor commit path (#394): per-keystroke work is hash-free and
 /// the buffer is committed off-actor on a debounce, while blur/copy/close flush a
 /// still-pending edit and an external update cancels a superseded one.
-@Suite("ClipboardContentViewController editor commit", .admissionGated)
+@Suite("ClipboardContentViewController editor commit", .caseScoped)
 @MainActor
 struct ClipboardContentViewControllerEditTests {
     private let stagingRoot = TestStagingRoot()
@@ -400,7 +400,7 @@ struct ClipboardContentViewControllerEditTests {
 /// passthrough is on, both at window-open time and live as the toggle changes,
 /// and restored when it's turned back off. The row itself stays in place either
 /// way, so the actions read as unavailable rather than absent.
-@Suite("ClipboardContentViewController passthrough chrome", .admissionGated)
+@Suite("ClipboardContentViewController passthrough chrome", .caseScoped)
 @MainActor
 struct ClipboardContentViewControllerPassthroughChromeTests {
     private let stagingRoot = TestStagingRoot()
@@ -586,7 +586,7 @@ private final class CopyOutcomeLatch {
 /// The refused cases are the point: a refusal the user can't read is the same
 /// as no refusal at all, and a mixed offer that drops its files must not lead
 /// with an unqualified success.
-@Suite("ClipboardContentViewController copy-outcome messages", .admissionGated)
+@Suite("ClipboardContentViewController copy-outcome messages", .caseScoped)
 @MainActor
 struct ClipboardContentViewControllerCopyOutcomeTests {
     private let stagingRoot = TestStagingRoot()
@@ -784,7 +784,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 /// setting the VM's settings pane also offers: both go through
 /// `ClipboardPassthroughSetting`, so turning it on confirms first and a
 /// cancelled or unconfirmable enable writes nothing and puts the switch back.
-@Suite("ClipboardContentViewController passthrough switch", .admissionGated)
+@Suite("ClipboardContentViewController passthrough switch", .caseScoped)
 @MainActor
 struct ClipboardPassthroughSwitchTests {
     private let stagingRoot = TestStagingRoot()
@@ -880,7 +880,7 @@ struct ClipboardPassthroughSwitchTests {
 
 /// Verifies the buffer card's content-type chip, which states what the buffer
 /// holds — the job the status line used to share with transient messages.
-@Suite("ClipboardContentViewController content chip", .admissionGated, .scopedWindows)
+@Suite("ClipboardContentViewController content chip", .caseScoped, .scopedWindows)
 @MainActor
 struct ClipboardContentChipTests {
     private let stagingRoot = TestStagingRoot()

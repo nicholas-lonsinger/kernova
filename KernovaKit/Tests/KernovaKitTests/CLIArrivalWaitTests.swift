@@ -8,7 +8,7 @@ import Testing
 
 /// How `clone` and `import` wait for the copy they start: inside the one
 /// request that starts it, against a real socket where one is reached.
-@Suite("CLI arrival wait", .admissionGated)
+@Suite("CLI arrival wait", .caseScoped)
 struct CLIArrivalWaitTests {
     private let settled = VMSummary(
         id: UUID(uuidString: "44444444-5555-6666-7777-888888888888") ?? UUID(),

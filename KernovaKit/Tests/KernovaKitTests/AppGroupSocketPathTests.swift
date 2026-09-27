@@ -9,7 +9,7 @@ import Testing
 /// Which command socket a copy of Kernova answers on: one per copy, named the
 /// same way by the app and by the tool inside it, however either spells the
 /// bundle's path.
-@Suite("KernovaAppGroup socket path", .admissionGated)
+@Suite("KernovaAppGroup socket path", .caseScoped)
 struct AppGroupSocketPathTests {
     /// A signed build's group container under a 30-character account name.
     private static let container = URL(

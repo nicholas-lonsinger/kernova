@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import KernovaKit
 
-@Suite("LazyPullCoordinator", .admissionGated)
+@Suite("LazyPullCoordinator", .caseScoped)
 struct LazyPullCoordinatorTests {
     // No-signal polls — `pendingSlotCountForTesting` and `waiterCountForTesting`
     // are NSLock-guarded SUT state, not @Observable, and neither slot nor waiter

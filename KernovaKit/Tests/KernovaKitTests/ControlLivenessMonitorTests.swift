@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import KernovaKit
 
-@Suite("ControlLivenessMonitor")
+@Suite("ControlLivenessMonitor", .caseScoped)
 struct ControlLivenessMonitorTests {
     /// Windows wide apart so a test can sit between them unambiguously.
     private static let cadence = ControlChannelCadence(

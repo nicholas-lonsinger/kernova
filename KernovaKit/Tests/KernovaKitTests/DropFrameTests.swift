@@ -7,7 +7,7 @@ import Testing
 /// Wire round-trip for the drag-and-drop frames, so a field number or type that
 /// changes shape is caught here rather than by a guest that silently reads
 /// nothing.
-@Suite("Drop frames", .admissionGated)
+@Suite("Drop frames", .caseScoped)
 struct DropFrameTests {
     private func roundTrip(_ frame: Frame) throws -> Frame {
         try Frame(serializedBytes: frame.serializedData())

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ExternalFileReference Tests", .admissionGated)
+@Suite("ExternalFileReference Tests", .caseScoped)
 struct ExternalFileReferenceTests {
     // MARK: - Fixture
 

@@ -5,7 +5,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("UnixSocketAddress", .admissionGated)
+@Suite("UnixSocketAddress", .caseScoped)
 struct UnixSocketAddressTests {
     @Test("sun_path holds 104 bytes on Darwin")
     func maxPathLengthMatchesDarwin() {

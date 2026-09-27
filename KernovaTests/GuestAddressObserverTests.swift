@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("GuestAddressObserver Tests", .serialized, .admissionGated)
+@Suite("GuestAddressObserver Tests", .serialized, .caseScoped)
 @MainActor
 struct GuestAddressObserverTests {
     /// The library the observer reads through. Held by the suite because the

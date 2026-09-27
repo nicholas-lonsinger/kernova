@@ -12,7 +12,7 @@ import Testing
 /// alongside `DownloadServiceTests`. `fetchLatestRestoreImage` is absent by
 /// design — it is a direct `VZMacOSRestoreImage.latestSupported` call with no
 /// injectable seam.
-@Suite("IPSWService Tests", .admissionGated)
+@Suite("IPSWService Tests", .caseScoped)
 struct IPSWServiceTests {
     private static func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory

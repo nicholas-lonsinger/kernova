@@ -10,7 +10,7 @@ import Testing
 /// Both names are resolved against the running system: a name the symbol set
 /// does not carry leaves the headless app with no visible status item, and it is
 /// the only affordance such a process has.
-@Suite("HostAgentStatusItemController.iconSymbol", .admissionGated)
+@Suite("HostAgentStatusItemController.iconSymbol", .caseScoped)
 @MainActor
 struct HostAgentStatusItemIconTests {
     @Test("A quiet status item wears the plain window glyph")

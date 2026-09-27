@@ -7,7 +7,7 @@ import Testing
 
 /// The `get`/`set` keyspace on its own: what each key reads, what it accepts,
 /// and what it refuses — with no library, no VM and no wire in sight.
-@Suite("VMConfigurationKeyRegistry Tests", .admissionGated)
+@Suite("VMConfigurationKeyRegistry Tests", .caseScoped)
 @MainActor
 struct VMConfigurationKeyRegistryTests {
     /// A macOS configuration in the shape every path in the app produces one:

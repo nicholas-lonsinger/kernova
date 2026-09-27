@@ -77,8 +77,7 @@ func makeSettingsPane(
 /// `category` opens that panel, which is what puts its rows on screen — the
 /// pane starts on the overview, where every panel is hidden.
 /// `holdsSavedState` puts a suspend slot in the VM's bundle before the pane is
-/// built, which is what pins the settings a saved state pins — the caller takes
-/// the bundle away again with ``VMInstanceFixture/removeBundle(of:)``.
+/// built, which is what pins the settings a saved state pins.
 @MainActor
 func makeSettingsController(
     guestOS: VMGuestOS, isReadOnly: Bool, category: VMSettingsCategory? = nil,

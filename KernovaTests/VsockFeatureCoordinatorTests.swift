@@ -8,7 +8,7 @@ import Testing
 
 /// The descriptor table production drives every vsock channel from, and the
 /// accept and teardown paths written once against it.
-@Suite("VsockFeatureCoordinator", .admissionGated)
+@Suite("VsockFeatureCoordinator", .caseScoped)
 @MainActor
 struct VsockFeatureCoordinatorTests {
     // MARK: - The table

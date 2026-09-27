@@ -3,7 +3,7 @@ import KernovaTestSupport
 import Testing
 @testable import Kernova
 
-@Suite("MicPermissionPresentation Tests", .admissionGated)
+@Suite("MicPermissionPresentation Tests", .caseScoped)
 struct MicPermissionPresentationTests {
     // MARK: - Audio input disabled → never any supplementary UI
 

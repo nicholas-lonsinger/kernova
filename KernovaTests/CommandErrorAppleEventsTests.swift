@@ -7,7 +7,7 @@ import Testing
 @testable import Kernova
 
 /// What a script reads when a verb refuses.
-@Suite("Command error as an Apple event error", .admissionGated)
+@Suite("Command error as an Apple event error", .caseScoped)
 struct CommandErrorAppleEventsTests {
     private func makeSummary(name: String = "Alpha") -> VMSummary {
         VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)

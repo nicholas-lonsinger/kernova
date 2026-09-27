@@ -7,7 +7,7 @@ import Testing
 /// Covers how `MainWindowController` takes New VM out of the toolbar while the
 /// sidebar is collapsed and puts it back: in the live toolbar, around a
 /// customization the user made, and around the customize palette.
-@Suite("MainWindowController New VM toolbar item", .admissionGated, .scopedWindows)
+@Suite("MainWindowController New VM toolbar item", .caseScoped, .scopedWindows)
 @MainActor
 struct MainWindowControllerNewVMTests {
     private let autosave = WindowAutosaveScope.unsaved()

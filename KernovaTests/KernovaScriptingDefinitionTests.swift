@@ -11,7 +11,7 @@ import Testing
 /// The dictionary is data the system reads, so nothing in the app fails to
 /// compile when a term stops matching what it points at. These are the checks
 /// that would otherwise only fire as a script's "can't get" at runtime.
-@Suite("Kernova scripting definition", .admissionGated)
+@Suite("Kernova scripting definition", .caseScoped)
 struct KernovaScriptingDefinitionTests {
     /// The dictionary as the built app carries it, with the Standard Suite it
     /// includes already substituted in.

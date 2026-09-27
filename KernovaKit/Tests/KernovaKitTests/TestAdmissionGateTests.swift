@@ -6,7 +6,7 @@ import Testing
 /// The gate's own invariants. It is the thing that decides how much of a bundle
 /// runs at once, so a lost or duplicated permit would either stall a run or
 /// quietly disable the bound it exists to impose.
-@Suite("TestAdmissionGate")
+@Suite("TestAdmissionGate", .caseScoped)
 struct TestAdmissionGateTests {
     // No-signal polls — `waiterCountForTesting` is NSLock-guarded state inside
     // the subject, and a caller reaching `acquire()`'s suspension point publishes

@@ -1,9 +1,10 @@
 import AppKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("GroupedFormStyle Tests")
+@Suite("GroupedFormStyle Tests", .caseScoped)
 @MainActor
 struct GroupedFormStyleTests {
     /// A scroll view laid out at `width`, with a content view tall enough to

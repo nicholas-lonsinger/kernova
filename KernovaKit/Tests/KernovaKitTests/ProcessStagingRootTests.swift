@@ -5,7 +5,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ProcessStagingRoot", .admissionGated)
+@Suite("ProcessStagingRoot", .caseScoped)
 struct ProcessStagingRootTests {
     /// The reclaiming root; siblings made from it stand in for other processes'.
     private let staging = TestStagingRoot()

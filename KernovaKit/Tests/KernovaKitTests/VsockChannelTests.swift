@@ -5,7 +5,7 @@ import SwiftProtobuf
 import KernovaTestSupport
 @testable import KernovaKit
 
-@Suite("VsockChannel", .admissionGated)
+@Suite("VsockChannel", .caseScoped)
 struct VsockChannelTests {
     // MARK: - Helpers
 

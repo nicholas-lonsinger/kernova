@@ -6,7 +6,7 @@ import Testing
 @testable import Kernova
 
 /// The window-title marker composed from `EphemeralModeCopy.titleName`.
-@Suite("Ephemeral Mode Title Tests", .admissionGated)
+@Suite("Ephemeral Mode Title Tests", .caseScoped)
 @MainActor
 struct EphemeralModeTitleTests {
     @Test("A live session appends the marker")
@@ -29,7 +29,7 @@ struct EphemeralModeTitleTests {
 }
 
 /// Ephemeral Mode's model rule: the flag/baseline pairing, and how it persists.
-@Suite("Ephemeral Mode Host State Tests", .admissionGated)
+@Suite("Ephemeral Mode Host State Tests", .caseScoped)
 struct EphemeralModeHostStateTests {
     @Test("A fresh host state is not ephemeral")
     func defaultsOff() {
@@ -75,7 +75,7 @@ struct EphemeralModeHostStateTests {
 }
 
 /// What a `VMInstance` reports about its ephemeral baseline.
-@Suite("Ephemeral Mode Instance Tests", .serialized, .admissionGated)
+@Suite("Ephemeral Mode Instance Tests", .serialized, .caseScoped)
 @MainActor
 struct EphemeralModeInstanceTests {
     private let preferences = makeTestPreferences()

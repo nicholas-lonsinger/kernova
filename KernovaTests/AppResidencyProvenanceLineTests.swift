@@ -10,7 +10,7 @@ import Testing
 /// so the copy that actually launched need not be the one the developer
 /// expected; this one greppable line makes "which copy is this" legible from the
 /// log alone.
-@Suite("AppResidencyController.residentProvenanceLine", .admissionGated)
+@Suite("AppResidencyController.residentProvenanceLine", .caseScoped)
 struct AppResidencyProvenanceLineTests {
     private func provenance(
         _ origin: AppResidencyController.LaunchProvenance.Origin, isHidden: Bool

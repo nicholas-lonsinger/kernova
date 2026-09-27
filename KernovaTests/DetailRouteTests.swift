@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("DetailRoute Tests", .admissionGated)
+@Suite("DetailRoute Tests", .caseScoped)
 @MainActor
 struct DetailRouteTests {
     /// A stand-in session identity for the live phases, which no CI test host

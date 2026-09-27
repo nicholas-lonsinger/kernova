@@ -10,7 +10,7 @@ import Testing
 /// The `nil` persisted preference is the load-bearing case: an open persisted
 /// the user's choice at the request site, and a close that is not a pop-in must
 /// leave `.fullscreen` intact so the next reopen restores it.
-@Suite("VMDisplayPlacementController.placement", .admissionGated)
+@Suite("VMDisplayPlacementController.placement", .caseScoped)
 struct VMDisplayPlacementTransitionTests {
     @Test("Showing a pop-out window hosts the display in a window, persisting nothing")
     func shownPopOut() {

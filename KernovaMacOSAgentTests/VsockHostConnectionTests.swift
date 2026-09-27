@@ -58,7 +58,7 @@ private final class AgentLogSink: @unchecked Sendable {
 /// Serialized because `KernovaLogger.forwardingSink` is process-wide: a second
 /// `VsockHostConnection` running concurrently would emit into whichever ring
 /// the installed sink points at.
-@Suite("VsockHostConnection log buffer", .serialized, .admissionGated)
+@Suite("VsockHostConnection log buffer", .serialized, .caseScoped)
 struct VsockHostConnectionTests {
     // MARK: - Buffer helpers
 

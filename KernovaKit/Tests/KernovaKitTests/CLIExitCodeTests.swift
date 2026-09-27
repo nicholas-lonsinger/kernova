@@ -9,7 +9,7 @@ import Testing
 /// Every refusal the tool can receive maps to exactly one exit code, and the
 /// mapping is exhaustive by `switch` — a new refusal case will not compile
 /// until it has a code.
-@Suite("CLI exit codes", .admissionGated)
+@Suite("CLI exit codes", .caseScoped)
 struct CLIExitCodeTests {
     private let vm = VMSummary(
         id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)

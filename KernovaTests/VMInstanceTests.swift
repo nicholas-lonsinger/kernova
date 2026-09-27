@@ -5,7 +5,7 @@ import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMInstance Tests", .admissionGated)
+@Suite("VMInstance Tests", .caseScoped)
 @MainActor
 struct VMInstanceTests {
     /// Every phase that reports a status other than `.paused` — what the
@@ -125,7 +125,6 @@ struct VMInstanceTests {
     @Test("A session's end releases the whole session context and rests on the slot that survived it")
     func sessionEndReleasesTheContext() throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let context = instance.beginSessionContextForTesting()
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
@@ -188,7 +187,6 @@ struct VMInstanceTests {
     @Test("A suspend slot only counts while nothing is live")
     func holdsSuspendedSessionNeedsAnAtRestPhase() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         #expect(!instance.holdsSuspendedSession)
 
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -213,7 +211,6 @@ struct VMInstanceTests {
     @Test("Discarding the saved state takes the file and the suspension together")
     func discardSavedStateRestsTheVMStopped() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         try makeTestLifecycle().discardSavedState(instance)
@@ -236,7 +233,6 @@ struct VMInstanceTests {
             .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: sessionID),
         ] {
             let instance = VMInstanceFixture.make(phase: phase)
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             try VMInstanceFixture.writeSaveFile(for: instance)
 
             instance.handleSessionEvent(.didStopWithError(error))
@@ -256,7 +252,6 @@ struct VMInstanceTests {
     @Test("A guest that dies over a kept slot rests the VM back on its saved state")
     func didStopWithErrorOverAKeptSlotRestsSuspended() throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         instance.handleSessionEvent(.didStopWithError(NSError(domain: "test", code: 1)))
@@ -284,7 +279,6 @@ struct VMInstanceTests {
     @Test("A power-off rests the VM on a slot that survived it, and stopped otherwise")
     func powerOffReadsTheBundle() throws {
         let holding = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: holding) }
         try VMInstanceFixture.writeSaveFile(for: holding)
 
         holding.handleSessionEvent(.guestDidStop)
@@ -300,7 +294,6 @@ struct VMInstanceTests {
     @Test("A VM answers admission as it will stand once its saved state is discarded")
     func decideAsIfSavedStateDiscardedLiftsOnlyThatTerm() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let edit = VMAdmission.Request.edit(.machineKeys)
 
@@ -1011,10 +1004,7 @@ struct VMInstanceTests {
             $0.networkMode = .bridged
             $0.lastSeenAgentVersion = "0.9.2"
         }
-        defer {
-            instance.cancelAgentPostStartWatchdog()
-            VMInstanceFixture.removeBundle(of: instance)
-        }
+        defer { instance.cancelAgentPostStartWatchdog() }
         if row.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
         let observer = MockNetworkLinkObserver()
 

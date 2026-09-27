@@ -27,7 +27,7 @@ private struct TestTransport {
 /// The wire boundary driven end to end against the real command core: a client
 /// that can only speak bytes gets the same verbs, the same refusals, and the
 /// same consent semantics as the in-process UI.
-@Suite("VM Command Envelope Router Tests", .serialized, .admissionGated)
+@Suite("VM Command Envelope Router Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandEnvelopeRouterTests {
     private let preferences = makeTestPreferences()

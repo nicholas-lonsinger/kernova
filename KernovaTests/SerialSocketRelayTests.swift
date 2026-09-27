@@ -9,7 +9,7 @@ import KernovaTestSupport
 /// listener under the temp dir, a test "client" socket connects to it, and a
 /// `Pipe` stands in for the guest serial input.
 @MainActor
-@Suite("SerialSocketRelay", .admissionGated)
+@Suite("SerialSocketRelay", .caseScoped)
 struct SerialSocketRelayTests {
     // No-signal polls — this suite's only waits are kernel socket/pipe readability
     // (`readChunk`) and `relay.hasClientForTesting`, NSLock-guarded SUT state;

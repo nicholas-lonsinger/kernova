@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("SaturatingArithmetic", .admissionGated)
+@Suite("SaturatingArithmetic", .caseScoped)
 struct SaturatingArithmeticTests {
     @Test("a sum that fits is the ordinary sum")
     func inRangeSum() {

@@ -12,7 +12,7 @@ import Testing
 /// Every operation here is a real one committed by the activity — nothing is
 /// placed over a running body — so what each test observes is what the
 /// structure allows, not what a placed phase pretends.
-@Suite("VMActivity Tests", .serialized, .admissionGated)
+@Suite("VMActivity Tests", .serialized, .caseScoped)
 @MainActor
 struct VMActivityTests {
     private struct Probe: Error, Equatable {}
@@ -232,7 +232,6 @@ struct VMActivityTests {
     func performNowCommitsAndEndsInOneStep() throws {
         let (instance, recorder) = makeInstance(.suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
 
         // A body that throws rests where the kind says: back on the slot.
         #expect(throws: Probe.self) {
@@ -1068,7 +1067,6 @@ struct VMActivityTests {
         // A slot that survived the session is what the VM comes back on.
         let (suspending, recorder) = makeInstance(.running(sessionID: session))
         try VMInstanceFixture.writeSaveFile(for: suspending)
-        defer { VMInstanceFixture.removeBundle(of: suspending) }
         suspending.activity.deliverSessionEvent(.guestDidStop, from: session)
         #expect(suspending.phase == .suspended)
         #expect(recorder.poweredOff == 1)
@@ -1249,7 +1247,6 @@ struct VMActivityTests {
         for (kind, startedFrom) in tolerating {
             for slot in [false, true] {
                 let (instance, recorder, library) = makeWiredInstance(startedFrom)
-                defer { VMInstanceFixture.removeBundle(of: instance) }
                 let body = GatedStep()
                 let terminate = GatedStep()
                 let outcome = try launchGated(kind, on: instance, gate: body)

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ScrollMoreIndicator Tests", .admissionGated, .scopedWindows)
+@Suite("ScrollMoreIndicator Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct ScrollMoreIndicatorTests {
     private static let viewportHeight: CGFloat = 200

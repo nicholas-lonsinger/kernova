@@ -4,7 +4,7 @@ import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("AppPreferences", .admissionGated)
+@Suite("AppPreferences", .caseScoped)
 struct AppPreferencesTests {
     /// A fresh `AppPreferences` and the store behind it: the round-trip tests
     /// assert on the typed property and on the key it lands under.

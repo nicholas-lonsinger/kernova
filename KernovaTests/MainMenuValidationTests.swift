@@ -9,7 +9,7 @@ import Testing
 ///
 /// The controller is built but never installed: `install()` writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController validation", .serialized, .admissionGated)
+@Suite("MainMenuController validation", .serialized, .caseScoped)
 @MainActor
 struct MainMenuValidationTests {
     private let preferences = makeTestPreferences()
@@ -65,7 +65,6 @@ struct MainMenuValidationTests {
     @Test("A cold-paused VM's stop item discards the saved state")
     func stopRetitlesForColdPausedVM() throws {
         let instance = makeMenuInstance(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let fixture = makeFixture(instance: instance)
         let item = makeMenuItem(#selector(AppDelegate.stopVM(_:)))

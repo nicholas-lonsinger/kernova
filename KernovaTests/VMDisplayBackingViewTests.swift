@@ -6,7 +6,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMDisplayBackingView Tests", .admissionGated)
+@Suite("VMDisplayBackingView Tests", .caseScoped)
 @MainActor
 struct VMDisplayBackingViewTests {
     private let stagingRoot = TestStagingRoot()

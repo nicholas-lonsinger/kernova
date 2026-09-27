@@ -53,7 +53,7 @@ private final class ArchiveBytesSource: ClipboardSequentialArchiveStream, @unche
 /// by ``ClipboardArchive/extract(_:into:)``, which together pin what an archived
 /// transfer preserves and what it drops. The connection that carries the archive
 /// is `ClipboardTransferStreamTests`.
-@Suite("ClipboardArchiveCodec", .admissionGated)
+@Suite("ClipboardArchiveCodec", .caseScoped)
 struct ClipboardArchiveStreamTests {
     /// A unique scratch directory removed when the test ends.
     private func makeScratch() throws -> URL {

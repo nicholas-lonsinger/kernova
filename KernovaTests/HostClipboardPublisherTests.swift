@@ -13,7 +13,7 @@ import Testing
 /// Everything runs over a private `NSPasteboard(name:)` and an isolated provider
 /// registry, so the real write/promise path is exercised without touching the
 /// developer's clipboard.
-@Suite("HostClipboardPublisher cancellation", .admissionGated)
+@Suite("HostClipboardPublisher cancellation", .caseScoped)
 @MainActor
 struct HostClipboardPublisherCancellationTests {
     /// Minimal in-memory `ClipboardServicing` that counts the publish's one

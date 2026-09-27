@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("OSSelectionContentViewController Tests", .admissionGated)
+@Suite("OSSelectionContentViewController Tests", .caseScoped)
 @MainActor
 struct OSSelectionContentViewControllerTests {
     @Test("Initial selection reflects the model's selectedOS")

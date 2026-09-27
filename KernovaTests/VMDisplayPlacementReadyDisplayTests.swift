@@ -11,7 +11,7 @@ import Testing
 /// A bring-up is not a request to look at the guest, so both answers are taken
 /// from the app's own posture and the VM's persisted placement, never from who
 /// asked for the start.
-@Suite("VMDisplayPlacementController readying", .serialized, .admissionGated, .scopedWindows)
+@Suite("VMDisplayPlacementController readying", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {
     private let preferences = makeTestPreferences()

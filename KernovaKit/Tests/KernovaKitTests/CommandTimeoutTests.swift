@@ -4,7 +4,7 @@ import KernovaTestSupport
 import Testing
 
 /// The one rule every deadline a verb takes is held to.
-@Suite("Command timeout", .admissionGated)
+@Suite("Command timeout", .caseScoped)
 struct CommandTimeoutTests {
     @Test(
         "A deadline is a positive, finite number of seconds",

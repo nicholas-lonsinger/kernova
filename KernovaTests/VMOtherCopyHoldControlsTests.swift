@@ -11,7 +11,7 @@ import Testing
 ///
 /// A sweep rather than a list, so a control added without asking the catalog
 /// fails it. What it passes over is named below: the controls that only read.
-@Suite("Another copy's hold dims every edit control", .serialized, .admissionGated, .scopedWindows)
+@Suite("Another copy's hold dims every edit control", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMOtherCopyHoldControlsTests {
     private let preferences = makeTestPreferences()

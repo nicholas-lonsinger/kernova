@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxImageCatalogSheetContentViewController Tests", .admissionGated)
+@Suite("LinuxImageCatalogSheetContentViewController Tests", .caseScoped)
 @MainActor
 struct LinuxImageCatalogSheetContentViewControllerTests {
     private var entries: [LinuxImageCatalogEntry] {

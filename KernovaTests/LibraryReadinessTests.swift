@@ -5,7 +5,7 @@ import Testing
 @testable import Kernova
 
 /// The one library-read await every automation front door shares.
-@Suite("Library readiness", .admissionGated)
+@Suite("Library readiness", .caseScoped)
 @MainActor
 struct LibraryReadinessTests {
     /// A library read the test lands when it chooses.

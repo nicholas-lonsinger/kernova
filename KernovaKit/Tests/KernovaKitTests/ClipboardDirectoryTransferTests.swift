@@ -6,7 +6,7 @@ import Testing
 
 /// A folder crossing the real sender and receiver over one data connection, with
 /// no archive file at either end.
-@Suite("ClipboardDirectoryTransfer", .admissionGated)
+@Suite("ClipboardDirectoryTransfer", .caseScoped)
 struct ClipboardDirectoryTransferTests {
     private func makeScratch() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -480,7 +480,6 @@ struct ClipboardDirectoryTransferTests {
         let transfer = try #require(received.value)
         #expect(transfer.isComplete)
         let tree = try extractedClipboardArchive(transfer.payload, named: "Project")
-        defer { try? fm.removeItem(at: tree.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: tree.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")

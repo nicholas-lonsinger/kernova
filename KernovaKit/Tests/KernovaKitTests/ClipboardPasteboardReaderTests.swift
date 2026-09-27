@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 @testable import KernovaKit
 
-@Suite("ClipboardPasteboardReader", .admissionGated)
+@Suite("ClipboardPasteboardReader", .caseScoped)
 @MainActor
 struct ClipboardPasteboardReaderTests {
     // MARK: - Fixtures

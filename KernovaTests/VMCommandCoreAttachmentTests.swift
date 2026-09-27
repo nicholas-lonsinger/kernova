@@ -9,7 +9,7 @@ import Testing
 /// edit's happy path, the state gate each refuses on, the consent a trashing
 /// removal asks for, and the files that are never trashed however the removal
 /// is asked for.
-@Suite("VMCommandCore Attachment Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore Attachment Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreAttachmentTests {
     private let preferences = makeTestPreferences()
@@ -1027,7 +1027,6 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Old")
         let instance = makeInstance(in: harness, phase: .suspended) { $0.removableMedia = [item] }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         let refusal = await commandError {
@@ -1356,7 +1355,6 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let keeper = RemovableMediaItem(path: externalPath("keep.iso"), readOnly: true)
         let instance = makeInstance(in: harness, phase: .suspended) { $0.removableMedia = [keeper] }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         try await harness.core.removeStartFailedAttachment(
@@ -1380,7 +1378,6 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .suspended) {
             $0.storageDisks = [disk, keeper]
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         // The saved state pins the device set, so the removal would be refused
         // until the discard clears it.
@@ -1407,7 +1404,6 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let sole = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
         let instance = makeInstance(in: harness, phase: .suspended) { $0.storageDisks = [sole] }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         // A VM keeps at least one storage disk, so this removal is refused.
@@ -1444,7 +1440,6 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .suspended) {
             $0.storageDisks = [disk, keeper]
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A bring-up another door issued while the alert was up — the slot is
         // still on disk, and VZ has not finished loading it.
@@ -1476,7 +1471,6 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .suspended) {
             $0.storageDisks = [disk, keeper]
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         harness.storage.saveConfigurationError = VMStorageError.bundleNotFound(instance.bundleURL)
 

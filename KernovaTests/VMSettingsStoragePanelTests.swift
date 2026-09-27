@@ -7,7 +7,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Storage panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Storage Panel Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("VM Settings Storage Panel Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMSettingsStoragePanelTests {
     private let preferences = makeTestPreferences()
@@ -99,9 +99,8 @@ struct VMSettingsStoragePanelTests {
         #expect(visibleLockHints(in: running.view) == [groupedFormLockHintText])
 
         // A suspended VM's saved state pins both, so both sections say so.
-        let (suspended, suspendedVM, _) = makeController(
+        let (suspended, _, _) = makeController(
             guestOS: .linux, isReadOnly: true, phase: .suspended, holdsSavedState: true)
-        defer { VMInstanceFixture.removeBundle(of: suspendedVM) }
         #expect(
             Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
     }

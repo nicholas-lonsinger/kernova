@@ -23,7 +23,7 @@ import Testing
 /// `terminationEndingForTesting` seam, so the two-phase order is observable
 /// without the real `NSApp.terminate` — or an unmatched
 /// `reply(toApplicationShouldTerminate:)` — reaching the shared host.
-@Suite("AppTerminationController gate", .serialized, .admissionGated)
+@Suite("AppTerminationController gate", .serialized, .caseScoped)
 @MainActor
 struct AppTerminationGateTests {
     private let preferences = makeTestPreferences()
@@ -213,7 +213,6 @@ struct AppTerminationGateTests {
         let (controller, viewModel, spy) = makeFullQuit(diskImages: diskImages)
         let instance = admitPeer(named: "Creating", to: viewModel)
         instance.activity.placeForTesting(.stopped)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let creation = Task { @MainActor in
             try await viewModel.commands.createStorageDisk(.id(instance.id), sizeInGB: 8)
         }
@@ -251,7 +250,6 @@ struct AppTerminationGateTests {
         let (controller, viewModel, spy) = makeFullQuit()
         let instance = admitPeer(named: "Live", to: viewModel)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let gate = GatedStep()
         let trash = try instance.activity.launch(.deletingSnapshot) { _ in
             try await gate.pass()

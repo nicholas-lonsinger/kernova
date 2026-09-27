@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import Kernova
 
-@Suite("VMLibrary Tests", .serialized, .admissionGated)
+@Suite("VMLibrary Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryTests {
     /// What the library asked a user to be told, in place of a presenter.
@@ -684,7 +684,6 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         let holding = library.admitFixture(name: "Still suspended")
         holding.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: holding) }
         try VMInstanceFixture.writeSaveFile(for: holding)
         let emptied = library.admitFixture(name: "Slot gone")
         emptied.activity.placeForTesting(.suspended)

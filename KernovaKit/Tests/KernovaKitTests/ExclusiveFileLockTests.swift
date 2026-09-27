@@ -6,7 +6,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ExclusiveFileLock", .admissionGated)
+@Suite("ExclusiveFileLock", .caseScoped)
 struct ExclusiveFileLockTests {
     private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "ExclusiveFileLockTests-\(UUID().uuidString)", isDirectory: true)

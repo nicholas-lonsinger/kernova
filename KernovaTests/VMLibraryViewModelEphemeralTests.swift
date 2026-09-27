@@ -6,7 +6,7 @@ import Testing
 
 /// The Ephemeral Mode policy: what a power-off does, what a suspend doesn't,
 /// and what the baseline is protected from.
-@Suite("VMLibraryViewModel Ephemeral Mode Tests", .serialized, .admissionGated)
+@Suite("VMLibraryViewModel Ephemeral Mode Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryViewModelEphemeralTests {
     private let presenter = MockVMLibraryPresenting()

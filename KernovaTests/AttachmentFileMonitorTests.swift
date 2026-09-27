@@ -6,7 +6,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("AttachmentFileMonitor", .admissionGated)
+@Suite("AttachmentFileMonitor", .caseScoped)
 @MainActor
 struct AttachmentFileMonitorTests {
     // MARK: - Helpers

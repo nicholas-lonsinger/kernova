@@ -4,7 +4,7 @@ import Darwin
 import KernovaKit
 import KernovaTestSupport
 
-@Suite("VsockGuestClient connect/retry/stop lifecycle", .admissionGated)
+@Suite("VsockGuestClient connect/retry/stop lifecycle", .caseScoped)
 struct VsockGuestClientTests {
     // MARK: - Tests
 
@@ -317,7 +317,7 @@ struct VsockGuestClientTests {
 
 // MARK: - classifySocketErrno tests
 
-@Suite("VsockGuestClient.classifySocketErrno classification", .admissionGated)
+@Suite("VsockGuestClient.classifySocketErrno classification", .caseScoped)
 struct ClassifySocketErrnoTests {
     @Test("EAFNOSUPPORT classifies as permanent")
     func eafnosupportIsPermanent() {
@@ -558,7 +558,7 @@ struct ClassifySocketErrnoTests {
     }
 }
 
-@Suite("Bounded blocking connect: socket ownership and the parked-attempt gate", .admissionGated)
+@Suite("Bounded blocking connect: socket ownership and the parked-attempt gate", .caseScoped)
 struct BlockingConnectTests {
     @Test("A syscall that beats the deadline hands the socket to the waiter")
     func syscallBeatsDeadline() {
@@ -795,7 +795,7 @@ struct BlockingConnectTests {
     }
 }
 
-@Suite("boundedBlockingConnect: outcome arms over real descriptors", .admissionGated)
+@Suite("boundedBlockingConnect: outcome arms over real descriptors", .caseScoped)
 struct BoundedBlockingConnectTests {
     @Test("A prompt success hands the open fd to the caller and charges the gate nothing")
     func promptSuccessKeepsCallerOwnership() throws {
@@ -922,7 +922,7 @@ struct BoundedBlockingConnectTests {
 
 // MARK: - awaitConnectCompletion revents classification
 
-@Suite("VsockGuestClient.awaitConnectCompletion revents classification", .admissionGated)
+@Suite("VsockGuestClient.awaitConnectCompletion revents classification", .caseScoped)
 struct AwaitConnectCompletionTests {
     @Test("POLLHUP with SO_ERROR == 0 is a completed connect, not a failure")
     func pollhupWithNoSocketErrorCompletes() throws {

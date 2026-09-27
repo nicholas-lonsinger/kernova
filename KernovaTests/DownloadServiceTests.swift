@@ -10,7 +10,7 @@ import Testing
 /// canned responses keyed by `Range` header presence so the same suite can
 /// exercise fresh downloads, resume happy paths, file-changed scenarios, and
 /// 416 handling without touching the network.
-@Suite("DownloadService Tests", .serialized, .admissionGated)
+@Suite("DownloadService Tests", .serialized, .caseScoped)
 struct DownloadServiceTests {
     // MARK: - Test infrastructure
 

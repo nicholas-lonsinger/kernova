@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("DeleteVMSheetContentViewController Tests", .admissionGated)
+@Suite("DeleteVMSheetContentViewController Tests", .caseScoped)
 @MainActor
 struct DeleteVMSheetContentViewControllerTests {
     @Test("the header and both buttons read from the prompt, not from copy of its own")

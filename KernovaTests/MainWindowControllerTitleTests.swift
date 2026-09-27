@@ -1,9 +1,10 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("MainWindowController window title")
+@Suite("MainWindowController window title", .caseScoped)
 @MainActor
 struct MainWindowControllerTitleTests {
     @Test("With nothing selected the window is titled Kernova alone")

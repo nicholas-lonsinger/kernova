@@ -4,7 +4,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMConfiguration Tests", .admissionGated)
+@Suite("VMConfiguration Tests", .caseScoped)
 struct VMConfigurationTests {
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
     ///

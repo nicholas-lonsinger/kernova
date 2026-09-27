@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("GuestAgentDiskDelivery Tests", .admissionGated)
+@Suite("GuestAgentDiskDelivery Tests", .caseScoped)
 struct GuestAgentDiskDeliveryTests {
     // MARK: - Helpers
 

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
@@ -6,7 +7,7 @@ import Testing
 /// The wire envelope's whole job: every request and every response survives a
 /// round trip unchanged, so a transport carries what the facade said and not an
 /// approximation of it.
-@Suite("VM Command Envelope Tests")
+@Suite("VM Command Envelope Tests", .caseScoped)
 struct VMCommandEnvelopeTests {
     private let selector = VMSelector.idOrName("Alpha")
     // Built from their bytes rather than parsed: a literal that has to be

@@ -5,7 +5,7 @@ import Testing
 /// Proves the `LogWire.segment` overload set resolves the way the `#log`
 /// expansion relies on: an unannotated interpolation must land on the wire with
 /// the privacy `os.Logger` would have given it locally.
-@Suite("LogWire default privacy", .admissionGated)
+@Suite("LogWire default privacy", .caseScoped)
 struct LogWireTests {
     private struct Point {
         let x: Int

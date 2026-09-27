@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -11,7 +12,7 @@ import Testing
 /// Driven through the gateway rather than through `VMEntityQuery`, which holds
 /// no logic of its own — it forwards, and the `@Dependency` it forwards through
 /// resolves only inside a live intent session.
-@Suite("VM Intent Gateway Tests")
+@Suite("VM Intent Gateway Tests", .caseScoped)
 @MainActor
 struct VMIntentGatewayTests {
     private static let stoppedID = UUID()

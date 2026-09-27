@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for `AppResidencyController.launchPosture` — what a launch puts
 /// on screen, given what it asked for and the residency preference.
-@Suite("AppResidencyController launch posture", .admissionGated)
+@Suite("AppResidencyController launch posture", .caseScoped)
 struct AppResidencyLaunchPostureTests {
     private func posture(
         origin: AppResidencyController.LaunchProvenance.Origin = .user,

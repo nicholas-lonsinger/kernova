@@ -10,7 +10,7 @@ import Testing
 /// it rests here: an edit is refused inside its coordinated write, the VM
 /// claims its identity against every bring-up, and each event-driven refresh
 /// marks the hold, clears it, and re-reads what the other copy wrote.
-@Suite("Another copy's hold", .serialized, .admissionGated)
+@Suite("Another copy's hold", .serialized, .caseScoped)
 @MainActor
 struct VMOtherCopyHoldTests {
     /// An in-memory store that counts each run-lock probe by whether it ran
@@ -353,7 +353,6 @@ struct VMOtherCopyHoldTests {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let instance = library.registerFixture()
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         library.refreshFromOtherCopies()

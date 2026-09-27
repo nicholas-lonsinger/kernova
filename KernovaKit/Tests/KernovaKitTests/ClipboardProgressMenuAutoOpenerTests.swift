@@ -6,7 +6,7 @@ import Testing
 
 /// Unit tests for `ClipboardProgressMenuAutoOpener` — the rules that let a
 /// transfer someone is waiting on open the status-item dropdown by itself, once.
-@Suite("ClipboardProgressMenuAutoOpener", .admissionGated)
+@Suite("ClipboardProgressMenuAutoOpener", .caseScoped)
 struct ClipboardProgressMenuAutoOpenerTests {
     /// A readout that clears every gate, so each test varies only what it is about.
     ///

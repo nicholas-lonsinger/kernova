@@ -4,7 +4,7 @@ import Virtualization
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VirtualizationService Tests", .admissionGated)
+@Suite("VirtualizationService Tests", .caseScoped)
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
@@ -257,7 +257,6 @@ struct VirtualizationServiceTests {
     @Test("A suspend whose write throws drops the part-written slot and rests at the failure")
     func suspendFailureDropsThePartWrittenSlot() async throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let session = MockSnapshotSession(guestState: .running)
         await session.setSaveError(
             NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "The disk is full."]))
@@ -276,7 +275,6 @@ struct VirtualizationServiceTests {
     @Test("A guest that goes away mid-suspend drops the slot and rests where its end put it")
     func suspendOverAVanishingGuestDropsTheSlot() async throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let session = MockSnapshotSession(guestState: .running)
         await session.setAfterSave {
             await MainActor.run {
@@ -932,7 +930,6 @@ struct VirtualizationServiceTests {
     @Test("A restore of a VM holding a saved state keeps the slot when it fails")
     func startOfASuspendedVMRestoresAndKeepsTheSlot() async throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         // The bundle holds no real disk image, so the attempt fails at the
@@ -991,7 +988,6 @@ struct VirtualizationServiceTests {
     @Test("A restore onto a live identity is refused, keeping the saved state")
     func coldResumeRefusesALiveIdentityKeepingTheSavedState() async throws {
         let (library, resting, live) = makeLiveMACPair(restingAt: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: resting) }
         try VMInstanceFixture.writeSaveFile(for: resting)
 
         let refusal = await #expect(throws: VMAdmissionRefusal.self) {
@@ -1215,7 +1211,6 @@ struct VirtualizationServiceTests {
     func restingPhaseForSuspendSlotReadsTheBundle() throws {
         let holding = VMInstanceFixture.make(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: holding)
-        defer { VMInstanceFixture.removeBundle(of: holding) }
 
         holding.activity.placeForTesting(holding.restingPhase(withoutSlot: .stopped))
 
@@ -1274,7 +1269,6 @@ struct VirtualizationServiceTests {
         for failure in failures {
             let instance = VMInstanceFixture.make(phase: .suspended)
             try VMInstanceFixture.writeSaveFile(for: instance)
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             #expect(
                 await restAfterFailedBringUp(.guestStart(.restoringSavedState), on: instance, with: failure.error)
                     == .suspended, "\(failure.label)")
@@ -1333,7 +1327,6 @@ struct VirtualizationServiceTests {
         let snapshot = VMSnapshot(name: "Warm", macAddress: nil)
         let instance = VMInstanceFixture.make(
             phase: .suspended, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         #expect(
             await restAfterFailedBringUp(

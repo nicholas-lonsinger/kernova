@@ -7,7 +7,7 @@ import KernovaTestSupport
 import UniformTypeIdentifiers
 @testable import Kernova
 
-@Suite("VsockClipboardService", .admissionGated)
+@Suite("VsockClipboardService", .caseScoped)
 @MainActor
 struct VsockClipboardServiceTests {
     private let stagingRoot = TestStagingRoot()
@@ -292,7 +292,6 @@ struct VsockClipboardServiceTests {
 
         // The streamed bytes are the archive, and they extract back to the tree.
         let dest = try extractedClipboardArchive(received.payload)
-        defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")

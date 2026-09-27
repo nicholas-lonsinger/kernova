@@ -14,7 +14,7 @@ import Testing
 /// A read that arrives before the library has landed is suspended and
 /// re-issued through Cocoa's own Apple event handling, which only a live
 /// script exercises; what is tested here is everything short of that.
-@Suite("VM scripting gateway", .admissionGated)
+@Suite("VM scripting gateway", .caseScoped)
 @MainActor
 struct VMScriptingGatewayTests {
     /// A readiness await the test holds open, so a verb's wait for the first

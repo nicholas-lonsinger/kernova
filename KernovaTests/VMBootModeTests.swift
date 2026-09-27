@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMBootMode Tests", .admissionGated)
+@Suite("VMBootMode Tests", .caseScoped)
 struct VMBootModeTests {
     // MARK: - Display Name
 

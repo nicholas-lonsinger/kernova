@@ -11,7 +11,7 @@ import Testing
 /// open; `sync(to:after:)` covers the in-place edits applied while the menu is
 /// on screen, where the line has to land in its slot under the anchor and keep
 /// its identity across a retitle.
-@Suite("StatusMenuStartFailureSection", .admissionGated)
+@Suite("StatusMenuStartFailureSection", .caseScoped)
 @MainActor
 struct StatusMenuStartFailureSectionTests {
     private final class ActionTarget: NSObject {

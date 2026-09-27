@@ -7,7 +7,7 @@ import KernovaTestSupport
 /// The detail pane across the library's empty-until-read interval. The app now
 /// presents its window before the library has been read, so the pane has to
 /// distinguish "no VMs" from "no VMs *yet*".
-@Suite("DetailContainer library-load state", .serialized, .admissionGated, .scopedWindows)
+@Suite("DetailContainer library-load state", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeTestPreferences()

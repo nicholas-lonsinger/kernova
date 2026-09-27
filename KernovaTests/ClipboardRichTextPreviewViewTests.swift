@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ClipboardRichTextPreviewView Tests", .admissionGated)
+@Suite("ClipboardRichTextPreviewView Tests", .caseScoped)
 @MainActor
 struct ClipboardRichTextPreviewViewTests {
     /// How the source colored the previewed text.

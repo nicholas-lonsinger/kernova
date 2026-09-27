@@ -6,7 +6,7 @@ import Testing
 
 /// Unit tests for the receive-side gate both peers apply to an offer's
 /// representations before a byte of it crosses.
-@Suite("ClipboardPromisePolicy", .admissionGated)
+@Suite("ClipboardPromisePolicy", .caseScoped)
 struct ClipboardPromisePolicyTests {
     private func info(
         uti: String = ClipboardContent.utf8TextUTI, byteCount: UInt64 = 8, filename: String = "",

@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMBundleLayout Tests", .admissionGated)
+@Suite("VMBundleLayout Tests", .caseScoped)
 struct VMBundleLayoutTests {
     private let bundleURL = URL(fileURLWithPath: "/tmp/TestVM.bundle", isDirectory: true)
 

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("BootConfigContentViewController Tests", .admissionGated)
+@Suite("BootConfigContentViewController Tests", .caseScoped)
 @MainActor
 struct BootConfigContentViewControllerTests {
     @Test("EFI mode offers all three image sources, with none picked to start")

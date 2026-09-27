@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// Each spec promises a set of types and serves their bytes lazily through
 /// `provide`; the tests drive that closure directly, so they cover both the
 /// grouping and the on-demand read without touching a real `NSPasteboard`.
-@Suite("HostClipboardPublisher pasteboard items", .admissionGated)
+@Suite("HostClipboardPublisher pasteboard items", .caseScoped)
 struct ClipboardHostPasteboardItemsTests {
     private let stagingRoot = TestStagingRoot()
 

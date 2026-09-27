@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSleepWakeCoordinator Tests", .serialized, .admissionGated)
+@Suite("VMSleepWakeCoordinator Tests", .serialized, .caseScoped)
 @MainActor
 struct VMSleepWakeCoordinatorTests {
     /// What the coordinator asked a user to be told, in place of a presenter.
@@ -452,7 +452,6 @@ struct VMSleepWakeCoordinatorTests {
         coordinator.onFailure = { [failures] error in
             failures.record(title: "Error", message: error.localizedDescription)
         }
-        defer { VMInstanceFixture.removeBundle(of: sleeper) }
 
         await sleep(coordinator, virtService)
         // Between sleep and wake the paused VM came to rest on its suspend slot,

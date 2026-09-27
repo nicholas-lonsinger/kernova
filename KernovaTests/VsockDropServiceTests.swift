@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// Unit tests for the host side of dragging files onto the VM display: the offer
 /// it announces, the bytes it streams when the guest pulls, and what it reports
 /// when a drop is cancelled or the guest cannot finish it.
-@Suite("VsockDropService", .admissionGated)
+@Suite("VsockDropService", .caseScoped)
 @MainActor
 struct VsockDropServiceTests {
     // MARK: - Harness
@@ -328,7 +328,6 @@ struct VsockDropServiceTests {
         let xid = transferID(generation: 1, repIndex: 0)
         let received = try await harness.pull(generation: 1, transferID: xid, uti: rep.uti)
         let unpacked = try extractedClipboardArchive(received.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(
             try Data(contentsOf: unpacked.appendingPathComponent("shortcut.txt")) == payload)
         #expect(harness.failure == nil)
@@ -402,7 +401,6 @@ struct VsockDropServiceTests {
 
         let wire = received.payload
         let unpacked = try extractedClipboardArchive(wire)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         // Nothing on the connection repeats the offer's name: the archive's one
         // entry is what lands the file under it.
         #expect(
@@ -440,7 +438,6 @@ struct VsockDropServiceTests {
         // The tree's entries are relative to the folder, so its own name is not
         // in the archive — the receiver supplies it.
         let unpacked = try extractedClipboardArchive(wire, named: "Photos")
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(unpacked.lastPathComponent == "Photos")
         #expect(
             try Data(contentsOf: unpacked.appendingPathComponent("one.txt"))
@@ -480,7 +477,6 @@ struct VsockDropServiceTests {
             generation: 1, transferID: transferID(generation: 1, repIndex: 1), uti: reps[1].uti)
         #expect(second.isComplete)
         let unpacked = try extractedClipboardArchive(second.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.txt")) == payload)
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))

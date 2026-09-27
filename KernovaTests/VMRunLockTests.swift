@@ -10,7 +10,7 @@ import Testing
 /// exactly while the VM is neither at rest nor removed, takes it in the one
 /// admission step, and refuses an operation another copy of Kernova holds the
 /// bundle for before anything of the operation runs.
-@Suite("VM run lock", .serialized, .admissionGated)
+@Suite("VM run lock", .serialized, .caseScoped)
 @MainActor
 struct VMRunLockTests {
     private struct Probe: Error {}
@@ -158,7 +158,6 @@ struct VMRunLockTests {
                 $0.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
             }
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         if attempt.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
         store.holdElsewhere(instance.bundleURL)
         let recorder = Recorder()
@@ -181,7 +180,6 @@ struct VMRunLockTests {
                     $0.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
                 }
             }
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             if attempt.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
             let recorder = Recorder()
             try await attempt.run(instance, recorder)
@@ -373,7 +371,6 @@ struct VMRunLockTests {
     @Test("A save file another copy left re-derives the VM as suspended, and refuses a cold boot over it")
     func admissionSeesASaveFileAnotherCopyLeft() async throws {
         let (instance, store) = makeInstance(.stopped)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let recorder = Recorder()
 
@@ -553,7 +550,6 @@ struct VMRunLockTests {
     func startVerbRestoresASaveFileAnotherCopyLeft() async throws {
         let harness = makeCore()
         let instance = harness.library.registerFixture()
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         try await harness.core.start(.id(instance.id), recovery: false)

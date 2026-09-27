@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSettingsKeyedListController Tests", .admissionGated)
+@Suite("VMSettingsKeyedListController Tests", .caseScoped)
 @MainActor
 struct VMSettingsKeyedListControllerTests {
     /// A row's model: an id and the one value a change shows up in.

@@ -5,7 +5,7 @@ import KernovaTestSupport
 import Synchronization
 @testable import Kernova
 
-@Suite("VMStorageService Tests", .admissionGated)
+@Suite("VMStorageService Tests", .caseScoped)
 struct VMStorageServiceTests {
     /// The library this test owns: the test host is the app, so
     /// ``VMStorageService/productionLibraryDirectory`` is the maintainer's
@@ -199,7 +199,7 @@ struct VMStorageServiceTests {
 
     @Test(
         "Two spellings a case-insensitive volume folds together name one bundle",
-        .enabled(if: VMStorageServiceTests.scratchVolumeFoldsCase()))
+        .enabled(if: TestScratchDirectory.volumeFoldsCase))
     func bundleIdentityIsTheVolumes() throws {
         let url = try makeBundle(VMConfiguration(name: "Folded", guestOS: .linux, bootMode: .efi))
         let respelled = url.deletingLastPathComponent()
@@ -207,15 +207,6 @@ struct VMStorageServiceTests {
         #expect(VMBundleIdentity.spelling(respelled) != VMBundleIdentity.spelling(url))
 
         #expect(service.bundleIdentity(at: respelled) == service.bundleIdentity(at: url))
-    }
-
-    /// Whether the volume every test's library sits on folds case.
-    private static func scratchVolumeFoldsCase() -> Bool {
-        guard
-            let values = try? FileManager.default.temporaryDirectory.resourceValues(
-                forKeys: [.volumeSupportsCaseSensitiveNamesKey])
-        else { return false }
-        return values.volumeSupportsCaseSensitiveNames == false
     }
 
     // MARK: - Bundle Extension

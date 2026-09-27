@@ -14,7 +14,7 @@ import Testing
 /// 5 s slice is exactly the stranding that test asserts against. Observed
 /// 2026-08-20 (run 32341761480): all four cases reported the same 15.58 s and
 /// two of them failed.
-@Suite("LazyPullCoordinator on the main thread", .serialized, .admissionGated)
+@Suite("LazyPullCoordinator on the main thread", .serialized, .caseScoped)
 @MainActor
 struct LazyPullCoordinatorMainThreadTests {
     // Each test holds the real main thread inside `pull` from a main-queue job,

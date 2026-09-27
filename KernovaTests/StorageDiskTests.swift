@@ -1,9 +1,10 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("StorageDisk Tests")
+@Suite("StorageDisk Tests", .caseScoped)
 struct StorageDiskTests {
     @Test("mainDisk produces a stable UUID for the same bundle URL")
     func mainDiskUUIDIsStableAcrossCalls() {

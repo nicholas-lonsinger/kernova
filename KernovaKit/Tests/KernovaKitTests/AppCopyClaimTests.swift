@@ -9,7 +9,7 @@ import Testing
 ///
 /// A second claim from this process is refused exactly as another process's
 /// is (`ExclusiveFileLock`), so these run in one process.
-@Suite("AppCopyClaim", .admissionGated)
+@Suite("AppCopyClaim", .caseScoped)
 struct AppCopyClaimTests {
     /// A `Kernova.app` directory at `relativePath` under `scratch`.
     private func makeBundle(in scratch: URL, at relativePath: String = "Kernova.app") throws -> URL {

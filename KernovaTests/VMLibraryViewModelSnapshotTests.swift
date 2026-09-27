@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMLibraryViewModel Snapshot Tests", .serialized, .admissionGated)
+@Suite("VMLibraryViewModel Snapshot Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryViewModelSnapshotTests {
     private let presenter = MockVMLibraryPresenting()

@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("KernovaAppGroup identifier", .admissionGated)
+@Suite("KernovaAppGroup identifier", .caseScoped)
 struct AppGroupIdentifierTests {
     @Test("a team-prefixed group is the app's own")
     func teamPrefixedGroupMatches() {

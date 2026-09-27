@@ -6,7 +6,7 @@ import Testing
 @testable import Kernova
 
 /// Linking the bundled `kernova` tool somewhere a shell will find it.
-@Suite("Command line tool installer", .admissionGated)
+@Suite("Command line tool installer", .caseScoped)
 struct CommandLineToolInstallerTests {
     /// A fresh directory the test owns, removed when it ends.
     private func makeTemporaryDirectory() throws -> URL {

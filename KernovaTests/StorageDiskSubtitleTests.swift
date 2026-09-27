@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("StorageDiskSubtitle Tests", .admissionGated)
+@Suite("StorageDiskSubtitle Tests", .caseScoped)
 @MainActor
 struct StorageDiskSubtitleTests {
     private func makeInstanceWithBundle() throws -> VMInstance {

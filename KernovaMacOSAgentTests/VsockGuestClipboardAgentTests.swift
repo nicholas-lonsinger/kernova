@@ -143,7 +143,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 
 // MARK: - Test Suite
 
-@Suite("VsockGuestClipboardAgent state machine", .admissionGated)
+@Suite("VsockGuestClipboardAgent state machine", .caseScoped)
 struct VsockGuestClipboardAgentTests {
     private let stagingRoot = TestStagingRoot()
 
@@ -319,7 +319,6 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.reply.totalBytes == 0)
         #expect(transfer.isComplete)
         let unpacked = try extractedClipboardArchive(transfer.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         // Nothing on a data connection repeats the offer's filename, so the name
         // the transfer delivers is the archive entry's.
         #expect(try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["notes.bin"])
@@ -371,7 +370,6 @@ struct VsockGuestClipboardAgentTests {
         #expect(transfer.reply.isArchive)
         #expect(transfer.isComplete)
         let unpacked = try extractedClipboardArchive(transfer.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         // The offer's filename is not repeated on the connection; the entry the
         // archive delivers carries it.
         #expect(try FileManager.default.contentsOfDirectory(atPath: unpacked.path) == ["empty.bin"])
@@ -418,7 +416,6 @@ struct VsockGuestClipboardAgentTests {
                 generation: offer.generation, transferID: transferID, uti: info.uti))
         let transfer = try await collectOutboundTransfer(transferID: transferID, from: dialled)
         let unpacked = try extractedClipboardArchive(transfer.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.bin")) == contents)
 
         try await reports.wait { !reports.finalSnapshots.isEmpty && reports.runningSnapshot == nil }
@@ -613,7 +610,6 @@ struct VsockGuestClipboardAgentTests {
         #expect(materializedFiles(under: stagingRoot.root.url).isEmpty)
 
         let dest = try extractedClipboardArchive(transfer.payload)
-        defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")
@@ -707,13 +703,11 @@ struct VsockGuestClipboardAgentTests {
         let emptyTransfer = try await requestOutboundRep(
             offer: offer, repIndex: 0, from: hostChannel, dialled: dialled)
         let emptyOut = try extractedClipboardArchive(emptyTransfer.payload)
-        defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
 
         let scaffoldTransfer = try await requestOutboundRep(
             offer: offer, repIndex: 1, from: hostChannel, dialled: dialled)
         let scaffoldOut = try extractedClipboardArchive(scaffoldTransfer.payload)
-        defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
         #expect(
             FileManager.default.fileExists(
                 atPath: scaffoldOut.appendingPathComponent("sub/.keep").path))

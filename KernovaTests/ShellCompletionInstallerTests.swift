@@ -5,7 +5,7 @@ import Testing
 @testable import Kernova
 
 /// Writing the file a shell loads the `kernova` tool's completions from.
-@Suite("Shell completion installer", .admissionGated)
+@Suite("Shell completion installer", .caseScoped)
 struct ShellCompletionInstallerTests {
     /// A fresh directory the test owns, removed when it ends.
     private func makeTemporaryDirectory() throws -> URL {

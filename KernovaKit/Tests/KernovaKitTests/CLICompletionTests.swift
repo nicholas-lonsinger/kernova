@@ -13,7 +13,7 @@ private final class ConnectionCount {
 
 /// What a Tab press reads back off the line, what it asks the app for, and how
 /// it hands the answer to each shell.
-@Suite("CLI completion", .admissionGated)
+@Suite("CLI completion", .caseScoped)
 struct CLICompletionTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),

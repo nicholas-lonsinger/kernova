@@ -8,7 +8,7 @@ import Testing
 /// The configuration verbs against a real library: the keyspace read and
 /// written through the core's own gates, the shared-directory edits a caller
 /// names by path, and every refusal each of them owes.
-@Suite("VMCommandCore Configuration Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore Configuration Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreConfigurationTests {
     private let preferences = makeTestPreferences()

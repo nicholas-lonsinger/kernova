@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("FileDigest Tests", .admissionGated)
+@Suite("FileDigest Tests", .caseScoped)
 @MainActor
 struct FileDigestTests {
     /// Collects the main-actor progress callbacks for assertion after the fact.

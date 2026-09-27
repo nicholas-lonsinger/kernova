@@ -7,7 +7,7 @@ import Testing
 /// Unit tests for the naming a dropped file gets in the guest's Downloads
 /// folder — Finder's own "Keep Both" convention, not staging's invisible ` (n)`
 /// style.
-@Suite("FinderStyleUniquing", .admissionGated)
+@Suite("FinderStyleUniquing", .caseScoped)
 struct FinderStyleUniquingTests {
     /// A fresh empty directory, plus the files named in `seeded`.
     private func makeDirectory(seeded: [String] = []) throws -> URL {

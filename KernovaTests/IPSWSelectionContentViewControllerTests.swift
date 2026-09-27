@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("IPSWSelectionContentViewController Tests", .admissionGated)
+@Suite("IPSWSelectionContentViewController Tests", .caseScoped)
 @MainActor
 struct IPSWSelectionContentViewControllerTests {
     @Test("Defaults to Download Latest with the default destination shown")

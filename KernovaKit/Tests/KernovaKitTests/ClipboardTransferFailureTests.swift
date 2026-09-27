@@ -6,7 +6,7 @@ import Testing
 
 /// Unit tests for the classification every pull of a peer offer lands on when it
 /// aborts — the paste-time blocking fire and the lazy preview pull alike.
-@Suite("ClipboardTransferFailure.inboundPullAborted", .admissionGated)
+@Suite("ClipboardTransferFailure.inboundPullAborted", .caseScoped)
 struct ClipboardTransferFailureTests {
     private func abortInfo(
         _ code: ClipboardStreamAbortCode, needed: Int? = nil, available: Int? = nil

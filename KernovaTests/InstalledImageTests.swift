@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("InstalledImage Tests", .admissionGated)
+@Suite("InstalledImage Tests", .caseScoped)
 struct InstalledImageTests {
     private func roundTrip(_ image: InstalledImage) throws -> InstalledImage {
         let data = try VMConfiguration.makeJSONEncoder().encode(image)

@@ -6,7 +6,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMLifecycleCoordinator Tests", .admissionGated)
+@Suite("VMLifecycleCoordinator Tests", .caseScoped)
 @MainActor
 struct VMLifecycleCoordinatorTests {
     /// The pinned catalog image the `.catalogVersion` cases install from.

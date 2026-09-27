@@ -11,7 +11,7 @@ import Testing
 /// The pane's job is to make the paste ceiling selectable *and* legible: the
 /// popup has to reflect and write the stored value, and the estimate line has to
 /// track the selection rather than freeze on the value it first rendered.
-@Suite("Clipboard Settings Tests", .serialized, .admissionGated)
+@Suite("Clipboard Settings Tests", .serialized, .caseScoped)
 @MainActor
 struct ClipboardSettingsViewControllerTests {
     private let preferences: AppPreferences

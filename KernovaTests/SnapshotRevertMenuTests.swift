@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SnapshotRevertMenu Tests", .admissionGated)
+@Suite("SnapshotRevertMenu Tests", .caseScoped)
 @MainActor
 struct SnapshotRevertMenuTests {
     /// Stands in for the menu's target; the action is never invoked here.

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("NSWindow.withStableContentSize Tests", .admissionGated, .scopedWindows)
+@Suite("NSWindow.withStableContentSize Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct NSWindowExtensionsTests {
     /// A content view controller whose Auto Layout fitting size is far smaller
