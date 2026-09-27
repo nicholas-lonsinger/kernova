@@ -138,9 +138,29 @@ final class VMLifecycleCoordinator {
         }
     }
 
+    /// ``pause(_:)`` as an operation no caller has to wait on, resolving
+    /// `outcome` — admitted and committed before this returns, and throwing
+    /// the refusal otherwise.
+    func launchPause(_ instance: VMInstance, resolving outcome: VMOutcome) throws {
+        try instance.activity.launch(.pausing, resolving: outcome) {
+            [virtualizationService] context in
+            try await virtualizationService.pause(instance, context)
+        }
+    }
+
     /// Resumes a live-paused VM from memory.
     func resume(_ instance: VMInstance) async throws {
         try await instance.activity.perform(.resuming) { context in
+            try await virtualizationService.resume(instance, context)
+        }
+    }
+
+    /// ``resume(_:)`` as an operation no caller has to wait on, resolving
+    /// `outcome` — admitted and committed before this returns, and throwing
+    /// the refusal otherwise.
+    func launchResume(_ instance: VMInstance, resolving outcome: VMOutcome) throws {
+        try instance.activity.launch(.resuming, resolving: outcome) {
+            [virtualizationService] context in
             try await virtualizationService.resume(instance, context)
         }
     }

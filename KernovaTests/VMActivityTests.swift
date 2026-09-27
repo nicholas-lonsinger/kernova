@@ -857,10 +857,11 @@ struct VMActivityTests {
         let owed = followUp("copy", .copyingOut, on: instance, order: order)
         instance.activity.follow(owed)
 
-        instance.activity.withdraw(owed)
+        #expect(instance.activity.withdraw(owed))
 
         await #expect(throws: CancellationError.self) { try await owed.outcome.value() }
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(!instance.activity.withdraw(owed))
         holdGate.release()
         try await hold.value()
         #expect(order.admitted.isEmpty)

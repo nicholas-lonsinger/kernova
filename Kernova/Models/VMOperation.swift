@@ -305,7 +305,8 @@ enum VMSessionEnd: Sendable, Equatable {
 /// Equal by identity: one operation, one outcome.
 @MainActor
 final class VMOutcome: Sendable, Equatable {
-    private var result: Result<Void, any Error>?
+    /// How the operation ended, or `nil` until it has.
+    private(set) var result: Result<Void, any Error>?
     private var waiters: [CheckedContinuation<Result<Void, any Error>, Never>] = []
     /// Outcomes that resolve as this one does — ``forward(to:)``.
     private var forwarded: [VMOutcome] = []

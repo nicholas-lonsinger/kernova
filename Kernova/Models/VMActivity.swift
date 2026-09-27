@@ -110,12 +110,15 @@ final class VMActivity {
     }
 
     /// Takes `followUp` off the queue, resolving its outcome with
-    /// `CancellationError` — nothing, once it has drained.
-    func withdraw(_ followUp: VMFollowUp) {
+    /// `CancellationError`, answering whether it was still queued — nothing,
+    /// once it has drained.
+    @discardableResult
+    func withdraw(_ followUp: VMFollowUp) -> Bool {
         guard let index = followUps.firstIndex(where: { $0.outcome === followUp.outcome }) else {
-            return
+            return false
         }
         followUps.remove(at: index).outcome.resolve(.failure(CancellationError()))
+        return true
     }
 
     /// Queues `items` behind every follow-up of their rank or better, without

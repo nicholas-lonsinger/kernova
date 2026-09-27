@@ -37,8 +37,8 @@ final class VMLibraryViewModel {
 
     /// Pauses running VMs for system sleep and resumes them on wake.
     ///
-    /// Held rather than read: the sleep watcher it installs is what drives it,
-    /// and this is the composition root that owns its lifetime.
+    /// Held rather than read: the sleep watcher it is handed is what drives
+    /// it, and this is the composition root that owns its lifetime.
     private let sleepWake: VMSleepWakeCoordinator
 
     /// Watches the USB accessories macOS assigns to Kernova; `nil` when this
@@ -512,6 +512,9 @@ final class VMLibraryViewModel {
         // the whole process, and a default would hand it to every test that
         // builds a view model for something else entirely.
         usbAccessoryService: (any USBAccessoryProviding)? = nil,
+        // Supplied by ``AppDelegate`` for the reason `usbAccessoryService` is:
+        // the power registration is a side effect on the whole process.
+        systemSleep: SystemSleepWatcher? = nil,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
         downloadService: any Downloading = DownloadService(),
         fileSystem: any FileSystemOperating,
@@ -549,7 +552,8 @@ final class VMLibraryViewModel {
             entitlements: entitlements
         )
         self.library = library
-        let sleepWake = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
+        let sleepWake = VMSleepWakeCoordinator(
+            lifecycle: lifecycle, roster: library, systemSleep: systemSleep)
         self.sleepWake = sleepWake
         let usbAccessories = USBAccessoryCoordinator(
             lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
