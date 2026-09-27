@@ -24,14 +24,7 @@ final class USBAccessoryService: USBAccessoryProviding {
     /// AccessoryAccess holds its listener weakly; the service retains it.
     private var listener: AccessoryListener?
 
-    /// Where the durable half of an accessory's description comes from.
-    private let registry: any USBAccessoryRegistryReading
-
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "USBAccessoryService")
-
-    init(registry: any USBAccessoryRegistryReading = USBAccessoryRegistry()) {
-        self.registry = registry
-    }
 
     func startObserving() {
         guard listener == nil else { return }
@@ -80,7 +73,7 @@ final class USBAccessoryService: USBAccessoryProviding {
             return
         }
 
-        let node = registry.properties(ofAccessory: registryID)
+        let node = USBAccessoryRegistry.properties(ofAccessory: registryID)
         // What a guest is holding counts as claimed even though macOS withdrew
         // it: the guest's record still answers to that key, and a second unit
         // reporting the same serial would otherwise be taken for that one
