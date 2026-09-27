@@ -233,6 +233,9 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.instance.configuration
                 _ = self.instance.hostState
                 _ = self.instance.status
+                // The header names the hold, and every control another copy's
+                // hold refuses dims.
+                _ = self.instance.heldByAnotherCopy
                 _ = self.instance.snapshotManifest
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
@@ -327,6 +330,9 @@ extension VMSettingsViewController {
 
     /// What the cards are currently painted from.
     var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
+
+    /// Whether the panels were last bound read-only.
+    var isReadOnlyForTesting: Bool { panelContext.isReadOnly }
     #endif
 
     private func addPanelContent(_ content: NSView) {
@@ -449,7 +455,9 @@ extension VMSettingsViewController {
     }
 
     private func refreshOverview() {
-        overviewVC.configure(instance: instance, resolved: panelContext.overview.resolved)
+        overviewVC.configure(
+            instance: instance, resolved: panelContext.overview.resolved,
+            capabilities: viewModel.capabilities)
     }
 
     /// Repaints the one surface an async read moved, rather than the whole pane.
@@ -463,7 +471,8 @@ extension VMSettingsViewController {
         if category == .storage { refreshHeader() }
         guard selectedCategory == nil else { return }
         overviewVC.configureCard(
-            category, instance: instance, resolved: panelContext.overview.resolved)
+            category, instance: instance, resolved: panelContext.overview.resolved,
+            capabilities: viewModel.capabilities)
     }
 }
 

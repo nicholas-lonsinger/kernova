@@ -13,12 +13,13 @@ import Testing
 @MainActor
 func makeSettingsViewModel(
     preferences: AppPreferences,
+    storage: MockVMStorageService = MockVMStorageService(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
-        storageService: MockVMStorageService(),
+        storageService: storage,
         diskImageService: MockDiskImageService(),
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
@@ -137,6 +138,13 @@ func settingsRow(labeled label: String, in view: NSView) -> NSView? {
     firstSubview(NSStackView.self, in: view) { stack in
         stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
     }
+}
+
+/// The title of `row` when it is a ``GroupedFormControlRow``, which is what
+/// dims with the controls it holds.
+@MainActor
+func rowTitle(of row: NSView) -> NSTextField? {
+    (row as? GroupedFormControlRow)?.titleLabel
 }
 
 @MainActor

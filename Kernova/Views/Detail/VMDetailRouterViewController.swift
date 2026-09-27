@@ -13,7 +13,14 @@ final class VMDetailRouterViewController: NSViewController {
     private let contentStack = NSStackView()
     private var currentChild: NSViewController?
     private var currentBanner: NSView?
-    private var displayedRoute: DetailRoute?
+    private var displayed: Rendered?
+
+    /// What the pane last rendered: the route, and whether a settings form it
+    /// shows takes edits.
+    private struct Rendered: Equatable {
+        let route: DetailRoute
+        let isReadOnly: Bool
+    }
 
     // Reused children.
     private lazy var settingsVC = VMSettingsViewController(
@@ -32,12 +39,23 @@ final class VMDetailRouterViewController: NSViewController {
         fatalError("VMDetailRouterViewController does not support NSCoder")
     }
 
+    #if DEBUG
+    /// What the pane last rendered: its route, and whether it holds a form
+    /// read-only.
+    var renderedForTesting: (route: DetailRoute, isReadOnly: Bool)? {
+        displayed.map { ($0.route, $0.isReadOnly) }
+    }
+
+    /// The settings form every form-bearing route shows.
+    var settingsForTesting: VMSettingsViewController { settingsVC }
+    #endif
+
     /// Rebinds the router to a (possibly different) selected VM.
     func reconfigure(instance: VMInstance, viewModel: VMLibraryViewModel) {
         self.instance = instance
         self.viewModel = viewModel
         guard isViewLoaded else { return }
-        displayedRoute = nil
+        displayed = nil
         restartObservation()
         apply()
     }
@@ -70,6 +88,7 @@ final class VMDetailRouterViewController: NSViewController {
                 _ = self.instance.phase
                 _ = self.instance.detailPaneMode
                 _ = self.instance.setupState
+                _ = self.isSettingsReadOnly
             },
             apply: { [weak self] in self?.apply() }
         )
@@ -77,34 +96,50 @@ final class VMDetailRouterViewController: NSViewController {
 
     // MARK: - Routing
 
+    /// Whether a settings form this pane shows takes configuration edits: the
+    /// catalog's answer, so the form locks for whatever refuses them — a live
+    /// guest, an operation, another copy of Kernova holding the VM.
+    private var isSettingsReadOnly: Bool {
+        !viewModel.capabilities.isAvailable(.editConfiguration, on: instance)
+    }
+
     private func apply() {
         guard isViewLoaded else { return }
         let route = DetailRoute.resolve(
             phase: instance.phase,
             hasSetupState: instance.setupState != nil,
             detailPaneMode: instance.detailPaneMode)
+        let showsSettings =
+            switch route {
+            case .settings, .initialBoot, .error: true
+            case .setup, .transition, .display: false
+            }
+        // Read only for a route showing the form, so a lock that moves under
+        // the display leaves it in place.
+        let rendered = Rendered(route: route, isReadOnly: showsSettings && isSettingsReadOnly)
 
-        guard route != displayedRoute else { return }
-        displayedRoute = route
-        render(route)
+        guard rendered != displayed else { return }
+        displayed = rendered
+        render(rendered)
     }
 
-    private func render(_ route: DetailRoute) {
-        switch route {
+    private func render(_ rendered: Rendered) {
+        let readOnly = rendered.isReadOnly
+        switch rendered.route {
         case .transition(let label):
             placeholderVC.configure(label: label)
             setContent(child: placeholderVC, banner: nil)
 
-        case .settings(let readOnly):
+        case .settings:
             settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: readOnly)
             setContent(child: settingsVC, banner: nil)
 
         case .initialBoot:
-            settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+            settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: readOnly)
             setContent(child: settingsVC, banner: DetailBannerView.initialBoot(instance: instance))
 
         case .error(let message):
-            settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+            settingsVC.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: readOnly)
             setContent(child: settingsVC, banner: DetailBannerView.error(message: message))
 
         case .setup:

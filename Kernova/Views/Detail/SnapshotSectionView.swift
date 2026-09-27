@@ -40,11 +40,14 @@ final class SnapshotSectionView: NSView {
     /// What the rows were last rendered under, so a cancelled edit can
     /// re-render without the settings pane feeding the state in again.
     private var gate = Gate(
-        canTakeSnapshot: false, canRevert: false, deleteOffers: [:], baselineID: nil)
+        canTakeSnapshot: false, canRevert: false, canRename: false, canSetNotes: false,
+        deleteOffers: [:], baselineID: nil)
 
     private struct Gate {
         let canTakeSnapshot: Bool
         let canRevert: Bool
+        let canRename: Bool
+        let canSetNotes: Bool
         /// What each row's ••• menu offers its Delete as, by snapshot id — the
         /// one term that differs from row to row.
         let deleteOffers: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]
@@ -190,20 +193,22 @@ final class SnapshotSectionView: NSView {
     /// is off.
     func update(
         manifest: VMSnapshotManifest, canTakeSnapshot: Bool, canRevert: Bool,
+        canRename: Bool, canSetNotes: Bool,
         deleteOffers: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer],
         baselineID: UUID?
     ) {
         self.manifest = manifest
         gate = Gate(
-            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, deleteOffers: deleteOffers,
-            baselineID: baselineID)
+            canTakeSnapshot: canTakeSnapshot, canRevert: canRevert, canRename: canRename,
+            canSetNotes: canSetNotes, deleteOffers: deleteOffers, baselineID: baselineID)
         takeSnapshotButton.isEnabled = canTakeSnapshot
 
         let models = manifest.ordered.map { snapshot in
             SnapshotRowModel(
                 snapshot: snapshot, isCurrent: snapshot.id == manifest.currentID,
                 isBaseline: snapshot.id == baselineID,
-                canRevert: canRevert, deleteOffer: Self.deleteOffer(for: snapshot, in: deleteOffers))
+                canRevert: canRevert, canRename: canRename, canSetNotes: canSetNotes,
+                deleteOffer: Self.deleteOffer(for: snapshot, in: deleteOffers))
         }
         list.update(
             models,
@@ -267,7 +272,8 @@ final class SnapshotSectionView: NSView {
             guard let self else { return }
             self.update(
                 manifest: self.manifest, canTakeSnapshot: self.gate.canTakeSnapshot,
-                canRevert: self.gate.canRevert, deleteOffers: self.gate.deleteOffers,
+                canRevert: self.gate.canRevert, canRename: self.gate.canRename,
+                canSetNotes: self.gate.canSetNotes, deleteOffers: self.gate.deleteOffers,
                 baselineID: self.gate.baselineID)
         }
     }
@@ -279,28 +285,29 @@ final class SnapshotSectionView: NSView {
             let model = list.rendered?.first(where: { $0.id == id })
         else { return nil }
         return makeRowMenu(
-            for: snapshot, canRevert: model.canRevert, deleteOffer: model.deleteOffer)
+            for: snapshot, canRevert: model.canRevert, canRename: model.canRename,
+            canSetNotes: model.canSetNotes, deleteOffer: model.deleteOffer)
     }
 
     /// The context menu for one snapshot row — the same menu the ••• button
     /// pops and a right-click surfaces.
     ///
-    /// Rename and Edit Notes only wait on `activeEdit`: their writes are
-    /// metadata-only and land regardless of what the VM is doing. Delete follows
-    /// `deleteOffer`, which also says when the Ephemeral baseline is what bars
-    /// it — the one bar a user can lift, and the only one the row explains.
+    /// Rename and Edit Notes also wait on `activeEdit`, which a rebuild of the
+    /// editing row would destroy. Delete follows `deleteOffer`, which also says
+    /// when the Ephemeral baseline is what bars it — the one bar a user can
+    /// lift, and the only one the row explains.
     func makeRowMenu(
-        for snapshot: VMSnapshot, canRevert: Bool,
+        for snapshot: VMSnapshot, canRevert: Bool, canRename: Bool, canSetNotes: Bool,
         deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
     ) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
         let rename = menuItem("Rename", #selector(menuRename(_:)), snapshot)
-        rename.isEnabled = activeEdit == nil
+        rename.isEnabled = canRename && activeEdit == nil
         menu.addItem(rename)
         let editNotes = menuItem("Edit Notes", #selector(menuEditNotes(_:)), snapshot)
-        editNotes.isEnabled = activeEdit == nil
+        editNotes.isEnabled = canSetNotes && activeEdit == nil
         menu.addItem(editNotes)
         menu.addItem(menuItem("Get Info", #selector(menuGetInfo(_:)), snapshot))
         menu.addItem(.separator())

@@ -10,10 +10,10 @@ import Testing
 struct CLIRenderingTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
     private let longName = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
-        name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved)
+        name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved, heldByAnotherCopy: false)
 
     private func info(ipAddress: GuestIPAddress = .observed("192.168.64.4")) -> VMInfo {
         VMInfo(
@@ -21,7 +21,7 @@ struct CLIRenderingTests {
             memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova")
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
 
     // MARK: - Listing
@@ -70,6 +70,33 @@ struct CLIRenderingTests {
         #expect(lines[1].contains("192.168.64.4"))
         #expect(lines[1].contains(alpha.id.uuidString))
         #expect(lines[2].contains("Not seen"))
+    }
+
+    @Test("A VM another copy holds reads as in use by it, in the listing and in info")
+    func heldByAnotherCopyReplacesTheStatus() throws {
+        let held = VMSummary(
+            id: alpha.id, name: "Alpha", status: "stopped", ipAddress: .notObserved,
+            heldByAnotherCopy: true)
+        let listing = TableRenderer.render([held], quiet: false).components(separatedBy: "\n")
+        #expect(listing[1].contains("In use by another copy of Kernova"))
+        #expect(!listing[1].contains("Stopped"))
+
+        let base = info()
+        let heldInfo = VMInfo(
+            id: base.id, name: base.name, status: "stopped", guestOS: base.guestOS,
+            cpuCount: base.cpuCount, memoryBytes: base.memoryBytes, diskSizeInGB: base.diskSizeInGB,
+            networkMode: base.networkMode, macAddress: base.macAddress, ipAddress: .notObserved,
+            agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
+            snapshotCount: base.snapshotCount, bundlePath: base.bundlePath, heldByAnotherCopy: true)
+        let status = try #require(
+            TableRenderer.render(heldInfo, quiet: false).components(separatedBy: "\n")
+                .first { $0.hasPrefix("Status") })
+        #expect(status.hasSuffix("In use by another copy of Kernova"))
+
+        // A script reads the field itself.
+        let decoded = try JSONDecoder().decode(
+            VMSummary.self, from: try JSONEncoder().encode(held))
+        #expect(decoded.heldByAnotherCopy)
     }
 
     @Test("--quiet prints names alone, one per line")

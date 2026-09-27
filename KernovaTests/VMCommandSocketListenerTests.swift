@@ -108,7 +108,8 @@ struct VMCommandSocketListenerTests {
 
     @Test("A read verb round-trips over the socket")
     func unaryReadRoundTrips() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -145,7 +146,8 @@ struct VMCommandSocketListenerTests {
 
     @Test("No verb is answered until the app's first library read has landed")
     func verbsWaitForTheLibraryRead() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         // The cold-launch shape: the socket is bound, the library is not read
         // yet, and the VMs appear only once it is.
         let harness = try makeHarness(library: [], libraryHasLanded: false)
@@ -176,7 +178,8 @@ struct VMCommandSocketListenerTests {
             .reveal(.name("Alpha")),
         ])
     func surfacingVerbsAskTheClientToActivate(_ verb: VMCommandRequest.Verb) async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -218,7 +221,8 @@ struct VMCommandSocketListenerTests {
 
     @Test("A verb that puts nothing on screen answers with no activate frame")
     func nonSurfacingVerbsSendNoActivate() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -260,7 +264,7 @@ struct VMCommandSocketListenerTests {
     @Test("A client that hangs up cancels the verb it left running")
     func closingAConnectionCancelsItsRequest() async throws {
         let alpha = VMSummary(
-            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         let park = CancellationPark()
         harness.commands.outcomePark = park
@@ -327,7 +331,8 @@ struct VMCommandSocketListenerTests {
 
     @Test("A peer speaking another protocol version is refused before any verb runs")
     func foreignProtocolVersionIsRefused() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }
@@ -372,7 +377,8 @@ struct VMCommandSocketListenerTests {
 
     @Test("A subscription answers with the library, then with each change")
     func subscriptionDeliversSnapshotThenEvents() async throws {
-        let alpha = VMSummary(id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable)
+        let alpha = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let harness = try makeHarness(library: [alpha])
         harness.listener.start()
         defer { harness.listener.stop() }

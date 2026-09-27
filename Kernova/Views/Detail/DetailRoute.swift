@@ -2,10 +2,12 @@ import Foundation
 
 /// Which content the detail pane shows for a given VM, derived purely from the
 /// VM's lifecycle phase and related flags.
+///
+/// Whether a form it shows takes edits is the catalog's answer, not the
+/// route's (`VMDetailRouterViewController`).
 enum DetailRoute: Equatable {
-    /// Show the settings form. `isReadOnly` is `true` when viewing a running
-    /// VM's configuration.
-    case settings(isReadOnly: Bool)
+    /// Show the settings form.
+    case settings
     /// VM exists but hasn't completed its initial boot; show the initial-boot
     /// banner stacked above the (editable) settings form.
     case initialBoot
@@ -32,7 +34,7 @@ enum DetailRoute: Equatable {
         let label = phase.status.displayName
         let displayRoute: DetailRoute
         if phase.hasActiveDisplay {
-            displayRoute = detailPaneMode == .settings ? .settings(isReadOnly: true) : .display
+            displayRoute = detailPaneMode == .settings ? .settings : .display
         } else {
             displayRoute = .transition(label: label)
         }
@@ -40,7 +42,7 @@ enum DetailRoute: Equatable {
         // phase.
         switch phase.presented {
         case .stopped:
-            return .settings(isReadOnly: false)
+            return .settings
         case .failed(let message):
             return .error(message: message)
         case .initialBoot:

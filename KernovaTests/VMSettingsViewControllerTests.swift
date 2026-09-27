@@ -92,12 +92,12 @@ struct VMSettingsViewControllerTests {
         let (readOnlyVC, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .system)
         let readOnlyPanel = try #require(readOnlyVC.panelForTesting(.system))
         let locked = try #require(settingsRow(labeled: "CPU cores", in: readOnlyPanel))
-        #expect(locked.alphaValue == Alpha.disabled)
+        #expect(rowTitle(of: locked)?.textColor == .disabledControlTextColor)
 
         let (editableVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false, category: .system)
         let editablePanel = try #require(editableVC.panelForTesting(.system))
         let editable = try #require(settingsRow(labeled: "CPU cores", in: editablePanel))
-        #expect(editable.alphaValue == 1)
+        #expect(rowTitle(of: editable)?.textColor == .labelColor)
     }
 
     @Test("The auto-resize row stays undimmed inside a locked Display card")
@@ -107,7 +107,7 @@ struct VMSettingsViewControllerTests {
             let panel = try #require(vc.panelForTesting(.system))
             let autoResize = try #require(
                 settingsRow(labeled: "Automatically resize with window", in: panel))
-            #expect(autoResize.alphaValue == 1)
+            #expect(rowTitle(of: autoResize)?.textColor == .labelColor)
         }
     }
 

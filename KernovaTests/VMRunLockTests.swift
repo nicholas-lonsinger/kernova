@@ -425,9 +425,12 @@ struct VMRunLockTests {
         #expect(catalog.isAvailable(.start, on: instance))
         harness.store.holdElsewhere(instance.bundleURL)
 
-        await #expect(throws: CommandError.heldByAnotherCopy(vm: harness.core.summary(instance))) {
+        let refusal = await #expect(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false)
         }
+        // The summary names the VM as the refusal left it: held.
+        #expect(refusal == .heldByAnotherCopy(vm: harness.core.summary(instance)))
+        #expect(instance.heldByAnotherCopy)
 
         #expect(catalog.isApplicable(.start, to: instance))
         #expect(!catalog.isAvailable(.start, on: instance))

@@ -219,3 +219,24 @@ extension NotesEditorView: NSTextViewDelegate {
         refreshHeight()
     }
 }
+
+/// A Get Info callout's Notes section under `title`: an editable box while the
+/// note can be written, and otherwise the note as static text — no rows at all
+/// when there is no note to read and no way to add one.
+///
+/// Answers the box, if any, which the host commits as it goes away.
+@MainActor
+func makeCalloutNotesSection(
+    _ notes: String, title: NSTextField, canEdit: Bool,
+    onCommit: @escaping (String) -> Void, onCancel: @escaping () -> Void
+) -> (rows: [NSView], editor: NotesEditorView?) {
+    guard canEdit else {
+        guard !notes.isEmpty else { return ([], nil) }
+        return ([title, makeCalloutBody(notes, color: .labelColor)], nil)
+    }
+    let editor = NotesEditorView(text: notes)
+    editor.onCommit = onCommit
+    editor.onCancel = onCancel
+    editor.widthAnchor.constraint(equalToConstant: CalloutStyle.bodyWidth).isActive = true
+    return ([title, editor], editor)
+}

@@ -37,7 +37,7 @@ enum VMIntentFixtures {
             hasSavedState: hasSavedState,
             isEphemeral: isEphemeral,
             snapshotCount: snapshotCount,
-            bundlePath: bundlePath)
+            bundlePath: bundlePath, heldByAnotherCopy: false)
     }
 
     static func snapshot(

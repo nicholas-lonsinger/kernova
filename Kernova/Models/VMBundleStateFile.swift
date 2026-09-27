@@ -212,23 +212,36 @@ struct VMBundleFiles: Sendable {
     /// A change that leaves the value as it was writes nothing. `change` runs
     /// inside the coordinated write, and whatever it throws leaves the file as
     /// it was.
+    ///
+    /// Unless `holdingRunLock`, a change that moves the value throws
+    /// ``VMAdmission/Refusal/heldByAnotherCopy``, leaving the file as it was,
+    /// while another copy of Kernova holds the bundle's run lock.
     @discardableResult
     func update<Value>(
-        _ file: VMBundleStateFile<Value>, _ key: VMBundle.CommitKey,
+        _ file: VMBundleStateFile<Value>, _ key: VMBundle.CommitKey, holdingRunLock: Bool,
         _ change: (inout Value) throws -> Void
     ) throws -> Value {
-        try replace(file, change)
+        try replace(file, refusingAnotherCopysHold: !holdingRunLock, change)
     }
 
-    /// ``update(_:_:_:)``'s write, for the two writers this file admits.
+    /// ``update(_:_:holdingRunLock:_:)``'s write, for the two writers this
+    /// file admits.
     fileprivate func replace<Value>(
-        _ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void
+        _ file: VMBundleStateFile<Value>, refusingAnotherCopysHold: Bool,
+        _ change: (inout Value) throws -> Void
     ) throws -> Value {
         try access.writing(url, VMBundleFileWriteKey()) { files in
             let current = try file.read(from: files)
             var new = current
             try change(&new)
             guard new != current else { return current }
+            // Inside the coordinated write: another copy's bring-up takes the
+            // run lock and then reads the bundle, and a read and a write of one
+            // bundle exclude each other, so either that read sees this write or
+            // this check sees the lock.
+            if refusingAnotherCopysHold, try access.isBundleLockedElsewhere(at: url) {
+                throw VMAdmissionRefusal(refusal: .heldByAnotherCopy)
+            }
             let encoded = try file.encode(new)
             try files.replace(atRelativePath: file.relativePath, with: encoded)
             // What the file holds, not `new`: the encoding keeps dates to the
@@ -267,13 +280,15 @@ struct VMStagedBundle: Sendable {
         }
     }
 
-    /// Applies `change` to what `file` holds, as ``VMBundleFiles/update(_:_:_:)``
-    /// does for a held bundle.
+    /// Applies `change` to what `file` holds, as
+    /// ``VMBundleFiles/update(_:_:holdingRunLock:_:)`` does for a held bundle —
+    /// which no other copy of Kernova writes, since it lies under this
+    /// process's own staging root.
     @discardableResult
     func update<Value>(_ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void)
         throws -> Value
     {
-        try files.replace(file, change)
+        try files.replace(file, refusingAnotherCopysHold: false, change)
     }
 
     #if DEBUG
@@ -286,7 +301,7 @@ struct VMStagedBundle: Sendable {
 }
 
 /// What ``VMBundleFileAccessing/writing(_:_:_:)`` asks for, so only this
-/// file — a ``VMBundle``'s commits through ``VMBundleFiles/update(_:_:_:)``
+/// file — a ``VMBundle``'s commits through ``VMBundleFiles/update(_:_:holdingRunLock:_:)``
 /// and a ``VMStagedBundle``'s writes — replaces a bundle's state file: the
 /// initializer is `fileprivate`, which `@testable import` does not open, and
 /// the key is passed `borrowing`, so no conformer can keep one.

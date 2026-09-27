@@ -567,7 +567,7 @@ struct VMCommandCoreUSBAccessoryTests {
         _ = try await attach(accessory, to: target, in: harness)
 
         #expect(service.attachedRegistryIDs == [7])
-        let busy = harness.core.admissionRefusal(.busy(.deleting), on: holder)
+        let busy = harness.core.commandError(for: .busy(.deleting), on: holder)
         #expect(reported.count == 1)
         #expect(reported.first?.message.hasSuffix(busy.message) == true)
         #expect(holder.usbPairings.pairings.map(\.key) == [pairing.key])

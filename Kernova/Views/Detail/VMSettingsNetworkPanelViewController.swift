@@ -20,8 +20,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var entitlements: EntitlementService { context.viewModel.entitlements }
 
     private var networkModePopUp = NSPopUpButton()
-    /// The Network Mode row, dimmed on the same terms its header hint is shown.
-    private var networkModeRow: NSView?
     /// The Network header's lock hint, hidden — unlike its `lockHints` peers —
     /// while the picker is the live-switch surface.
     private var networkLockHint: NSView?
@@ -71,7 +69,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // dimming (and the section lock hint it makes moot).
         networkModePopUp = makeNetworkModePopUp()
         let modeRow = makeGroupedFormCardRow("Mode", control: networkModePopUp)
-        networkModeRow = modeRow
 
         var rows: [NSView] = [modeRow]
         rows.append(makeIPAddressRow())
@@ -324,8 +321,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private func refreshNetwork() {
         let liveSwitchable = networkModeIsLiveSwitchable
         let modeEditable = !isReadOnly || liveSwitchable
-        networkModePopUp.isEnabled = modeEditable
-        networkModeRow?.alphaValue = modeEditable ? 1 : Alpha.disabled
+        applyGroupedFormRowEnabled(modeEditable, control: networkModePopUp)
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
         networkLockHint?.isHidden = modeEditable

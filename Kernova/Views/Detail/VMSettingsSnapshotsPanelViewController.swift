@@ -79,6 +79,8 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
             manifest: manifest,
             canTakeSnapshot: capabilities.isAvailable(.takeSnapshot, on: instance),
             canRevert: capabilities.isAvailable(.revertToSnapshot, on: instance),
+            canRename: capabilities.isAvailable(.renameSnapshot, on: instance),
+            canSetNotes: capabilities.isAvailable(.setSnapshotNotes, on: instance),
             deleteOffers: deleteOffers,
             baselineID: instance.ephemeralBaselineSnapshot?.id)
         // The sizes are a directory walk over gigabyte-scale copies, read off
@@ -99,6 +101,8 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
             let content = SnapshotInfoPopoverContentViewController(
                 snapshot: snapshot,
                 onDiskText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}",
+                canEditNotes: self.viewModel.capabilities.isAvailable(
+                    .setSnapshotNotes, on: self.instance),
                 onCommitNotes: { [weak self] notes in
                     guard let self else { return }
                     // Looked up fresh: the popover outlives edits landing from

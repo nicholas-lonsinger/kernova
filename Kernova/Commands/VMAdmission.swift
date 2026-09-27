@@ -50,7 +50,8 @@ enum VMAdmission {
         /// surface reads it as applicable.
         case terminating
         /// Another running copy of Kernova holds the VM's bundle, and the
-        /// request would begin an operation on it.
+        /// request would begin an operation on it or write its state files
+        /// (``VMAdmission/isRefusedWhileHeldByAnotherCopy(_:phase:)``).
         ///
         /// Raised only where the VM would otherwise admit the request, so a
         /// surface reads it as applicable.
@@ -92,8 +93,9 @@ enum VMAdmission {
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
         var usbSupported: Bool
-        /// The live VM whose identity bringing this one up would duplicate —
-        /// supplied only when deciding a bring-up.
+        /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
+        /// bringing this one up would duplicate — supplied only when deciding
+        /// a bring-up.
         var identityConflict: VMIdentityConflict?
         /// The VM holding the accessory an attach names — supplied only when
         /// deciding an attach (``VMAccessoryHolders/holder(of:)``).
@@ -119,10 +121,26 @@ enum VMAdmission {
         phase: VMLifecyclePhase, facts: Facts
     ) -> Decision {
         let decision = decideOnTheVM(request, posture: posture, phase: phase, facts: facts)
-        guard decision == .admit, beginsOperation(request, phase: phase) else { return decision }
-        if facts.terminating, !origin.exempts(request) { return .refuse(.terminating) }
-        if facts.heldByAnotherCopy, phase.isAtRest { return .refuse(.heldByAnotherCopy) }
+        guard decision == .admit else { return decision }
+        if facts.terminating, beginsOperation(request, phase: phase), !origin.exempts(request) {
+            return .refuse(.terminating)
+        }
+        if facts.heldByAnotherCopy, isRefusedWhileHeldByAnotherCopy(request, phase: phase) {
+            return .refuse(.heldByAnotherCopy)
+        }
         return decision
+    }
+
+    /// Whether another copy of Kernova holding the bundle refuses `request` in
+    /// `phase`: anything admitted on a VM at rest that begins an operation or
+    /// writes its state files — the two ways this copy would write a bundle
+    /// the other copy holds.
+    static func isRefusedWhileHeldByAnotherCopy(
+        _ request: Request, phase: VMLifecyclePhase
+    ) -> Bool {
+        guard phase.isAtRest else { return false }
+        if case .edit = request { return true }
+        return beginsOperation(request, phase: phase)
     }
 
     /// Whether admitting `request` in `phase` commits an operation: a Start, a
@@ -570,8 +588,8 @@ protocol VMAdmissionPeers: AnyObject {
     /// Which VM holds each USB accessory passed through to a guest.
     var accessoryHolders: VMAccessoryHolders { get }
 
-    /// The live VM whose identity bringing `instance` up under `configuration`
-    /// would duplicate.
+    /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
+    /// bringing `instance` up under `configuration` would duplicate.
     func identityConflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration
     ) -> VMIdentityConflict?

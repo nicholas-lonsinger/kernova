@@ -186,7 +186,8 @@ struct CLIWaitTests {
     private var snapshot: VMCommandResponse {
         VMCommandResponse(
             result: .summaries([
-                VMSummary(id: alpha, name: "Alpha", status: "stopped", ipAddress: .unavailable)
+                VMSummary(
+                    id: alpha, name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
             ]))
     }
 
@@ -198,7 +199,7 @@ struct CLIWaitTests {
                     memoryBytes: 8 * 1024 * 1024 * 1024, diskSizeInGB: 64, networkMode: "shared",
                     macAddress: nil, ipAddress: .unavailable, agentStatus: agentStatus,
                     hasSavedState: false, isEphemeral: false, snapshotCount: 0,
-                    bundlePath: "/Users/somebody/Alpha.kernova")))
+                    bundlePath: "/Users/somebody/Alpha.kernova", heldByAnotherCopy: false)))
     }
 
     private func event(_ event: VMLibraryEvent) -> VMCommandResponse {

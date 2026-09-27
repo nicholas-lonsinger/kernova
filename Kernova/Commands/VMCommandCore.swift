@@ -251,7 +251,8 @@ final class VMCommandCore: VMCommanding {
     func summary(_ arrival: VMArrival) -> VMSummary {
         VMSummary(
             id: arrival.id, name: arrival.name, status: VMStatus.preparingWireName,
-            ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration))
+            ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration),
+            heldByAnotherCopy: false)
     }
 
     func summary(_ entry: LibraryEntry) -> VMSummary {
@@ -300,21 +301,41 @@ final class VMCommandCore: VMCommanding {
     /// other than ``require(anyOf:on:)`` still owes the user the refusal that
     /// verb would have raised.
     func refusal(for options: [VMCapability], on instance: VMInstance) -> CommandError {
-        let refusals = options.compactMap { option -> VMAdmission.Refusal? in
+        let refusals = options.compactMap { option -> (verb: VMVerb?, reason: VMAdmission.Refusal)? in
             guard case .refuse(let reason) = capabilities.decision(option, on: instance, posture: .commit)
             else { return nil }
-            return reason
+            return (option.verb, reason)
         }
         let busy = refusals.first {
-            if case .busy = $0 { return true }
+            if case .busy = $0.reason { return true }
             return false
         }
-        guard let reason = busy ?? refusals.first else { return invalidState(instance) }
-        return admissionRefusal(reason, on: instance)
+        let refused = busy ?? refusals.first
+        return admissionRefusal(
+            refused?.reason ?? .invalidState, on: instance,
+            verb: refused?.verb ?? options.lazy.compactMap(\.verb).first)
     }
 
-    /// The one mapping from an admission refusal to the command vocabulary.
-    func admissionRefusal(_ reason: VMAdmission.Refusal, on instance: VMInstance) -> CommandError {
+    /// The one mapping from an admission refusal to the command vocabulary,
+    /// and the one record of a refused verb: every refusal a verb reports
+    /// passes here once, so each is logged once. `verb` is `nil` only for an
+    /// affordance no wire verb performs.
+    func admissionRefusal(
+        _ reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb?
+    ) -> CommandError {
+        let error = commandError(for: reason, on: instance)
+        #log(
+            Self.logger, .notice,
+            "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+        )
+        return error
+    }
+
+    /// What `reason` reads as in the command vocabulary, unrecorded — what a
+    /// verb reports goes through ``admissionRefusal(_:on:verb:)``.
+    func commandError(
+        for reason: VMAdmission.Refusal, on instance: VMInstance
+    ) -> CommandError {
         switch reason {
         case .busy(let kind):
             .busy(vm: summary(instance), operation: Self.busyDescription(kind))
@@ -411,7 +432,7 @@ final class VMCommandCore: VMCommanding {
         case .saved:
             return
         case .refused(let refusal):
-            throw refusalError(refusal, on: instance)
+            throw refusalError(refusal, on: instance, verb: verb)
         case .notSaved(let failure):
             throw CommandError.operationFailed(
                 verb: verb,
@@ -498,7 +519,7 @@ final class VMCommandCore: VMCommanding {
     /// The refusal a verb raises when the library turned its settings write
     /// away.
     func refusalError(
-        _ refusal: VMLibrary.SettingsRefusal, on instance: VMInstance
+        _ refusal: VMLibrary.SettingsRefusal, on instance: VMInstance, verb: VMVerb
     ) -> CommandError {
         switch refusal {
         case .macAddressInUse(let conflict):
@@ -507,35 +528,46 @@ final class VMCommandCore: VMCommanding {
             .notFound(.id(instance.id))
         case .outsidePermit:
             invalidState(instance)
+        case .heldByAnotherCopy:
+            admissionRefusal(.heldByAnotherCopy, on: instance, verb: verb)
         }
     }
 
     /// Maps an error a lifecycle call threw into the command vocabulary.
     ///
-    /// An admission refusal is mapped by ``admissionRefusal(_:on:)`` — on the
+    /// An admission refusal is mapped by ``admissionRefusal(_:on:verb:)`` — on the
     /// VM that refused, which for a pairing move is the VM that held the
     /// pairing — and a ``CommandError`` a body raised passes through as it is.
     func failure(_ error: Error, verb: VMVerb, on instance: VMInstance) -> CommandError {
         if let commandError = error as? CommandError { return commandError }
         if let refused = error as? VMAdmissionRefusal {
-            return admissionRefusal(refused.refusal, on: instance)
+            return admissionRefusal(refused.refusal, on: instance, verb: verb)
         }
         if let moved = error as? VMLibrary.PairingMoveRefused {
-            return admissionRefusal(moved.refusal.refusal, on: moved.holder)
+            return admissionRefusal(moved.refusal.refusal, on: moved.holder, verb: verb)
         }
         return .operationFailed(verb: verb, message: error.localizedDescription)
     }
 
     // MARK: - Reads
 
+    // `list`, `info` and `get` first catch each VM they read up with another
+    // copy of Kernova (``VMActivity/refreshFromBundle()``): the command socket
+    // is how a script sees that copy's work, and it runs without this copy
+    // ever becoming active.
+
     func list() -> [VMSummary] {
-        library.entries.map(summary)
+        library.refreshFromOtherCopies()
+        return library.entries.map(summary)
     }
 
     func info(_ selector: VMSelector) throws -> VMInfo {
         switch try resolveEntry(selector) {
-        case .vm(let instance): info(instance)
-        case .arriving(let arrival): info(arrival)
+        case .vm(let instance):
+            instance.activity.refreshFromBundle()
+            return info(instance)
+        case .arriving(let arrival):
+            return info(arrival)
         }
     }
 
@@ -556,7 +588,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: instance.hasSaveFile,
             isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
-            bundlePath: instance.bundleURL.path(percentEncoded: false)
+            bundlePath: instance.bundleURL.path(percentEncoded: false),
+            heldByAnotherCopy: instance.heldByAnotherCopy
         )
     }
 
@@ -579,7 +612,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: false,
             isEphemeral: false,
             snapshotCount: 0,
-            bundlePath: arrival.destinationURL.path(percentEncoded: false)
+            bundlePath: arrival.destinationURL.path(percentEncoded: false),
+            heldByAnotherCopy: false
         )
     }
 

@@ -17,10 +17,10 @@ private final class ConnectionCount {
 struct CLICompletionTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"))
+        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
     private let beta = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
-        name: "Beta", status: "stopped", ipAddress: .unavailable)
+        name: "Beta", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
 
     private let shares = [
         SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),

@@ -57,9 +57,15 @@ final class EditableRowTitleView: NSView {
 
     /// Updates what the line displays and whether click-to-edit is armed.
     func update(name: String, notes: String = "", controlsEnabled: Bool) {
+        update(name: name, notes: notes, nameEditable: controlsEnabled, notesEditable: controlsEnabled)
+    }
+
+    /// ``update(name:notes:controlsEnabled:)``, arming each part's
+    /// click-to-edit on its own.
+    func update(name: String, notes: String, nameEditable: Bool, notesEditable: Bool) {
         self.notes = notes
-        nameLabel.update(text: name, controlsEnabled: controlsEnabled)
-        notesLabel.update(text: Self.singleLine(notes), controlsEnabled: controlsEnabled)
+        nameLabel.update(text: name, controlsEnabled: nameEditable)
+        notesLabel.update(text: Self.singleLine(notes), controlsEnabled: notesEditable)
         refreshNotesVisibility()
     }
 

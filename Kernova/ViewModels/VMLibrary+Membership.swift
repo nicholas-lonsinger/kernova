@@ -18,7 +18,19 @@ extension VMLibrary {
         storageService.reclaimStagedBundles()
         await reclaimRestoreStaging()
         await loadVMs()
+        refreshFromOtherCopies()
         startDirectoryWatcher()
+    }
+
+    /// Catches every VM at rest up with what another copy of Kernova holds and
+    /// wrote (``VMActivity/refreshFromBundle()``), or only those `ids` names.
+    ///
+    /// Run on events, never on a timer: an `flock` raises no file-system event
+    /// to watch, so a mark stays what the last of these found.
+    func refreshFromOtherCopies(only ids: Set<UUID>? = nil) {
+        for instance in instances where ids?.contains(instance.id) ?? true {
+            instance.activity.refreshFromBundle()
+        }
     }
 
     /// Removes the restore staging directory an interrupted revert left in any
@@ -310,7 +322,12 @@ extension VMLibrary {
             reportedFailedBundles.formIntersection(currentDiskNames)
             reportedDuplicateBundles.formIntersection(currentDiskNames)
 
-            normalizeEmptiedSuspensions(inBundles: confirmedIDs)
+            // Bounded to the VMs this pass read: a bundle it could not see says
+            // nothing about what is inside. The watcher behind this pass sees
+            // only the VMs directory, so a file changed inside a bundle — a
+            // suspend slot removed in the Finder — is caught up here, at the
+            // next pass for any reason.
+            refreshFromOtherCopies(only: confirmedIDs)
 
             #log(
                 Self.logger, .debug,
@@ -319,35 +336,6 @@ extension VMLibrary {
             #log(
                 Self.logger, .error, "Directory reconciliation failed: \(error.localizedDescription, privacy: .public)")
             presentError(error)
-        }
-    }
-
-    /// Rests any VM naming a suspend slot its bundle no longer holds.
-    ///
-    /// ``VMLifecyclePhase/suspended`` names a session on disk, so a slot removed
-    /// out of band — in the Finder, by another tool — leaves a phase describing
-    /// something that is not there: the row still reads Suspended while every
-    /// predicate that asks the bundle already offers Start and an editable
-    /// configuration.
-    ///
-    /// Re-derived whenever the library reconciles, and no sooner: the watcher
-    /// behind that pass observes the VMs directory, where a bundle is added,
-    /// removed or renamed, so a file deleted *inside* a bundle wakes nothing.
-    /// The phase catches up at the next reconciliation for any reason, and at
-    /// the next launch.
-    ///
-    /// `bundlesOnDisk` bounds it to the VMs this pass actually read: a bundle
-    /// the scan could not see says nothing about the slot inside it.
-    private func normalizeEmptiedSuspensions(inBundles bundlesOnDisk: Set<UUID>) {
-        for instance in instances
-        where bundlesOnDisk.contains(instance.id) && instance.phase == .suspended
-            && !instance.hasSaveFile
-        {
-            #log(
-                Self.logger, .notice,
-                "Resting '\(instance.name, privacy: .public)' stopped: its suspend slot is no longer in the bundle"
-            )
-            instance.activity.reconcileRest()
         }
     }
 

@@ -133,16 +133,29 @@ extension VMSettingsPanel {
 
     var instance: VMInstance { context.instance }
     var viewModel: VMLibraryViewModel { context.viewModel }
-    /// Whether the *route* opened this pane read-only, which is the pane's
-    /// chrome: the lock hints, the dimming, the captions.
+    /// Whether the pane opened with configuration edits refused
+    /// (``VMCapability/editConfiguration``), which drives the lock chrome: the
+    /// hints and the dimming of the lockable rows.
     ///
-    /// Not a control's gate. What a control may do is the capability its verb
-    /// refuses on (``VMCapabilityCatalog/isAvailable(_:on:)``) — a second
-    /// surface asking the same question has to get the same answer, and only the
-    /// capability is the answer the verb behind the control will honour.
+    /// A control no lock covers asks the capability its verb refuses on
+    /// (``VMCapabilityCatalog/isAvailable(_:on:)``) — a second surface asking
+    /// the same question has to get the same answer, and only the capability
+    /// is the answer the verb behind the control will honour.
     var isReadOnly: Bool { context.isReadOnly }
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }
+
+    /// Whether the guest holds a session a configuration change waits out —
+    /// live, or suspended to disk — which a "takes effect on next start"
+    /// caption names.
+    var guestHoldsSession: Bool { instance.hasLiveVirtualMachine || instance.isColdPaused }
+
+    /// Whether a control writing `value` to `key` takes a change right now
+    /// (``VMCapabilityCatalog/isAvailable(_:writing:on:)``) — the gate of a
+    /// control no lock covers.
+    func isAvailable(_ key: VMConfigurationKey, writing value: String) -> Bool {
+        viewModel.capabilities.isAvailable(key, writing: value, on: instance)
+    }
 
     /// Writes `assignments` through the configuration verb, the one path a
     /// panel's edit takes.
@@ -254,21 +267,21 @@ struct VMSettingsLockRegistry {
     /// "Editable when stopped" hints on lockable section headers; shown only
     /// while read-only.
     private(set) var hints: [NSView] = []
-    /// Form rows that only a stopped VM can change: their controls go inert and
-    /// the whole row dims while read-only (per-row controls in the dynamic lists
-    /// set their own enabled state when those lists are rebuilt).
-    private(set) var rows: [(row: NSView, controls: [NSControl])] = []
+    /// The controls of form rows only a stopped VM can change, disabled while
+    /// read-only (per-row controls in the dynamic lists set their own enabled
+    /// state when those lists are rebuilt).
+    private(set) var controls: [NSControl] = []
 
     mutating func removeAll() {
         hints.removeAll()
-        rows.removeAll()
+        controls.removeAll()
     }
 
-    /// Registers `row` as editable only while the VM is stopped, returning it so
-    /// it can be handed straight to a card.
+    /// Registers `row`'s `controls` as editable only while the VM is stopped,
+    /// returning `row` so it can be handed straight to a card.
     @discardableResult
     mutating func lockable(_ row: NSView, _ controls: NSControl...) -> NSView {
-        rows.append((row: row, controls: controls))
+        self.controls.append(contentsOf: controls)
         return row
     }
 
@@ -309,13 +322,11 @@ struct VMSettingsLockRegistry {
         return hint
     }
 
-    /// Shows every hint and dims every locked row for a read-only pane.
+    /// Shows every hint and disables every locked control for a read-only
+    /// pane, dimmed as any disabled row is (``applyGroupedFormRowEnabled(_:control:)``).
     func apply(isReadOnly: Bool) {
         hints.forEach { $0.isHidden = !isReadOnly }
-        for entry in rows {
-            entry.controls.forEach { $0.isEnabled = !isReadOnly }
-            entry.row.alphaValue = isReadOnly ? Alpha.disabled : 1
-        }
+        for control in controls { applyGroupedFormRowEnabled(!isReadOnly, control: control) }
     }
 }
 

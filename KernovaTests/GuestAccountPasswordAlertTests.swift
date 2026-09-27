@@ -23,7 +23,7 @@ struct GuestAccountPasswordAlertTests {
     private func makePrompt(fullName: String = "Ada Lovelace") -> GuestAccountPrompt {
         GuestAccountPrompt(
             vm: VMSummary(
-                id: UUID(), name: "Sequoia", status: "stopped", ipAddress: .unavailable),
+                id: UUID(), name: "Sequoia", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false),
             username: "ada", fullName: fullName,
             message: "\u{201C}Sequoia\u{201D} creates the macOS account.")
     }

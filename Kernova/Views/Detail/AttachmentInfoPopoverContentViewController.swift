@@ -105,16 +105,12 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
     /// otherwise the note as static text — omitted entirely when there is no
     /// note to read and no way to add one.
     private func makeNotesRows() -> [NSView] {
-        guard canEdit else {
-            guard !notes.isEmpty else { return [] }
-            return [keyLabel("Notes"), makeCalloutBody(notes, color: .labelColor)]
-        }
-        let editor = NotesEditorView(text: notes)
-        editor.onCommit = { [weak self] notes in self?.onCommitNotes(notes) }
-        editor.onCancel = { [weak self] in self?.onRequestClose?() }
-        editor.widthAnchor.constraint(equalToConstant: CalloutStyle.bodyWidth).isActive = true
-        notesEditor = editor
-        return [keyLabel("Notes"), editor]
+        let section = makeCalloutNotesSection(
+            notes, title: keyLabel("Notes"), canEdit: canEdit,
+            onCommit: { [weak self] notes in self?.onCommitNotes(notes) },
+            onCancel: { [weak self] in self?.onRequestClose?() })
+        notesEditor = section.editor
+        return section.rows
     }
 
     private func makeFactsGrid() -> NSGridView {

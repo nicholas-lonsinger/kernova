@@ -131,7 +131,7 @@ struct VMCapabilityAgreementTests {
     }
 
     /// Whether `error` is the refusal admission gives, in the command
-    /// vocabulary ``VMCommandCore/admissionRefusal(_:on:)`` maps it into.
+    /// vocabulary ``VMCommandCore/admissionRefusal(_:on:verb:)`` maps it into.
     private func isAdmissionRefusal(_ error: CommandError) -> Bool {
         switch error {
         case .busy, .invalidState, .notFound, .conflict, .unsupportedByBuild, .terminating,
@@ -189,6 +189,43 @@ struct VMCapabilityAgreementTests {
                     accepted == (refusal == nil),
                     "\(capability) during \(operation.kind) from \(operation.startedFrom) on \(guestOS): accepted \(accepted), refusal \(String(describing: refusal))"
                 )
+            }
+        }
+    }
+
+    @Test(
+        "While another copy holds the VM at rest, the catalog accepts exactly what admission lets the verb do",
+        arguments: VMGuestOS.allCases)
+    func catalogAndVerbAgreeWhileHeldByAnotherCopy(guestOS: VMGuestOS) async throws {
+        for phase in [VMLifecyclePhase.stopped, .suspended, .failed(message: "Failed.")] {
+            for capability in VMCapability.allCases {
+                guard let gates = gates(of: capability) else { continue }
+                let harness = makeHarness()
+                let snapshot = VMSnapshot(name: "Kept", macAddress: nil)
+                let instance = RegisteredVMInstanceFixture.register(
+                    name: "Agreeing", phase: phase, guestOS: guestOS, snapshots: [snapshot],
+                    library: harness.library, preferences: preferences)
+                harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+                defer { VMInstanceFixture.removeBundle(of: instance) }
+                if phase == .suspended {
+                    try VMInstanceFixture.writeSaveFile(for: instance)
+                }
+                harness.storage.files.holdElsewhere(instance.bundleURL)
+
+                let accepted = gates.contains { harness.library.capabilities.accepts($0, on: instance) }
+                var refusal: CommandError?
+                do {
+                    try await invoke(capability, on: instance, snapshot: snapshot, in: harness)
+                } catch let error as CommandError {
+                    if isAdmissionRefusal(error) { refusal = error }
+                } catch {
+                    Issue.record("\(capability) held elsewhere at \(phase) on \(guestOS) threw \(error)")
+                }
+                #expect(
+                    accepted == (refusal == nil),
+                    "\(capability) held elsewhere at \(phase) on \(guestOS): accepted \(accepted), refusal \(String(describing: refusal))"
+                )
+                #expect(instance.phase == phase, "\(capability) at \(phase) on \(guestOS)")
             }
         }
     }

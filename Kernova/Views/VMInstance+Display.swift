@@ -80,16 +80,20 @@ extension VMInstance {
         vsockDropService?.reportUnreadableDrop()
     }
 
-    /// Display name that distinguishes cold-paused ("Suspended") and live-paused ("Paused").
+    /// Display name that distinguishes cold-paused ("Suspended") and live-paused
+    /// ("Paused"), and names a VM another copy of Kernova holds.
     var statusDisplayName: String {
-        isColdPaused ? "Suspended" : status.displayName
+        if heldByAnotherCopy { return VMStatus.heldByAnotherCopyDisplayName }
+        return isColdPaused ? "Suspended" : status.displayName
     }
 
     /// Color used to tint the sidebar's OS icon.
     ///
+    /// A VM another copy of Kernova holds is the running color dimmed.
     /// Cold-paused and running-while-awaiting-network-reattach are orange,
     /// live-paused is yellow, and the remaining states follow `status`.
     var statusDisplayNSColor: NSColor {
+        if heldByAnotherCopy { return StatusColor.heldByAnotherCopy }
         if isColdPaused { return StatusColor.warning }
         if status == .running && networkAttachmentPending { return StatusColor.warning }
         switch status {
@@ -118,6 +122,7 @@ extension VMInstance {
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
+        if heldByAnotherCopy { return VMStatus.heldByAnotherCopyDisplayName + "." }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
         if status == .running, networkAttachmentPending {

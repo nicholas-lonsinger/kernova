@@ -25,7 +25,7 @@ extension VMCommandCore {
             {
                 throw CommandError.unsupported(capability: "starting in macOS Recovery")
             }
-            throw admissionRefusal(reason, on: instance)
+            throw admissionRefusal(reason, on: instance, verb: .start)
         case .join(let outcome):
             readyDisplay?(instance)
             return try await joinBringUp(instance, outcome, verb: .start)
@@ -250,7 +250,7 @@ extension VMCommandCore {
         case .saved:
             return
         case .refused(let refusal):
-            throw refusalError(refusal, on: instance)
+            throw refusalError(refusal, on: instance, verb: .start)
         case .notSaved:
             throw CommandError.operationFailed(
                 verb: .start,
@@ -328,8 +328,8 @@ extension VMCommandCore {
     private func bringUpFailure(
         _ error: Error, verb: VMVerb, on instance: VMInstance
     ) -> CommandError {
-        // A refusal, not a failure: the VM never left where it was, and the
-        // refusal logged itself where it was raised.
+        // A refusal, not a failure: the VM never left where it was, and
+        // ``admissionRefusal(_:on:verb:)`` records it.
         if error is VMAdmissionRefusal { return failure(error, verb: verb, on: instance) }
         #log(
             Self.logger, .error,
@@ -819,7 +819,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         switch instance.activity.decide(.resume, posture: .commit) {
         case .refuse(let reason):
-            throw admissionRefusal(reason, on: instance)
+            throw admissionRefusal(reason, on: instance, verb: .resume)
         case .join(let outcome):
             readyDisplay?(instance)
             return try await joinBringUp(instance, outcome, verb: .resume)

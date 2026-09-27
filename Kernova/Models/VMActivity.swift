@@ -55,8 +55,8 @@ final class VMActivity {
     var holdsRunLock: Bool { hold.isThisCopy }
 
     /// Whether this copy last found another copy of Kernova holding the VM's
-    /// run lock, by a lock attempt or a commit's probe — only ever while the
-    /// VM is at rest here.
+    /// run lock — by a lock attempt, a commit's probe, a refused write or a
+    /// ``refreshFromBundle()`` — only ever while the VM is at rest here.
     var heldByAnotherCopy: Bool {
         access(keyPath: \.heldByAnotherCopy)
         return hold.isAnotherCopy
@@ -260,20 +260,12 @@ final class VMActivity {
         probingOtherCopies: Bool
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
-        var facts = owner.admissionFacts
-        if probingOtherCopies, phase.isAtRest, !hold.isThisCopy,
-            VMAdmission.beginsOperation(request, phase: phase)
+        if probingOtherCopies, !hold.isThisCopy,
+            VMAdmission.isRefusedWhileHeldByAnotherCopy(request, phase: phase)
         {
-            let heldElsewhere = owner.bundle.isRunLockedElsewhere()
-            if heldElsewhere {
-                #log(
-                    Self.logger, .notice,
-                    "Found '\(self.name, privacy: .public)' held by another copy of Kernova deciding \(String(describing: request), privacy: .public)"
-                )
-            }
-            setHold(heldElsewhere ? .anotherCopy : .none)
-            facts.heldByAnotherCopy = heldElsewhere
+            recordOtherCopyHold(heldElsewhere: owner.bundle.isRunLockedElsewhere())
         }
+        var facts = owner.admissionFacts
         if posture == .commit,
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
             kind.checksIdentity
@@ -307,27 +299,17 @@ final class VMActivity {
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
         probingOtherCopies: Bool = true
     ) throws -> VMInstance {
-        guard let owner else { throw refusal(.invalidState, for: request) }
+        guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
         switch decide(
             request, origin: origin, posture: .commit, probingOtherCopies: probingOtherCopies)
         {
         case .admit:
             return owner
         case .join:
-            throw refusal(phase.operation.map { .busy($0.kind) } ?? .invalidState, for: request)
+            throw VMAdmissionRefusal(refusal: phase.operation.map { .busy($0.kind) } ?? .invalidState)
         case .refuse(let reason):
-            throw refusal(reason, for: request)
+            throw VMAdmissionRefusal(refusal: reason)
         }
-    }
-
-    private func refusal(
-        _ reason: VMAdmission.Refusal, for request: VMAdmission.Request
-    ) -> VMAdmissionRefusal {
-        #log(
-            Self.logger, .notice,
-            "Refused \(String(describing: request), privacy: .public) for '\(self.name, privacy: .public)': \(String(describing: reason), privacy: .public)"
-        )
-        return VMAdmissionRefusal(refusal: reason)
     }
 
     // MARK: - Edits
@@ -568,7 +550,7 @@ final class VMActivity {
         _ kind: VMOperationKind, origin: VMRequestOrigin, outcome: VMOutcome
     ) throws -> VMInstance {
         let request = VMAdmission.Request.operation(kind)
-        guard let owner else { throw refusal(.invalidState, for: request) }
+        guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
         let tookLock = try takeRunLock(on: owner)
         do {
             // The lock attempt just made is read rather than probed again: a
@@ -615,12 +597,57 @@ final class VMActivity {
         setHold(.none)
     }
 
+    /// Records what asking the bundle found about another copy's hold on it —
+    /// only for a VM at rest holding no lock, the one case where a holder the
+    /// bundle reports can only be another copy.
+    func recordOtherCopyHold(heldElsewhere: Bool) {
+        guard phase.isAtRest, !hold.isThisCopy else { return }
+        setHold(heldElsewhere ? .anotherCopy : .none)
+    }
+
+    /// Catches a VM at rest up with what another copy of Kernova may have done
+    /// while this copy held no lock: whether that copy holds the bundle now,
+    /// the four state files it may have written, and where the VM rests.
+    ///
+    /// A VM holding the lock has nothing to catch up with — no other copy can
+    /// have written its bundle — and one that is not at rest holds it.
+    func refreshFromBundle() {
+        guard phase.isAtRest, !hold.isThisCopy, let owner else { return }
+        let bundle = owner.bundle
+        recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
+        do {
+            try bundle.refresh()
+        } catch {
+            #log(
+                Self.logger, .warning,
+                "Could not re-read the bundle of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        let before = phase
+        reconcileRest()
+        guard phase != before else { return }
+        #log(
+            Self.logger, .notice,
+            "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
+        )
+    }
+
     /// The one write of ``hold``, noticed by observers of
-    /// ``heldByAnotherCopy`` when it moves that.
+    /// ``heldByAnotherCopy`` — and logged — when it moves that, so a probe
+    /// that finds what the last one found records nothing.
     private func setHold(_ new: consuming VMRunLockHold) {
         let wasHeldByAnotherCopy = hold.isAnotherCopy
         hold = new
         guard hold.isAnotherCopy != wasHeldByAnotherCopy else { return }
+        if hold.isAnotherCopy {
+            #log(
+                Self.logger, .notice,
+                "Found '\(self.name, privacy: .public)' held by another copy of Kernova")
+        } else {
+            #log(
+                Self.logger, .notice,
+                "Another copy of Kernova no longer holds '\(self.name, privacy: .public)'")
+        }
         withMutation(keyPath: \.heldByAnotherCopy) {}
     }
 
@@ -796,7 +823,7 @@ final class VMActivity {
         case .join(let outcome):
             return try await outcome.value()
         case .refuse(let reason):
-            throw refusal(reason, for: .sessionAction(.forceStop))
+            throw VMAdmissionRefusal(refusal: reason)
         case .admit:
             // Admitted only on a settled live VM, or on the live session of an
             // operation that tolerates the stop.
@@ -806,14 +833,14 @@ final class VMActivity {
                 commitOperation(.forceStopping, outcome: stop, stopping: stop)
             case .operating(var operation):
                 guard var session = operation.session else {
-                    throw refusal(.invalidState, for: .sessionAction(.forceStop))
+                    throw VMAdmissionRefusal(refusal: .invalidState)
                 }
                 sessionID = session.id
                 session.stopping = stop
                 operation.sessionState = .live(session)
                 setPhase(.operating(operation))
             case .stopped, .initialBoot, .failed, .suspended, .removed:
-                throw refusal(.invalidState, for: .sessionAction(.forceStop))
+                throw VMAdmissionRefusal(refusal: .invalidState)
             }
         }
         do {
@@ -1004,13 +1031,8 @@ final class VMActivity {
     /// Reserves the accessory `registryID` names for `owner`; refuses, as
     /// ``VMAdmission/Refusal/accessoryHeld(by:)``, while any VM holds it.
     fileprivate func reserveAccessory(_ registryID: UInt64, for owner: VMInstance) throws {
-        let request = VMAdmission.Request.operation(.attachingUSB(registryID: registryID))
-        guard let accessoryHolders else { throw refusal(.unsupportedByBuild, for: request) }
-        do {
-            try accessoryHolders.reserve(registryID, for: owner, AccessoryHoldersKey())
-        } catch let refused as VMAdmissionRefusal {
-            throw refusal(refused.refusal, for: request)
-        }
+        guard let accessoryHolders else { throw VMAdmissionRefusal(refusal: .unsupportedByBuild) }
+        try accessoryHolders.reserve(registryID, for: owner, AccessoryHoldersKey())
     }
 
     /// Drops the attachment `deviceID` names from what this VM's guest holds,

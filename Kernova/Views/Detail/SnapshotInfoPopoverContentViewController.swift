@@ -3,8 +3,8 @@ import AppKit
 /// Popover content shown by a snapshot row's "Get Info" menu item.
 ///
 /// It is where a snapshot's full note is read and written: the Notes box is
-/// always offered, so a snapshot with no note yet still has somewhere to
-/// gain one.
+/// always offered while the note can be written, so a snapshot with no note
+/// yet still has somewhere to gain one.
 @MainActor
 final class SnapshotInfoPopoverContentViewController: NSViewController {
     /// Fires with the edited note when the box commits.
@@ -15,14 +15,17 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     private let snapshot: VMSnapshot
     /// Bytes the captured copies occupy, already formatted.
     private let onDiskText: String
+    /// Whether the snapshot's note can be written right now.
+    private let canEditNotes: Bool
     private var notesEditor: NotesEditorView?
 
     init(
-        snapshot: VMSnapshot, onDiskText: String,
+        snapshot: VMSnapshot, onDiskText: String, canEditNotes: Bool,
         onCommitNotes: @escaping (String) -> Void
     ) {
         self.snapshot = snapshot
         self.onDiskText = onDiskText
+        self.canEditNotes = canEditNotes
         self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
     }
@@ -75,12 +78,12 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     }
 
     private func makeNotesRows() -> [NSView] {
-        let editor = NotesEditorView(text: snapshot.notes)
-        editor.onCommit = { [weak self] notes in self?.onCommitNotes(notes) }
-        editor.onCancel = { [weak self] in self?.onRequestClose?() }
-        editor.widthAnchor.constraint(equalToConstant: CalloutStyle.bodyWidth).isActive = true
-        notesEditor = editor
-        return [keyLabel("Notes"), editor]
+        let section = makeCalloutNotesSection(
+            snapshot.notes, title: keyLabel("Notes"), canEdit: canEditNotes,
+            onCommit: { [weak self] notes in self?.onCommitNotes(notes) },
+            onCancel: { [weak self] in self?.onRequestClose?() })
+        notesEditor = section.editor
+        return section.rows
     }
 
     private func makeFactsGrid() -> NSGridView {

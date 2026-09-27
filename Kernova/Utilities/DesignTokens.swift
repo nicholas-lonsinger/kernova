@@ -52,6 +52,9 @@ enum StatusColor {
     static let warning = NSColor.systemOrange
     /// Healthy / running (running VM, agent current).
     static let running = NSColor.systemGreen
+    /// A VM another running copy of Kernova holds — for a run or for any
+    /// other operation — as the running color dimmed.
+    static let heldByAnotherCopy = running.withAlphaComponent(Alpha.disabled)
     /// Paused in memory.
     static let pausedInMemory = NSColor.systemYellow
     /// Error state.

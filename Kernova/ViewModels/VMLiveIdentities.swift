@@ -2,10 +2,9 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Which identity another live VM already claims — the identity term
-/// admission decides every bring-up against
-/// (``VMAdmission/Facts/identityConflict``). Live is
-/// ``VMActivity/holdsLiveIdentity``.
+/// Which identity another VM already claims — the identity term admission
+/// decides every bring-up against (``VMAdmission/Facts/identityConflict``). A
+/// claim is ``VMInstance/claimsIdentity``.
 @MainActor
 final class VMLiveIdentities {
     nonisolated private static let logger = KernovaLogger(
@@ -32,14 +31,21 @@ final class VMLiveIdentities {
         return roster.instances
     }
 
-    /// The live VM whose identity bringing `instance` up under `configuration`
-    /// would duplicate, and what on — `nil` when nothing collides.
+    /// The VM claiming the identity bringing `instance` up under
+    /// `configuration` would duplicate, and what on — `nil` when nothing
+    /// collides.
     ///
-    /// The machine identity is checked only while
-    /// ``AppPreferences/blockDuplicateMachineIDBoot`` asks for it.
+    /// Every other VM at rest is first caught up with another copy of
+    /// Kernova (``VMActivity/refreshFromBundle()``), so a VM that copy holds
+    /// claims the identity its bundle carries now. The machine identity is
+    /// checked only while ``AppPreferences/blockDuplicateMachineIDBoot`` asks
+    /// for it.
     func conflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration
     ) -> VMIdentityConflict? {
+        for other in instances where other !== instance {
+            other.activity.refreshFromBundle()
+        }
         if preferences.blockDuplicateMachineIDBoot,
             let other = liveMachineIDConflict(for: instance)
         {
@@ -51,11 +57,11 @@ final class VMLiveIdentities {
         return nil
     }
 
-    /// The first live VM holding a machine identity matching `instance`'s.
+    /// The first VM claiming a machine identity matching `instance`'s.
     private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
         instances.first { other in
             other !== instance
-                && other.holdsLiveIdentity
+                && other.claimsIdentity
                 && Self.sharesMachineIdentifier(instance, other)
         }
     }
@@ -81,8 +87,8 @@ final class VMLiveIdentities {
     }
 }
 
-/// A bring-up refused because another live VM already claims the identity it
-/// would put in front of VZ.
+/// A bring-up refused because another VM already claims the identity it would
+/// put in front of VZ (``VMInstance/claimsIdentity``).
 struct VMIdentityConflict: LocalizedError {
     /// What the two VMs would share.
     enum Reason: Sendable {
@@ -98,11 +104,12 @@ struct VMIdentityConflict: LocalizedError {
         }
     }
 
-    /// The live VM already holding the identity.
+    /// The VM already claiming the identity.
     let other: VMInstance
     let reason: Reason
     /// The sentence every surface words this refusal in, fixed at the refusal
-    /// because the names it carries are read on the main actor.
+    /// because the names it carries — and whether the claim is another copy of
+    /// Kernova's hold — are read on the main actor.
     let errorDescription: String?
 
     @MainActor
@@ -110,6 +117,7 @@ struct VMIdentityConflict: LocalizedError {
         self.other = other
         self.reason = reason
         self.errorDescription = CommandErrorDTO.conflictMessage(
-            vm: vm.name, other: other.name, reason: reason.conflictReason)
+            vm: vm.name, other: other.name, otherHeldByAnotherCopy: other.heldByAnotherCopy,
+            reason: reason.conflictReason)
     }
 }

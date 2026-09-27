@@ -14,14 +14,14 @@ struct SnapshotInfoPopoverContentViewControllerTests {
     }
 
     private func makeController(
-        kind: VMSnapshotKind, notes: String = "",
+        kind: VMSnapshotKind, notes: String = "", canEditNotes: Bool = true,
         recorder: NoteRecorder = NoteRecorder()
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
             name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
-            snapshot: snapshot, onDiskText: "2 GB",
+            snapshot: snapshot, onDiskText: "2 GB", canEditNotes: canEditNotes,
             onCommitNotes: { recorder.committed.append($0) })
         controller.loadViewIfNeeded()
         return controller
@@ -29,6 +29,17 @@ struct SnapshotInfoPopoverContentViewControllerTests {
 
     private func notesEditor(in controller: NSViewController) -> NotesEditorView? {
         firstSubview(NotesEditorView.self, in: controller.view)
+    }
+
+    @Test("A note the VM will not take a write to reads as text, with no box to type in")
+    func unwritableNoteIsStaticText() {
+        let controller = makeController(kind: .warm, notes: "Clean install", canEditNotes: false)
+
+        #expect(notesEditor(in: controller) == nil)
+        #expect(findLabel(withText: "Clean install", in: controller.view) != nil)
+        #expect(
+            findLabel(withText: "Notes", in: makeController(kind: .warm, canEditNotes: false).view)
+                == nil)
     }
 
     @Test("The facts grid says what a memory-and-disks snapshot holds")

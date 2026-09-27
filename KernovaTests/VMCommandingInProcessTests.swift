@@ -16,7 +16,7 @@ struct VMCommandingInProcessTests {
         -> (commands: any VMCommanding, mock: MockVMCommanding, vm: VMSummary)
     {
         let mock = MockVMCommanding()
-        let vm = VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable)
+        let vm = VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         mock.library = [vm]
         return (mock, mock, vm)
     }

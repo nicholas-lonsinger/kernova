@@ -303,7 +303,7 @@ final class MockVMCommanding: VMCommanding {
             hasSavedState: false,
             isEphemeral: false,
             snapshotCount: 0,
-            bundlePath: "/tmp/\(summary.id.uuidString).kernova")
+            bundlePath: "/tmp/\(summary.id.uuidString).kernova", heldByAnotherCopy: false)
     }
 
     func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
@@ -514,7 +514,7 @@ final class MockVMCommanding: VMCommanding {
         // caller that reads it back on the same turn finds it.
         let created = VMSummary(
             id: configuration.id, name: configuration.name,
-            status: VMStatus.preparingWireName, ipAddress: .unavailable)
+            status: VMStatus.preparingWireName, ipAddress: .unavailable, heldByAnotherCopy: false)
         library.append(created)
         return created
     }
@@ -541,7 +541,9 @@ final class MockVMCommanding: VMCommanding {
         let source = try resolve(selector)
         let copy =
             cloneResult
-            ?? VMSummary(id: UUID(), name: "\(source.name) copy", status: source.status, ipAddress: .unavailable)
+            ?? VMSummary(
+                id: UUID(), name: "\(source.name) copy", status: source.status, ipAddress: .unavailable,
+                heldByAnotherCopy: false)
         // The core registers the copy's arrival before it first suspends, so a
         // caller that reads it back on the same turn finds it.
         library.append(copy)
@@ -598,7 +600,7 @@ final class MockVMCommanding: VMCommanding {
             importResult
             ?? VMSummary(
                 id: UUID(), name: url.deletingPathExtension().lastPathComponent,
-                status: VMStatus.preparingWireName, ipAddress: .unavailable)
+                status: VMStatus.preparingWireName, ipAddress: .unavailable, heldByAnotherCopy: false)
         // The core registers the import's arrival before it first suspends, so
         // a caller that reads it back on the same turn finds it.
         library.append(imported)

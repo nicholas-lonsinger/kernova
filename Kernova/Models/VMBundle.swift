@@ -166,7 +166,7 @@ final class VMBundle {
 
     // MARK: - State files
 
-    /// What ``VMBundleFiles/update(_:_:_:)`` asks for, so only a bundle's
+    /// What ``VMBundleFiles/update(_:_:holdingRunLock:_:)`` asks for, so only a bundle's
     /// own commits — reached only through a permit — write a bundle a
     /// ``VMBundle`` holds: the initializer is `fileprivate`, which
     /// `@testable import` does not open.
@@ -174,24 +174,15 @@ final class VMBundle {
         fileprivate init() {}
     }
 
-    fileprivate func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
-        publish(try files.update(.configuration, CommitKey(), change), to: \.configuration)
-    }
-
-    fileprivate func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
-        publish(try files.update(.hostState, CommitKey(), change), to: \.hostState)
-    }
-
-    fileprivate func commitSnapshotManifest(
-        _ change: (inout VMSnapshotManifest) throws -> Void
+    /// Commits `change` to `file` (``VMBundleFiles/update(_:_:holdingRunLock:_:)``)
+    /// and publishes what the file now holds to `keyPath`.
+    fileprivate func commit<Value>(
+        _ file: VMBundleStateFile<Value>, to keyPath: ReferenceWritableKeyPath<VMBundle, Value>,
+        holdingRunLock: Bool, _ change: (inout Value) throws -> Void
     ) throws {
-        publish(try files.update(.snapshotManifest, CommitKey(), change), to: \.snapshotManifest)
-    }
-
-    fileprivate func commitUSBPairings(
-        _ change: (inout USBAccessoryPairingSet) throws -> Void
-    ) throws {
-        publish(try files.update(.usbPairings, CommitKey(), change), to: \.usbPairings)
+        publish(
+            try files.update(file, CommitKey(), holdingRunLock: holdingRunLock, change),
+            to: keyPath)
     }
 
     // MARK: - Machine files
@@ -251,6 +242,10 @@ extension VMBundle {
     ///
     /// Every call commits to the bundle the VM lives in at that moment, as
     /// ``MachineFiles`` does.
+    ///
+    /// A commit made while this copy holds no run lock is refused, leaving its
+    /// file as it was, with ``VMAdmission/Refusal/heldByAnotherCopy`` when
+    /// another copy of Kernova holds the bundle, and the VM records that hold.
     @MainActor
     struct StateFiles: ~Copyable, Sendable {
         private let owner: VMInstance
@@ -274,7 +269,7 @@ extension VMBundle {
             let bundle = bundle
             let policy = bundle.configurationPolicy
             let old = bundle.configuration
-            try bundle.commitConfiguration { config in
+            try commit(.configuration, to: \.configuration) { config in
                 let onDisk = config
                 try change(&config)
                 guard config != onDisk else { return }
@@ -292,7 +287,7 @@ extension VMBundle {
         }
 
         func commitHostState(_ change: (inout VMHostState) throws -> Void) throws {
-            try bundle.commitHostState { hostState in
+            try commit(.hostState, to: \.hostState) { hostState in
                 let onDisk = hostState
                 try change(&hostState)
                 try requireWritable(VMHostState.fieldClasses, from: onDisk, to: hostState)
@@ -300,7 +295,7 @@ extension VMBundle {
         }
 
         func commitSnapshotManifest(_ change: (inout VMSnapshotManifest) throws -> Void) throws {
-            try bundle.commitSnapshotManifest { manifest in
+            try commit(.snapshotManifest, to: \.snapshotManifest) { manifest in
                 let onDisk = manifest
                 try change(&manifest)
                 try requireWritable(VMSnapshotManifest.fieldClasses, from: onDisk, to: manifest)
@@ -308,10 +303,30 @@ extension VMBundle {
         }
 
         func commitUSBPairings(_ change: (inout USBAccessoryPairingSet) throws -> Void) throws {
-            try bundle.commitUSBPairings { pairings in
+            try commit(.usbPairings, to: \.usbPairings) { pairings in
                 let onDisk = pairings
                 try change(&pairings)
                 try requireWritable(USBAccessoryPairingSet.fieldClasses, from: onDisk, to: pairings)
+            }
+        }
+
+        /// Commits `change` to `file` on the VM's bundle, refused as another
+        /// copy's hold unless this copy holds the run lock — the one case the
+        /// answer can be about another copy — and records a hold it was
+        /// refused for.
+        private func commit<Value>(
+            _ file: VMBundleStateFile<Value>, to keyPath: ReferenceWritableKeyPath<VMBundle, Value>,
+            _ change: (inout Value) throws -> Void
+        ) throws {
+            let activity = owner.activity
+            do {
+                try bundle.commit(
+                    file, to: keyPath, holdingRunLock: activity.holdsRunLock, change)
+            } catch let refused as VMAdmissionRefusal where refused.refusal == .heldByAnotherCopy {
+                // The hold's discovery is logged where it is recorded, and the
+                // refusal by whoever reports it.
+                activity.recordOtherCopyHold(heldElsewhere: true)
+                throw refused
             }
         }
 

@@ -461,7 +461,13 @@ final class VMInstance {
     var isColdPaused: Bool { activity.isColdPaused }
     var isLivePaused: Bool { activity.isLivePaused }
     var holdsLiveIdentity: Bool { activity.holdsLiveIdentity }
+    var heldByAnotherCopy: Bool { activity.heldByAnotherCopy }
     var isAtRest: Bool { activity.isAtRest }
+
+    /// Whether this VM claims its machine identity and MAC address right now:
+    /// live in this copy (``holdsLiveIdentity``), or held by another copy of
+    /// Kernova, which may be running it.
+    var claimsIdentity: Bool { holdsLiveIdentity || heldByAnotherCopy }
     var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
     var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
@@ -512,11 +518,11 @@ final class VMInstance {
             identityConflict: nil,
             accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false,
-            heldByAnotherCopy: activity.heldByAnotherCopy)
+            heldByAnotherCopy: heldByAnotherCopy)
     }
 
-    /// The live VM whose identity bringing this one up by `kind` would
-    /// duplicate, or `nil` when nothing collides.
+    /// The VM claiming the identity (``claimsIdentity``) that bringing this
+    /// one up by `kind` would duplicate, or `nil` when nothing collides.
     func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
         peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
     }
@@ -557,7 +563,9 @@ final class VMInstance {
     /// resolves one, and both callers already hold it — so a summary is built
     /// one way whichever of them is naming the VM.
     func summary(ipAddress: GuestIPAddress) -> VMSummary {
-        VMSummary(id: instanceID, name: name, status: status.rawValue, ipAddress: ipAddress)
+        VMSummary(
+            id: instanceID, name: name, status: status.rawValue, ipAddress: ipAddress,
+            heldByAnotherCopy: heldByAnotherCopy)
     }
 
     // MARK: - Ephemeral Mode

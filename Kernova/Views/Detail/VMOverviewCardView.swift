@@ -41,7 +41,6 @@ final class VMOverviewCardView: NSView {
     private struct ToggleRow {
         let row: NSView
         let control: NSSwitch
-        let label: NSTextField
     }
 
     /// What the card's rows were last built from; the values themselves are
@@ -107,15 +106,13 @@ final class VMOverviewCardView: NSView {
         headerRow.addGestureRecognizer(click)
 
         for toggle in toggles {
-            var label = NSTextField()
             let control = NSSwitch()
             control.controlSize = .small
             control.identifier = NSUserInterfaceItemIdentifier(toggle.rawValue)
             control.target = self
             control.action = #selector(toggleFlipped(_:))
-            let row = makeGroupedFormCardRow(
-                toggle.title, control: control, titleLabel: { label = $0 })
-            toggleRows[toggle] = ToggleRow(row: row, control: control, label: label)
+            let row = makeGroupedFormCardRow(toggle.title, control: control)
+            toggleRows[toggle] = ToggleRow(row: row, control: control)
         }
     }
 
@@ -145,7 +142,7 @@ final class VMOverviewCardView: NSView {
         for state in toggles {
             guard let entry = toggleRows[state.toggle] else { continue }
             entry.control.state = state.isOn ? .on : .off
-            applyGroupedFormRowEnabled(state.isEnabled, control: entry.control, label: entry.label)
+            applyGroupedFormRowEnabled(state.isEnabled, control: entry.control)
         }
         actionButton?.isEnabled = action?.isEnabled ?? false
     }
@@ -174,14 +171,16 @@ final class VMOverviewCardView: NSView {
     /// which is what the row was read for, stays whole.
     private func makeValueRow(_ row: VMOverviewSummary.Row) -> NSView {
         let value = makeGroupedFormValueLabel(row.value)
-        let yieldFirst: (NSTextField) -> Void = { label in
+        let yieldFirst = { (built: GroupedFormControlRow) -> NSView in
+            let label = built.titleLabel
             label.maximumNumberOfLines = 1
             label.lineBreakMode = .byTruncatingTail
             label.toolTip = row.label
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            return built
         }
         guard let copy = row.copy else {
-            return makeGroupedFormCardRow(row.label, control: value, titleLabel: yieldFirst)
+            return yieldFirst(makeGroupedFormCardRow(row.label, control: value))
         }
         let button = CopyValueButton(value: copy.value)
         button.image = .systemSymbol("doc.on.doc", accessibilityDescription: copy.name)
@@ -199,7 +198,7 @@ final class VMOverviewCardView: NSView {
         control.orientation = .horizontal
         control.alignment = .centerY
         control.spacing = Spacing.tight
-        return makeGroupedFormCardRow(row.label, control: control, titleLabel: yieldFirst)
+        return yieldFirst(makeGroupedFormCardRow(row.label, control: control))
     }
 
     /// The card's foot command: a borderless accent-tinted button on a row of

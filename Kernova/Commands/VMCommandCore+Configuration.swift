@@ -21,6 +21,7 @@ extension VMCommandCore {
 
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
+        instance.activity.refreshFromBundle()
         let settings = instance.settings
         guard let keys else {
             // A key the guest cannot have is left out rather than reported with

@@ -861,7 +861,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(isReadOnly: true, phase: .running(sessionID: UUID()))
         let panel = try #require(vc.panelForTesting(.network))
         let modeRow = try #require(settingsRow(labeled: "Mode", in: panel))
-        #expect(modeRow.alphaValue == 1)
+        #expect(rowTitle(of: modeRow)?.textColor == .labelColor)
         #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == true)
         #expect(panelHeaderLockHints(in: vc).allSatisfy { $0.isHidden })
     }
@@ -871,6 +871,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(isReadOnly: true, phase: .stopped)
         let panel = try #require(vc.panelForTesting(.network))
         let modeRow = try #require(settingsRow(labeled: "Mode", in: panel))
-        #expect(modeRow.alphaValue == Alpha.disabled)
+        #expect(rowTitle(of: modeRow)?.textColor == .disabledControlTextColor)
+        #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
     }
 }

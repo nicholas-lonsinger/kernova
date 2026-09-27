@@ -21,10 +21,16 @@ enum TableRenderer {
             headings: ["NAME", "STATUS", "IP ADDRESS", "ID"],
             rows: rows.map {
                 [
-                    $0.name, VMStatus.displayName(forWireName: $0.status),
+                    $0.name, status($0.status, heldByAnotherCopy: $0.heldByAnotherCopy),
                     render($0.ipAddress), $0.id.uuidString,
                 ]
             })
+    }
+
+    /// A VM's status as a person reads it.
+    private static func status(_ wireName: String, heldByAnotherCopy: Bool) -> String {
+        heldByAnotherCopy
+            ? VMStatus.heldByAnotherCopyDisplayName : VMStatus.displayName(forWireName: wireName)
     }
 
     /// One VM's full description, as a field-per-line block.
@@ -36,7 +42,7 @@ enum TableRenderer {
         var fields: [(String, String)] = [
             ("Name", info.name),
             ("Identifier", info.id.uuidString),
-            ("Status", VMStatus.displayName(forWireName: info.status)),
+            ("Status", status(info.status, heldByAnotherCopy: info.heldByAnotherCopy)),
             ("Guest", info.guestOS),
             ("CPUs", String(info.cpuCount)),
             ("Memory", memory(info.memoryBytes)),

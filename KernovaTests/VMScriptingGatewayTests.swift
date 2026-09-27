@@ -118,7 +118,7 @@ struct VMScriptingGatewayTests {
     private func makeSummary(
         name: String = "Sonoma", status: String = "stopped", id: UUID = UUID()
     ) -> VMSummary {
-        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable)
+        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     private func makePrompt(kind: ConfirmationKind) -> ConfirmationPrompt {
@@ -204,7 +204,7 @@ struct VMScriptingGatewayTests {
             memoryBytes: 8 << 30, diskSizeInGB: 128, networkMode: "shared",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.3"),
             agentStatus: "connected", hasSavedState: true, isEphemeral: true, snapshotCount: 2,
-            bundlePath: "/VMs/Alpha.kernova")
+            bundlePath: "/VMs/Alpha.kernova", heldByAnotherCopy: false)
 
         let vm = try #require(makeGateway(commands).virtualMachines().first)
 

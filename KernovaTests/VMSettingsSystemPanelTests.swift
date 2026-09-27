@@ -26,6 +26,7 @@ struct VMSettingsSystemPanelTests {
     /// stored trio is a previous boot's artifact.
     private func makeDisplayController(
         guestOS: VMGuestOS = .macOS,
+        phase: VMLifecyclePhase = .stopped,
         isReadOnly: Bool = false,
         sizesToWindow: Bool = false,
         width: Int = 1920,
@@ -34,7 +35,7 @@ struct VMSettingsSystemPanelTests {
         hiDPI: Bool? = nil
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
-        let instance = viewModel.library.registerFixture(guestOS: guestOS) {
+        let instance = viewModel.library.registerFixture(guestOS: guestOS, phase: phase) {
             $0.displayWidth = width
             $0.displayHeight = height
             $0.displayPPI = ppi
@@ -320,12 +321,18 @@ struct VMSettingsSystemPanelTests {
         #expect(editableField("Height", in: vc.view)?.integerValue == 1200)
     }
 
-    @Test("The restart caption shows only while read-only")
-    func restartCaptionOnlyWhileReadOnly() {
+    @Test("The restart caption shows only while the guest holds a session")
+    func restartCaptionOnlyWhileTheGuestHoldsASession() {
         let caption = "Takes effect on next start."
 
-        let (readOnlyVC, _) = makeDisplayController(isReadOnly: true)
-        #expect(visibleLabel(caption, in: readOnlyVC.view))
+        let (runningVC, _) = makeDisplayController(
+            phase: .running(sessionID: UUID()), isReadOnly: true)
+        #expect(visibleLabel(caption, in: runningVC.view))
+
+        // A pane locked with no session to wait out — another copy of Kernova
+        // holding the VM — names no next start.
+        let (lockedVC, _) = makeDisplayController(isReadOnly: true)
+        #expect(!visibleLabel(caption, in: lockedVC.view))
 
         let (editableVC, _) = makeDisplayController(isReadOnly: false)
         #expect(!visibleLabel(caption, in: editableVC.view))

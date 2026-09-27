@@ -68,7 +68,7 @@ extension VMCommandCore {
                 try library.updateUSBPairings(permit) { $0.remove(key: key) }
             }
         } catch let refused as VMAdmissionRefusal {
-            throw admissionRefusal(refused.refusal, on: instance)
+            throw admissionRefusal(refused.refusal, on: instance, verb: .forgetUSBPairing)
         } catch {
             throw CommandError.operationFailed(
                 verb: .forgetUSBPairing,
