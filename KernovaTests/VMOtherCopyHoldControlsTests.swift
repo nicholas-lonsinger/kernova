@@ -5,9 +5,9 @@ import Testing
 
 @testable import Kernova
 
-/// Every control that writes a VM's state, swept on a VM another copy of
-/// Kernova holds: each one dims through the catalog, and the title of the row
-/// holding it dims with it.
+/// Every control that writes a VM's state, swept across every settings panel
+/// on a VM another copy of Kernova holds: each one dims through the catalog,
+/// and the title of the row holding it grays with it.
 ///
 /// A sweep rather than a list, so a control added without asking the catalog
 /// fails it. What it passes over is named below: the controls that only read.
@@ -86,22 +86,30 @@ struct VMOtherCopyHoldControlsTests {
         return "\(type(of: control)) \(action) \(row?.titleLabel.stringValue ?? "")"
     }
 
-    /// Whether the row holding `control` reads as dimmed: its title grayed, or
-    /// the row faded by the pane's lock.
-    private func rowReadsDimmed(_ control: NSControl, within panel: NSView) -> Bool? {
-        let ancestors = sequence(first: control as NSView, next: \.superview)
-            .prefix { $0 !== panel }
-        guard let row = ancestors.lazy.compactMap({ $0 as? GroupedFormControlRow }).first else {
-            return nil
+    /// The titled row holding `control` within `panel`, if any.
+    private func titledRow(of control: NSControl, within panel: NSView) -> GroupedFormControlRow? {
+        sequence(first: control as NSView, next: \.superview).prefix { $0 !== panel }
+            .lazy.compactMap { $0 as? GroupedFormControlRow }.first
+    }
+
+    /// Whether `control` has to sit in a ``GroupedFormControlRow`` for its
+    /// title to dim with it: everything but a button naming itself, or a
+    /// control on a list row, which carries its own title line.
+    private static func needsRowTitle(_ control: NSControl) -> Bool {
+        let onListRow = sequence(first: control as NSView, next: \.superview).contains {
+            $0 is AttachmentRowView || $0 is SnapshotRowView
         }
-        return row.titleLabel.textColor == .disabledControlTextColor
-            || ancestors.contains { $0.alphaValue < 1 }
+        if onListRow { return false }
+        if let button = control as? NSButton, !(button is NSPopUpButton), !button.title.isEmpty {
+            return false
+        }
+        return true
     }
 
     nonisolated private static let sweeps: [(VMGuestOS, VMSettingsCategory)] = [
         VMGuestOS.macOS, .linux,
     ].flatMap { guestOS in
-        [VMSettingsCategory.general, .system, .sharing, .snapshots].map { (guestOS, $0) }
+        VMSettingsCategory.allCases.map { (guestOS, $0) }
     }
 
     @Test("Every edit control in the panel dims, with its row's title", arguments: sweeps)
@@ -116,9 +124,15 @@ struct VMOtherCopyHoldControlsTests {
         #expect(!controls.isEmpty)
         for control in controls {
             #expect(!takesInput(control), "\(guestOS) \(category): \(describe(control)) takes input")
-            if let dimmed = rowReadsDimmed(control, within: held.panel) {
-                #expect(dimmed, "\(guestOS) \(category): \(describe(control))'s row title is lit")
+            guard let row = titledRow(of: control, within: held.panel) else {
+                #expect(
+                    !Self.needsRowTitle(control),
+                    "\(guestOS) \(category): \(describe(control)) sits in no titled row")
+                continue
             }
+            #expect(
+                row.titleLabel.textColor == .disabledControlTextColor,
+                "\(guestOS) \(category): \(describe(control))'s row title is lit")
         }
     }
 

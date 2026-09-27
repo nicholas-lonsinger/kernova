@@ -267,21 +267,21 @@ struct VMSettingsLockRegistry {
     /// "Editable when stopped" hints on lockable section headers; shown only
     /// while read-only.
     private(set) var hints: [NSView] = []
-    /// Form rows that only a stopped VM can change: their controls go inert and
-    /// the whole row dims while read-only (per-row controls in the dynamic lists
-    /// set their own enabled state when those lists are rebuilt).
-    private(set) var rows: [(row: NSView, controls: [NSControl])] = []
+    /// The controls of form rows only a stopped VM can change, disabled while
+    /// read-only (per-row controls in the dynamic lists set their own enabled
+    /// state when those lists are rebuilt).
+    private(set) var controls: [NSControl] = []
 
     mutating func removeAll() {
         hints.removeAll()
-        rows.removeAll()
+        controls.removeAll()
     }
 
-    /// Registers `row` as editable only while the VM is stopped, returning it so
-    /// it can be handed straight to a card.
+    /// Registers `row`'s `controls` as editable only while the VM is stopped,
+    /// returning `row` so it can be handed straight to a card.
     @discardableResult
     mutating func lockable(_ row: NSView, _ controls: NSControl...) -> NSView {
-        rows.append((row: row, controls: controls))
+        self.controls.append(contentsOf: controls)
         return row
     }
 
@@ -322,13 +322,11 @@ struct VMSettingsLockRegistry {
         return hint
     }
 
-    /// Shows every hint and dims every locked row for a read-only pane.
+    /// Shows every hint and disables every locked control for a read-only
+    /// pane, dimmed as any disabled row is (``applyGroupedFormRowEnabled(_:control:)``).
     func apply(isReadOnly: Bool) {
         hints.forEach { $0.isHidden = !isReadOnly }
-        for entry in rows {
-            entry.controls.forEach { $0.isEnabled = !isReadOnly }
-            entry.row.alphaValue = isReadOnly ? Alpha.disabled : 1
-        }
+        for control in controls { applyGroupedFormRowEnabled(!isReadOnly, control: control) }
     }
 }
 

@@ -140,6 +140,13 @@ func settingsRow(labeled label: String, in view: NSView) -> NSView? {
     }
 }
 
+/// The title of `row` when it is a ``GroupedFormControlRow``, which is what
+/// dims with the controls it holds.
+@MainActor
+func rowTitle(of row: NSView) -> NSTextField? {
+    (row as? GroupedFormControlRow)?.titleLabel
+}
+
 @MainActor
 func containsLabel(_ text: String, in view: NSView) -> Bool {
     findLabel(withText: text, in: view) != nil

@@ -485,9 +485,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // (disabled, not hidden). HiDPI stays live — it picks the scale that
         // computation runs at.
         let manualEnabled = !isReadOnly && !config.displaySizesToWindow
-        displayResolutionPopUp.isEnabled = manualEnabled
-        displayWidthField.isEnabled = manualEnabled
-        displayHeightField.isEnabled = manualEnabled
+        for control in [displayResolutionPopUp, displayWidthField, displayHeightField] as [NSControl] {
+            applyGroupedFormRowEnabled(manualEnabled, control: control)
+        }
 
         displayResolutionCaption.stringValue = displayResolutionCaptionText()
         displayRestartCaption.isHidden = !guestHoldsSession
