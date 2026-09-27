@@ -741,12 +741,15 @@ struct VMActivityTests {
         let order = FollowUpOrder()
         let holdGate = GatedStep()
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
+        // Gated, so the revert still holds the VM when the first drain is
+        // read: ungated, it can end and drain the next before this resumes.
+        let revertGate = GatedStep()
         let owed = [
             followUp("first", .copyingOut, on: instance, order: order),
             followUp("second", .copyingOut, on: instance, order: order),
             followUp(
                 "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
-                on: instance, rank: .restoration, order: order),
+                on: instance, rank: .restoration, gate: revertGate, order: order),
             followUp("third", .copyingOut, on: instance, order: order),
         ]
 
@@ -756,6 +759,7 @@ struct VMActivityTests {
         holdGate.release()
         try await hold.value()
         #expect(order.admitted == ["revert"])
+        revertGate.release()
         for item in owed { try await item.outcome.value() }
         #expect(order.admitted == ["revert", "first", "second", "third"])
         #expect(instance.phase == .stopped)
