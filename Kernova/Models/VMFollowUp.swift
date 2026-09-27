@@ -29,10 +29,14 @@ struct VMFollowUp {
     let scope: Scope
     let rank: Rank
 
-    /// The request under which the follow-up joins an operation holding the
-    /// VM that declares the join, rather than queueing behind it — so it
-    /// takes that operation's outcome; `nil` for one that never joins.
-    let joins: VMAdmission.Request?
+    /// The request the follow-up makes of admission, when it is known before
+    /// the follow-up drains; `nil` otherwise.
+    ///
+    /// A follow-up that names one joins, taking its outcome, rather than
+    /// queueing: an operation holding the VM that admission says the request
+    /// joins, or a follow-up already queued with the same request and scope.
+    /// So one request is queued at most once, whichever path sends it.
+    let request: VMAdmission.Request?
 
     /// What the follow-up's operation resolves when it ends, or the refusal
     /// that ended the follow-up without running it — made before it is
@@ -45,13 +49,13 @@ struct VMFollowUp {
     let admit: @MainActor (VMOutcome) throws -> Void
 
     init(
-        scope: Scope, rank: Rank, joins: VMAdmission.Request? = nil,
+        scope: Scope, rank: Rank, request: VMAdmission.Request? = nil,
         outcome: VMOutcome = VMOutcome(),
         admit: @escaping @MainActor (VMOutcome) throws -> Void
     ) {
         self.scope = scope
         self.rank = rank
-        self.joins = joins
+        self.request = request
         self.outcome = outcome
         self.admit = admit
     }

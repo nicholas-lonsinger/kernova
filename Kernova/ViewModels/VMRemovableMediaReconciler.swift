@@ -54,7 +54,7 @@ final class VMRemovableMediaReconciler {
     /// admitted first, and a quit waits a reconcile out.
     private func reconcileFollowUp(of instance: VMInstance, for sessionID: UUID) -> VMFollowUp {
         VMFollowUp(
-            scope: .session(sessionID), rank: .ordinary, joins: .operation(.reconcilingMedia)
+            scope: .session(sessionID), rank: .ordinary, request: .operation(.reconcilingMedia)
         ) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             try instance.activity.launch(

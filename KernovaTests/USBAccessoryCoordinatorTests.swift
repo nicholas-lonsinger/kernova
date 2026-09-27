@@ -452,30 +452,163 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs == [1])
     }
 
-    @Test("An accessory a capture is waiting for is reconciled and left alone")
-    func anAwaitedReturnIsNotRouted() async throws {
+    // MARK: - Owed Returns
+
+    /// Runs a warm capture's sweep on `instance`, and macOS withdraws each
+    /// stick while the reset runs. Parks on `gate`, when given, before ending.
+    private func capture(
+        _ instance: VMInstance, service: MockUSBAccessoryService, gate: GatedStep? = nil
+    ) async throws {
+        try await instance.activity.captureSnapshot(.live) { context in
+            try await VirtualizationService.detachUSBAccessories(
+                owingReturns: context, session: MockSnapshotSession(guestState: .running))
+            service.accessories.removeAll()
+            try await gate?.pass()
+            return .rest(.asStarted, ())
+        }
+    }
+
+    @Test("An accessory a capture took off goes back to that guest, whatever the pairings say")
+    func anOwedReturnBypassesThePairings() async throws {
         let service = MockUSBAccessoryService()
-        let instance = makeInstance(sessionID: UUID())
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let one = makeInstance(sessionID: UUID(), named: "One")
+        let two = makeInstance(sessionID: UUID(), named: "Two")
+        let lifecycle = makeLifecycle(service)
         let coordinator = try makeCoordinator(
-            makeLifecycle(service), roster: StubVMInstanceRoster([instance]))
+            lifecycle, roster: StubVMInstanceRoster([instance, one, two]))
         defer { withExtendedLifetime(coordinator) {} }
         let accessory = MockUSBAccessoryService.accessory(
             registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        try pair(accessory, with: instance)
+        // Two other VMs claim it, which on its own holds it for the host.
+        try pair(accessory, with: one)
+        try pair(accessory, with: two)
+        service.accessories.append(accessory)
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+
+        try await capture(instance, service: service)
+        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
+
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+        #expect(service.attachedRegistryIDs == [1, 2])
+        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [2])
+    }
+
+    @Test("An owed return is spent by one arrival, so the next one is routed as fresh")
+    func anOwedReturnIsSpentOnce() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let recorder = PromptRecorder()
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.accessories.append(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        try await capture(instance, service: service)
+        let returned = service.assignComposing(
+            registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
+        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
+
+        // Taken off again by something other than a capture: its next arrival
+        // owes nothing, and nothing pairs it, so the user is asked.
+        let attached = try #require(instance.liveUSBAccessories.first)
+        try await lifecycle.detachUSBAccessory(
+            deviceID: attached.deviceID, from: instance, for: sessionID)
+        service.accessories.removeAll { $0.registryID == returned.registryID }
+        service.assignComposing(registryID: 3, serial: "0373", receptacle: "hub/Port-A@1")
+
+        #expect(recorder.requests.map(\.accessory.registryID) == [3])
+        #expect(service.attachedRegistryIDs == [1, 2])
+    }
+
+    @Test("A detach the user asked for outranks an owed return, and both are spent")
+    func aUserDetachOutranksAnOwedReturn() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let roster = StubVMInstanceRoster([instance])
+        let coordinator = try makeCoordinator(lifecycle, roster: roster)
+        defer { withExtendedLifetime(coordinator) {} }
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
         let identity = try #require(accessory.identity)
+        service.accessories.append(accessory)
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        // What a detach the user asked for leaves armed when VZ refused it: the
+        // accessory is still on the guest, and the user's last word is that it
+        // belongs to the Mac.
+        coordinator.userDetaching(accessory)
 
-        // A warm capture's put-back, already parked on this exact unit. The
-        // pairing names the same VM, so without the arrival both would attach
-        // it.
-        let putBack = Task {
-            await service.accessory(matching: identity, appearingWithin: .seconds(5))
-        }
-        try await service.waitStarted.wait { service.parkedWaitCount == 1 }
-        service.assign(accessory)
-        #expect(await putBack.value?.registryID == 1)
+        try await capture(instance, service: service)
+        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
 
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(service.attachedRegistryIDs.isEmpty)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(roster.accessoryHolders.owedReturn(of: identity) == nil)
+        #expect(instance.phase == .running(sessionID: sessionID))
+        #expect(service.attachedRegistryIDs == [1])
+    }
+
+    @Test("A guest that goes away under the capture drops what it was owed")
+    func aSessionEndDropsItsOwedReturns() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let roster = StubVMInstanceRoster([instance])
+        let coordinator = try makeCoordinator(lifecycle, roster: roster)
+        defer { withExtendedLifetime(coordinator) {} }
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
+        let identity = try #require(accessory.identity)
+        service.accessories.append(accessory)
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        let gate = GatedStep()
+        let snapshot = Task { try? await capture(instance, service: service, gate: gate) }
+        try await gate.waitUntilEntered()
+        #expect(roster.accessoryHolders.owedReturn(of: identity) === instance)
+
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(roster.accessoryHolders.owedReturn(of: identity) == nil)
+        gate.release()
+        _ = await snapshot.value
+        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
+
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(service.attachedRegistryIDs == [1])
+        #expect(!instance.hasLiveVirtualMachine)
+    }
+
+    @Test("A return that arrives under the capture waits behind it, and a session end drops it")
+    func aSessionEndDropsAQueuedReturn() async throws {
+        let service = MockUSBAccessoryService()
+        let sessionID = UUID()
+        let instance = makeInstance(sessionID: sessionID)
+        let lifecycle = makeLifecycle(service)
+        let coordinator = try makeCoordinator(lifecycle, roster: StubVMInstanceRoster([instance]))
+        defer { withExtendedLifetime(coordinator) {} }
+        service.accessories.append(
+            MockUSBAccessoryService.accessory(
+                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
+        try await lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
+        let gate = GatedStep()
+        let snapshot = Task { try? await capture(instance, service: service, gate: gate) }
+        try await gate.waitUntilEntered()
+        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        gate.release()
+        _ = await snapshot.value
+
+        #expect(service.attachedRegistryIDs == [1])
+        #expect(!instance.hasLiveVirtualMachine)
     }
 
     // MARK: - The User's Own Edits

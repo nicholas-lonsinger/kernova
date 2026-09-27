@@ -2,13 +2,22 @@ import Foundation
 import IOKit
 import IOKit.usb
 
-/// Reads an assigned accessory's IORegistry node through IOKit.
+/// Reads the durable facts off the IORegistry node behind an assigned USB
+/// accessory, through IOKit.
 ///
-/// `registryID` resolves to the `IOUSBHostDevice` node itself, so one
-/// `IORegistryEntryCreateCFProperties` answers every question but the
-/// receptacle, which lives on the port node above it.
-struct USBAccessoryRegistry: USBAccessoryRegistryReading {
-    func properties(ofAccessory registryID: UInt64) -> USBAccessoryNodeProperties? {
+/// A property read opens no user client, so it takes the device from nobody
+/// and needs no entitlement: the strings a device reports about itself are
+/// already in the registry by the time macOS assigns the accessory. Opening it
+/// to ask the same questions would take it exclusively and reset it on close,
+/// which is why nothing here does.
+enum USBAccessoryRegistry {
+    /// What the node `registryID` names reports, or `nil` when no node answers
+    /// to it.
+    ///
+    /// `registryID` resolves to the `IOUSBHostDevice` node itself, so one
+    /// `IORegistryEntryCreateCFProperties` answers every question but the
+    /// receptacle, which lives on the port node above it.
+    static func properties(ofAccessory registryID: UInt64) -> USBAccessoryNodeProperties? {
         let node = IOServiceGetMatchingService(
             kIOMainPortDefault, IORegistryEntryIDMatching(registryID))
         guard node != IO_OBJECT_NULL else { return nil }
@@ -42,7 +51,7 @@ struct USBAccessoryRegistry: USBAccessoryRegistryReading {
     /// device behind one hub the same key and make them one unit to anything
     /// matching on it. A hub's own ports carry no such property, so a device
     /// behind one has none here and is keyed by its `locationID` instead.
-    private func ioPortPath(above node: io_service_t) -> String? {
+    private static func ioPortPath(above node: io_service_t) -> String? {
         var port: io_registry_entry_t = IO_OBJECT_NULL
         guard IORegistryEntryGetParentEntry(node, kIOServicePlane, &port) == KERN_SUCCESS,
             port != IO_OBJECT_NULL
@@ -56,7 +65,7 @@ struct USBAccessoryRegistry: USBAccessoryRegistryReading {
 
     /// A descriptor index as the registry carries it — an `OSNumber` Kernova
     /// reads as one byte.
-    private func byte(_ value: Any?) -> UInt8 {
+    private static func byte(_ value: Any?) -> UInt8 {
         guard let number = value as? Int else { return 0 }
         return UInt8(truncatingIfNeeded: number)
     }

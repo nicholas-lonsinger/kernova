@@ -56,17 +56,3 @@ struct USBAccessoryNodeProperties: Sendable, Equatable {
         return receptacleKey.split(separator: "/").last.map(String.init) ?? receptacleKey
     }
 }
-
-/// Reads the durable facts off the IORegistry node behind an assigned USB
-/// accessory.
-///
-/// A property read opens no user client, so it takes the device from nobody
-/// and needs no entitlement: the strings a device reports about itself are
-/// already in the registry by the time macOS assigns the accessory. Opening it
-/// to ask the same questions would take it exclusively and reset it on close,
-/// which is why nothing here does.
-protocol USBAccessoryRegistryReading: Sendable {
-    /// What the node `registryID` names reports, or `nil` when no node answers
-    /// to it.
-    func properties(ofAccessory registryID: UInt64) -> USBAccessoryNodeProperties?
-}

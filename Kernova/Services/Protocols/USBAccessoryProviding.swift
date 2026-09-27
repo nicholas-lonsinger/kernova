@@ -20,17 +20,6 @@ enum USBAccessoryError: LocalizedError, Equatable {
     }
 }
 
-/// Why an accessory arrived, which decides whether anything may act on it.
-enum USBAccessoryArrival: Sendable, Equatable {
-    /// Nobody was waiting for this unit: a device the user just plugged in and
-    /// assigned, or one coming back from a reset nothing asked for.
-    case fresh
-    /// A caller was already waiting for exactly this unit and has just been
-    /// answered — the put-back a warm capture owes. That caller owns the
-    /// accessory, so nothing else may route it.
-    case awaitedReturn
-}
-
 /// Observes the USB accessories macOS assigns to Kernova, and moves them on and
 /// off a running guest's USB controller.
 ///
@@ -43,10 +32,8 @@ protocol USBAccessoryProviding: AnyObject {
     /// The accessories macOS has assigned to Kernova, in arrival order.
     var accessories: [USBAccessoryInfo] { get }
 
-    /// Called when a newly assigned accessory arrives, with why it did.
-    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo, USBAccessoryArrival) -> Void)? {
-        get set
-    }
+    /// Called when a newly assigned accessory arrives.
+    var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)? { get set }
 
     /// What the guests are holding, asked whenever a new assignment's identity
     /// is composed.
@@ -63,22 +50,6 @@ protocol USBAccessoryProviding: AnyObject {
     /// Registers the listener that populates `accessories`. Idempotent; the
     /// registration lives for the process.
     func startObserving()
-
-    /// The accessory now carrying `identity`, waiting up to `timeout` for
-    /// macOS to assign one that does.
-    ///
-    /// Detaching a passthrough device destroys the capture behind it, which
-    /// resets the device and re-registers drivers for it, so the same stick
-    /// comes back as a different IORegistry node after a delay nothing bounds
-    /// — under a second with the host idle, and far longer when it has a
-    /// volume to unmount first. Event-driven for that reason: the wait ends on
-    /// the assignment, and `timeout` is only the backstop.
-    ///
-    /// `identity` carries the receptacle the unit was in, so an accessory
-    /// reporting the same serial from somewhere else answers nothing here.
-    /// Cancelling the calling task ends the wait with `nil` immediately.
-    func accessory(matching identity: USBAccessoryIdentity, appearingWithin timeout: Duration)
-        async -> USBAccessoryInfo?
 
     /// Attaches the accessory `reservation` names to the live USB controller
     /// of the VM it is reserved for.

@@ -161,9 +161,54 @@ struct VirtualizationServiceTests {
             try await fixture.sweep(session)
         }
 
-        // What the instance still holds is what the sweep never got to, which
-        // is how the put-back after a failed capture knows what was ejected.
         #expect(fixture.instance.liveUSBAccessories.map(\.deviceID) == [fixture.deviceIDs[1]])
+    }
+
+    @Test("A capture's sweep owes back exactly the accessories it took off")
+    func aCaptureSweepOwesWhatItTookOff() async throws {
+        let fixture = try await instanceHoldingAccessories(3)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setDetachError(
+            VMSessionError.usbControllerUnavailable, forDeviceID: fixture.deviceIDs[1])
+        let owedBefore = OwedRecord()
+        let holders = fixture.library.accessoryHolders
+        let identities = fixture.instance.liveUSBAccessories.compactMap(\.accessory.identity)
+        #expect(identities.count == 3)
+        let firstDevice = fixture.deviceIDs[0]
+        let firstIdentity = identities[0]
+        await session.setBeforeDetach { deviceID in
+            await MainActor.run {
+                guard deviceID == firstDevice else { return }
+                owedBefore.instance = holders.owedReturn(of: firstIdentity)
+            }
+        }
+
+        await #expect(throws: VMSessionError.self) {
+            try await fixture.instance.activity.captureSnapshot(.live) { context in
+                try await VirtualizationService.detachUSBAccessories(
+                    owingReturns: context, session: session)
+                return .rest(.asStarted, ())
+            }
+        }
+
+        // Owed before its own detach ran, since macOS can hand it back before
+        // that returns.
+        #expect(owedBefore.instance === fixture.instance)
+        #expect(holders.owedReturn(of: identities[0]) === fixture.instance)
+        // The one whose detach threw is still the guest's, and the one never
+        // reached was never taken off.
+        #expect(holders.owedReturn(of: identities[1]) == nil)
+        #expect(holders.owedReturn(of: identities[2]) == nil)
+    }
+
+    @Test("A save's sweep owes nothing back")
+    func aSaveSweepOwesNothing() async throws {
+        let fixture = try await instanceHoldingAccessories(1)
+        let identity = try #require(fixture.instance.liveUSBAccessories.first?.accessory.identity)
+
+        try await fixture.sweep(MockSnapshotSession(guestState: .running))
+
+        #expect(fixture.library.accessoryHolders.owedReturn(of: identity) == nil)
     }
 
     @Test("A session holding nothing asks VZ for no detach at all")
@@ -362,7 +407,7 @@ struct VirtualizationServiceTests {
     private func captureWarm(
         _ instance: VMInstance, snapshot: VMSnapshotCaptureRequest, session: MockSnapshotSession
     ) async throws -> VMSnapshot {
-        try await instance.activity.perform(.capturingSnapshot(.live)) { context in
+        try await instance.activity.captureSnapshot(.live) { context in
             try await VirtualizationService.captureWarmSnapshot(
                 instance, context, snapshot: snapshot, session: session)
         }
@@ -1387,4 +1432,10 @@ struct VirtualizationServiceTests {
         #expect(instance.configuration.kernelPath == picked.path(percentEncoded: false))
         #expect(storage.bundles[instance.bundleURL]?.kernelPath == picked.path(percentEncoded: false))
     }
+}
+
+/// Which VM a return was owed to at one moment mid-sweep.
+@MainActor
+private final class OwedRecord {
+    var instance: VMInstance?
 }
