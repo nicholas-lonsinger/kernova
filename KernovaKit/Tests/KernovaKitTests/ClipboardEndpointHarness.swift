@@ -20,7 +20,6 @@ final class EndpointSide {
     let channel: VsockChannel
     /// The ceiling `maxPasteBytes` reads, so a test can move it mid-connection.
     let pasteLimit: Box<Int>
-    private let stagingRoot: TestStagingRoot?
 
     init(
         channel: VsockChannel,
@@ -40,12 +39,9 @@ final class EndpointSide {
         let clock = TestEngineClock()
         self.clock = clock
         if receives {
-            let root = TestStagingRoot()
-            stagingRoot = root
             staging = ClipboardFileStaging(
-                label: label, root: root.root, freeSpaceProvider: freeSpaceProvider)
+                label: label, root: TestStagingRoot().root, freeSpaceProvider: freeSpaceProvider)
         } else {
-            stagingRoot = nil
             staging = nil
         }
         let limit = self.pasteLimit

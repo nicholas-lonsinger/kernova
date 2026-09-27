@@ -50,6 +50,26 @@ struct TestScratchDirectoryTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test("a mint into a case's ledger after the case ended stops the process")
+    func mintAfterTheCaseEndedStopsTheProcess() async {
+        await #expect(processExitsWith: .failure) {
+            let ended = await TestScratchLedger.scoping { TestScratchLedger.current }
+            TestScratchLedger.$current.withValue(ended) {
+                _ = TestScratchDirectory(prefix: "ScratchLedgerEnded")
+            }
+        }
+    }
+
+    @Test("a forCase into a case's ledger after the case ended stops the process")
+    func forCaseAfterTheCaseEndedStopsTheProcess() async {
+        await #expect(processExitsWith: .failure) {
+            let ended = await TestScratchLedger.scoping { TestScratchLedger.current }
+            TestScratchLedger.$current.withValue(ended) {
+                _ = TestScratchDirectory.forCase(prefix: "ScratchLedgerEnded")
+            }
+        }
+    }
+
     @Test("forCase names one directory per prefix within a case, recorded once")
     func forCaseIsMemoizedPerPrefix() throws {
         let ledger = try #require(TestScratchLedger.current)
@@ -62,12 +82,10 @@ struct TestScratchDirectoryTests {
         #expect(ledger.recordedURLs.filter { $0 == first.url }.count == 1)
     }
 
-    @Test("a scratch is named by its prefix under the temporary directory, with its symlinks resolved")
-    func scratchSitsUnderTheResolvedTemporaryDirectory() {
+    @Test("a scratch is named by its prefix under the temporary directory")
+    func scratchSitsUnderTheTemporaryDirectory() {
         let parent = scratch.url.deletingLastPathComponent()
-        let resolved = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
-        #expect(parent.path == resolved.path)
-        #expect(parent.resolvingSymlinksInPath().path == parent.path)
+        #expect(parent.path == FileManager.default.temporaryDirectory.path)
         #expect(scratch.url.lastPathComponent.hasPrefix("ScratchLedgerTests-"))
     }
 }

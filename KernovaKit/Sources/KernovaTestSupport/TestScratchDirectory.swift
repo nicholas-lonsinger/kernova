@@ -20,7 +20,8 @@ public struct TestScratchDirectory: Sendable {
     ///
     /// - Parameter prefix: starts the name, so leftovers name their suite.
     public init(prefix: String) {
-        url = TestScratchLedger.running(minting: "TestScratchDirectory(prefix: \"\(prefix)\")").mint(prefix)
+        let caller = "TestScratchDirectory(prefix: \"\(prefix)\")"
+        url = TestScratchLedger.running(minting: caller).mint(prefix, for: caller)
     }
 
     private init(url: URL) {
@@ -31,9 +32,8 @@ public struct TestScratchDirectory: Sendable {
     /// call in the same case returns the same directory, and the case's end
     /// removes it — for a fixture with no suite instance to hold one.
     public static func forCase(prefix: String) -> Self {
-        Self(
-            url: TestScratchLedger.running(minting: "TestScratchDirectory.forCase(prefix: \"\(prefix)\")")
-                .shared(prefix))
+        let caller = "TestScratchDirectory.forCase(prefix: \"\(prefix)\")"
+        return Self(url: TestScratchLedger.running(minting: caller).shared(prefix, for: caller))
     }
 
     /// Whether the volume every scratch directory sits on folds case; mints
@@ -43,10 +43,8 @@ public struct TestScratchDirectory: Sendable {
         return values?.volumeSupportsCaseSensitiveNames == false
     }
 
-    /// Where every scratch directory is named, with symlinks resolved so a path
-    /// under it compares equal to the one the system reports for the same item.
     fileprivate static var parent: URL {
-        FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        FileManager.default.temporaryDirectory
     }
 
     fileprivate static func freshURL(_ prefix: String) -> URL {
@@ -55,10 +53,11 @@ public struct TestScratchDirectory: Sendable {
     }
 }
 
-/// The scratch directories one test case minted, removed when the case ends.
+/// The scratch directories one test case minted, removed when the case ends,
+/// after which it takes no more.
 ///
-/// `@unchecked Sendable`: `lock` serializes every access to `urls` and
-/// `shared`.
+/// `@unchecked Sendable`: `lock` serializes every access to `urls`,
+/// `sharedURLs` and `isClosed`.
 final class TestScratchLedger: @unchecked Sendable {
     /// The running case's ledger; `nil` outside a ``TestCaseScopeTrait`` scope.
     @TaskLocal static var current: TestScratchLedger?
@@ -66,6 +65,7 @@ final class TestScratchLedger: @unchecked Sendable {
     private let lock = NSLock()
     private var urls: [URL] = []
     private var sharedURLs: [String: URL] = [:]
+    private var isClosed = false
 
     /// Every directory recorded so far, in minting order.
     var recordedURLs: [URL] { lock.withLock { urls } }
@@ -97,24 +97,45 @@ final class TestScratchLedger: @unchecked Sendable {
         return current
     }
 
-    fileprivate func mint(_ prefix: String) -> URL {
+    fileprivate func mint(_ prefix: String, for caller: @autoclosure () -> String) -> URL {
         let url = TestScratchDirectory.freshURL(prefix)
-        lock.withLock { urls.append(url) }
+        let recorded = lock.withLock {
+            guard !isClosed else { return false }
+            urls.append(url)
+            return true
+        }
+        guard recorded else { Self.caseEnded(caller()) }
         return url
     }
 
-    fileprivate func shared(_ prefix: String) -> URL {
-        lock.withLock {
+    fileprivate func shared(_ prefix: String, for caller: @autoclosure () -> String) -> URL {
+        let url: URL? = lock.withLock {
+            guard !isClosed else { return nil }
             if let url = sharedURLs[prefix] { return url }
             let url = TestScratchDirectory.freshURL(prefix)
             urls.append(url)
             sharedURLs[prefix] = url
             return url
         }
+        guard let url else { Self.caseEnded(caller()) }
+        return url
+    }
+
+    private static func caseEnded(_ caller: String) -> Never {
+        preconditionFailure(
+            """
+            \(caller) ran after its test case had already ended and removed its scratch, from work the \
+            case started without awaiting, such as an unstructured Task. Nothing would remove this \
+            directory; await that work before the case returns.
+            """)
     }
 
     private func removeAll() {
-        for url in recordedURLs {
+        let recorded = lock.withLock {
+            isClosed = true
+            return urls
+        }
+        for url in recorded {
             do {
                 try FileManager.default.removeItem(at: url)
             } catch CocoaError.fileNoSuchFile {
