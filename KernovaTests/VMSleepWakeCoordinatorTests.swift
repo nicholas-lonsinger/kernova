@@ -211,6 +211,8 @@ struct VMSleepWakeCoordinatorTests {
 
         gate.release()
         try await capture.value()
+        // The capture's own ending took the pause off the queue.
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         try await ack.waitUntilAllowed()
         await pass.value
 
@@ -350,11 +352,83 @@ struct VMSleepWakeCoordinatorTests {
 
         gate.release()
         try await attach.value()
+        // The attach's own ending took the resume off the queue.
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         await wake.value
 
         #expect(virtService.resumeCallCount == 1)
         #expect(instance.phase == .running(sessionID: session))
         #expect(!failures.showError)
+    }
+
+    /// Runs the sleep pass over one running VM whose pause parks in `mock`,
+    /// then wakes while the pause still holds the VM.
+    private func wakeDuringAParkedPause(
+        _ mock: SuspendingMockVirtualizationService
+    ) async -> (
+        coordinator: VMSleepWakeCoordinator, instance: VMInstance, session: UUID,
+        sleep: Task<Void, Never>, wake: Task<Void, Never>
+    ) {
+        let roster = StubVMInstanceRoster()
+        let coordinator = VMSleepWakeCoordinator(
+            lifecycle: makeTestLifecycle(virtualization: mock, fileSystem: fileSystem),
+            roster: roster)
+        coordinator.onFailure = { [failures] error in
+            failures.record(title: "Error", message: error.localizedDescription)
+        }
+        let session = UUID()
+        let instance = VMInstanceFixture.make(name: "Pausing")
+        instance.activity.placeForTesting(.running(sessionID: session))
+        roster.instances = [instance]
+        let sleep = coordinator.pauseAllForSleep {}
+        await mock.waitUntilSuspended()
+        #expect(instance.phase.operation?.kind == .pausing)
+
+        let wake = coordinator.resumeAllAfterWake()
+        return (coordinator, instance, session, sleep, wake)
+    }
+
+    /// The pause can still be running at wake on the `NSWorkspace` fallback,
+    /// which holds nothing, or once the platform stopped waiting.
+    @Test("Wake while the sleep pause still runs resumes the VM once the pause ends")
+    func wakeDuringARunningPauseResumesAfterIt() async {
+        let mock = SuspendingMockVirtualizationService()
+        let (coordinator, instance, session, sleep, wake) = await wakeDuringAParkedPause(mock)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(mock.resumeCallCount == 0)
+        #expect(instance.phase.operation?.kind == .pausing)
+
+        mock.resumeSuspended()
+        await sleep.value
+        await wake.value
+        // The composition root holds the coordinator; the pass holds it weakly.
+        withExtendedLifetime(coordinator) {}
+
+        #expect(mock.resumeCallCount == 1)
+        #expect(instance.phase == .running(sessionID: session))
+        #expect(!failures.showError)
+    }
+
+    @Test("Wake while the sleep pause still runs resumes nothing when the pause fails")
+    func wakeDuringARunningPauseThatFailsResumesNothing() async {
+        let mock = SuspendingMockVirtualizationService()
+        mock.pauseError = VirtualizationError.noVirtualMachine
+        let (coordinator, instance, session, sleep, wake) = await wakeDuringAParkedPause(mock)
+        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+
+        mock.resumeSuspended()
+        await sleep.value
+        await wake.value
+        // The composition root holds the coordinator; the pass holds it weakly.
+        withExtendedLifetime(coordinator) {}
+
+        #expect(mock.resumeCallCount == 0)
+        #expect(instance.phase == .running(sessionID: session))
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        // Only the sleep pass's own report of the failed pause: the resume
+        // the pause's ending refused is not reported.
+        #expect(failures.errors.count == 1)
+        #expect(failures.errorMessage?.contains("Failed to pause") == true)
     }
 
     /// Wake's resume is a hot one: a VM that came to rest on its slot while
