@@ -349,13 +349,6 @@ struct VMCapabilityCatalog {
         return configuration.pendingGuestAccount
     }
 
-    /// Whether `instance` has the account question outstanding — what a surface
-    /// deciding whether to raise it reads.
-    func owesGuestAccountAnswer(_ instance: VMInstance) -> Bool {
-        guard case .owed = guestAccountState(of: instance) else { return false }
-        return true
-    }
-
     /// Whether the stop slot can be invoked now.
     ///
     /// The slot stands for two capabilities, and layers the baseline's own rule

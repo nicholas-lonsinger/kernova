@@ -396,14 +396,6 @@ final class VMActivity {
         try await run(kind, origin: origin, { $0 }, body)
     }
 
-    /// ``perform(_:origin:_:)`` for a bring-up, whose body alone may create a session.
-    func bringUp<T>(
-        _ kind: VMBringUpKind,
-        _ body: (borrowing VMBringUpContext) async throws -> VMOperationEnding<T>
-    ) async throws -> T {
-        try await run(.bringUp(kind), { VMBringUpContext(operation: $0) }, body)
-    }
-
     /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
     /// was admitted in from its context.
     func captureSnapshot<T>(

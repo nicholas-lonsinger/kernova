@@ -101,14 +101,14 @@ extension VMCommandCore {
     }
 
     /// A start nobody waits on, as a follow-up on `instance` — joining a
-    /// bring-up already in flight, and otherwise decided afresh when it
-    /// drains.
+    /// bring-up already in flight or a start already queued, and otherwise
+    /// decided afresh when it drains.
     ///
     /// A failure is reported the way a direct start's is, the
     /// removable-attachment recovery included; a standing start that passed
     /// its VM over (``standingStartPassedOver(_:)``) did not fail.
     func startFollowUp(_ instance: VMInstance, policy: StartPolicy) -> VMFollowUp {
-        VMFollowUp(scope: .vm, rank: .ordinary, joins: .start(recovery: false)) {
+        VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             try self.startNow(instance, policy: policy, resolving: outcome)
@@ -124,16 +124,16 @@ extension VMCommandCore {
 
     /// Whether a standing start that ended with `error` passed its VM over
     /// rather than failed: the VM's state takes no start — it is running
-    /// already, gone, or has a guest setup still to run — or its start would
-    /// ask the account question nobody is there to answer.
+    /// already, here or in another copy of Kernova, gone, or has a guest setup
+    /// still to run — or its start would ask the account question nobody is
+    /// there to answer.
     static func standingStartPassedOver(_ error: any Error) -> Bool {
         if case .guestAccountPasswordRequired? = error as? CommandError { return true }
         guard let refused = error as? VMAdmissionRefusal else { return false }
         switch refused.refusal {
-        case .invalidState, .removed:
+        case .invalidState, .removed, .heldByAnotherCopy:
             return true
-        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating,
-            .heldByAnotherCopy:
+        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating:
             return false
         }
     }
@@ -928,11 +928,11 @@ extension VMCommandCore {
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
     /// one it is unbounded, matching what a graceful shutdown means. A guest
-    /// that will not go down within it is neither restarted nor terminated
-    /// behind the user's back: the owed boot is withdrawn — unless the session
-    /// already ended, in which case it is under way and awaited like any
-    /// other. A VM deleted in the meantime is refused by the bring-up it would
-    /// have got.
+    /// whose session is still live when the wait fails is neither restarted
+    /// nor terminated behind the user's back: the owed boot is withdrawn. Once
+    /// the session has ended, the boot is owed whatever the wait reported, and
+    /// is awaited. A VM deleted in the meantime is refused by the bring-up it
+    /// would have got.
     ///
     /// A VM still owing its guest the account it was set up with is refused
     /// before the stop. Running is not evidence the window is spent — an
@@ -951,7 +951,10 @@ extension VMCommandCore {
         guard let sessionID = instance.activity.liveSessionID else {
             throw admissionRefusal(.invalidState, on: instance, verb: .restart)
         }
-        let boot = VMFollowUp(scope: .vm, rank: .ordinary) { [weak self, weak instance] outcome in
+        // A start request, so a second restart's boot owed to the same end
+        // joins this one rather than meeting the VM this one brought up.
+        let boot = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
+            [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             try self.startNow(instance, policy: .command, resolving: outcome)
         }
@@ -960,7 +963,12 @@ extension VMCommandCore {
             try await stop(instance, disposition: .graceful, confirmed: true)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
-            guard !instance.activity.withdraw(boot) else { throw error }
+            // The session ending is what the boot is owed to, so once it has
+            // ended the boot is under way whatever this wait reported.
+            guard instance.activity.liveSessionID != sessionID else {
+                instance.activity.withdraw(boot)
+                throw error
+            }
         }
         do {
             try await boot.outcome.value()

@@ -2861,7 +2861,7 @@ struct VMCommandCoreTests {
 
         #expect(
             harness.library.heldGuestAccountPassword(for: instance)?.value == "analytical-engine")
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!harness.core.capabilities.guestAccountState(of: instance).isOwed)
 
         try await harness.core.start(instance)
 
@@ -2911,7 +2911,7 @@ struct VMCommandCoreTests {
         // Nothing held, so the question is still outstanding and the start still
         // refuses.
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        #expect(harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(harness.core.capabilities.guestAccountState(of: instance).isOwed)
         await #expect(throws: CommandError.self) { try await harness.core.start(instance) }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -2950,7 +2950,7 @@ struct VMCommandCoreTests {
 
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!harness.core.capabilities.guestAccountState(of: instance).isOwed)
 
         try await harness.core.start(instance)
 
@@ -2992,7 +2992,7 @@ struct VMCommandCoreTests {
         // provisioning window with nobody to answer for the account.
         #expect(instance.setupOperationTask == nil)
         #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
-        #expect(harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(harness.core.capabilities.guestAccountState(of: instance).isOwed)
     }
 
     @available(macOS 27.0, *)
@@ -3048,7 +3048,7 @@ struct VMCommandCoreTests {
         // so nothing may be left to ask about or to spend.
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!harness.core.capabilities.guestAccountState(of: instance).isOwed)
     }
 
     @available(macOS 27.0, *)
@@ -3137,7 +3137,7 @@ struct VMCommandCoreTests {
         // answer is still there, which is what makes the retry silent.
         #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
         #expect(harness.library.heldGuestAccountPassword(for: instance) != nil)
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!harness.core.capabilities.guestAccountState(of: instance).isOwed)
 
         virtualization.startError = nil
         try await harness.core.start(instance)
@@ -3159,7 +3159,7 @@ struct VMCommandCoreTests {
         // The skip is about the VM rather than about one call, so a boot that
         // never happened does not bring the account back.
         #expect(instance.configuration.pendingGuestAccount == nil)
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!harness.core.capabilities.guestAccountState(of: instance).isOwed)
 
         virtualization.startError = nil
         try await harness.core.start(instance)
@@ -3417,7 +3417,7 @@ struct VMCommandCoreTests {
 
         #expect(harness.virtualization.startCallCount == 0)
         #expect(created.configuration.pendingGuestAccount == makeAccountIntent())
-        #expect(!harness.core.capabilities.owesGuestAccountAnswer(created))
+        #expect(!harness.core.capabilities.guestAccountState(of: created).isOwed)
 
         try await harness.core.start(created)
 
@@ -3625,6 +3625,36 @@ struct VMCommandCoreTests {
         #expect(instance.status == .running)
     }
 
+    @Test("Two restarts owed to one shutdown bring the guest up once, and both succeed")
+    func twoRestartsShareOneBoot() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let session = UUID()
+        let instance = makeInstance(
+            in: harness, name: "Twice", phase: .running(sessionID: session))
+
+        let first = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: 60)
+        }
+        let second = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), timeout: 60)
+        }
+        // Both power-off deadlines parked: both restarts owe a boot to the
+        // session's end.
+        try await clock.sleepRequested.wait { clock.parked.count == 2 }
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await first.value
+        try await second.value
+
+        // The second boot joined the first rather than meeting the VM the
+        // first brought up.
+        #expect(virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
+
     // MARK: - Deadlines on the power-off
 
     @Test("A stop deadline that expires refuses and escalates nothing")
@@ -3703,8 +3733,9 @@ struct VMCommandCoreTests {
         let virtualization = MockVirtualizationService()
         virtualization.guestIgnoresShutdownRequest = true
         let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let session = UUID()
         let instance = makeInstance(
-            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+            in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let error = await commandError {
             try await harness.core.restart(.id(instance.id), timeout: 30)
@@ -3721,6 +3752,12 @@ struct VMCommandCoreTests {
         #expect(virtualization.startCallCount == 0)
         #expect(virtualization.forceStopCallCount == 0)
         #expect(instance.status == .running)
+
+        // The boot was withdrawn with the expiry, so the guest going down
+        // later brings nothing up.
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        #expect(instance.phase == .stopped)
+        #expect(virtualization.startCallCount == 0)
     }
 
     @Test("A stop settles on the power-off, not on the baseline revert behind it")
@@ -3790,8 +3827,9 @@ struct VMCommandCoreTests {
         virtualization.guestIgnoresShutdownRequest = true
         let clock = GatedEngineClock()
         let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let session = UUID()
         let instance = makeInstance(
-            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
+            in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let restart = Task {
             try await harness.core.restart(.id(instance.id), timeout: 60)
@@ -3812,6 +3850,12 @@ struct VMCommandCoreTests {
         // the caller asked to reboot, and reported it as a restart.
         #expect(virtualization.startCallCount == 0)
         #expect(virtualization.resumeCallCount == 0)
+
+        // The boot was withdrawn with the expiry, so the session ending later
+        // brings nothing up.
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        #expect(instance.phase == .stopped)
+        #expect(virtualization.startCallCount == 0)
     }
 
     @Test("A restart deadline covers the power-off, not the baseline revert behind it")

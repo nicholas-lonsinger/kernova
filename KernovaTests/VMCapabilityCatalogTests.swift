@@ -659,14 +659,12 @@ struct VMCapabilityCatalogTests {
             $0.pendingGuestAccount = intent
         }
         #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
-        #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
         #expect(
             harness.catalog.guestAccountState(of: instance)
                 == .answered(intent, GuestAccountPassword("analytical-engine")))
-        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
     }
 
     @available(macOS 27.0, *)
@@ -687,7 +685,6 @@ struct VMCapabilityCatalogTests {
         // Not "asks again": the window is gone, so the question is gone with it.
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
     }
 
     @available(macOS 27.0, *)

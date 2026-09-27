@@ -1020,7 +1020,7 @@ struct VMInstanceTests {
 
         switch row.kind {
         case .bringUp(let kind):
-            try await instance.activity.bringUp(kind) { context in
+            try await instance.activity.launchBringUp(kind) { context in
                 // A revert ends the session it started from before it brings
                 // the snapshot up.
                 context.operation.endSession()
@@ -1029,7 +1029,7 @@ struct VMInstanceTests {
                     to: instance, device: MockNetworkDeviceControl(), linkObserver: observer)
                 context.bindSessionForTesting(UUID())
                 return .rest(.live(.running), ())
-            }
+            }.value()
         default:
             instance.beginSessionContextForTesting()
             attachNetworkCoordinator(

@@ -3088,7 +3088,7 @@ struct VMLibraryViewModelTests {
         // The password went to the verb, which holds it apart from the bundle —
         // so the VM owes no answer even though the account is still unspent.
         #expect(wizard.guestAccountPasswordForCreate == "analytical-engine")
-        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
+        #expect(!viewModel.capabilities.guestAccountState(of: created).isOwed)
     }
 
     @Test("createVM answers nothing when the wizard is creating no account")
@@ -3101,7 +3101,7 @@ struct VMLibraryViewModelTests {
 
         let created = try #require(viewModel.instances.first)
         #expect(created.configuration.pendingGuestAccount == nil)
-        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
+        #expect(!viewModel.capabilities.guestAccountState(of: created).isOwed)
         #expect(wizard.guestAccountPasswordForCreate == nil)
     }
 
@@ -4362,15 +4362,17 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("startAutomaticVMsForLaunch skips a VM that left the library mid-pass")
-    func autoStartSkipsInstanceRemovedMidPass() async {
+    func autoStartSkipsInstanceRemovedMidPass() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
         let first = makeAutoStartInstance(in: viewModel.library, name: "First")
         let second = makeAutoStartInstance(in: viewModel.library, name: "Second")
 
         let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
-        // Deleted while the first VM is still booting, so the pass's snapshot
-        // holds an instance the library no longer has.
+        // Removed while the first VM is still booting, so the pass's snapshot
+        // holds an instance the library no longer has — evicted as a
+        // reconcile evicts it.
         await suspending.waitUntilSuspended()
+        try second.activity.remove()
         viewModel.library.evict(second)
         suspending.shouldSuspendOnStart = false
         suspending.resumeSuspended()
@@ -4378,6 +4380,30 @@ struct VMLibraryViewModelTests {
 
         #expect(first.status == .running)
         #expect(second.status == .stopped)
+    }
+
+    /// The copy that runs the VM is the one that started it; a second copy
+    /// launched beside it has nothing to report about it.
+    @Test("startAutomaticVMsForLaunch passes over a marked VM another copy holds, alerting nothing")
+    func autoStartPassesOverAVMAnotherCopyHolds() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let files = InMemoryVMBundleFiles()
+        var marked = VMHostState()
+        marked.startsAutomaticallyOnLaunch = true
+        let elsewhere = viewModel.library.admitFixture(
+            name: "Elsewhere", hostState: marked, files: files)
+        let here = makeAutoStartInstance(in: viewModel.library, name: "Here")
+        files.holdElsewhere(elsewhere.bundleURL)
+
+        await viewModel.startAutomaticVMsForLaunch()
+        // A report would come from the start's own follow-up, queued before
+        // this barrier.
+        await drainMainQueue()
+
+        #expect(virtService.startCallCount == 1)
+        #expect(elsewhere.status == .stopped)
+        #expect(here.status == .running)
+        #expect(presenter.errors.isEmpty)
     }
 
     /// The CLI relaunch's shape: a command reaching a Kernova that was not

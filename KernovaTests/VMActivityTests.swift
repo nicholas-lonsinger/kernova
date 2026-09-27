@@ -171,10 +171,10 @@ struct VMActivityTests {
                 VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
             await #expect(throws: Probe.self, "\(kind)") {
                 if case .bringUp(let bringUp) = kind {
-                    try await instance.activity.bringUp(bringUp) {
+                    try await instance.activity.launchBringUp(bringUp) {
                         (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                         throw Probe()
-                    }
+                    }.value()
                 } else {
                     try await instance.activity.perform(kind) {
                         (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
@@ -189,10 +189,10 @@ struct VMActivityTests {
         // message; nothing is live after it.
         let (booting, _) = makeInstance(.stopped)
         await #expect(throws: Probe.self) {
-            try await booting.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await booting.activity.launchBringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 throw Probe()
-            }
+            }.value()
         }
         #expect(booting.phase == .failed(message: message))
         #expect(!booting.hasLiveVirtualMachine)
@@ -1390,7 +1390,7 @@ struct VMActivityTests {
         let (instance, recorder) = makeInstance(.stopped)
         let session = UUID()
 
-        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
+        try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
             recorder.sessionID = context.operation.sessionID
             #expect(instance.liveSessionID == nil)
             context.bindSessionForTesting(session)
@@ -1398,7 +1398,7 @@ struct VMActivityTests {
             #expect(instance.phase.operation?.session == VMOperationSession(id: session, guest: .running))
             #expect(instance.liveSessionID == session)
             return .rest(.live(.running), ())
-        }
+        }.value()
 
         #expect(recorder.sessionID == nil)
         #expect(instance.phase == .running(sessionID: session))
@@ -1409,11 +1409,11 @@ struct VMActivityTests {
         let (instance, _) = makeInstance(.stopped)
 
         await #expect(throws: Probe.self) {
-            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 throw Probe()
-            }
+            }.value()
         }
 
         #expect(instance.activity.sessionContext == nil)

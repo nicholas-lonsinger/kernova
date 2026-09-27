@@ -1333,17 +1333,13 @@ final class VMLibraryViewModel {
         var skippedCount = 0
         var failedCount = 0
         for instance in marked {
-            // A boot takes long enough for the user to delete or evict a later
-            // VM meanwhile, and `marked` still holds that instance. Starting it
-            // would open a display window over a bundle no longer in the library.
-            // The marking is re-read at the moment of acting: it is this pass's
-            // own criterion, and the user can clear it while the pass runs.
-            guard instances.contains(where: { $0 === instance }),
-                instance.hostState.startsAutomaticallyOnLaunch
-            else {
+            // Re-read at the moment of acting: the marking is this pass's own
+            // criterion, and the user can clear it while the pass runs. A VM
+            // deleted or evicted meanwhile is refused by its start.
+            guard instance.hostState.startsAutomaticallyOnLaunch else {
                 #log(
                     Self.logger, .debug,
-                    "Launch auto-start: '\(instance.name, privacy: .public)' left the library or its marking before its turn"
+                    "Launch auto-start: '\(instance.name, privacy: .public)' lost its marking before its turn"
                 )
                 skippedCount += 1
                 continue

@@ -335,12 +335,12 @@ struct VMLibraryTests {
         }
         #expect(reverting.configuration.macAddress != address)
 
-        try await reverting.activity.bringUp(
+        try await reverting.activity.launchBringUp(
             .reverting(snapshotID: snapshot.id, resumesAfter: false)
         ) { context in
             try install(context.operation.permit)
             return .rest(.atRest(.stopped), ())
-        }
+        }.value()
         #expect(reverting.configuration.macAddress == address)
     }
 
@@ -420,14 +420,14 @@ struct VMLibraryTests {
         written.memorySizeInGB += 2
         let saves = storage.saveConfigurationCallCount
 
-        try await instance.activity.bringUp(
+        try await instance.activity.launchBringUp(
             .reverting(snapshotID: snapshot.id, resumesAfter: false)
         ) { context in
             try library.commitRevertedConfiguration(
                 VMSnapshotRestorePlan(configuration: written, relativePaths: [], kind: .cold),
                 context.operation.permit)
             return .rest(.asStarted, ())
-        }
+        }.value()
 
         #expect(instance.configuration == written)
         #expect(storage.bundles[instance.bundleURL] == written)

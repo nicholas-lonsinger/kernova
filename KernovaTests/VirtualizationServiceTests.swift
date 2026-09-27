@@ -232,12 +232,12 @@ struct VirtualizationServiceTests {
         }
 
         await #expect(throws: GuestStopped.self) {
-            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) {
                 (context: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 context.bindSessionForTesting(UUID())
                 throw GuestStopped()
-            }
+            }.value()
         }
 
         #expect(instance.phase == .failed(message: "The guest stopped."))
@@ -1235,10 +1235,10 @@ struct VirtualizationServiceTests {
     private func restAfterFailedBringUp(
         _ kind: VMBringUpKind, on instance: VMInstance, with error: any Error
     ) async -> VMLifecyclePhase {
-        _ = try? await instance.activity.bringUp(kind) {
+        _ = try? await instance.activity.launchBringUp(kind) {
             (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
             throw error
-        }
+        }.value()
         return instance.phase
     }
 

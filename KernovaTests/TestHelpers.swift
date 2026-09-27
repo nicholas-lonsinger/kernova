@@ -406,6 +406,14 @@ enum PhaseFixture: Sendable, CustomTestStringConvertible {
     }
 }
 
+extension VMCapabilityCatalog.GuestAccountState {
+    /// Whether the account question is outstanding.
+    var isOwed: Bool {
+        if case .owed = self { return true }
+        return false
+    }
+}
+
 extension VMActivity {
     /// Whether `request` is admitted outright right now.
     func admits(_ request: VMAdmission.Request, posture: VMAdmission.Posture = .commit) -> Bool {
