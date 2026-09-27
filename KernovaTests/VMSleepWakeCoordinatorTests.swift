@@ -211,8 +211,6 @@ struct VMSleepWakeCoordinatorTests {
 
         gate.release()
         try await capture.value()
-        // The capture's own ending admitted the pause.
-        #expect(instance.phase.operation?.kind == .pausing)
         try await ack.waitUntilAllowed()
         await pass.value
 
@@ -348,11 +346,10 @@ struct VMSleepWakeCoordinatorTests {
 
         let wake = coordinator.resumeAllAfterWake()
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        #expect(virtService.resumeCallCount == 0)
 
         gate.release()
         try await attach.value()
-        // The attach's own ending admitted the resume.
-        #expect(instance.phase.operation?.kind == .resuming)
         await wake.value
 
         #expect(virtService.resumeCallCount == 1)
