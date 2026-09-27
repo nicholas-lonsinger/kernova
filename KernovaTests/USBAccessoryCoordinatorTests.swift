@@ -730,10 +730,10 @@ struct USBAccessoryCoordinatorTests {
         let sessionID = UUID()
         service.suspendNextAttach = true
 
-        try await instance.activity.startGuest(.starting(recovery: false)) { context in
+        try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
             context.bringUp.bindSessionForTesting(sessionID)
             return .rest(.live(.running), ())
-        }
+        }.value()
 
         // The start's own ending admitted the attach: no other request could
         // be decided against the running VM in between.

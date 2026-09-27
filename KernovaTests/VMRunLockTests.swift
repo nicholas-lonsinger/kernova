@@ -59,10 +59,10 @@ struct VMRunLockTests {
 
     /// Brings `instance` up live through a real bring-up.
     private func startLive(_ instance: VMInstance) async throws {
-        try await instance.activity.startGuest(.starting(recovery: false)) { context in
+        try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }
+        }.value()
     }
 
     // MARK: - Refusal
@@ -78,16 +78,16 @@ struct VMRunLockTests {
 
     nonisolated private static let attempts: [Attempt] = [
         Attempt(description: "start", phase: .stopped) { instance, recorder in
-            try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }
+            }.value()
         },
         Attempt(description: "restore", phase: .suspended, slot: true) { instance, recorder in
-            try await instance.activity.startGuest(.restoringSavedState) { _ in
+            try await instance.activity.launchStartGuest(.restoringSavedState) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }
+            }.value()
         },
         Attempt(description: "setup", phase: .initialBoot, pendingSetup: true) { instance, recorder in
             try instance.activity.launchBringUp(.settingUp(.linuxImageDownload)) { _ in
@@ -200,11 +200,11 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, store)
 
         // A bring-up: held in the body, and while the guest runs.
-        try await instance.activity.startGuest(.starting(recovery: false)) { context in
+        try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
             recorder.heldInBody = instance.activity.holdsRunLock
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }
+        }.value()
         #expect(recorder.heldInBody == true)
         expectLockFollowsPhase(instance, store)
 
@@ -258,9 +258,9 @@ struct VMRunLockTests {
 
         // A bring-up that fails before binding a session.
         await #expect(throws: Probe.self) {
-            try await instance.activity.startGuest(.starting(recovery: false)) {
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) {
                 (_: borrowing VMGuestStartContext) throws -> VMOperationEnding<Void> in throw Probe()
-            }
+            }.value()
         }
         expectLockFollowsPhase(instance, store)
 
@@ -358,11 +358,11 @@ struct VMRunLockTests {
             .update(.configuration) { $0.linuxInstallContext = nil }
         let recorder = Recorder()
 
-        try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+        try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
             recorder.startedFrom = instance.phase.operation?.startedFrom
             recorder.pendingSetupInBody = instance.configuration.pendingGuestSetup != nil
             return .rest(.asStarted, ())
-        }
+        }.value()
 
         #expect(recorder.startedFrom == .stopped)
         #expect(recorder.pendingSetupInBody == false)
@@ -378,10 +378,10 @@ struct VMRunLockTests {
         let recorder = Recorder()
 
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }
+            }.value()
         }
 
         #expect(!recorder.bodyRan)

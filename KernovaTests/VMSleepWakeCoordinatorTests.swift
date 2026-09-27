@@ -71,7 +71,7 @@ struct VMSleepWakeCoordinatorTests {
     /// Launches `kind` with a body that parks on `gate` and then rests where
     /// it started.
     private func launchGated(
-        _ kind: VMOperationKind, on instance: VMInstance, gate: GatedStep,
+        _ kind: VMNonBringUpKind, on instance: VMInstance, gate: GatedStep,
         resting rest: VMOperationRest = .asStarted
     ) throws -> VMOutcome {
         try instance.activity.launch(kind) { _ in

@@ -311,40 +311,6 @@ struct VMCapabilityCatalog {
         return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
     }
 
-    /// The verb that brings a VM back up.
-    enum BringUpVerb: Equatable {
-        case start
-        case resume
-    }
-
-    /// Which verb brings `instance` back up, or `nil` when its state admits
-    /// neither.
-    ///
-    /// A VM holding a saved state is resumed: its memory is in the bundle's
-    /// suspend slot, and a boot would discard it. A live-paused one is neither —
-    /// its memory never left the host, so there is no bring-up owed.
-    func bringUpVerb(for instance: VMInstance) -> BringUpVerb? {
-        if isAvailable(.resume, on: instance), instance.holdsSuspendedSession { return .resume }
-        return isAvailable(.start, on: instance) ? .start : nil
-    }
-
-    /// What a bring-up taken from a standing preference rather than a command
-    /// may do with this VM, or `nil`.
-    ///
-    /// The launch pass acts on ``VMHostState/startsAutomaticallyOnLaunch``,
-    /// so it begins no guest setup and raises no question: a VM with a macOS
-    /// install or a Linux image download still to run is passed over, and so is
-    /// one still owing its guest an account answer
-    /// (``owesGuestAccountAnswer(_:)``). Both are decided here rather than left
-    /// to the verb, because the pass has no window for what either would put on
-    /// screen.
-    func standingBringUp(for instance: VMInstance) -> BringUpVerb? {
-        guard instance.configuration.pendingGuestSetup == nil,
-            !owesGuestAccountAnswer(instance)
-        else { return nil }
-        return bringUpVerb(for: instance)
-    }
-
     /// Where a VM stands on the macOS account it was set up with.
     enum GuestAccountState: Equatable {
         /// Nothing to create: the VM names no account, or this host's
@@ -381,13 +347,6 @@ struct VMCapabilityCatalog {
     static func deliverableGuestAccount(of configuration: VMConfiguration) -> GuestAccountIntent? {
         guard MacOSGuestProvisioning.hostSupportsProvisioning else { return nil }
         return configuration.pendingGuestAccount
-    }
-
-    /// Whether `instance` has the account question outstanding — what a surface
-    /// deciding whether to raise it reads.
-    func owesGuestAccountAnswer(_ instance: VMInstance) -> Bool {
-        guard case .owed = guestAccountState(of: instance) else { return false }
-        return true
     }
 
     /// Whether the stop slot can be invoked now.

@@ -78,13 +78,14 @@ struct VMActivityTests {
     private func launchGated(
         _ kind: VMOperationKind, on instance: VMInstance, gate: GatedStep
     ) throws -> VMOutcome {
-        if case .bringUp(let bringUp) = kind {
-            return try instance.activity.launchBringUp(bringUp) { _ in
+        guard let nonBringUp = VMNonBringUpKind(kind) else {
+            guard case .bringUp(let bringUp) = kind else { preconditionFailure("\(kind)") }
+            return try instance.activity.launchAnyBringUp(bringUp) { _ in
                 try await gate.pass()
                 return .rest(.asStarted, ())
             }
         }
-        return try instance.activity.launch(kind) { _ in
+        return try instance.activity.launch(nonBringUp) { _ in
             try await gate.pass()
             return .rest(.asStarted, ())
         }
@@ -115,11 +116,11 @@ struct VMActivityTests {
     @Test("Each typed entry point commits its kind and hands the body what it was admitted with")
     func typedEntryPointsCarryTheirKind() async throws {
         let (starting, startRecorder) = makeInstance(.stopped)
-        try await starting.activity.startGuest(.starting(recovery: false)) { context in
+        try await starting.activity.launchStartGuest(.starting(recovery: false)) { context in
             startRecorder.operation = starting.phase.operation
             startRecorder.guestStart = context.kind
             return .rest(.asStarted, ())
-        }
+        }.value()
         #expect(startRecorder.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         #expect(startRecorder.guestStart == .starting(recovery: false))
 
@@ -171,12 +172,12 @@ struct VMActivityTests {
                 VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
             await #expect(throws: Probe.self, "\(kind)") {
                 if case .bringUp(let bringUp) = kind {
-                    try await instance.activity.bringUp(bringUp) {
+                    try await instance.activity.launchAnyBringUp(bringUp) {
                         (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                         throw Probe()
-                    }
+                    }.value()
                 } else {
-                    try await instance.activity.perform(kind) {
+                    try await instance.activity.perform(try #require(VMNonBringUpKind(kind))) {
                         (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
                         throw Probe()
                     }
@@ -189,10 +190,10 @@ struct VMActivityTests {
         // message; nothing is live after it.
         let (booting, _) = makeInstance(.stopped)
         await #expect(throws: Probe.self) {
-            try await booting.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await booting.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 throw Probe()
-            }
+            }.value()
         }
         #expect(booting.phase == .failed(message: message))
         #expect(!booting.hasLiveVirtualMachine)
@@ -521,7 +522,7 @@ struct VMActivityTests {
         for failure in [nil, Probe()] as [Probe?] {
             let (instance, _) = makeInstance(.stopped)
             let gate = GatedStep()
-            let outcome = try instance.activity.launchBringUp(.guestStart(.starting(recovery: false))) { context in
+            let outcome = try instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
                 try await gate.pass()
                 context.bindSessionForTesting(UUID())
                 return .rest(.live(.running), ())
@@ -648,9 +649,17 @@ struct VMActivityTests {
         request: VMAdmission.Request? = nil, gate: GatedStep? = nil, order: FollowUpOrder
     ) -> VMFollowUp {
         VMFollowUp(scope: scope, rank: rank, request: request) { outcome in
-            try instance.activity.launch(kind, resolving: outcome) { _ in
-                try await gate?.pass()
-                return .rest(.asStarted, ())
+            if let nonBringUp = VMNonBringUpKind(kind) {
+                try instance.activity.launch(nonBringUp, resolving: outcome) { _ in
+                    try await gate?.pass()
+                    return .rest(.asStarted, ())
+                }
+            } else if case .bringUp(let bringUp) = kind {
+                try instance.activity.launchAnyBringUp(bringUp) { _ in
+                    try await gate?.pass()
+                    return .rest(.asStarted, ())
+                }
+                .forward(to: outcome)
             }
             order.admitted.append(label)
         }
@@ -725,9 +734,9 @@ struct VMActivityTests {
             instance.activity.decide(.start(recovery: false), posture: .commit)
                 == .refuse(.busy(.copyingOut)))
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut))) {
-            try await instance.activity.startGuest(.starting(recovery: false)) { _ in
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 .rest(.asStarted, ())
-            }
+            }.value()
         }
         gate.release()
         try await owed.outcome.value()
@@ -1390,7 +1399,7 @@ struct VMActivityTests {
         let (instance, recorder) = makeInstance(.stopped)
         let session = UUID()
 
-        try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) { context in
+        try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             recorder.sessionID = context.operation.sessionID
             #expect(instance.liveSessionID == nil)
             context.bindSessionForTesting(session)
@@ -1398,7 +1407,7 @@ struct VMActivityTests {
             #expect(instance.phase.operation?.session == VMOperationSession(id: session, guest: .running))
             #expect(instance.liveSessionID == session)
             return .rest(.live(.running), ())
-        }
+        }.value()
 
         #expect(recorder.sessionID == nil)
         #expect(instance.phase == .running(sessionID: session))
@@ -1409,11 +1418,11 @@ struct VMActivityTests {
         let (instance, _) = makeInstance(.stopped)
 
         await #expect(throws: Probe.self) {
-            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 throw Probe()
-            }
+            }.value()
         }
 
         #expect(instance.activity.sessionContext == nil)

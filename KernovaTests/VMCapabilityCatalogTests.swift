@@ -223,7 +223,6 @@ struct VMCapabilityCatalogTests {
                     "\(capability) with no slot, \(phase)")
             }
             #expect(harness.catalog.isApplicable(.delete, to: instance), "\(phase)")
-            #expect(harness.catalog.bringUpVerb(for: instance) == .start, "\(phase)")
 
             try VMInstanceFixture.writeSaveFile(for: instance)
 
@@ -240,7 +239,6 @@ struct VMCapabilityCatalogTests {
             #expect(harness.catalog.isApplicable(.delete, to: instance), "\(phase)")
             // The offer names Resume; a start committed anyway restores rather
             // than being refused.
-            #expect(harness.catalog.bringUpVerb(for: instance) == .resume, "\(phase)")
             #expect(harness.catalog.accepts(.start, on: instance), "\(phase)")
             #expect(harness.catalog.stopAction(for: instance) == .discardSavedState, "\(phase)")
         }
@@ -644,83 +642,6 @@ struct VMCapabilityCatalogTests {
         }
     }
 
-    // MARK: - Bring-up
-
-    @Test(
-        "The bring-up verb boots a resting VM and restores one holding a saved state",
-        arguments: [
-            (VMLifecyclePhase.stopped, false, VMCapabilityCatalog.BringUpVerb.start),
-            (.failed(message: "Boot failed."), false, .start),
-            // A suspension whose slot has gone boots: there is nothing left to
-            // restore, whatever the phase is still called.
-            (.suspended, false, .start),
-            (.stopped, true, .resume),
-            (.failed(message: "Restore failed."), true, .resume),
-            (.suspended, true, .resume),
-        ] as [(VMLifecyclePhase, Bool, VMCapabilityCatalog.BringUpVerb)])
-    func bringUpVerbByPhase(
-        phase: VMLifecyclePhase, holdsSavedState: Bool,
-        expected: VMCapabilityCatalog.BringUpVerb
-    ) throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
-        if holdsSavedState { try VMInstanceFixture.writeSaveFile(for: instance) }
-
-        #expect(harness.catalog.bringUpVerb(for: instance) == expected)
-        // The standing pass adds guards on top of this one and changes nothing
-        // else, so a VM with neither of them outstanding answers the same.
-        #expect(harness.catalog.standingBringUp(for: instance) == expected)
-    }
-
-    @Test(
-        "No phase that is already live, or held by an operation, has a bring-up owed",
-        arguments: [
-            PhaseFixture.settled(.running(sessionID: VMLifecyclePhaseFixtures.session)),
-            // Live-paused: the VZ object is already in memory, so there is
-            // nothing to bring up.
-            .settled(.livePaused(sessionID: VMLifecyclePhaseFixtures.session)),
-            .operating(
-                .bringUp(.guestStart(.starting(recovery: false))), from: .stopped,
-                boundSession: VMLifecyclePhaseFixtures.session),
-            .operating(.saving, from: .running(sessionID: VMLifecyclePhaseFixtures.session)),
-            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
-            .operating(
-                .bringUp(.settingUp(.macOSInstall)), from: .initialBoot,
-                boundSession: VMLifecyclePhaseFixtures.session),
-        ])
-    func bringUpVerbRefusesLivePhases(phase: PhaseFixture) {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase.phase)
-
-        #expect(harness.catalog.bringUpVerb(for: instance) == nil)
-        #expect(harness.catalog.standingBringUp(for: instance) == nil)
-    }
-
-    /// A start here runs the macOS install or the Linux image download, and
-    /// neither may begin from a standing preference. The context decides, not
-    /// the phase: a failed install keeps its context at `.failed`, where the
-    /// phase alone reads as an ordinary boot retry.
-    @Test(
-        "A VM that has yet to finish guest setup takes no standing bring-up",
-        arguments: [
-            VMLifecyclePhase.initialBoot,
-            .failed(message: "Install failed."),
-            .stopped,
-        ])
-    func standingBringUpRefusesPendingSetup(phase: VMLifecyclePhase) {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: phase) {
-            $0.installContext = MacOSInstallContext(source: .downloadLatest)
-        }
-
-        #expect(instance.configuration.pendingGuestSetup != nil)
-        #expect(harness.catalog.standingBringUp(for: instance) == nil)
-        // A commanded bring-up is not blocked by it: the verb runs the setup and
-        // chains the boot.
-        #expect(harness.catalog.bringUpVerb(for: instance) != nil)
-    }
-
     // MARK: - The guest account
 
     @available(macOS 27.0, *)
@@ -738,58 +659,12 @@ struct VMCapabilityCatalogTests {
             $0.pendingGuestAccount = intent
         }
         #expect(harness.catalog.guestAccountState(of: instance) == .owed(intent))
-        #expect(harness.catalog.owesGuestAccountAnswer(instance))
 
         harness.library.holdGuestAccountPassword(
             GuestAccountPassword("analytical-engine"), for: instance.id)
         #expect(
             harness.catalog.guestAccountState(of: instance)
                 == .answered(intent, GuestAccountPassword("analytical-engine")))
-        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
-    }
-
-    /// The pass reads the same predicate the verb does, so a VM whose start
-    /// would raise a question is passed over rather than alerted about at a
-    /// login with no window to alert in.
-    @available(macOS 27.0, *)
-    @Test(
-        "A VM still owing its guest an account answer takes no standing bring-up",
-        arguments: [VMLifecyclePhase.stopped, .suspended, .failed(message: "Boot failed.")])
-    func standingBringUpRefusesAnOwedAccount(phase: VMLifecyclePhase) {
-        let harness = makeHarness()
-        // A VM owing nothing, to show the phase alone would have brought it up.
-        let owingNothing = makeInstance(in: harness, phase: phase, guestOS: .macOS)
-        #expect(harness.catalog.standingBringUp(for: owingNothing) != nil)
-
-        let instance = makeInstance(in: harness, phase: phase, guestOS: .macOS) {
-            $0.pendingGuestAccount = GuestAccountIntent(
-                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-                enablesRemoteLogin: false)
-        }
-
-        #expect(harness.catalog.owesGuestAccountAnswer(instance))
-        #expect(harness.catalog.standingBringUp(for: instance) == nil)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A VM whose account answer is held owes nothing, and takes the standing bring-up")
-    func standingBringUpAdmitsAnAnsweredAccount() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped, guestOS: .macOS) {
-            $0.pendingGuestAccount = GuestAccountIntent(
-                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-                enablesRemoteLogin: false)
-        }
-        #expect(harness.catalog.standingBringUp(for: instance) == nil)
-
-        harness.library.holdGuestAccountPassword(
-            GuestAccountPassword("analytical-engine"), for: instance.id)
-
-        // The intent is still there — the boot has yet to spend it — but there is
-        // no question left to raise, which is the whole of what the pass avoids.
-        #expect(instance.configuration.pendingGuestAccount != nil)
-        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
-        #expect(harness.catalog.standingBringUp(for: instance) == .start)
     }
 
     @available(macOS 27.0, *)
@@ -810,7 +685,6 @@ struct VMCapabilityCatalogTests {
         // Not "asks again": the window is gone, so the question is gone with it.
         #expect(instance.configuration.pendingGuestAccount == nil)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        #expect(!harness.catalog.owesGuestAccountAnswer(instance))
     }
 
     @available(macOS 27.0, *)

@@ -406,7 +406,31 @@ enum PhaseFixture: Sendable, CustomTestStringConvertible {
     }
 }
 
+extension VMCapabilityCatalog.GuestAccountState {
+    /// Whether the account question is outstanding.
+    var isOwed: Bool {
+        if case .owed = self { return true }
+        return false
+    }
+}
+
 extension VMActivity {
+    /// Launches the bring-up `kind` names through the entry it takes — a
+    /// guest start through ``launchStartGuest(_:resolving:_:)``, any other
+    /// through ``launchBringUp(_:whenEnded:_:)`` — running `body` under its
+    /// bring-up context; for a test that reaches every bring-up alike.
+    @discardableResult
+    func launchAnyBringUp(
+        _ kind: VMBringUpKind,
+        _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        guard let nonStart = VMNonStartBringUpKind(kind) else {
+            guard case .guestStart(let start) = kind else { preconditionFailure("\(kind)") }
+            return try launchStartGuest(start) { try await body($0.bringUp) }
+        }
+        return try launchBringUp(nonStart, body)
+    }
+
     /// Whether `request` is admitted outright right now.
     func admits(_ request: VMAdmission.Request, posture: VMAdmission.Posture = .commit) -> Bool {
         decide(request, posture: posture) == .admit
@@ -429,7 +453,7 @@ func withOperation<T>(
 /// the permit its own writes hold.
 @MainActor
 func withOperation<T>(
-    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    on instance: VMInstance, _ kind: VMNonBringUpKind = .deletingSnapshot,
     _ body: (borrowing VMOperationContext) async throws -> T
 ) async throws -> T {
     try await instance.activity.perform(kind) { context in
@@ -440,7 +464,7 @@ func withOperation<T>(
 /// The synchronous ``withOperation(on:_:_:)``.
 @MainActor
 func withOperationNow<T>(
-    on instance: VMInstance, _ kind: VMOperationKind = .deletingSnapshot,
+    on instance: VMInstance, _ kind: VMNonBringUpKind = .deletingSnapshot,
     _ body: (borrowing VMOperationContext) throws -> T
 ) throws -> T {
     try instance.activity.performNow(kind) { context in

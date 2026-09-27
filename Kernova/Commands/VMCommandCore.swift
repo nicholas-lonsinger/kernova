@@ -503,7 +503,7 @@ final class VMCommandCore: VMCommanding {
     /// started once `body` ends, and answers any refusal or failure in the
     /// command vocabulary under `verb` (``failure(_:verb:on:)``).
     func perform(
-        _ kind: VMOperationKind, on instance: VMInstance, verb: VMVerb,
+        _ kind: VMNonBringUpKind, on instance: VMInstance, verb: VMVerb,
         _ body: (borrowing VMOperationContext) async throws -> Void
     ) async throws {
         do {

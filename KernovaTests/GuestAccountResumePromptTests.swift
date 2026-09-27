@@ -192,7 +192,7 @@ struct GuestAccountResumePromptTests {
         #expect(presenter.errors.isEmpty)
         // Still asked for next time, from the same untouched intent.
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(viewModel.capabilities.owesGuestAccountAnswer(instance))
+        #expect(viewModel.capabilities.guestAccountState(of: instance).isOwed)
     }
 
     /// The shown sheet turns a refused password down on the click and puts
@@ -214,7 +214,7 @@ struct GuestAccountResumePromptTests {
         #expect(!presenter.errors.isEmpty)
         // Nothing held and nothing spent, so the next Start asks again.
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(viewModel.capabilities.owesGuestAccountAnswer(instance))
+        #expect(viewModel.capabilities.guestAccountState(of: instance).isOwed)
     }
 
     // MARK: - A start that never reached a boot
@@ -233,7 +233,7 @@ struct GuestAccountResumePromptTests {
         // The boot threw before the guest ran, so the window is unspent — and the
         // answer supplied for it is still held.
         #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(!viewModel.capabilities.owesGuestAccountAnswer(instance))
+        #expect(!viewModel.capabilities.guestAccountState(of: instance).isOwed)
         #expect(presenter.guestAccountPasswordRequests.count == 1)
 
         virtualization.startError = nil

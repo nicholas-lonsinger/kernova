@@ -53,7 +53,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, virtService, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        _ = try await coordinator.start(instance, Self.coldBoot)
+        try await coordinator.launchStart(instance, Self.coldBoot).value()
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == false)
@@ -65,7 +65,7 @@ struct VMLifecycleCoordinatorTests {
         // Recovery is a macOS guest's boot, so only one is admitted to it.
         let instance = VMInstanceFixture.make(guestOS: .macOS)
 
-        _ = try await coordinator.start(instance, .starting(recovery: true))
+        try await coordinator.launchStart(instance, .starting(recovery: true)).value()
 
         #expect(virtService.startCallCount == 1)
         #expect(virtService.lastStartBootIntoRecovery == true)
@@ -135,7 +135,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
     }
 
@@ -160,7 +160,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.phase.operation == nil)
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
 
@@ -181,7 +181,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
         #expect(instance.phase.operation != nil)
@@ -241,7 +241,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
 
@@ -300,7 +300,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make(bundleFactory: VMBundle.Factory(machineFiles: store))
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
 
@@ -321,12 +321,12 @@ struct VMLifecycleCoordinatorTests {
         let instance2 = VMInstanceFixture.make(name: "VM 2")
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance1, Self.coldBoot)
+            try await coordinator.launchStart(instance1, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
 
         suspendingService.shouldSuspendOnStart = false
-        _ = try await coordinator.start(instance2, Self.coldBoot)
+        try await coordinator.launchStart(instance2, Self.coldBoot).value()
 
         suspendingService.resumeSuspended()
         _ = try await task.value
@@ -337,7 +337,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, _, _) = makeCoordinator()
         let instance = VMInstanceFixture.make()
 
-        _ = try await coordinator.start(instance, Self.coldBoot)
+        try await coordinator.launchStart(instance, Self.coldBoot).value()
         #expect(instance.phase.operation == nil)
 
         try await coordinator.pause(instance)
@@ -351,13 +351,13 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
 
         #expect(instance.phase.operation == nil)
 
         virtService.startError = nil
-        _ = try await coordinator.start(instance, Self.coldBoot)
+        try await coordinator.launchStart(instance, Self.coldBoot).value()
         #expect(virtService.startCallCount == 2)
     }
 
@@ -371,7 +371,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
 
         let task = Task { @MainActor in
-            try await coordinator.start(instance, Self.coldBoot)
+            try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
         await suspendingService.waitUntilSuspended()
 

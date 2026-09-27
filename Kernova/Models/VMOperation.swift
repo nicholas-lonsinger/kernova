@@ -401,6 +401,97 @@ enum VMOperationKind: Sendable, Equatable {
     }
 }
 
+/// An operation that brings no guest up — the kinds ``VMActivity``'s generic
+/// entries (``VMActivity/perform(_:origin:_:)``,
+/// ``VMActivity/launch(_:origin:resolving:whenEnded:_:)``,
+/// ``VMActivity/performNow(_:_:)``) take, so none of them can admit a
+/// bring-up: each bring-up has an entry of its own.
+enum VMNonBringUpKind: Sendable, Equatable {
+    case pausing
+    case resuming
+    case saving
+    case capturingSnapshot(VMSnapshotCaptureMode)
+    case deletingSnapshot
+    case attachingUSB(registryID: UInt64)
+    case detachingUSB(deviceID: UUID)
+    case reconcilingMedia
+    case forceStopping
+    case discardingSavedState
+    case deleting
+    case creatingStorageDisk
+    case removingStorageDisk
+    case creatingRemovableMedia
+    case copyingOut
+
+    /// `kind`, unless it is a bring-up.
+    init?(_ kind: VMOperationKind) {
+        switch kind {
+        case .bringUp: return nil
+        case .pausing: self = .pausing
+        case .resuming: self = .resuming
+        case .saving: self = .saving
+        case .capturingSnapshot(let mode): self = .capturingSnapshot(mode)
+        case .deletingSnapshot: self = .deletingSnapshot
+        case .attachingUSB(let registryID): self = .attachingUSB(registryID: registryID)
+        case .detachingUSB(let deviceID): self = .detachingUSB(deviceID: deviceID)
+        case .reconcilingMedia: self = .reconcilingMedia
+        case .forceStopping: self = .forceStopping
+        case .discardingSavedState: self = .discardingSavedState
+        case .deleting: self = .deleting
+        case .creatingStorageDisk: self = .creatingStorageDisk
+        case .removingStorageDisk: self = .removingStorageDisk
+        case .creatingRemovableMedia: self = .creatingRemovableMedia
+        case .copyingOut: self = .copyingOut
+        }
+    }
+
+    var operationKind: VMOperationKind {
+        switch self {
+        case .pausing: .pausing
+        case .resuming: .resuming
+        case .saving: .saving
+        case .capturingSnapshot(let mode): .capturingSnapshot(mode)
+        case .deletingSnapshot: .deletingSnapshot
+        case .attachingUSB(let registryID): .attachingUSB(registryID: registryID)
+        case .detachingUSB(let deviceID): .detachingUSB(deviceID: deviceID)
+        case .reconcilingMedia: .reconcilingMedia
+        case .forceStopping: .forceStopping
+        case .discardingSavedState: .discardingSavedState
+        case .deleting: .deleting
+        case .creatingStorageDisk: .creatingStorageDisk
+        case .removingStorageDisk: .removingStorageDisk
+        case .creatingRemovableMedia: .creatingRemovableMedia
+        case .copyingOut: .copyingOut
+        }
+    }
+}
+
+/// A bring-up that starts no guest from what the bundle holds — the kinds
+/// ``VMActivity/launchBringUp(_:whenEnded:_:)`` takes, so a guest start is
+/// admitted only through ``VMActivity/launchStartGuest(_:resolving:_:)``.
+enum VMNonStartBringUpKind: Sendable, Equatable {
+    case settingUp(GuestSetupKind)
+    case reverting(snapshotID: UUID, resumesAfter: Bool)
+
+    /// `kind`, unless it is a guest start.
+    init?(_ kind: VMBringUpKind) {
+        switch kind {
+        case .guestStart: return nil
+        case .settingUp(let setup): self = .settingUp(setup)
+        case .reverting(let snapshotID, let resumesAfter):
+            self = .reverting(snapshotID: snapshotID, resumesAfter: resumesAfter)
+        }
+    }
+
+    var bringUpKind: VMBringUpKind {
+        switch self {
+        case .settingUp(let setup): .settingUp(setup)
+        case .reverting(let snapshotID, let resumesAfter):
+            .reverting(snapshotID: snapshotID, resumesAfter: resumesAfter)
+        }
+    }
+}
+
 /// An operation that brings a guest up, or holds the VM across a restore that
 /// may resume one.
 enum VMBringUpKind: Sendable, Equatable {

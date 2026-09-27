@@ -287,12 +287,43 @@ struct VMCommandCoreArrivalTests {
         hold.signal()
 
         let instance = try #require(await arrival.settle())
-        // The start-after-create follows the adoption on the main actor; once
-        // the queue drains it has been decided.
-        await drainMainQueue()
+        // The start-after-create is decided in the step that adopts the VM.
         #expect(instance.phase == .stopped)
         #expect(harness.virtualization.startCallCount == 0)
         #expect(harness.reports.failures.isEmpty)
+    }
+
+    @Test("A create's auto-start is admitted in the step that adopts the new VM")
+    func aCreatesAutoStartIsAdmittedAtAdoption() async throws {
+        // The boot parks inside Virtualization, so the VM is still held by it
+        // when the arrival's outcome is read.
+        let virtualization = SuspendingMockVirtualizationService()
+        let lifecycle = makeTestLifecycle(virtualization: virtualization)
+        let library = makeWiredLibrary(
+            storage: storage, lifecycle: lifecycle, preferences: preferences)
+        let core = VMCommandCore(
+            library: library, lifecycle: lifecycle, storageService: storage,
+            diskImageService: MockDiskImageService(), fileSystem: MockFileSystem(),
+            preferences: preferences)
+        let configuration = VMConfiguration(name: "Fresh", guestOS: .linux, bootMode: .efi)
+
+        try core.create(
+            configuration: configuration, startAfterCreate: true, guestAccountPassword: nil)
+        let arrival = try #require(library.arrivals.first)
+        let instance = try #require(await arrival.settle())
+
+        // Held by its start from the adoption on, so the first request decided
+        // against the new VM — a clone here — finds it busy.
+        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
+        let clone = #expect(throws: CommandError.self) {
+            try core.beginClone(.id(instance.id), machineIdentity: .keep)
+        }
+        #expect(isBusy(clone))
+
+        await virtualization.waitUntilSuspended()
+        virtualization.resumeSuspended()
+        try await waitForChange { instance.status == .running }
+        #expect(virtualization.startCallCount == 1)
     }
 
     @Test("A waiter on an arrival cancelled during its rename receives the cancel, not the VM")

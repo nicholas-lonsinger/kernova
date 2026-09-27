@@ -62,17 +62,37 @@ final class VMLifecycleCoordinator {
 
     // MARK: - Lifecycle
 
-    /// Brings `instance` up by the guest start `kind` names, running
-    /// `beforeBoot` first as a write of the start.
-    func start(
+    /// Launches the bring-up the guest start `kind` names on `instance`,
+    /// resolving `outcome` when it ends.
+    ///
+    /// `beforeBoot` runs first, as a write of the start. `afterBoot` runs once
+    /// the guest came up, as a write of the start too, with the route it came
+    /// up by; what it throws fails the start and leaves the guest where the
+    /// boot left it.
+    @discardableResult
+    func launchStart(
         _ instance: VMInstance, _ kind: VMGuestStartKind,
         provisioning: GuestProvisioningCredentials? = nil,
-        beforeBoot: (borrowing VMEditPermit) -> Void = { _ in }
-    ) async throws -> GuestStartRoute {
-        try await instance.activity.startGuest(kind) { context in
+        resolving outcome: VMOutcome = VMOutcome(),
+        beforeBoot: @escaping @MainActor (borrowing VMEditPermit) -> Void = { _ in },
+        afterBoot: @escaping @MainActor (borrowing VMEditPermit, GuestStartRoute) throws -> Void = {
+            _, _ in
+        }
+    ) throws -> VMOutcome {
+        try instance.activity.launchStartGuest(kind, resolving: outcome) {
+            [virtualizationService] context in
             beforeBoot(context.bringUp.operation.permit)
-            return try await virtualizationService.start(
+            let ending = try await virtualizationService.start(
                 instance, context, provisioning: provisioning)
+            switch ending {
+            case .rest(let rest, let route):
+                do { try afterBoot(context.bringUp.operation.permit, route) } catch {
+                    return .failed(rest, error)
+                }
+                return .rest(rest, ())
+            case .failed(let rest, let error):
+                return .failed(rest, error)
+            }
         }
     }
 

@@ -350,16 +350,21 @@ extension VMLibrary {
     /// the tree becomes a bundle at one instant — the publication rename — so
     /// an abnormal exit at any point before it leaves nothing to adopt, and the
     /// launch reclaim discards it.
+    ///
+    /// `whenAdopted` answers the follow-ups the VM the arrival becomes owes,
+    /// which its adoption step follows — so the first request decided against
+    /// the new VM is theirs.
     func beginArrival(
         kind: VMArrival.Kind, configuration: VMConfiguration, destination: URL,
-        staged: VMStagedBundle, write: @escaping (VMStagedBundle) async throws -> Void
+        staged: VMStagedBundle, write: @escaping (VMStagedBundle) async throws -> Void,
+        whenAdopted: (@MainActor (VMInstance) -> [VMFollowUp])? = nil
     ) -> VMArrival {
         let arrival = VMArrival(
             id: configuration.id, kind: kind, configuration: configuration,
             destinationURL: destination, staged: staged
         ) { [weak self] arrival in
             guard let self else { throw CancellationError() }
-            return try await self.settle(arrival, writtenBy: write)
+            return try await self.settle(arrival, writtenBy: write, whenAdopted: whenAdopted)
         }
         register(arrival)
         return arrival
@@ -368,10 +373,12 @@ extension VMLibrary {
     /// Runs `arrival` to its outcome and removes its row, handing a failure to
     /// ``onArrivalFailed`` first.
     private func settle(
-        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void
+        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void,
+        whenAdopted: (@MainActor (VMInstance) -> [VMFollowUp])?
     ) async throws -> VMInstance {
         do {
-            let instance = try await publish(arrival, writtenBy: write)
+            let instance = try await publish(
+                arrival, writtenBy: write, whenAdopted: whenAdopted)
             removeArrival(arrival)
             return instance
         } catch {
@@ -392,9 +399,12 @@ extension VMLibrary {
     /// arrival settles, so nothing that follows the arrival ever receives its
     /// VM.
     ///
-    /// Every outcome a cancel produced is thrown as `CancellationError`.
+    /// Every outcome a cancel produced is thrown as `CancellationError`. The
+    /// VM the arrival became follows what `whenAdopted` answers in the step
+    /// that adopts it.
     private func publish(
-        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void
+        _ arrival: VMArrival, writtenBy write: (VMStagedBundle) async throws -> Void,
+        whenAdopted: (@MainActor (VMInstance) -> [VMFollowUp])?
     ) async throws -> VMInstance {
         let storage = storageService
         let reader = bundleReader
@@ -432,6 +442,7 @@ extension VMLibrary {
         switch adopt(try scanned.get(), publishing: arrival) {
         case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
             macAddresses.logDuplicateMACAddressHolders()
+            for followUp in whenAdopted?(instance) ?? [] { instance.activity.follow(followUp) }
             return instance
         case .publishing, .duplicate:
             throw ArrivalError.identifierInUse(name: arrival.name)

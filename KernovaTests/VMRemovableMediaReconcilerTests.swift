@@ -66,7 +66,7 @@ struct VMRemovableMediaReconcilerTests {
     /// Launches `kind` on `instance`, its body parking on `gate` and then
     /// resting the VM at `rest`.
     private func launchGated(
-        _ kind: VMOperationKind, on instance: VMInstance, gate: GatedStep,
+        _ kind: VMNonBringUpKind, on instance: VMInstance, gate: GatedStep,
         resting rest: VMOperationRest = .asStarted
     ) throws -> VMOutcome {
         try instance.activity.launch(kind) { _ in

@@ -137,6 +137,11 @@ extension VMCommandCore {
         let diskImages = diskImageService
         let diskSizeInGB = configuration.diskSizeInGB
         let name = configuration.name
+        let autoStart: @MainActor (VMInstance) -> [VMFollowUp] = { [weak self] instance in
+            guard let self else { return [] }
+            #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
+            return [self.startFollowUp(instance, policy: .command)]
+        }
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,
             staged: staged,
@@ -152,23 +157,13 @@ extension VMCommandCore {
                 }.value
                 try await diskImages.createDiskImage(
                     at: staged.layout.diskImageURL, sizeInGB: diskSizeInGB)
-            })
-        followUnwaited(arrival) { [weak self] instance in
+            },
+            whenAdopted: startAfterCreate ? autoStart : nil)
+        followUnwaited(arrival) { instance in
             #log(
                 Self.logger, .notice,
                 "Created VM '\(name, privacy: .public)' (status: \(instance.status.displayName, privacy: .public))"
             )
-            guard startAfterCreate, let self else { return }
-            #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
-            do {
-                try await self.start(instance)
-            } catch let failure as CommandError {
-                self.report(failure, on: instance)
-            } catch {
-                self.report(
-                    .operationFailed(verb: .start, message: error.localizedDescription),
-                    on: instance)
-            }
         }
         return summary(arrival)
     }

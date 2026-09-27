@@ -192,7 +192,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         let resume = Task { @MainActor in
-            try await viewModel.lifecycle.start(instance, .restoringSavedState)
+            try await viewModel.lifecycle.launchStart(instance, .restoringSavedState).value()
         }
         await suspending.waitUntilSuspended()
 
@@ -3088,7 +3088,7 @@ struct VMLibraryViewModelTests {
         // The password went to the verb, which holds it apart from the bundle —
         // so the VM owes no answer even though the account is still unspent.
         #expect(wizard.guestAccountPasswordForCreate == "analytical-engine")
-        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
+        #expect(!viewModel.capabilities.guestAccountState(of: created).isOwed)
     }
 
     @Test("createVM answers nothing when the wizard is creating no account")
@@ -3101,7 +3101,7 @@ struct VMLibraryViewModelTests {
 
         let created = try #require(viewModel.instances.first)
         #expect(created.configuration.pendingGuestAccount == nil)
-        #expect(!viewModel.capabilities.owesGuestAccountAnswer(created))
+        #expect(!viewModel.capabilities.guestAccountState(of: created).isOwed)
         #expect(wizard.guestAccountPasswordForCreate == nil)
     }
 
@@ -4313,7 +4313,6 @@ struct VMLibraryViewModelTests {
         // resting back on its saved state moves no field the event diff turns
         // into a failure — so the pass reports it explicitly.
         let events = viewModel.commands.events()
-        var iterator = events.makeAsyncIterator()
 
         await viewModel.startAutomaticVMsForLaunch()
 
@@ -4326,10 +4325,19 @@ struct VMLibraryViewModelTests {
         // Exactly one surfacing, not two: the report routes through the same
         // presenter path the pass would otherwise have used on its own.
         #expect(presenter.errors.count == 1)
-        let batch = await iterator.next()
-        let failures = (batch ?? []).compactMap { event -> UUID? in
-            guard case .failure(let id, _, _) = event else { return nil }
-            return id
+        // Read up to a rename made after the pass, so a second failure would
+        // still be seen.
+        let sentinel = "Read past the pass"
+        try viewModel.commands.rename(.id(suspended.id), to: sentinel)
+        var failures: [UUID] = []
+        reading: for await batch in events {
+            for event in batch {
+                switch event {
+                case .renamed(_, _, let to) where to == sentinel: break reading
+                case .failure(let id, _, _): failures.append(id)
+                default: continue
+                }
+            }
         }
         #expect(failures == [suspended.id])
     }
@@ -4354,15 +4362,17 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("startAutomaticVMsForLaunch skips a VM that left the library mid-pass")
-    func autoStartSkipsInstanceRemovedMidPass() async {
+    func autoStartSkipsInstanceRemovedMidPass() async throws {
         let (viewModel, suspending) = makeSuspendingViewModel()
         let first = makeAutoStartInstance(in: viewModel.library, name: "First")
         let second = makeAutoStartInstance(in: viewModel.library, name: "Second")
 
         let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
-        // Deleted while the first VM is still booting, so the pass's snapshot
-        // holds an instance the library no longer has.
+        // Removed while the first VM is still booting, so the pass's snapshot
+        // holds an instance the library no longer has — evicted as a
+        // reconcile evicts it.
         await suspending.waitUntilSuspended()
+        try second.activity.remove()
         viewModel.library.evict(second)
         suspending.shouldSuspendOnStart = false
         suspending.resumeSuspended()
@@ -4370,6 +4380,62 @@ struct VMLibraryViewModelTests {
 
         #expect(first.status == .running)
         #expect(second.status == .stopped)
+    }
+
+    /// The copy that runs the VM is the one that started it; a second copy
+    /// launched beside it has nothing to report about it.
+    @Test("startAutomaticVMsForLaunch passes over a marked VM another copy holds, alerting nothing")
+    func autoStartPassesOverAVMAnotherCopyHolds() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let files = InMemoryVMBundleFiles()
+        var marked = VMHostState()
+        marked.startsAutomaticallyOnLaunch = true
+        let elsewhere = viewModel.library.admitFixture(
+            name: "Elsewhere", hostState: marked, files: files)
+        let here = makeAutoStartInstance(in: viewModel.library, name: "Here")
+        files.holdElsewhere(elsewhere.bundleURL)
+
+        await viewModel.startAutomaticVMsForLaunch()
+        // A report would come from the start's own follow-up, queued before
+        // this barrier.
+        await drainMainQueue()
+
+        #expect(virtService.startCallCount == 1)
+        #expect(elsewhere.status == .stopped)
+        #expect(here.status == .running)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    /// The CLI relaunch's shape: a command reaching a Kernova that was not
+    /// running takes a snapshot of a stopped VM while the pass begins.
+    @Test("startAutomaticVMsForLaunch starts a VM a capture holds once it ends, and waits for it")
+    func autoStartWaitsOutAnOperationHoldingAMarkedVM() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let held = makeAutoStartInstance(in: viewModel.library, name: "Held")
+        let following = makeAutoStartInstance(in: viewModel.library, name: "Following")
+        let capture = GatedStep()
+        let captured = try held.activity.launch(.capturingSnapshot(.stopped)) { _ in
+            try await capture.pass()
+            return .rest(.asStarted, ())
+        }
+        try await capture.waitUntilEntered()
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        // The pass runs up to its wait on the held VM's start before anything
+        // queued after it.
+        await drainMainQueue()
+        #expect(held.activity.queuedFollowUpCountForTesting == 1)
+        // Waiting on the held VM, so the next one is not started beside it.
+        #expect(virtService.startCallCount == 0)
+        #expect(following.status == .stopped)
+
+        capture.release()
+        try await captured.value()
+        await pass.value
+
+        #expect(virtService.startCallCount == 2)
+        #expect(held.status == .running)
+        #expect(following.status == .running)
     }
 
     @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")

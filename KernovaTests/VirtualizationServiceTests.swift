@@ -232,12 +232,12 @@ struct VirtualizationServiceTests {
         }
 
         await #expect(throws: GuestStopped.self) {
-            try await instance.activity.bringUp(.guestStart(.starting(recovery: false))) {
+            try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
                 (context: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 instance.beginSessionContextForTesting()
                 context.bindSessionForTesting(UUID())
                 throw GuestStopped()
-            }
+            }.value()
         }
 
         #expect(instance.phase == .failed(message: "The guest stopped."))
@@ -381,12 +381,12 @@ struct VirtualizationServiceTests {
             await MainActor.run { instance.rebind(to: moved) }
         }
 
-        try await instance.activity.startGuest(.restoringSavedState) { context in
+        try await instance.activity.launchStartGuest(.restoringSavedState) { context in
             try await VirtualizationService.restoreSavedState(
                 instance, context.bringUp.operation, session: session)
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }
+        }.value()
 
         #expect(await session.restoredStateURLs == [original.saveFileURL])
         #expect(!movedLayout.hasSaveFile)
@@ -919,9 +919,12 @@ struct VirtualizationServiceTests {
     private func start(
         _ instance: VMInstance, _ kind: VMGuestStartKind = .starting(recovery: false)
     ) async throws {
-        _ = try await instance.activity.startGuest(kind) { context in
-            try await service.start(instance, context, provisioning: nil)
-        }
+        try await instance.activity.launchStartGuest(kind) { context in
+            switch try await service.start(instance, context, provisioning: nil) {
+            case .rest(let rest, _): .rest(rest, ())
+            case .failed(let rest, let error): .failed(rest, error)
+            }
+        }.value()
     }
 
     /// A bring-up that gives up before the restore leaves the slot for the
@@ -1232,10 +1235,10 @@ struct VirtualizationServiceTests {
     private func restAfterFailedBringUp(
         _ kind: VMBringUpKind, on instance: VMInstance, with error: any Error
     ) async -> VMLifecyclePhase {
-        _ = try? await instance.activity.bringUp(kind) {
+        _ = try? await instance.activity.launchAnyBringUp(kind) {
             (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
             throw error
-        }
+        }.value()
         return instance.phase
     }
 
