@@ -62,10 +62,12 @@ struct TestScratchDirectoryTests {
         #expect(ledger.recordedURLs.filter { $0 == first.url }.count == 1)
     }
 
-    @Test("a scratch is named under the temporary directory with its symlinks resolved")
+    @Test("a scratch is named by its prefix under the temporary directory, with its symlinks resolved")
     func scratchSitsUnderTheResolvedTemporaryDirectory() {
+        let parent = scratch.url.deletingLastPathComponent()
         let resolved = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
-        #expect(scratch.url.deletingLastPathComponent().path == resolved.path)
+        #expect(parent.path == resolved.path)
+        #expect(parent.resolvingSymlinksInPath().path == parent.path)
         #expect(scratch.url.lastPathComponent.hasPrefix("ScratchLedgerTests-"))
     }
 }

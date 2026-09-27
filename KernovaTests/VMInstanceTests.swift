@@ -8,6 +8,8 @@ import KernovaTestSupport
 @Suite("VMInstance Tests", .caseScoped)
 @MainActor
 struct VMInstanceTests {
+    private let scratch = TestScratchDirectory(prefix: "VMInstanceTests")
+
     /// Every phase that reports a status other than `.paused` — what the
     /// display-projection loops enumerate, since the paused pair is covered on
     /// its own.
@@ -46,7 +48,6 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .suspended)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
             atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
@@ -376,7 +377,6 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make()
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         try Data([4, 5, 6]).write(to: instance.machineIdentifierURL)
 
         #expect(instance.configuration.machineIdentifierData == nil)
@@ -622,17 +622,14 @@ struct VMInstanceTests {
     ///
     /// `partialBytes` is what the bundle's `data` file holds: pass `nil` for the
     /// husk a finalize leaves when its disposal fails (directory and metadata
-    /// present, `data` already moved to the destination). Returns the temp
-    /// directory so the caller can clean it up.
+    /// present, `data` already moved to the destination).
     private func makeInstanceWithSeededDownloadBundle(
         partialBytes: Data?,
         source: MacOSInstallContext.Source = .downloadLatest
-    ) throws -> (instance: VMInstance, temp: URL) {
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+    ) throws -> VMInstance {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         try bundle.prepareForFreshDownload(
             with: DownloadBundleMetadata(
@@ -658,7 +655,7 @@ struct VMInstanceTests {
                 downloadDestinationPath: destination.path(percentEncoded: false)
             )
         }
-        return (instance, temp)
+        return instance
     }
 
     @Test("startAction is .install when the bundle is a data-less husk")
@@ -666,8 +663,7 @@ struct VMInstanceTests {
         // A finalize whose disposal failed leaves the bundle directory (and its
         // metadata) behind with `data` already moved to the destination. It has
         // no bytes to resume from, so it must not offer "Resume Install".
-        let (instance, temp) = try makeInstanceWithSeededDownloadBundle(partialBytes: nil)
-        defer { try? FileManager.default.removeItem(at: temp) }
+        let instance = try makeInstanceWithSeededDownloadBundle(partialBytes: nil)
 
         #expect(instance.hasResumableInstallDownload == false)
         #expect(instance.startAction == .install)
@@ -683,11 +679,10 @@ struct VMInstanceTests {
     func startActionResumeInstallWithPartialBytes(source: MacOSInstallContext.Source) throws {
         // Every downloading source writes the same sidecar and resumes through
         // the same path, so all three offer "Resume Install".
-        let (instance, temp) = try makeInstanceWithSeededDownloadBundle(
+        let instance = try makeInstanceWithSeededDownloadBundle(
             partialBytes: Data(repeating: 0x11, count: 1024),
             source: source
         )
-        defer { try? FileManager.default.removeItem(at: temp) }
 
         #expect(instance.hasResumableInstallDownload == true)
         #expect(instance.startAction == .resumeInstall)
@@ -698,11 +693,10 @@ struct VMInstanceTests {
     func startActionInstallForLocalFileSource() throws {
         // A local-file install never downloads, so a bundle left at the same
         // path by an earlier attempt says nothing about what Start will do.
-        let (instance, temp) = try makeInstanceWithSeededDownloadBundle(
+        let instance = try makeInstanceWithSeededDownloadBundle(
             partialBytes: Data(repeating: 0x11, count: 1024),
             source: .localFile
         )
-        defer { try? FileManager.default.removeItem(at: temp) }
 
         #expect(instance.hasResumableInstallDownload == false)
         #expect(instance.startAction == .install)
@@ -724,12 +718,9 @@ struct VMInstanceTests {
 
     @Test("startAction is .resumeDownload when a Linux image's bundle holds partial bytes")
     func startActionResumeDownload() throws {
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VMInstanceTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temp) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let destination = temp.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
+        let destination = scratch.url.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
         try bundle.prepareForFreshDownload(
             with: DownloadBundleMetadata(
@@ -773,28 +764,24 @@ struct VMInstanceTests {
     /// captured saved state the bundle's own suspend slot can be compared to.
     private func makeEphemeralInstanceWithBundle(
         ephemeralModeEnabled: Bool = true
-    ) throws -> (
-        instance: VMInstance, baseline: VMSnapshot, temp: URL
-    ) {
+    ) throws -> (instance: VMInstance, baseline: VMSnapshot) {
         let baseline = VMSnapshot(name: "Ephemeral", macAddress: nil)
         let instance = VMInstanceFixture.make(
             name: "Ephemeral VM", phase: .suspended,
             hostState: ephemeralModeEnabled ? .ephemeral(baseline: baseline.id) : VMHostState())
-        let temp = instance.bundleURL
-        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: instance.bundleURL, withIntermediateDirectories: true)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
 
         let snapshotLayout = instance.bundleLayout.snapshotLayout(id: baseline.id)
         try FileManager.default.createDirectory(
             at: snapshotLayout.bundleURL, withIntermediateDirectories: true)
         try Data("captured".utf8).write(to: snapshotLayout.saveFileURL)
-        return (instance, baseline, temp)
+        return (instance, baseline)
     }
 
     @Test("A suspended Ephemeral VM holding the baseline's own saved state rests at it")
     func restingAtEphemeralBaseline() throws {
-        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: temp) }
+        let (instance, baseline) = try makeEphemeralInstanceWithBundle()
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
 
         try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
@@ -803,8 +790,7 @@ struct VMInstanceTests {
 
     @Test("A suspend of its own leaves an Ephemeral VM away from its baseline")
     func ownSuspendIsNotTheEphemeralBaseline() throws {
-        let (instance, _, temp) = try makeEphemeralInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: temp) }
+        let (instance, _) = try makeEphemeralInstanceWithBundle()
 
         try Data("captured".utf8).write(to: instance.bundleLayout.saveFileURL)
         #expect(!instance.isRestingAtEphemeralBaseline)
@@ -812,8 +798,7 @@ struct VMInstanceTests {
 
     @Test("A VM that is not suspended never reads as resting at its baseline")
     func restingAtBaselineNeedsASuspendedVM() throws {
-        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: temp) }
+        let (instance, baseline) = try makeEphemeralInstanceWithBundle()
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
 
@@ -823,8 +808,7 @@ struct VMInstanceTests {
 
     @Test("Ephemeral Mode off leaves the baseline comparison unasked")
     func restingAtBaselineNeedsEphemeralMode() throws {
-        let (instance, baseline, temp) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
-        defer { try? FileManager.default.removeItem(at: temp) }
+        let (instance, baseline) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
         let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
         try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
 

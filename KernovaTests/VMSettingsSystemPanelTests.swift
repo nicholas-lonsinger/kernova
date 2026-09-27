@@ -962,7 +962,6 @@ struct VMSettingsSystemPanelTests {
         let instance = VMInstanceFixture.make()
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let viewModel = makeViewModel()
         FileManager.default.createFile(
             atPath: instance.serialLogURL.path(percentEncoded: false), contents: Data([0]))

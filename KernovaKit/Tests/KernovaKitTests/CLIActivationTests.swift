@@ -20,9 +20,9 @@ struct CLIActivationTests {
 
     /// Sends `reveal` to a double answering `frames`, recording every activation.
     private func reveal(
-        answering frames: [VMCommandResponse], tag: String
+        answering frames: [VMCommandResponse]
     ) throws -> (answer: VMCommandResponse, activations: [pid_t]) {
-        let listener = try TestCommandSocket(tag: tag)
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let activations = Activations()
         let client = try VMCommandClient(
@@ -38,8 +38,7 @@ struct CLIActivationTests {
     @Test("An activate frame ahead of the answer brings the peer forward, and the answer still arrives")
     func activateFrameCallsTheActivatorWithThePeer() throws {
         let exchanged = try reveal(
-            answering: [VMCommandResponse(result: .activate), VMCommandResponse(result: .ok)],
-            tag: "activate")
+            answering: [VMCommandResponse(result: .activate), VMCommandResponse(result: .ok)])
 
         #expect(exchanged.answer.result == .ok)
         // The double runs in this process, so the peer is this process.
@@ -48,7 +47,7 @@ struct CLIActivationTests {
 
     @Test("An answer with no activate frame brings nothing forward")
     func noActivateFrameNoActivation() throws {
-        let exchanged = try reveal(answering: [VMCommandResponse(result: .ok)], tag: "noactivate")
+        let exchanged = try reveal(answering: [VMCommandResponse(result: .ok)])
 
         #expect(exchanged.answer.result == .ok)
         #expect(exchanged.activations.isEmpty)
@@ -56,7 +55,7 @@ struct CLIActivationTests {
 
     @Test("A frame reader never sees an activate frame, only what follows it")
     func nextFrameReadsPastActivate() throws {
-        let listener = try TestCommandSocket(tag: "frames")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let activations = Activations()
         let client = try VMCommandClient(

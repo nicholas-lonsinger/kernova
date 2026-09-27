@@ -186,7 +186,7 @@ struct CLICompletionTests {
 
     @Test("The library listing is what a virtual machine argument offers")
     func vmNamesComeFromTheLibrary() throws {
-        let listener = try TestCommandSocket(tag: "cmp-vms")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .summaries([alpha, beta]))]])
 
@@ -198,7 +198,7 @@ struct CLICompletionTests {
 
     @Test("--id offers the identifiers the same listing carries")
     func vmIdentifiersComeFromTheSameListing() throws {
-        let listener = try TestCommandSocket(tag: "cmp-vm-ids")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .summaries([alpha]))]])
 
@@ -209,7 +209,7 @@ struct CLICompletionTests {
 
     @Test("A snapshot argument offers the named machine's own restore points")
     func snapshotNamesComeFromTheMachine() throws {
-        let listener = try TestCommandSocket(tag: "cmp-snaps")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .snapshots([checkpoint]))]])
 
@@ -224,7 +224,7 @@ struct CLICompletionTests {
 
     @Test("A share removal offers the folders that machine actually shares")
     func sharedDirectoryPathsComeFromTheMachine() throws {
-        let listener = try TestCommandSocket(tag: "cmp-shares")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .sharedDirectories(shares))]])
 
@@ -237,7 +237,7 @@ struct CLICompletionTests {
 
     @Test("zsh is told which of the shared folders the guest may write to")
     func sharedFoldersCarryTheirAccess() throws {
-        let listener = try TestCommandSocket(tag: "cmp-shares-zsh")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .sharedDirectories(shares))]])
 
@@ -252,7 +252,7 @@ struct CLICompletionTests {
 
     @Test("A USB detachment offers only what the named machine is actually holding")
     func usbDevicesComeFromTheMachine() throws {
-        let listener = try TestCommandSocket(tag: "cmp-usb-held")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .usbAccessories(accessories))]])
 
@@ -267,7 +267,7 @@ struct CLICompletionTests {
 
     @Test("A USB attachment offers the free accessories, described by what they are")
     func availableUSBAccessoriesComeFromTheHost() throws {
-        let listener = try TestCommandSocket(tag: "cmp-usb-free")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .usbAccessories([accessories[1]]))]])
 
@@ -282,7 +282,7 @@ struct CLICompletionTests {
 
     @Test("Forgetting a USB accessory offers the keys the named machine remembers")
     func usbPairingKeysComeFromTheMachine() throws {
-        let listener = try TestCommandSocket(tag: "cmp-usb-rules")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([
             [
@@ -330,7 +330,7 @@ struct CLICompletionTests {
         let refusal = VMCommandResponse(
             result: .failure(.ambiguous(selector: .idOrName("Alpha"), candidates: [alpha, beta])))
 
-        let snapshots = try TestCommandSocket(tag: "cmp-refused")
+        let snapshots = try TestCommandSocket()
         defer { snapshots.close() }
         snapshots.serve([[refusal]])
         #expect(
@@ -338,7 +338,7 @@ struct CLICompletionTests {
                 ofVM: "Alpha", byIdentifier: false, in: context(to: snapshots)
             ).isEmpty)
 
-        let shares = try TestCommandSocket(tag: "cmp-refused-sh")
+        let shares = try TestCommandSocket()
         defer { shares.close() }
         shares.serve([[refusal]])
         #expect(
@@ -349,7 +349,7 @@ struct CLICompletionTests {
 
     @Test("An app that takes the request and never answers offers nothing")
     func aSilentAppOffersNothing() throws {
-        let listener = try TestCommandSocket(tag: "cmp-silent")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         // Answers nothing and keeps the connection, which is the app that is
         // running but not getting back to it. The deadline is short because it
@@ -364,7 +364,7 @@ struct CLICompletionTests {
 
     @Test("zsh is answered with each value's description beside it")
     func zshGetsDescribedCandidates() throws {
-        let listener = try TestCommandSocket(tag: "cmp-zsh")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .summaries([alpha, beta]))]])
 
@@ -381,13 +381,13 @@ struct CLICompletionTests {
                 name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
         ]
 
-        let plain = try TestCommandSocket(tag: "cmp-keys")
+        let plain = try TestCommandSocket()
         defer { plain.close() }
         plain.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(CompletionSource.configurationKeys(in: context(to: plain)) == ["cpus"])
         #expect(plain.requests().map(\.verb) == [.configurationKeys])
 
-        let assigning = try TestCommandSocket(tag: "cmp-keys-eq")
+        let assigning = try TestCommandSocket()
         defer { assigning.close() }
         assigning.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(

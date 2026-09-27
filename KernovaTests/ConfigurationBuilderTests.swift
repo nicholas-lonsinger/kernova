@@ -6,16 +6,19 @@ import Virtualization
 
 @Suite("ConfigurationBuilder Tests", .caseScoped)
 struct ConfigurationBuilderTests {
+    private let scratch = TestScratchDirectory(prefix: "ConfigurationBuilderTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
     // MARK: - Helpers
 
-    /// Creates a temp directory with a dummy disk image, holding the EFI
+    /// Creates a bundle directory with a dummy disk image, holding the EFI
     /// variable store a bring-up creates before an EFI build unless
     /// `withEFIVariableStore` is off.
-    ///
-    /// Caller must `defer` removal of the returned URL.
-    private func makeTempBundle(withDisk: Bool = false, withEFIVariableStore: Bool = true) throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
+    private func makeBundle(withDisk: Bool = false, withEFIVariableStore: Bool = true) throws -> URL {
+        let tempDir = scratch.url.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         if withDisk {
             try Data().write(to: VMBundleLayout(bundleURL: tempDir).diskImageURL)
@@ -84,8 +87,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws when the default main disk file is missing")
     func efiBootWithoutDisk() throws {
-        let bundleURL = try makeTempBundle()
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle()
 
         let builder = makeBuilder()
         #expect {
@@ -100,8 +102,7 @@ struct ConfigurationBuilderTests {
 
     @Test("An EFI build over a bundle with no variable store fails naming it, and ensuring the store fixes it")
     func efiBootWithoutVariableStore() throws {
-        let bundleURL = try makeTempBundle(withDisk: true, withEFIVariableStore: false)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true, withEFIVariableStore: false)
         let builder = makeBuilder()
         let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
 
@@ -123,8 +124,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for kernel boot without kernel path")
     func kernelBootWithoutPath() throws {
-        let bundleURL = try makeTempBundle()
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle()
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         let builder = makeBuilder()
@@ -140,8 +140,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for macOS boot without hardware model")
     func macOSBootWithoutHardwareModel() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         let builder = makeBuilder()
@@ -154,8 +153,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for missing shared directory path")
     func builderThrowsForMissingSharedDirectoryPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let config = makeLinuxConfig(sharedDirectories: [
             SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
@@ -174,8 +172,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for shared path that is a file")
     func builderThrowsForSharedPathThatIsAFile() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a file (not a directory) to use as the shared path
         let filePath = bundleURL.appendingPathComponent("not-a-directory").path(percentEncoded: false)
@@ -198,8 +195,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for non-writable read-write share")
     func builderThrowsForNonWritableReadWriteShare() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
@@ -228,8 +224,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for dangling symlink as shared directory")
     func builderThrowsForDanglingSymlinkSharedDirectory() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a symlink pointing to a nonexistent target
         let symlinkPath = bundleURL.appendingPathComponent("dangling-link").path(percentEncoded: false)
@@ -253,8 +248,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to file as shared directory")
     func builderThrowsForSymlinkToFileAsSharedDirectory() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a regular file, then symlink to it
         let filePath = bundleURL.appendingPathComponent("a-file").path(percentEncoded: false)
@@ -279,8 +273,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder follows symlink to valid shared directory")
     func builderFollowsSymlinkToValidSharedDirectory() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real directory and a symlink to it
         let realDir = bundleURL.appendingPathComponent("real-share")
@@ -309,8 +302,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent kernel path")
     func builderThrowsForNonexistentKernelPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel)
         config.kernelPath = "/nonexistent/\(UUID().uuidString)/vmlinuz"
@@ -328,8 +320,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent initrd path")
     func builderThrowsForNonexistentInitrdPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -354,8 +345,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent removable media path")
     func builderThrowsForNonexistentRemovableMediaPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.removableMedia = [
@@ -375,8 +365,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Attach failure for removable media throws typed error with item identity")
     func removableMediaAttachFailureThrowsTypedError() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // 100 bytes is not a multiple of the 512-byte sector size, so
         // VZDiskImageStorageDeviceAttachment rejects the file even though it
@@ -404,8 +393,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Attach failure for external storage disk throws typed error with item identity")
     func storageDiskAttachFailureThrowsTypedError() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Unaligned size — see the removable-media counterpart above.
         let diskPath = bundleURL.appendingPathComponent("bad.img").path(percentEncoded: false)
@@ -433,8 +421,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Removable media is attached to XHCI controller, not storageDevices")
     func removableMediaOnXHCIController() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -455,8 +442,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")
     func removableMediaReturnsDeviceInfos() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -483,8 +469,7 @@ struct ConfigurationBuilderTests {
 
     @Test("No removable media returns empty coldRemovableMedia")
     func noRemovableMediaReturnsEmpty() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         let builder = makeBuilder()
@@ -494,8 +479,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for non-writable removable media when readOnly is false")
     func builderThrowsForNonWritableRemovableMedia() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("readonly.iso").path(percentEncoded: false)
         FileManager.default.createFile(atPath: isoPath, contents: Data([0]))
@@ -520,8 +504,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Default storage disks list synthesizes the main disk at index 0")
     func defaultStorageDisksSynthesizesMainDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         let builder = makeBuilder()
@@ -533,8 +516,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Storage disks list orders devices on storageDevices by position")
     func storageDisksOrderingPreserved() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let isoPath = bundleURL.appendingPathComponent("install.iso").path(percentEncoded: false)
         try Data().write(to: URL(fileURLWithPath: isoPath))
@@ -571,8 +553,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for nonexistent external storage disk")
     func builderThrowsForNonexistentStorageDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
         config.storageDisks = [
@@ -599,8 +580,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as external storage disk")
     func builderThrowsForDirectoryAsStorageDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("disk-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -630,8 +610,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for non-writable read-write external storage disk")
     func builderThrowsForNonWritableStorageDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
         FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
@@ -657,8 +636,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder accepts read-only storage disk for non-writable file")
     func builderAcceptsReadOnlyStorageDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let diskPath = bundleURL.appendingPathComponent("readonly-data.asif").path(percentEncoded: false)
         FileManager.default.createFile(atPath: diskPath, contents: Data([0]))
@@ -683,8 +661,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder accepts read-only share for non-writable directory")
     func builderAcceptsReadOnlyShareForNonWritableDirectory() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a read-only directory
         let shareDir = bundleURL.appendingPathComponent("readonly-share")
@@ -717,8 +694,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for dangling symlink as kernel path")
     func builderThrowsForDanglingSymlinkKernelPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let symlinkPath = bundleURL.appendingPathComponent("dangling-kernel").path(percentEncoded: false)
         let nonexistentTarget = bundleURL.appendingPathComponent("no-such-vmlinuz").path(percentEncoded: false)
@@ -740,8 +716,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for dangling symlink as initrd path")
     func builderThrowsForDanglingSymlinkInitrdPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -768,8 +743,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for dangling symlink as removable media path")
     func builderThrowsForDanglingSymlinkRemovableMediaPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let symlinkPath = bundleURL.appendingPathComponent("dangling-iso").path(percentEncoded: false)
         let nonexistentTarget = bundleURL.appendingPathComponent("no-such-iso").path(percentEncoded: false)
@@ -793,8 +767,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as kernel path")
     func builderThrowsForDirectoryAsKernelPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -815,8 +788,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as initrd path")
     func builderThrowsForDirectoryAsInitrdPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -842,8 +814,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for directory as removable media path")
     func builderThrowsForDirectoryAsRemovableMediaPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -868,8 +839,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to directory as kernel path")
     func builderThrowsForSymlinkToDirectoryAsKernelPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("kernel-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -893,8 +863,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to directory as initrd path")
     func builderThrowsForSymlinkToDirectoryAsInitrdPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real kernel file so we get past that check
         let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -923,8 +892,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder throws for symlink to directory as removable media path")
     func builderThrowsForSymlinkToDirectoryAsRemovableMediaPath() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let dirPath = bundleURL.appendingPathComponent("iso-dir")
         try FileManager.default.createDirectory(at: dirPath, withIntermediateDirectories: true)
@@ -950,8 +918,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Builder follows symlink to valid kernel file")
     func builderFollowsSymlinkToValidKernelFile() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Create a real kernel file and a symlink to it
         let realKernel = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
@@ -978,8 +945,7 @@ struct ConfigurationBuilderTests {
 
     @Test("BuildResult includes clipboard pipes when clipboard sharing is enabled")
     func clipboardPipesWhenEnabled() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = makeLinuxConfig()
         config.clipboardSharingEnabled = true
@@ -1003,8 +969,7 @@ struct ConfigurationBuilderTests {
 
     @Test("BuildResult has nil clipboard pipes when clipboard sharing is disabled")
     func clipboardPipesWhenDisabled() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = makeLinuxConfig()
         config.clipboardSharingEnabled = false
@@ -1037,8 +1002,7 @@ struct ConfigurationBuilderTests {
         _ config: VMConfiguration,
         _ assertions: (_ hasInput: Bool, _ hasOutput: Bool, _ deviceCount: Int) -> Void
     ) throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let result = try makeBuilder().assemble(from: config, bundleURL: bundleURL, validate: false)
         let streams = result.configuration.audioDevices
@@ -1082,8 +1046,7 @@ struct ConfigurationBuilderTests {
     private func networkDevices(for config: VMConfiguration) throws
         -> [VZNetworkDeviceConfiguration]
     {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
         return try makeBuilder()
             .assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
@@ -1101,8 +1064,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Shared Network without the entitlement attaches one virtio device over NAT")
     func sharedModeAttachesNAT() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
@@ -1118,8 +1080,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Shared Network with the entitlement attaches the app-managed shared network")
     func entitledSharedModeAttachesTheManagedNetwork() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
@@ -1134,8 +1095,7 @@ struct ConfigurationBuilderTests {
 
     @Test("A shared network that cannot be materialized builds the device detached")
     func entitledSharedModeWithoutANetworkBuildsDetached() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
@@ -1168,8 +1128,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Bridged mode with no bridgeable host interface builds the device detached")
     func bridgedModeWithoutAnInterfaceBuildsDetached() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var builder = makeBuilder(entitlements: .entitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
@@ -1185,8 +1144,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
     func bridgedModeWithoutTheEntitlementThrows() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var builder = makeBuilder(entitlements: .unentitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
@@ -1203,8 +1161,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Host Only mode attaches the app-managed network")
     func hostOnlyModeAttachesTheManagedNetwork() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
@@ -1219,8 +1176,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Host Only mode in a build without the entitlement names the entitlement")
     func hostOnlyModeWithoutTheEntitlementThrows() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .unentitled)
@@ -1239,8 +1195,7 @@ struct ConfigurationBuilderTests {
 
     @Test("A Host Only network that cannot be materialized builds the device detached")
     func hostOnlyModeWithoutANetworkBuildsDetached() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
         networks.attachmentError = TestFailure("vmnet refused")
@@ -1351,8 +1306,7 @@ struct ConfigurationBuilderTests {
 
     @Test("EFI scanout carries the configured display size")
     func efiScanoutMatchesConfiguration() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var config = makeLinuxConfig()
         config.displayWidth = 1680
@@ -1369,8 +1323,7 @@ struct ConfigurationBuilderTests {
 
     @Test("EFI guests get only the USB pointing/keyboard devices")
     func efiInputDevicesAreUSBOnly() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         let result = try makeBuilder().assemble(
             from: makeLinuxConfig(), bundleURL: bundleURL, validate: false)
@@ -1388,8 +1341,7 @@ struct ConfigurationBuilderTests {
 
     @Test("Internal storage disk path with .. escape is rejected as storageDiskNotFound")
     func internalStorageDiskRejectsPathTraversal() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Marking the entry `isInternal: true` opts into bundle-containment
         // validation. A `..` segment that resolves outside the bundle must
@@ -1420,16 +1372,13 @@ struct ConfigurationBuilderTests {
 
     @Test("External storage disk via symlink attaches to symlink target, not symlink path")
     func externalStorageDiskFollowsSymlink() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         // Real file in a scratch directory outside the bundle, plus a
         // symlink to it. The builder must hand VZ the resolved target
         // URL so the attachment doesn't depend on the symlink surviving.
-        let scratchDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
+        let scratchDir = scratch.url.appendingPathComponent("external")
         try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: scratchDir) }
 
         // Need a 1 MB zeroed raw disk image — VZ rejects smaller / empty
         // files as "disk image format not recognized" inside the
@@ -1440,7 +1389,7 @@ struct ConfigurationBuilderTests {
         try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: realPath)
 
         // The bundle's own Disk.asif also needs to be sized for the same
-        // reason; replace the zero-byte stub created by makeTempBundle.
+        // reason; replace the zero-byte stub created by makeBundle.
         let mainDiskURL = VMBundleLayout(bundleURL: bundleURL).diskImageURL
         try? FileManager.default.removeItem(at: mainDiskURL)
         FileManager.default.createFile(
@@ -1491,21 +1440,16 @@ struct ConfigurationBuilderTests {
     ///
     /// `Bundle.main` in a test run is the test host, not the app, so the real
     /// resource is never found — every guest-agent-disk test injects its own.
-    ///
-    /// Caller must `defer` removal of the returned URL.
     private func makeAgentDiskImage() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).dmg")
+        let url = scratch.url.appendingPathComponent("\(UUID().uuidString).dmg")
         try Data(count: 1_048_576).write(to: url)
         return url
     }
 
     @Test("A guest below the USB floor gets the agent disk on virtio, attached last")
     func subFloorGuestGetsVirtioAgentDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
-        defer { try? FileManager.default.removeItem(at: agentURL) }
 
         var builder = makeBuilder()
         builder.guestAgentDiskURL = agentURL
@@ -1529,10 +1473,8 @@ struct ConfigurationBuilderTests {
         "A guest at or above the USB floor gets no agent disk",
         arguments: ["12.3", "12.3.1", "13.0", "26.0"])
     func atFloorGuestGetsNoAgentDisk(installedVersion: String) throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
-        defer { try? FileManager.default.removeItem(at: agentURL) }
 
         var builder = makeBuilder()
         builder.guestAgentDiskURL = agentURL
@@ -1544,10 +1486,8 @@ struct ConfigurationBuilderTests {
 
     @Test("A guest of unknown version gets no agent disk")
     func unknownVersionGuestGetsNoAgentDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
-        defer { try? FileManager.default.removeItem(at: agentURL) }
 
         var builder = makeBuilder()
         builder.guestAgentDiskURL = agentURL
@@ -1558,10 +1498,8 @@ struct ConfigurationBuilderTests {
 
     @Test("A Linux guest gets no agent disk")
     func linuxGuestGetsNoAgentDisk() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
         let agentURL = try makeAgentDiskImage()
-        defer { try? FileManager.default.removeItem(at: agentURL) }
 
         var config = makeLinuxConfig()
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
@@ -1573,11 +1511,9 @@ struct ConfigurationBuilderTests {
 
     @Test("A missing installer image leaves the VM bootable")
     func missingAgentDiskStillBuilds() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).dmg")
+        let missing = scratch.url.appendingPathComponent("\(UUID().uuidString).dmg")
         var builder = makeBuilder()
         builder.guestAgentDiskURL = missing
         let result = try builder.assemble(
@@ -1588,8 +1524,7 @@ struct ConfigurationBuilderTests {
 
     @Test("A build carrying no installer image leaves the VM bootable")
     func absentAgentDiskStillBuilds() throws {
-        let bundleURL = try makeTempBundle(withDisk: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(withDisk: true)
 
         var builder = makeBuilder()
         builder.guestAgentDiskURL = nil
@@ -1601,10 +1536,8 @@ struct ConfigurationBuilderTests {
 
     @Test("The agent disk's identity is fixed by the bundle and distinct from the main disk's")
     func agentDiskIDIsStableAndDistinct() throws {
-        let bundleURL = try makeTempBundle()
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
-        let otherBundleURL = try makeTempBundle()
-        defer { try? FileManager.default.removeItem(at: otherBundleURL) }
+        let bundleURL = try makeBundle()
+        let otherBundleURL = try makeBundle()
 
         let disk = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
         let again = ConfigurationBuilder.guestAgentDisk(installerPath: "/tmp/a.dmg", bundleURL: bundleURL)
@@ -1623,8 +1556,7 @@ struct ConfigurationBuilderTests {
 
     @Test("isMainBundleDisk matches the bundle-relative path, not the disk id")
     func isMainBundleDiskMatchesByPath() throws {
-        let bundleURL = try makeTempBundle()
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle()
         let layout = VMBundleLayout(bundleURL: bundleURL)
 
         // A clone regenerates every disk id, so a fresh id at the canonical

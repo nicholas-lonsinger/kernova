@@ -11,6 +11,7 @@ import Virtualization
 @MainActor
 struct VMSettingsSharingPanelTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMSettingsSharingPanelTests")
 
     private func makeViewModel() -> VMLibraryViewModel {
         makeSettingsViewModel(preferences: preferences)
@@ -338,10 +339,9 @@ struct VMSettingsSharingPanelTests {
 
     @Test("A share whose folder is gone badges as missing; one that is there does not")
     func missingShareBadgesAfterTheProbeLands() async throws {
-        let present = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-settings-share-\(UUID().uuidString)", isDirectory: true)
+        let present = scratch.url.appendingPathComponent(
+            "kernova-settings-share", isDirectory: true)
         try FileManager.default.createDirectory(at: present, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: present) }
         let presentPath = present.path(percentEncoded: false)
 
         let (vc, _) = makeSharingController([
@@ -363,9 +363,8 @@ struct VMSettingsSharingPanelTests {
     /// the shell's re-ask on drill-in as the only thing that can move the badge.
     @Test("Drilling back into Sharing re-asks about a folder no watcher covers")
     func drillInReprobesAnUnwatchedShare() async throws {
-        let base = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-settings-share-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: base) }
+        let base = scratch.url.appendingPathComponent(
+            "kernova-settings-share", isDirectory: true)
         let parent = base.appendingPathComponent("parent", isDirectory: true)
         let share = parent.appendingPathComponent("Shared", isDirectory: true)
         let sharePath = share.path(percentEncoded: false)

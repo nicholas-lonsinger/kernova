@@ -11,6 +11,7 @@ import KernovaTestSupport
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "DetailContainerLibraryLoadTests")
 
     private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
         -> VMLibraryViewModel
@@ -66,7 +67,7 @@ struct DetailContainerLibraryLoadTests {
     private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Library VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
         return (storage, config)

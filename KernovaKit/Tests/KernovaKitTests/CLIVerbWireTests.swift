@@ -30,7 +30,7 @@ struct CLIVerbWireTests {
     @Test("list asks for the whole library and names no virtual machine")
     func listAsksForTheLibrary() throws {
         let exchanged = try CLIWire.exchange(
-            ["list"], answering: VMCommandResponse(result: .summaries([alpha])), tag: "list")
+            ["list"], answering: VMCommandResponse(result: .summaries([alpha])))
 
         #expect(exchanged.sent == [.list])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
@@ -40,12 +40,12 @@ struct CLIVerbWireTests {
     func infoSendsItsSelector() throws {
         let answered = VMCommandResponse(result: .info(info))
 
-        let named = try CLIWire.exchange(["info", "Alpha"], answering: answered, tag: "info")
+        let named = try CLIWire.exchange(["info", "Alpha"], answering: answered)
         #expect(named.sent == [.info(.idOrName("Alpha"))])
         #expect(try named.answer.payload() == .info(info))
 
         let byID = try CLIWire.exchange(
-            ["info", alpha.id.uuidString, "--id"], answering: answered, tag: "info-id")
+            ["info", alpha.id.uuidString, "--id"], answering: answered)
         #expect(byID.sent == [.info(.id(alpha.id))])
     }
 
@@ -53,8 +53,7 @@ struct CLIVerbWireTests {
     func ipAsksForTheAddress() throws {
         let exchanged = try CLIWire.exchange(
             ["ip", "Alpha"],
-            answering: VMCommandResponse(result: .ipAddress(.observed("192.168.64.4"))),
-            tag: "ip")
+            answering: VMCommandResponse(result: .ipAddress(.observed("192.168.64.4"))))
 
         #expect(exchanged.sent == [.ipAddress(.idOrName("Alpha"))])
         #expect(try exchanged.answer.payload() == .ipAddress(.observed("192.168.64.4")))
@@ -64,18 +63,18 @@ struct CLIVerbWireTests {
 
     @Test("start crosses carrying --recovery when the line asks for it")
     func startSendsItsRecoveryFlag() throws {
-        let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted, tag: "start")
+        let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted)
         #expect(plain.sent == [.start(.idOrName("Alpha"), recovery: false)])
         #expect(try plain.answer.payload() == .ok)
 
         let recovery = try CLIWire.exchange(
-            ["start", "Alpha", "--recovery"], answering: accepted, tag: "start-rec")
+            ["start", "Alpha", "--recovery"], answering: accepted)
         #expect(recovery.sent == [.start(.idOrName("Alpha"), recovery: true)])
     }
 
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")
     func stopSendsItsDispositionAndDeadline() throws {
-        let graceful = try CLIWire.exchange(["stop", "Alpha"], answering: accepted, tag: "stop")
+        let graceful = try CLIWire.exchange(["stop", "Alpha"], answering: accepted)
         #expect(
             graceful.sent == [
                 .stop(
@@ -83,15 +82,14 @@ struct CLIVerbWireTests {
             ])
 
         let forced = try CLIWire.exchange(
-            ["stop", "Alpha", "--force", "--yes", "--timeout", "30"], answering: accepted,
-            tag: "stop-force")
+            ["stop", "Alpha", "--force", "--yes", "--timeout", "30"], answering: accepted)
         #expect(
             forced.sent == [
                 .stop(.idOrName("Alpha"), disposition: .force, confirmed: true, timeout: 30)
             ])
 
         let resumeFirst = try CLIWire.exchange(
-            ["stop", "Alpha", "--resume-first"], answering: accepted, tag: "stop-resume")
+            ["stop", "Alpha", "--resume-first"], answering: accepted)
         #expect(
             resumeFirst.sent == [
                 .stop(
@@ -103,14 +101,14 @@ struct CLIVerbWireTests {
     @Test("suspend crosses as the verb that saves the session")
     func suspendSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
-            ["suspend", "Alpha"], answering: accepted, tag: "suspend")
+            ["suspend", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
     }
 
     @Test("pause crosses as the verb that holds the guest in memory")
     func pauseSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(["pause", "Alpha"], answering: accepted, tag: "pause")
+        let exchanged = try CLIWire.exchange(["pause", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.pause(.idOrName("Alpha"))])
     }
@@ -118,24 +116,24 @@ struct CLIVerbWireTests {
     @Test("resume crosses as the verb that lets a paused guest run again")
     func resumeSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
-            ["resume", "Alpha"], answering: accepted, tag: "resume")
+            ["resume", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.resume(.idOrName("Alpha"))])
     }
 
     @Test("restart crosses with the deadline bounding its shutdown half")
     func restartSendsItsDeadline() throws {
-        let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted, tag: "restart")
+        let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted)
         #expect(bare.sent == [.restart(.idOrName("Alpha"), timeout: nil)])
 
         let bounded = try CLIWire.exchange(
-            ["restart", "Alpha", "--timeout", "45"], answering: accepted, tag: "restart-t")
+            ["restart", "Alpha", "--timeout", "45"], answering: accepted)
         #expect(bounded.sent == [.restart(.idOrName("Alpha"), timeout: 45)])
     }
 
     @Test("open is the one verb that crosses asking for something to come forward")
     func openSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(["open", "Alpha"], answering: accepted, tag: "open")
+        let exchanged = try CLIWire.exchange(["open", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.open(.idOrName("Alpha"))])
     }
@@ -145,7 +143,7 @@ struct CLIVerbWireTests {
     @Test("rename crosses with the label to apply")
     func renameSendsTheNewName() throws {
         let exchanged = try CLIWire.exchange(
-            ["rename", "Alpha", "Beta"], answering: accepted, tag: "rename")
+            ["rename", "Alpha", "Beta"], answering: accepted)
 
         #expect(exchanged.sent == [.rename(.idOrName("Alpha"), newName: "Beta")])
     }
@@ -153,7 +151,7 @@ struct CLIVerbWireTests {
     @Test("delete crosses to the Trash unless --permanent, and takes no external file with it")
     func deleteSendsItsDisposalAndConsent() throws {
         let trashed = try CLIWire.exchange(
-            ["delete", "Alpha", "--yes"], answering: accepted, tag: "delete")
+            ["delete", "Alpha", "--yes"], answering: accepted)
         #expect(
             trashed.sent == [
                 .delete(
@@ -161,7 +159,7 @@ struct CLIVerbWireTests {
             ])
 
         let permanent = try CLIWire.exchange(
-            ["delete", "Alpha", "--permanent"], answering: accepted, tag: "delete-perm")
+            ["delete", "Alpha", "--permanent"], answering: accepted)
         #expect(
             permanent.sent == [
                 .delete(
@@ -172,7 +170,7 @@ struct CLIVerbWireTests {
     @Test("reveal crosses as the Finder verb, not as the app's own bring-up")
     func revealSendsTheFinderVerb() throws {
         let exchanged = try CLIWire.exchange(
-            ["reveal", "Alpha"], answering: accepted, tag: "reveal")
+            ["reveal", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.showInFinder(.idOrName("Alpha"))])
     }
@@ -186,12 +184,12 @@ struct CLIVerbWireTests {
         ]
         let answered = VMCommandResponse(result: .usbPairings(pairings))
 
-        let everyMachine = try CLIWire.exchange(["usb", "rules"], answering: answered, tag: "rules")
+        let everyMachine = try CLIWire.exchange(["usb", "rules"], answering: answered)
         #expect(everyMachine.sent == [.usbPairings(nil)])
         #expect(try everyMachine.answer.payload() == .usbPairings(pairings))
 
         let named = try CLIWire.exchange(
-            ["usb", "rules", "Alpha"], answering: answered, tag: "rules-vm")
+            ["usb", "rules", "Alpha"], answering: answered)
         #expect(named.sent == [.usbPairings(.idOrName("Alpha"))])
     }
 
@@ -200,8 +198,7 @@ struct CLIVerbWireTests {
         // The key is what the user copied out of a listing, `@` and `:` and
         // all, so nothing may reinterpret it on the way.
         let exchanged = try CLIWire.exchange(
-            ["usb", "forget", "Alpha", "04e8:6300:0100@hub/Port-A@1"], answering: accepted,
-            tag: "forget")
+            ["usb", "forget", "Alpha", "04e8:6300:0100@hub/Port-A@1"], answering: accepted)
 
         #expect(
             exchanged.sent

@@ -7,6 +7,12 @@ import Testing
 @Suite("IPSWSelectionContentViewController Tests", .caseScoped)
 @MainActor
 struct IPSWSelectionContentViewControllerTests {
+    private let scratch = TestScratchDirectory(prefix: "IPSWSelectionContentViewControllerTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
     @Test("Defaults to Download Latest with the default destination shown")
     func defaultDownloadSelected() {
         let vm = VMCreationViewModel()  // macOS + downloadLatest, default download path
@@ -76,8 +82,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
     func overwriteUseExisting() async {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
@@ -105,8 +110,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("A file of a different build is named, and not adopted until confirmed")
     func mismatchedExistingFileIsNotAdopted() async {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
@@ -140,8 +144,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("An unreadable file offers only a re-download")
     func unreadableExistingFileOffersReplace() async {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
@@ -161,8 +164,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Leaving the step mid-check adopts nothing")
     func cancelledInspectionCommitsNothing() async throws {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
@@ -248,8 +250,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")
     func overwriteConfirm() {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let vm = VMCreationViewModel()
         vm.ipswDownloadPath = path
@@ -266,8 +267,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Switching install source clears a stale mismatch banner")
     func sourceSwitchClearsMismatchBanner() async {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
@@ -295,8 +295,7 @@ struct IPSWSelectionContentViewControllerTests {
 
     @Test("Switching install source clears a stale checking banner")
     func sourceSwitchClearsCheckingBanner() async throws {
-        let path = makeTempIPSW()
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        let path = makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
@@ -378,9 +377,9 @@ struct IPSWSelectionContentViewControllerTests {
     // MARK: - Helpers
 
     @MainActor
-    private func makeTempIPSW() -> String {
-        let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("RestoreImage-\(UUID().uuidString).ipsw")
+    private func makeIPSW() -> String {
+        let path = scratch.url
+            .appendingPathComponent("RestoreImage.ipsw")
             .path(percentEncoded: false)
         FileManager.default.createFile(atPath: path, contents: Data())
         return path

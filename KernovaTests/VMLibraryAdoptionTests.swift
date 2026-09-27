@@ -13,6 +13,7 @@ import Testing
 struct VMLibraryAdoptionTests {
     private let preferences = makeTestPreferences()
     private let storage = MockVMStorageService()
+    private let scratch = TestScratchDirectory(prefix: "AdoptionTests")
 
     /// Every title the library handed its failure hook, in order.
     private final class Reports {
@@ -49,8 +50,7 @@ struct VMLibraryAdoptionTests {
     }
 
     private func bundleURL(_ name: String) -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("AdoptionTests-\(UUID().uuidString)", isDirectory: true)
+        scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("\(name).\(VMBundleFormat.fileExtension)", isDirectory: true)
     }
 

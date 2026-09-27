@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 @Suite("ClipboardPasteboardIntake", .caseScoped)
 @MainActor
 struct ClipboardPasteboardIntakeTests {
+    private let scratch = TestScratchDirectory(prefix: "kernova-intake-tests")
+
     /// Fresh uniquely-named pasteboard so tests never touch `.general`.
     private func makeScratchPasteboard() -> NSPasteboard {
         NSPasteboard(name: NSPasteboard.Name("kernova-test-\(UUID().uuidString)"))
@@ -28,9 +30,8 @@ struct ClipboardPasteboardIntakeTests {
         pasteboard.writeObjects([item])
     }
 
-    private func makeTempFile(name: String, contents: Data) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-intake-tests-\(UUID().uuidString)", isDirectory: true)
+    private func makeFile(name: String, contents: Data) throws -> URL {
+        let directory = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name)
         try contents.write(to: url)
@@ -305,7 +306,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(from:) defers a file URL to .pendingFiles so the bytes read off-actor")
     func readFromDefersFileToPendingFiles() throws {
-        let url = try makeTempFile(name: "deferred.txt", contents: Data("x".utf8))
+        let url = try makeFile(name: "deferred.txt", contents: Data("x".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -327,8 +328,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(from:) returns every item's file URL as .pendingFiles, in order")
     func readFromMultipleFiles() throws {
-        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
-        let b = try makeTempFile(name: "b.txt", contents: Data("b".utf8))
+        let a = try makeFile(name: "a.txt", contents: Data("a".utf8))
+        let b = try makeFile(name: "b.txt", contents: Data("b".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let itemA = NSPasteboardItem()
@@ -352,9 +353,9 @@ struct ClipboardPasteboardIntakeTests {
         // The issue's case: three files copied, one deleted before the poll
         // reads the pasteboard. The survivors are still forwarded, and the
         // deleted one is carried as a count instead of being dropped silently.
-        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
-        let gone = try makeTempFile(name: "gone.txt", contents: Data("g".utf8))
-        let b = try makeTempFile(name: "b.txt", contents: Data("b".utf8))
+        let a = try makeFile(name: "a.txt", contents: Data("a".utf8))
+        let gone = try makeFile(name: "gone.txt", contents: Data("g".utf8))
+        let b = try makeFile(name: "b.txt", contents: Data("b".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         pasteboard.writeObjects(
@@ -378,7 +379,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(from:) reports a copy whose every file is gone and has no inline flavor")
     func readFromAllFilesVanished() throws {
-        let gone = try makeTempFile(name: "gone.txt", contents: Data("g".utf8))
+        let gone = try makeFile(name: "gone.txt", contents: Data("g".utf8))
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -405,7 +406,7 @@ struct ClipboardPasteboardIntakeTests {
         // item precisely so the inline bytes can stand in once the staged file
         // is swept. Classifying the item as a pure loss would defeat that.
         let png = try makePNG()
-        let missing = FileManager.default.temporaryDirectory
+        let missing = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-swept.png")
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -429,7 +430,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("a vanished file on another item is still reported alongside item 0's content")
     func vanishedFileOnLaterItemIsReported() throws {
-        let missing = FileManager.default.temporaryDirectory
+        let missing = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-gone.txt")
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -456,7 +457,7 @@ struct ClipboardPasteboardIntakeTests {
         // Declaring `.fileURL` must not divert a promise away from
         // `NSFilePromiseReceiver`: `handleDrop` reaches that fallback only on a
         // rejection.
-        let missing = FileManager.default.temporaryDirectory
+        let missing = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-unwritten.png")
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
@@ -476,8 +477,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) folds the unresolved count into the skip note")
     func readFilesAtFoldsUnresolvedIntoNote() async throws {
-        let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))
-        let missing = FileManager.default.temporaryDirectory
+        let good = try makeFile(name: "good.txt", contents: Data("ok".utf8))
+        let missing = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-missing.txt")
 
         guard
@@ -507,8 +508,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) builds one ordered filename rep per file")
     func readFilesAtMultiple() async throws {
-        let a = try makeTempFile(name: "one.txt", contents: Data("one".utf8))
-        let b = try makeTempFile(name: "two.bin", contents: Data([0, 1, 2]))
+        let a = try makeFile(name: "one.txt", contents: Data("one".utf8))
+        let b = try makeFile(name: "two.bin", contents: Data([0, 1, 2]))
 
         guard
             case .content(let content, let note) = await ClipboardPasteboardIntake.read(
@@ -526,8 +527,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) keeps a zero-byte file — native macOS copies one")
     func readFilesAtZeroByteFile() async throws {
-        let empty = try makeTempFile(name: "empty.txt", contents: Data())
-        let full = try makeTempFile(name: "full.txt", contents: Data("hi".utf8))
+        let empty = try makeFile(name: "empty.txt", contents: Data())
+        let full = try makeFile(name: "full.txt", contents: Data("hi".utf8))
 
         guard
             case .content(let content, let note) = await ClipboardPasteboardIntake.read(
@@ -545,8 +546,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) skips an unreadable file with a note, keeping the rest")
     func readFilesAtSkipsUnreadable() async throws {
-        let good = try makeTempFile(name: "good.txt", contents: Data("ok".utf8))
-        let missing = FileManager.default.temporaryDirectory
+        let good = try makeFile(name: "good.txt", contents: Data("ok".utf8))
+        let missing = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-missing.txt")
 
         guard
@@ -562,9 +563,9 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) rejects when every file is unreadable")
     func readFilesAtAllFail() async {
-        let missing1 = FileManager.default.temporaryDirectory
+        let missing1 = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-m1")
-        let missing2 = FileManager.default.temporaryDirectory
+        let missing2 = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-m2")
 
         guard
@@ -578,7 +579,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("read(filesAt:) on a text-only transport is rejected")
     func readFilesAtTextOnlyRejected() async throws {
-        let a = try makeTempFile(name: "a.txt", contents: Data("a".utf8))
+        let a = try makeFile(name: "a.txt", contents: Data("a".utf8))
         guard
             case .rejected(let message, let unreadable) = await ClipboardPasteboardIntake.read(
                 filesAt: [a], allowsBinary: false)
@@ -598,7 +599,7 @@ struct ClipboardPasteboardIntakeTests {
         // representation tagged with the content UTI and name; its bytes stream
         // on demand and are never read at intake.
         let contents = Data("file text".utf8)
-        let url = try makeTempFile(name: "note.txt", contents: contents)
+        let url = try makeFile(name: "note.txt", contents: contents)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -623,7 +624,7 @@ struct ClipboardPasteboardIntakeTests {
     @Test("dragged image file becomes a disk-backed image representation")
     func imageFileIntake() async throws {
         let png = try makePNG()
-        let url = try makeTempFile(name: "image.png", contents: png)
+        let url = try makeFile(name: "image.png", contents: png)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -649,7 +650,7 @@ struct ClipboardPasteboardIntakeTests {
     @Test("dragged non-image file crosses as a disk-backed file representation")
     func nonImageFileCrossesAsFile() async throws {
         let contents = Data([0x00, 0x01])
-        let url = try makeTempFile(name: "blob.bin", contents: contents)
+        let url = try makeFile(name: "blob.bin", contents: contents)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -673,7 +674,7 @@ struct ClipboardPasteboardIntakeTests {
     @Test("read(filesAt:) resolves a single image file directly — the promise-receipt path")
     func directFileReadImage() async throws {
         let png = try makePNG()
-        let url = try makeTempFile(name: "promised.png", contents: png)
+        let url = try makeFile(name: "promised.png", contents: png)
 
         guard
             case .content(let content, _) = await ClipboardPasteboardIntake.read(
@@ -691,7 +692,7 @@ struct ClipboardPasteboardIntakeTests {
     func directFileReadLargeAccepted() async throws {
         // A large file becomes a disk-backed rep whose bytes stream on demand.
         // A sparse file keeps the test fast.
-        let url = try makeTempFile(name: "huge.bin", contents: Data())
+        let url = try makeFile(name: "huge.bin", contents: Data())
         let handle = try FileHandle(forWritingTo: url)
         try handle.truncate(atOffset: 200 * 1024 * 1024)  // 200 MiB sparse
         try handle.close()
@@ -708,7 +709,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("dragged image file on a text-only transport is rejected")
     func imageFileTextOnlyRejected() async throws {
-        let url = try makeTempFile(name: "image.png", contents: try makePNG())
+        let url = try makeFile(name: "image.png", contents: try makePNG())
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -728,9 +729,8 @@ struct ClipboardPasteboardIntakeTests {
 
     // MARK: - Folders
 
-    private func makeTempFolder(name: String, files: [(String, Data)]) throws -> URL {
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-intake-folder-\(UUID().uuidString)", isDirectory: true)
+    private func makeFolder(name: String, files: [(String, Data)]) throws -> URL {
+        let parent = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let folder = parent.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (fileName, data) in files {
@@ -741,9 +741,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("a copied folder is a source-directory rep — estimate only, no archive")
     func folderAsSourceDirectoryRep() async throws {
-        let folder = try makeTempFolder(
+        let folder = try makeFolder(
             name: "Tree", files: [("a.txt", Data("a".utf8)), ("b.txt", Data("bee".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
 
         guard
             case .content(let content, let note) = await ClipboardPasteboardIntake.read(
@@ -767,9 +766,8 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("a mixed file + folder selection yields one rep each, in order")
     func mixedFileAndFolder() async throws {
-        let file = try makeTempFile(name: "plain.txt", contents: Data("hello".utf8))
-        let folder = try makeTempFolder(name: "Docs", files: [("inside.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        let file = try makeFile(name: "plain.txt", contents: Data("hello".utf8))
+        let folder = try makeFolder(name: "Docs", files: [("inside.txt", Data("x".utf8))])
 
         guard
             case .content(let content, _) = await ClipboardPasteboardIntake.read(
@@ -788,8 +786,7 @@ struct ClipboardPasteboardIntakeTests {
 
     @Test("a copied folder on a text-only transport is rejected")
     func folderTextOnlyRejected() async throws {
-        let folder = try makeTempFolder(name: "F", files: [("a", Data("a".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
+        let folder = try makeFolder(name: "F", files: [("a", Data("a".utf8))])
         guard
             case .rejected = await ClipboardPasteboardIntake.read(
                 filesAt: [folder], allowsBinary: false)
@@ -808,7 +805,7 @@ struct ClipboardPasteboardIntakeTests {
         // pointing at the temp file screencaptureui has already written, plus
         // a path-text fallback. The temp file exists during the drag.
         let png = try makePNG()
-        let url = try makeTempFile(name: "Screenshot 2026 at 6.57.png", contents: png)
+        let url = try makeFile(name: "Screenshot 2026 at 6.57.png", contents: png)
         let pasteboard = makeScratchPasteboard()
         pasteboard.clearContents()
         let item = NSPasteboardItem()

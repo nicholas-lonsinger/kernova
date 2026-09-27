@@ -7,12 +7,10 @@ import Testing
 /// Writing the file a shell loads the `kernova` tool's completions from.
 @Suite("Shell completion installer", .caseScoped)
 struct ShellCompletionInstallerTests {
-    /// A fresh directory the test owns, removed when it ends.
-    private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("knv-comp-\(UUID().uuidString.prefix(8))", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "knv-comp")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     @Test("Every shell has a file name it looks for and a folder it looks in")
@@ -53,14 +51,12 @@ struct ShellCompletionInstallerTests {
 
     @Test("A folder the user cannot create files in is not offered")
     func writabilityFollowsOwnerAndMode() throws {
-        let directory = try makeTemporaryDirectory()
         defer {
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755],
-                ofItemAtPath: directory.path(percentEncoded: false))
-            try? FileManager.default.removeItem(at: directory)
+                ofItemAtPath: scratch.url.path(percentEncoded: false))
         }
-        let path = directory.path(percentEncoded: false)
+        let path = scratch.url.path(percentEncoded: false)
         #expect(ShellCompletionInstaller.isUserWritableDirectory(path))
 
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path)
@@ -68,7 +64,7 @@ struct ShellCompletionInstallerTests {
 
         #expect(!ShellCompletionInstaller.isUserWritableDirectory(path + "/not-there"))
         // A file is not a folder to install into.
-        let file = directory.appendingPathComponent("occupant")
+        let file = scratch.url.appendingPathComponent("occupant")
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
         try Data("x".utf8).write(to: file)
         #expect(!ShellCompletionInstaller.isUserWritableDirectory(file.path(percentEncoded: false)))
@@ -76,14 +72,11 @@ struct ShellCompletionInstallerTests {
 
     @Test("The panel is pointed at the closest folder that exists")
     func theAncestorIsWhereThePanelOpens() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        #expect(ShellCompletionInstaller.existingAncestor(of: directory) == directory)
+        #expect(ShellCompletionInstaller.existingAncestor(of: scratch.url) == scratch.url)
         #expect(
             ShellCompletionInstaller.existingAncestor(
-                of: directory.appending(path: "one/two/three", directoryHint: .isDirectory))
-                == directory)
+                of: scratch.url.appending(path: "one/two/three", directoryHint: .isDirectory))
+                == scratch.url)
         #expect(
             ShellCompletionInstaller.existingAncestor(
                 of: URL(fileURLWithPath: "/nowhere/at/all", isDirectory: true))
@@ -113,9 +106,7 @@ struct ShellCompletionInstallerTests {
 
     @Test("Installing writes the loader where it was asked to")
     func installWritesTheLoader() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("_kernova")
+        let destination = scratch.url.appendingPathComponent("_kernova")
 
         try ShellCompletionInstaller.install(.zsh, at: destination)
 
@@ -125,9 +116,7 @@ struct ShellCompletionInstallerTests {
 
     @Test("Reinstalling replaces what an earlier install left")
     func installReplacesAnOlderLoader() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         try Data("stale".utf8).write(to: destination)
 
         try ShellCompletionInstaller.install(.bash, at: destination)
@@ -147,13 +136,10 @@ struct ShellCompletionInstallerTests {
 
     @Test("The pasteable command writes the same loader the install would")
     func theManualCommandWritesTheLoader() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-
         for shell in ShellCompletionInstaller.Shell.allCases {
             // A folder that is not there yet, which is what the `mkdir -p` is
             // for on a Mac where none of the default ones exist.
-            let folder = directory.appending(
+            let folder = scratch.url.appending(
                 path: shell.rawValue, directoryHint: .isDirectory)
             let destination = folder.appending(path: shell.fileName)
             let command = ShellCompletionInstaller.manualCommand(for: shell, at: destination)

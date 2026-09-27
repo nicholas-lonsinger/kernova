@@ -9,6 +9,12 @@ import UniformTypeIdentifiers
 
 @Suite("ClipboardContentDescriber", .caseScoped)
 struct ClipboardContentDescriberTests {
+    private let scratch = TestScratchDirectory(prefix: "ClipboardContentDescriberTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
     /// Real encoded PNG so `imagePixelSize` has a header to read.
     private func makePNG(width: Int, height: Int) throws -> Data {
         let rep = try #require(
@@ -115,10 +121,8 @@ struct ClipboardContentDescriberTests {
         // resident data) must read its dimensions from the file header and render
         // like an inline image — "type · W × H · size" — not a bare file chip.
         let png = try makePNG(width: 12, height: 7)
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).png")
+        let url = scratch.url.appendingPathComponent("\(UUID().uuidString).png")
         try png.write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let content = ClipboardContent(representations: [
             .init(uti: UTType.png.identifier, fileURL: url, byteCount: png.count, filename: "photo.png")
@@ -170,18 +174,15 @@ struct ClipboardContentDescriberTests {
     @Test("imagePixelSize(url:) reads dimensions from a file-backed image header")
     func pixelSizeFromURL() throws {
         let png = try makePNG(width: 20, height: 9)
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).png")
+        let url = scratch.url.appendingPathComponent("\(UUID().uuidString).png")
         try png.write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
 
         #expect(ClipboardContentDescriber.imagePixelSize(url: url) == CGSize(width: 20, height: 9))
     }
 
     @Test("imagePixelSize(url:) returns nil for a missing file")
     func pixelSizeURLNilForMissing() {
-        let missing = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString)-does-not-exist.png")
+        let missing = scratch.url.appendingPathComponent("\(UUID().uuidString)-does-not-exist.png")
         #expect(ClipboardContentDescriber.imagePixelSize(url: missing) == nil)
     }
 }

@@ -66,7 +66,6 @@ struct VMStorageServiceTests {
         let configURL = bundleURL.appendingPathComponent("config.json")
         #expect(FileManager.default.fileExists(atPath: configURL.path(percentEncoded: false)))
 
-        // Clean up (use removeItem directly to avoid polluting Trash during tests)
         try FileManager.default.removeItem(at: bundleURL)
         #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
     }

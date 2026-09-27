@@ -9,31 +9,25 @@ import Testing
 @Suite("AttachmentFileMonitor", .caseScoped)
 @MainActor
 struct AttachmentFileMonitorTests {
-    // MARK: - Helpers
+    private let scratch = TestScratchDirectory(prefix: "kernova-monitor-test")
 
-    /// Creates a fresh temp directory and registers a cleanup with the
-    /// returned closure (call from a `defer`).
-    private func makeTempDir() throws -> (url: URL, cleanup: () -> Void) {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-monitor-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return (url, { try? FileManager.default.removeItem(at: url) })
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
-    private func path(in dir: URL, _ name: String) -> String {
-        dir.appendingPathComponent(name).path(percentEncoded: false)
+    // MARK: - Helpers
+
+    private func path(_ name: String) -> String {
+        scratch.url.appendingPathComponent(name).path(percentEncoded: false)
     }
 
     // MARK: - setPaths
 
     @Test("setPaths populates existsByPath once it returns for present and missing files")
     func setPathsPopulatesAfterAwait() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-
-        let present = path(in: tmp.url, "present.iso")
+        let present = path("present.iso")
         FileManager.default.createFile(atPath: present, contents: Data([0]))
-        let missing = path(in: tmp.url, "missing.iso")
+        let missing = path("missing.iso")
 
         let monitor = AttachmentFileMonitor()
         await monitor.setPaths([present: nil, missing: nil])
@@ -44,9 +38,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("exists defaults to true between calling setPaths and the await returning")
     func existsIsOptimisticDuringProbe() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let missing = path(in: tmp.url, "missing.iso")
+        let missing = path("missing.iso")
 
         let monitor = AttachmentFileMonitor()
         // Read exists() before setPaths has had a chance to populate.
@@ -66,9 +58,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("Empty path strings are ignored")
     func emptyPathsAreIgnored() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let present = path(in: tmp.url, "present.iso")
+        let present = path("present.iso")
         FileManager.default.createFile(atPath: present, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
@@ -80,10 +70,8 @@ struct AttachmentFileMonitorTests {
 
     @Test("setPaths diff removes dropped paths from the map")
     func setPathsRemovesDroppedPaths() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let a = path(in: tmp.url, "a.iso")
-        let b = path(in: tmp.url, "b.iso")
+        let a = path("a.iso")
+        let b = path("b.iso")
         FileManager.default.createFile(atPath: a, contents: Data([0]))
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
@@ -100,9 +88,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("File creation in a watched directory flips exists to true")
     func reactsToFileCreation() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "appears.iso")
+        let target = path("appears.iso")
 
         let monitor = AttachmentFileMonitor()
         await monitor.setPaths([target: nil])
@@ -117,9 +103,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("File deletion in a watched directory flips exists to false")
     func reactsToFileDeletion() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "vanishes.iso")
+        let target = path("vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor()
@@ -152,9 +136,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("revalidate overwrites a path already answered as present")
     func revalidateReprobesAPresentPath() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "vanishes.iso")
+        let target = path("vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         let monitor = AttachmentFileMonitor(probe: stubProbe(existence: true))
@@ -172,9 +154,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("revalidate overwrites a path already answered as missing")
     func revalidateReprobesAMissingPath() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "reappears.iso")
+        let target = path("reappears.iso")
 
         let monitor = AttachmentFileMonitor(probe: stubProbe(existence: false))
         await monitor.setPaths([target: nil])
@@ -190,9 +170,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("App activation re-probes every tracked path")
     func appActivationRevalidates() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "vanishes.iso")
+        let target = path("vanishes.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         // Its own center: the app-wide activation name reaches every live
@@ -263,10 +241,8 @@ struct AttachmentFileMonitorTests {
 
     @Test("In-flight probe results are discarded when a later setPaths un-requests their paths")
     func inFlightProbeDiscardedOnSupersedingCall() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let a = path(in: tmp.url, "a.iso")
-        let b = path(in: tmp.url, "b.iso")
+        let a = path("a.iso")
+        let b = path("b.iso")
         FileManager.default.createFile(atPath: a, contents: Data([0]))
         FileManager.default.createFile(atPath: b, contents: Data([0]))
 
@@ -299,9 +275,7 @@ struct AttachmentFileMonitorTests {
 
     @Test("Dropping a path cancels its parent watcher and removes it from the watch set")
     func droppingPathTearsDownWatcher() async throws {
-        let tmp = try makeTempDir()
-        defer { tmp.cleanup() }
-        let target = path(in: tmp.url, "target.iso")
+        let target = path("target.iso")
         FileManager.default.createFile(atPath: target, contents: Data([0]))
 
         // Compute the parent the same way the monitor does internally

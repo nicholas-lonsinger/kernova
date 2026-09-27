@@ -55,27 +55,25 @@ private final class ArchiveBytesSource: ClipboardSequentialArchiveStream, @unche
 /// is `ClipboardTransferStreamTests`.
 @Suite("ClipboardArchiveCodec", .caseScoped)
 struct ClipboardArchiveStreamTests {
-    /// A unique scratch directory removed when the test ends.
-    private func makeScratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("archive-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "archive-tests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     /// An empty directory to extract into — what `extract` requires.
-    private func makeDestination(in scratch: URL, named name: String = "out") throws -> URL {
-        let url = scratch.appendingPathComponent(name, isDirectory: true)
+    private func makeDestination(in root: URL, named name: String = "out") throws -> URL {
+        let url = root.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
 
     /// Encodes `source` whole and unpacks it into a fresh directory under
-    /// `scratch`, which it returns — the round trip every fidelity case asserts
+    /// `root`, which it returns — the round trip every fidelity case asserts
     /// on.
     @discardableResult
-    private func roundTrip(_ source: ClipboardArchiveSource, in scratch: URL) throws -> URL {
-        let destination = try makeDestination(in: scratch)
+    private func roundTrip(_ source: ClipboardArchiveSource, in root: URL) throws -> URL {
+        let destination = try makeDestination(in: root)
         try ClipboardArchive.extract(
             try ClipboardArchive.archiveBytes(of: source), into: destination)
         return destination
@@ -91,10 +89,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a nested tree, its contents, an empty directory and the exec bit round-trip")
     func roundTripFidelity() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         let nested = source.appendingPathComponent("a/b/c", isDirectory: true)
         try fm.createDirectory(at: nested, withIntermediateDirectories: true)
         try "top".write(
@@ -108,7 +104,7 @@ struct ClipboardArchiveStreamTests {
         try "#!/bin/sh\n".write(to: exe, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         #expect(
             try String(contentsOf: dest.appendingPathComponent("top.txt"), encoding: .utf8) == "top")
@@ -125,23 +121,21 @@ struct ClipboardArchiveStreamTests {
         #expect(perms & 0o111 != 0)
         // The tree and nothing beside it: the extract leaves no working file of
         // its own next to what it unpacked.
-        #expect(try fm.contentsOfDirectory(atPath: scratch.path).sorted() == ["out", "source"])
+        #expect(try fm.contentsOfDirectory(atPath: scratch.url.path).sorted() == ["out", "source"])
     }
 
     @Test("a symlink is preserved, not followed")
     func symlinkPreserved() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try "target".write(
             to: source.appendingPathComponent("file.txt"), atomically: true, encoding: .utf8)
         try fm.createSymbolicLink(
             atPath: source.appendingPathComponent("link.txt").path, withDestinationPath: "file.txt")
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         let linkPath = dest.appendingPathComponent("link.txt").path
         let attrs = try fm.attributesOfItem(atPath: linkPath)
@@ -152,16 +146,14 @@ struct ClipboardArchiveStreamTests {
     @Test("a package-shaped directory (.rtfd) round-trips as a directory")
     func bundleRoundTrips() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         let rtfd = source.appendingPathComponent("note.rtfd", isDirectory: true)
         try fm.createDirectory(at: rtfd, withIntermediateDirectories: true)
         try "{\\rtf1}".write(
             to: rtfd.appendingPathComponent("TXT.rtf"), atomically: true, encoding: .utf8)
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         #expect(
             try String(
@@ -172,16 +164,14 @@ struct ClipboardArchiveStreamTests {
     @Test("unicode names survive the round trip")
     func unicodeNamesRoundTrip() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         let folder = source.appendingPathComponent("Ünïcødé 🎉", isDirectory: true)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try "ok".write(
             to: folder.appendingPathComponent("naïve — файл.txt"), atomically: true, encoding: .utf8)
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         #expect(
             try String(
@@ -192,17 +182,15 @@ struct ClipboardArchiveStreamTests {
     @Test("an empty directory encodes real bytes and extracts to an empty tree")
     func emptyDirectoryRoundTrips() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("empty", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("empty", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
 
         // Archive-header bytes, so an encoded folder is never legitimately
         // zero-length whatever the tree inside it holds.
         let bytes = try ClipboardArchive.archiveBytes(of: .directory(source))
         #expect(!bytes.isEmpty)
-        let dest = try makeDestination(in: scratch)
+        let dest = try makeDestination(in: scratch.url)
         try ClipboardArchive.extract(bytes, into: dest)
         #expect(try fm.contentsOfDirectory(atPath: dest.path).isEmpty)
     }
@@ -210,10 +198,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a tree carrying no file bytes still round-trips")
     func byteFreeTreeRoundTrips() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("scaffold", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("scaffold", isDirectory: true)
         try fm.createDirectory(
             at: source.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
@@ -221,7 +207,7 @@ struct ClipboardArchiveStreamTests {
         try Data().write(to: source.appendingPathComponent("sub/.keep"))
         #expect(ClipboardArchive.estimatedByteCount(at: source) == 0)
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
         #expect(fm.fileExists(atPath: dest.appendingPathComponent(".keep").path))
         #expect(fm.fileExists(atPath: dest.appendingPathComponent("sub/.keep").path))
     }
@@ -229,10 +215,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a locked file inside a folder extracts unlocked, so the whole tree can be swept")
     func lockedFileInsideAFolderExtractsUnlocked() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         let nested = source.appendingPathComponent("sub", isDirectory: true)
         try fm.createDirectory(at: nested, withIntermediateDirectories: true)
         let locked = nested.appendingPathComponent("locked.bin")
@@ -242,7 +226,7 @@ struct ClipboardArchiveStreamTests {
         try fm.setAttributes([.immutable: true], ofItemAtPath: locked.path)
         defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: locked.path) }
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         let entry = dest.appendingPathComponent("sub/locked.bin")
         let immutable = try fm.attributesOfItem(atPath: entry.path)[.immutable] as? Bool
@@ -259,10 +243,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a locked directory extracts unlocked, so its children can still be swept")
     func lockedDirectoryExtractsUnlocked() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         let locked = source.appendingPathComponent("locked", isDirectory: true)
         try fm.createDirectory(at: locked, withIntermediateDirectories: true)
         try "inside".write(
@@ -271,7 +253,7 @@ struct ClipboardArchiveStreamTests {
         try fm.setAttributes([.immutable: true], ofItemAtPath: locked.path)
         defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: locked.path) }
 
-        let dest = try roundTrip(.directory(source), in: scratch)
+        let dest = try roundTrip(.directory(source), in: scratch.url)
 
         // The peer authors every entry's flags, and a locked *directory* is the
         // damaging shape: it blocks `unlink` of everything inside it, so one in
@@ -292,10 +274,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a file source round-trips byte-identically under its entry name, with mode and times")
     func fileSourceRoundTrips() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let file = scratch.appendingPathComponent("payload.bin")
+        let file = scratch.url.appendingPathComponent("payload.bin")
         let payload = patternedBytes(count: 256 * 1024, multiplier: 7, offset: 3)
         try payload.write(to: file)
         try fm.setAttributes([.posixPermissions: 0o640], ofItemAtPath: file.path)
@@ -306,7 +286,7 @@ struct ClipboardArchiveStreamTests {
         // The entry is named by the offer, not by the file: the receiver
         // extracts it under exactly this name.
         let out = try roundTrip(
-            .file(file, name: "renamed.bin", byteCount: payload.count), in: scratch)
+            .file(file, name: "renamed.bin", byteCount: payload.count), in: scratch.url)
 
         #expect(try fm.contentsOfDirectory(atPath: out.path) == ["renamed.bin"])
         let entry = out.appendingPathComponent("renamed.bin")
@@ -322,33 +302,27 @@ struct ClipboardArchiveStreamTests {
 
     @Test("a file source carries exactly the byte count its offer declared")
     func fileSourceCarriesTheDeclaredByteCount() throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-
-        let file = scratch.appendingPathComponent("grew.bin")
+        let file = scratch.url.appendingPathComponent("grew.bin")
         let payload = patternedBytes(count: 8192, multiplier: 1, offset: 0)
         try payload.write(to: file)
 
         // A file that grew between the offer's stat and the paste is sent as the
         // prefix the offer described, so the entry can never disagree with the
         // size its header declares.
-        let out = try roundTrip(.file(file, name: "grew.bin", byteCount: 1024), in: scratch)
+        let out = try roundTrip(.file(file, name: "grew.bin", byteCount: 1024), in: scratch.url)
         #expect(try Data(contentsOf: out.appendingPathComponent("grew.bin")) == payload.prefix(1024))
     }
 
     @Test("a locked file source extracts unlocked, so staging can move and remove it")
     func lockedFileSourceExtractsUnlocked() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let file = scratch.appendingPathComponent("locked.bin")
+        let file = scratch.url.appendingPathComponent("locked.bin")
         try Data(repeating: 0x5C, count: 2048).write(to: file)
         try fm.setAttributes([.immutable: true], ofItemAtPath: file.path)
         defer { try? fm.setAttributes([.immutable: false], ofItemAtPath: file.path) }
 
-        let out = try roundTrip(.file(file, name: "locked.bin", byteCount: 2048), in: scratch)
+        let out = try roundTrip(.file(file, name: "locked.bin", byteCount: 2048), in: scratch.url)
         let entry = out.appendingPathComponent("locked.bin")
         let attributes: [FileAttributeKey: Any] = try fm.attributesOfItem(atPath: entry.path)
         let immutable: Bool? = attributes[.immutable] as? Bool
@@ -362,11 +336,9 @@ struct ClipboardArchiveStreamTests {
     @Test("a blob source round-trips as one entry")
     func blobSourceRoundTrips() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
         let payload = patternedBytes(count: 64 * 1024, multiplier: 13, offset: 5)
-        let out = try roundTrip(.blob(payload, name: "clip.png"), in: scratch)
+        let out = try roundTrip(.blob(payload, name: "clip.png"), in: scratch.url)
         #expect(try fm.contentsOfDirectory(atPath: out.path) == ["clip.png"])
         #expect(try Data(contentsOf: out.appendingPathComponent("clip.png")) == payload)
     }
@@ -376,10 +348,8 @@ struct ClipboardArchiveStreamTests {
     @Test("archive entries carry neither a per-entry digest nor extended attributes")
     func entriesCarryNeitherDigestNorExtendedAttributes() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try Data(repeating: 0xCD, count: 64 * 1024).write(to: source.appendingPathComponent("a.bin"))
         let tagged = source.appendingPathComponent("b.txt")
@@ -390,7 +360,7 @@ struct ClipboardArchiveStreamTests {
                 setxattr(tagged.path, "app.kernova.test", raw.baseAddress, raw.count, 0, 0)
             } == 0)
 
-        let archive = scratch.appendingPathComponent("tree.aar")
+        let archive = scratch.url.appendingPathComponent("tree.aar")
         try ClipboardArchive.archiveBytes(of: .directory(source)).write(to: archive)
 
         let file = try #require(
@@ -429,13 +399,9 @@ struct ClipboardArchiveStreamTests {
 
     @Test("the counted total is in the payload's own bytes, not the compressed archive's")
     func countedTotalIsInThePayloadsUnit() throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-
         // One repeated byte, so the archive is a fraction of the payload and a
         // count that slipped to compressed bytes would be unmistakable.
-        let file = scratch.appendingPathComponent("big.log")
+        let file = scratch.url.appendingPathComponent("big.log")
         let payload = Data(repeating: 0x41, count: 1 << 20)
         try payload.write(to: file)
 
@@ -454,10 +420,8 @@ struct ClipboardArchiveStreamTests {
     @Test("the extract guard is consulted once per pacing quantum")
     func extractGuardIsPacedByItsQuantum() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         // Incompressible, so the tree the guard counts is the size written.
         let quantum = ClipboardStreamTuning.extractPacingBytes
@@ -469,7 +433,7 @@ struct ClipboardArchiveStreamTests {
         let failure = ClipboardArchiveCodec.extract(
             from: ArchiveBytesSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
-            into: try makeDestination(in: scratch), counted: ArchiveByteCounter(),
+            into: try makeDestination(in: scratch.url), counted: ArchiveByteCounter(),
             pacingBytes: quantum, onOutputAdvanced: { _ in advances.value += 1 })
 
         #expect(failure == nil)
@@ -482,10 +446,8 @@ struct ClipboardArchiveStreamTests {
     @Test("a refusing guard stops the extract, and its reason survives the archive's rewrapping")
     func extractGuardRefusalSurvivesRewrapping() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         let quantum = 64 * 1024
         let payload = try randomBytes(count: 16 * quantum)
@@ -497,7 +459,7 @@ struct ClipboardArchiveStreamTests {
                 throw ClipboardArchiveStreamError.outputRefused(.overAdvertisedSize)
             }
         }
-        let destination = try makeDestination(in: scratch)
+        let destination = try makeDestination(in: scratch.url)
         let failure = ClipboardArchiveCodec.extract(
             from: ArchiveBytesSource(
                 bytes: try ClipboardArchive.archiveBytes(of: .directory(source))),
@@ -519,9 +481,7 @@ struct ClipboardArchiveStreamTests {
 
     @Test("encoding a nonexistent folder fails")
     func missingSourceFails() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let missing = scratch.appendingPathComponent("nope", isDirectory: true)
+        let missing = scratch.url.appendingPathComponent("nope", isDirectory: true)
         // An empty archive here would be a folder silently arriving empty.
         #expect(throws: (any Error).self) {
             _ = try ClipboardArchive.archiveBytes(of: .directory(missing))
@@ -530,25 +490,19 @@ struct ClipboardArchiveStreamTests {
 
     @Test("a file source naming a directory or a missing path fails the encode")
     func fileSourceRequiresARegularFile() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-
         #expect(throws: (any Error).self) {
-            _ = try ClipboardArchive.archiveBytes(of: .file(scratch, name: "dir", byteCount: 0))
+            _ = try ClipboardArchive.archiveBytes(of: .file(scratch.url, name: "dir", byteCount: 0))
         }
         #expect(throws: (any Error).self) {
             _ = try ClipboardArchive.archiveBytes(
                 of: .file(
-                    scratch.appendingPathComponent("nope.bin"), name: "nope.bin", byteCount: 16))
+                    scratch.url.appendingPathComponent("nope.bin"), name: "nope.bin", byteCount: 16))
         }
     }
 
     @Test("a file source that ends before its declared byte count fails the encode")
     func fileSourceShorterThanDeclaredFails() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-
-        let file = scratch.appendingPathComponent("shrank.bin")
+        let file = scratch.url.appendingPathComponent("shrank.bin")
         try Data(repeating: 0x11, count: 4096).write(to: file)
 
         // The entry's header has already declared the larger size, so the
@@ -562,16 +516,14 @@ struct ClipboardArchiveStreamTests {
     @Test("a truncated archive fails the extract rather than half-landing")
     func truncatedArchiveFailsTheExtract() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         let payload = Data(repeating: 0xAB, count: 256 * 1024)
         try payload.write(to: source.appendingPathComponent("big.bin"))
 
         let bytes = try ClipboardArchive.archiveBytes(of: .directory(source))
-        let dest = try makeDestination(in: scratch)
+        let dest = try makeDestination(in: scratch.url)
         #expect(throws: (any Error).self) {
             try ClipboardArchive.extract(bytes.prefix(bytes.count / 2), into: dest)
         }
@@ -583,9 +535,7 @@ struct ClipboardArchiveStreamTests {
     @Test("garbage in place of an archive fails the extract")
     func garbageInputFailsTheExtract() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-        let dest = try makeDestination(in: scratch)
+        let dest = try makeDestination(in: scratch.url)
 
         #expect(throws: (any Error).self) {
             try ClipboardArchive.extract(Data("not a valid archive".utf8), into: dest)

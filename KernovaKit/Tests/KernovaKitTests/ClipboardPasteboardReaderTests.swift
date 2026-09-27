@@ -11,12 +11,10 @@ import UniformTypeIdentifiers
 struct ClipboardPasteboardReaderTests {
     // MARK: - Fixtures
 
-    /// A unique scratch directory the caller removes when the test ends.
-    private func makeScratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("reader-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "reader-tests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     private func fileURLItem(_ url: URL) -> FakePasteboardItem {
@@ -85,9 +83,7 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("a promised file URL already written on disk resolves like a concrete one")
     func promisedFileURLResolves() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = scratch.appendingPathComponent("promised.txt")
+        let file = scratch.url.appendingPathComponent("promised.txt")
         try Data("body".utf8).write(to: file)
 
         let pasteboard = FakeReadPasteboard()
@@ -217,9 +213,7 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("a resolvable file is deferred whatever the transport carries")
     func textOnlyTransportDefersAResolvableFile() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = scratch.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("body".utf8).write(to: file)
 
         let pasteboard = FakeReadPasteboard()
@@ -288,11 +282,9 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("a symlink crosses as its target's bytes under the name that was copied")
     func symlinkResolvesToTargetUnderTheCopiedName() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let target = scratch.appendingPathComponent("target.txt")
+        let target = scratch.url.appendingPathComponent("target.txt")
         try Data("target body".utf8).write(to: target)
-        let link = scratch.appendingPathComponent("link.txt")
+        let link = scratch.url.appendingPathComponent("link.txt")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
 
         let intake = ClipboardPasteboardReader.resolve(filesAt: [link])
@@ -305,11 +297,9 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("a file this process cannot open is skipped, not offered as an empty one")
     func unreadableFileIsSkipped() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let readable = scratch.appendingPathComponent("readable.txt")
+        let readable = scratch.url.appendingPathComponent("readable.txt")
         try Data("body".utf8).write(to: readable)
-        let sealed = scratch.appendingPathComponent("sealed.txt")
+        let sealed = scratch.url.appendingPathComponent("sealed.txt")
         try Data("secret".utf8).write(to: sealed)
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
         defer {
@@ -325,9 +315,7 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("the snapshot's own unresolved count is folded into the resolve stage's")
     func unresolvedCountIsFoldedIn() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = scratch.appendingPathComponent("kept.txt")
+        let file = scratch.url.appendingPathComponent("kept.txt")
         try Data("body".utf8).write(to: file)
 
         let intake = ClipboardPasteboardReader.resolve(filesAt: [file], unresolved: 2)
@@ -338,9 +326,7 @@ struct ClipboardPasteboardReaderTests {
 
     @Test("a folder becomes a directory source rep sized by the injected walk")
     func folderBecomesADirectorySourceRep() throws {
-        let scratch = try makeScratch()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let folder = scratch.appendingPathComponent("Tree", isDirectory: true)
+        let folder = scratch.url.appendingPathComponent("Tree", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let intake = ClipboardPasteboardReader.resolve(filesAt: [folder], sizeOf: { _ in 4_096 })

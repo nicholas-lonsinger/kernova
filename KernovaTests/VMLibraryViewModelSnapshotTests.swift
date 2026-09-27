@@ -181,7 +181,6 @@ struct VMLibraryViewModelSnapshotTests {
         // needs one on disk, not just the status.
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
             atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))

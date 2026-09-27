@@ -27,10 +27,7 @@ struct VsockGuestDropAgentTests {
         let stagingRoot = TestStagingRoot()
 
         init(freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil) throws {
-            root = FileManager.default.temporaryDirectory
-                .appendingPathComponent(
-                    "VsockGuestDropAgentTests-\(UUID().uuidString)",
-                    isDirectory: true)
+            root = TestScratchDirectory(prefix: "VsockGuestDropAgentTests").url
             downloads = root.appendingPathComponent("Downloads", isDirectory: true)
             try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
@@ -72,7 +69,6 @@ struct VsockGuestDropAgentTests {
             agent.stop()
             host.close()
             dialled.closeAll()
-            try? FileManager.default.removeItem(at: root)
         }
 
         /// Names of the entries in the fake Downloads folder, sorted.

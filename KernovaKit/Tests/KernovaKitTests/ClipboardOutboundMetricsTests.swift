@@ -11,16 +11,14 @@ struct ClipboardOutboundMetricsTests {
     /// case that measures where a transfer's seconds are charged.
     private static let perCheckSeconds: TimeInterval = 0.25
 
-    private func makeScratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "outbound-metrics-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "outbound-metrics")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     private func tempFile(bytes: Data) throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: false)
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: false)
         try bytes.write(to: url)
         return url
     }
@@ -94,14 +92,12 @@ struct ClipboardOutboundMetricsTests {
 
     @Test("an archived file send counts the archive on the wire and the payload it expands to")
     func archivedFileSendReportsMetrics() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
         let collector = harness.collector
 
         let bytes = incompressibleBytes(count: 5 * ClipboardStreamTuning.dataReadBufferBytes + 99)
         let source = try tempFile(bytes: bytes)
-        defer { try? fm.removeItem(at: source) }
 
         let transferID: UInt64 = 1
         harness.pull(
@@ -138,9 +134,7 @@ struct ClipboardOutboundMetricsTests {
         defer { harness.tearDown() }
         let collector = harness.collector
 
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-        let source = scratch.appendingPathComponent("Project", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("Project", isDirectory: true)
         try fm.createDirectory(
             at: source.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)

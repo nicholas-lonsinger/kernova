@@ -14,6 +14,7 @@ import Testing
 struct VMCommandCoreArrivalTests {
     private let preferences = makeTestPreferences()
     private let storage = MockVMStorageService()
+    private let scratch = TestScratchDirectory(prefix: "ArrivalTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -79,8 +80,7 @@ struct VMCommandCoreArrivalTests {
     /// A bundle whose configuration reads, at a path with nothing on disk to
     /// copy — an import of it fails in the copy.
     private func unreadableSource() -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ArrivalTests-\(UUID().uuidString)", isDirectory: true)
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Vanished.\(VMBundleFormat.fileExtension)", isDirectory: true)
         storage.files.seed(
             VMConfiguration(name: "Vanished", guestOS: .linux, bootMode: .efi),

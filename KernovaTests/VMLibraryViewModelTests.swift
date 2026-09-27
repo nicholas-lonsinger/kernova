@@ -10,6 +10,7 @@ import Virtualization
 @Suite("VMLibraryViewModel Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryViewModelTests {
+    private let scratch = TestScratchDirectory(prefix: "VMLibraryViewModelTests")
     private let presenter = MockVMLibraryPresenting()
     /// Fresh per test (the struct is re-instantiated), so each test starts from
     /// an empty store.
@@ -229,7 +230,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently deletes the selected external files")
     func deleteVMPermanentlyDeletesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let externalDisk = FileManager.default.temporaryDirectory
+        let externalDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-external.img")
 
         let diskID = UUID()
@@ -255,7 +256,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM permanently never deletes a shared external even if selected")
     func deleteVMPermanentlyNeverDeletesSharedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let sharedDisk = FileManager.default.temporaryDirectory
+        let sharedDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
 
         let sharedID = UUID()
@@ -379,12 +380,12 @@ struct VMLibraryViewModelTests {
     @Test("externalAttachments flags isMissing per backing-file existence")
     func externalAttachmentsFlagMissing() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
-        let presentDisk = FileManager.default.temporaryDirectory
-            .appendingPathComponent("present-\(UUID().uuidString).img")
+        let presentDisk = scratch.url
+            .appendingPathComponent("present.img")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         try Data("disk".utf8).write(to: presentDisk)
-        defer { try? FileManager.default.removeItem(at: presentDisk) }
-        let missingPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("missing-\(UUID().uuidString).iso").path
+        let missingPath = scratch.url
+            .appendingPathComponent("missing.iso").path
 
         let instance = viewModel.library.admitFixture(name: "Target") {
             $0.storageDisks = [
@@ -487,9 +488,9 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM with no selected externals leaves external files untouched")
     func deleteVMKeepsExternalsByDefault() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let externalDisk = FileManager.default.temporaryDirectory
+        let externalDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-external.img")
-        let externalISO = FileManager.default.temporaryDirectory
+        let externalISO = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-installer.iso")
 
         let instance = viewModel.library.admitFixture {
@@ -518,9 +519,9 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM trashes the selected external disks and removable media")
     func deleteVMTrashesExternals() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let externalDisk = FileManager.default.temporaryDirectory
+        let externalDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-external.img")
-        let externalISO = FileManager.default.temporaryDirectory
+        let externalISO = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-installer.iso")
 
         let diskID = UUID()
@@ -551,9 +552,9 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM trashes only the selected external and keeps the rest")
     func deleteVMTrashesOnlySelectedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let trashedDisk = FileManager.default.temporaryDirectory
+        let trashedDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-trash.img")
-        let keptDisk = FileManager.default.temporaryDirectory
+        let keptDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-keep.img")
 
         let trashedID = UUID()
@@ -582,7 +583,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM never trashes a shared external even if its id is selected")
     func deleteVMNeverTrashesSharedExternal() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let sharedDisk = FileManager.default.temporaryDirectory
+        let sharedDisk = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-shared.img")
 
         let sharedID = UUID()
@@ -616,7 +617,7 @@ struct VMLibraryViewModelTests {
     @Test("deleteVM never trashes a file a sibling names in a different path form")
     func deleteVMNeverTrashesSharedExternalAcrossPathForms() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let sharedDisk = FileManager.default.temporaryDirectory
+        let sharedDisk = scratch.url
             .appendingPathComponent(
                 "\(UUID().uuidString)-Cafe\u{0301}.img".precomposedStringWithCanonicalMapping)
 
@@ -687,7 +688,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
 
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         let instance = viewModel.library.admitFixture {
             $0.installContext = MacOSInstallContext(
@@ -715,7 +716,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let viewModel = makeViewModelWithIPSW(ipswService: ipswService, storage: storage)
 
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         let instance = viewModel.library.admitFixture {
             $0.installContext = MacOSInstallContext(
@@ -743,7 +744,7 @@ struct VMLibraryViewModelTests {
 
         // A destination path is set so the source — not a nil destination — is
         // what keeps the cleanup from firing.
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
         let instance = viewModel.library.admitFixture {
             $0.installContext = MacOSInstallContext(
@@ -777,8 +778,8 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.trashError = CocoaError(.fileNoSuchFile)
         let ghostID = UUID()
-        let ghostPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+        let ghostPath = scratch.url
+            .appendingPathComponent("kernova-ghost.iso")
             .path(percentEncoded: false)
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [RemovableMediaItem(id: ghostID, path: ghostPath, readOnly: true)]
@@ -796,8 +797,8 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         fileSystem.removeError = CocoaError(.fileNoSuchFile)
         let ghostID = UUID()
-        let ghostPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-ghost-\(UUID().uuidString).iso")
+        let ghostPath = scratch.url
+            .appendingPathComponent("kernova-ghost.iso")
             .path(percentEncoded: false)
         let instance = viewModel.library.admitFixture {
             $0.removableMedia = [RemovableMediaItem(id: ghostID, path: ghostPath, readOnly: true)]
@@ -1334,11 +1335,6 @@ struct VMLibraryViewModelTests {
             try FileManager.default.createDirectory(
                 at: instance.bundleURL, withIntermediateDirectories: true)
             try Data([1, 2, 3]).write(to: instance.machineIdentifierURL)
-        }
-        defer {
-            for instance in [starting, other] {
-                try? FileManager.default.removeItem(at: instance.bundleURL)
-            }
         }
         wire([starting, other], into: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
@@ -2031,7 +2027,6 @@ struct VMLibraryViewModelTests {
         let instance = makeMatchWindowInstance(in: viewModel.library)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         try Data().write(to: instance.bundleLayout.saveFileURL)
 
         await viewModel.start(instance)
@@ -2253,7 +2248,6 @@ struct VMLibraryViewModelTests {
         instance.activity.placeForTesting(.failed(message: "Test failure"))
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         FileManager.default.createFile(
             atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
@@ -3335,10 +3329,9 @@ struct VMLibraryViewModelTests {
         // install context on the new VM carries requestedFreshDownload=true,
         // which is what tells the lifecycle coordinator to trash the stale
         // file at first Start.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("createVMOverwrite-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("createVMOverwrite", isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
         try Data(repeating: 0x12, count: 256).write(to: destination)
 
@@ -3365,10 +3358,9 @@ struct VMLibraryViewModelTests {
         // Same wizard shape but without `confirmOverwrite()` — the persisted
         // context must have requestedFreshDownload=false so the coordinator
         // doesn't trash an unrelated file at first Start.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("createVMNoOverwrite-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("createVMNoOverwrite", isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: temp) }
         let destination = temp.appendingPathComponent("RestoreImage.ipsw")
 
         let (viewModel, _, _, _, _) = makeViewModel()
@@ -3603,10 +3595,9 @@ struct VMLibraryViewModelTests {
         // The pipeline runs the VM through `.installing`, and the Start chained
         // off its success is the one thing that has to survive that: the real
         // service refuses a start from a status failing `canStart`.
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("linuxAutoBoot-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("linuxAutoBoot", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: downloads) }
 
         let contents = Data("kernova linux image fixture".utf8)
         let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
@@ -4293,7 +4284,6 @@ struct VMLibraryViewModelTests {
         suspended.activity.placeForTesting(.suspended)
         try FileManager.default.createDirectory(
             at: suspended.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: suspended.bundleURL) }
         FileManager.default.createFile(
             atPath: suspended.bundleLayout.saveFileURL.path(percentEncoded: false),
             contents: Data("fake save".utf8))
@@ -4479,20 +4469,18 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Import
 
-    /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique temp parent.
+    /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique parent in the scratch.
     ///
-    /// The parent keeps parallel tests from colliding. When `createOnDisk` is true (the
+    /// The parent lets two sources in one test share a leaf name. When `createOnDisk` is true (the
     /// default), writes the bundle and its `config.json` on disk — `importVM` copies real files via
     /// `FileManager`, so tests exercising a successful copy need an actual source directory;
     /// tests modeling a missing/never-copied source (duplicate-UUID short-circuit,
-    /// copy-failure) pass `false` and have nothing to clean up. Callers that do create on disk
-    /// must remove the returned URL's *parent* directory (`url.deletingLastPathComponent()`),
-    /// not just the leaf `.kernova` directory this returns.
+    /// copy-failure) pass `false`.
     private func makeImportSource(
         name: String, storage: MockVMStorageService, createOnDisk: Bool = true
     ) throws -> (url: URL, config: VMConfiguration) {
         let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         if createOnDisk {
@@ -4509,7 +4497,6 @@ struct VMLibraryViewModelTests {
     func importVMSingleBundle() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = try makeImportSource(name: "Imported VM", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         await viewModel.awaitArrivalsForTesting()
@@ -4531,7 +4518,6 @@ struct VMLibraryViewModelTests {
     func importClearsAutoStartFlag() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = try makeImportSource(name: "Pre-marked VM", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
         // A real file, since the import copies the source directory itself.
         try VMStagedBundle.fixtureForTesting(at: source.url, access: CoordinatedBundleFileAccess()).update(.hostState) {
             $0 = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut)
@@ -4558,11 +4544,6 @@ struct VMLibraryViewModelTests {
             makeImportSource(name: "Batch VM 2", storage: storage),
             makeImportSource(name: "Batch VM 3", storage: storage),
         ]
-        defer {
-            for source in sources {
-                try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
-            }
-        }
 
         _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
         await viewModel.awaitArrivalsForTesting()
@@ -4582,10 +4563,6 @@ struct VMLibraryViewModelTests {
         // Two sources with the same leaf name but distinct parents (and distinct UUIDs).
         let first = try makeImportSource(name: "Same Name", storage: storage)
         let second = try makeImportSource(name: "Same Name", storage: storage)
-        defer {
-            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
-            try? FileManager.default.removeItem(at: second.url.deletingLastPathComponent())
-        }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, second.url])
         await viewModel.awaitArrivalsForTesting()
@@ -4644,10 +4621,6 @@ struct VMLibraryViewModelTests {
             name: existing.configuration.name, storage: storage, createOnDisk: false)
         storage.bundles[duplicate.url] = existing.configuration
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
-        defer {
-            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
-            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
-        }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
         await viewModel.awaitArrivalsForTesting()
@@ -4682,7 +4655,6 @@ struct VMLibraryViewModelTests {
             URL(filePath: "/tmp/occupied.kernova"))
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
         let source = try makeImportSource(name: "Unpublishable Import", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         let destination = try #require(viewModel.arrivals.first).destinationURL
@@ -4700,10 +4672,6 @@ struct VMLibraryViewModelTests {
         let first = try makeImportSource(name: "Batch VM 1", storage: storage)
         let failing = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
-        defer {
-            try? FileManager.default.removeItem(at: first.url.deletingLastPathComponent())
-            try? FileManager.default.removeItem(at: third.url.deletingLastPathComponent())
-        }
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, failing.url, third.url])
         await viewModel.awaitArrivalsForTesting()
@@ -4722,7 +4690,6 @@ struct VMLibraryViewModelTests {
             .cloning, named: "Cloning VM", gate: gate)
 
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         let imported = try #require(viewModel.arrivals.first { $0.kind == .importing })
@@ -4747,11 +4714,6 @@ struct VMLibraryViewModelTests {
             makeImportSource(name: "Trigger B VM", storage: storage)
         ]
         let allSources = firstBatch + secondBatch
-        defer {
-            for source in allSources {
-                try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent())
-            }
-        }
 
         // Two independent triggers (e.g. a drag-and-drop batch and a Finder double-click)
         // firing back-to-back, mirroring SidebarViewController's acceptImport and
@@ -4780,7 +4742,6 @@ struct VMLibraryViewModelTests {
         viewModel.selectedID = preparing.id
 
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
-        defer { try? FileManager.default.removeItem(at: source.url.deletingLastPathComponent()) }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
 
@@ -4984,7 +4945,6 @@ struct VMLibraryViewModelTests {
         try fm.createDirectory(at: sourceLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
         let sourceDiskFile = sourceLayout.additionalDiskURL(id: sourceDiskID)
         try Data("disk-bytes".utf8).write(to: sourceDiskFile)
-        defer { try? fm.removeItem(at: instance.bundleURL) }
 
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -4993,7 +4953,6 @@ struct VMLibraryViewModelTests {
 
         let clone = viewModel.instances.first { $0.id != instance.id }
         #expect(clone != nil)
-        defer { clone.map { try? fm.removeItem(at: $0.bundleURL) } }
 
         let clonedDisks = clone?.configuration.storageDisks ?? []
         guard let extra = clonedDisks.first(where: { $0.path.hasPrefix("AdditionalDisks/") }) else {
@@ -5175,7 +5134,6 @@ struct VMLibraryViewModelTests {
         try FileManager.default.createDirectory(
             at: source.bundleURL, withIntermediateDirectories: true)
         try Self.sourceMachineID.write(to: source.machineIdentifierURL)
-        defer { try? FileManager.default.removeItem(at: source.bundleURL) }
 
         viewModel.cloneVM(source)
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
@@ -5312,11 +5270,11 @@ struct VMLibraryViewModelTests {
             name: "Second", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
         let config3 = VMConfiguration(
             name: "Third", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 300))
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
-        let url3 = FileManager.default.temporaryDirectory
+        let url3 = scratch.url
             .appendingPathComponent("\(config3.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
@@ -5349,9 +5307,9 @@ struct VMLibraryViewModelTests {
             name: "Older", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
         let config2 = VMConfiguration(
             name: "Newer", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
@@ -5367,7 +5325,7 @@ struct VMLibraryViewModelTests {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(
             name: "Existing", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 200))
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
 
@@ -5378,7 +5336,7 @@ struct VMLibraryViewModelTests {
         // Simulate a new VM appearing on disk
         let config2 = VMConfiguration(
             name: "Discovered", guestOS: .linux, bootMode: .efi, createdAt: Date(timeIntervalSince1970: 100))
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url2] = config2
 
@@ -5407,7 +5365,7 @@ struct VMLibraryViewModelTests {
     func customOrderIgnoresStaleUUIDs() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
@@ -5524,7 +5482,7 @@ struct VMLibraryViewModelTests {
         config.removableMedia = [
             RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
         ]
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)

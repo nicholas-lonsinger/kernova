@@ -33,8 +33,8 @@ struct CLIAppLaunchTests {
 
     @Test("A tool outside any app resolves nothing, rather than guessing")
     func looseToolResolvesNothing() throws {
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         #expect(locate(scratch.appendingPathComponent("bin/kernova").path) == nil)
         #expect(locate("/kernova") == nil)
     }
@@ -45,8 +45,7 @@ struct CLIAppLaunchTests {
     /// to start.
     @Test("The installed tool resolves through its symlink into the app it links at")
     func installedSymlinkResolvesItsApp() throws {
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
         let installed = try InstalledToolFixture(in: scratch)
 
         let located = try #require(EnclosingAppBundle.locate(executable: installed.link))

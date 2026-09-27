@@ -9,16 +9,16 @@ import Testing
 /// style.
 @Suite("FinderStyleUniquing", .caseScoped)
 struct FinderStyleUniquingTests {
-    /// A fresh empty directory, plus the files named in `seeded`.
+    private let scratch = TestScratchDirectory(prefix: "FinderStyleUniquingTests")
+
+    /// This test's empty directory, plus the files named in `seeded`.
     private func makeDirectory(seeded: [String] = []) throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FinderStyleUniquingTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         for name in seeded {
             FileManager.default.createFile(
-                atPath: root.appendingPathComponent(name).path, contents: Data())
+                atPath: scratch.url.appendingPathComponent(name).path, contents: Data())
         }
-        return root
+        return scratch.url
     }
 
     // MARK: - Uniquing
@@ -26,7 +26,6 @@ struct FinderStyleUniquingTests {
     @Test("a free name is used as-is")
     func keepsAFreeName() throws {
         let dir = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
 
         #expect(
             FinderStyleUniquing.uniqueDestination(in: dir, filename: "report.pdf").lastPathComponent
@@ -36,7 +35,6 @@ struct FinderStyleUniquingTests {
     @Test("a taken name counts up before the extension, Finder-style")
     func countsUpBeforeTheExtension() throws {
         let dir = try makeDirectory(seeded: ["report.pdf"])
-        defer { try? FileManager.default.removeItem(at: dir) }
 
         let second = FinderStyleUniquing.uniqueDestination(in: dir, filename: "report.pdf")
         #expect(second.lastPathComponent == "report 2.pdf")
@@ -50,7 +48,6 @@ struct FinderStyleUniquingTests {
     @Test("an extensionless name — a folder's, say — takes a bare counter")
     func countsUpWithoutAnExtension() throws {
         let dir = try makeDirectory(seeded: ["Photos"])
-        defer { try? FileManager.default.removeItem(at: dir) }
 
         #expect(
             FinderStyleUniquing.uniqueDestination(in: dir, filename: "Photos").lastPathComponent
@@ -60,7 +57,6 @@ struct FinderStyleUniquingTests {
     @Test("a multi-dot name counts up before the last extension only")
     func treatsOnlyTheLastComponentAsAnExtension() throws {
         let dir = try makeDirectory(seeded: ["archive.tar.gz"])
-        defer { try? FileManager.default.removeItem(at: dir) }
 
         #expect(
             FinderStyleUniquing.uniqueDestination(in: dir, filename: "archive.tar.gz")
@@ -72,7 +68,6 @@ struct FinderStyleUniquingTests {
     @Test("a peer-supplied name cannot escape the destination directory")
     func sanitizesTraversal() throws {
         let dir = try makeDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
 
         let escaped = FinderStyleUniquing.uniqueDestination(in: dir, filename: "../escape.txt")
         #expect(escaped.lastPathComponent == "escape.txt")

@@ -744,8 +744,7 @@ struct LazyPullCoordinatorTests {
         let harness = TransferHarness()
         defer { harness.tearDown() }
         let advertised = 4 * 1024 * 1024
-        let (scratch, source) = try makeBulkyTree(named: "Bulky", byteCount: advertised)
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let source = try makeBulkyTree(named: "Bulky", byteCount: advertised)
         // Incompressible and short of one pacing quantum, so the extract cannot
         // reach its first figure from what arrives.
         let prefix = try clipboardArchiveBytes(ofDirectoryAt: source)
@@ -810,10 +809,10 @@ struct LazyPullCoordinatorTests {
         defer { harness.tearDown() }
 
         let bytes = Data(repeating: 7, count: 4096 * 2)
-        let source = FileManager.default.temporaryDirectory.appendingPathComponent(
-            UUID().uuidString, isDirectory: false)
+        let scratch = TestScratchDirectory(prefix: "LazyPullCoordinatorTests")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let source = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: false)
         try bytes.write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
 
         let box = RepBox()
         let gate = AsyncGate()

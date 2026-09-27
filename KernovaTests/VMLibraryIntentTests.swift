@@ -145,10 +145,9 @@ struct VMLibraryIntentTests {
 
     @Test("A picked bundle resolves to the file it names")
     func bundleFileNamesItsFile() async throws {
-        let picked = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Imported-\(UUID().uuidString).kernova", isDirectory: true)
+        let picked = TestScratchDirectory(prefix: "VMLibraryIntentTests").url
+            .appendingPathComponent("Imported.kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: picked, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: picked) }
 
         let resolved = try await VMBundleFile.defaultQuery.entities(
             for: [try FileEntityIdentifier.file(url: picked)])

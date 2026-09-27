@@ -6,7 +6,7 @@ import KernovaTestSupport
 @testable import Kernova
 
 /// Exercises `SerialSocketRelay` against real AF_UNIX sockets: the relay binds a
-/// listener under the temp dir, a test "client" socket connects to it, and a
+/// listener in a scratch directory, a test "client" socket connects to it, and a
 /// `Pipe` stands in for the guest serial input.
 @MainActor
 @Suite("SerialSocketRelay", .caseScoped)
@@ -17,10 +17,14 @@ struct SerialSocketRelayTests {
 
     // MARK: - Helpers
 
-    private func tempSocketPath() -> String {
-        let short = UUID().uuidString.prefix(8).lowercased()
-        return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-t-\(short).sock")
+    private let scratch = TestScratchDirectory(prefix: "knv")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
+
+    /// Short enough to bind: `sockaddr_un.sun_path` holds 104 bytes.
+    private var socketPath: String { scratch.url.appendingPathComponent("t.sock").path(percentEncoded: false) }
 
     /// Connects a non-blocking AF_UNIX client to `path` and returns its fd.
     private func connectClient(to path: String) throws -> Int32 {
@@ -67,7 +71,7 @@ struct SerialSocketRelayTests {
     @Test("guest output reaches a connected client")
     func outputReachesClient() async throws {
         let pipe = Pipe()
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -92,7 +96,7 @@ struct SerialSocketRelayTests {
     func forwardOutputNoClient() async throws {
         let pipe = Pipe()
         let relay = SerialSocketRelay(
-            path: tempSocketPath(), guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
+            path: socketPath, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
         defer { relay.stop() }
         relay.forwardOutput(Data("ignored".utf8))  // must not crash or block
@@ -109,7 +113,7 @@ struct SerialSocketRelayTests {
         let flags = fcntl(readFd, F_GETFL, 0)
         _ = fcntl(readFd, F_SETFL, flags | O_NONBLOCK)
 
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -135,7 +139,7 @@ struct SerialSocketRelayTests {
     @Test("a second client supersedes the first")
     func secondClientSupersedesFirst() async throws {
         let pipe = Pipe()
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -163,7 +167,7 @@ struct SerialSocketRelayTests {
     @Test("listener survives a client disconnect and accepts a reconnect")
     func reconnectAfterDisconnect() async throws {
         let pipe = Pipe()
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -192,7 +196,7 @@ struct SerialSocketRelayTests {
     @Test("stop unlinks the socket file")
     func stopUnlinksSocketFile() {
         let pipe = Pipe()
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -206,8 +210,7 @@ struct SerialSocketRelayTests {
     func lengthGuardDisablesRelay() {
         let pipe = Pipe()
         let longPath =
-            (NSTemporaryDirectory() as NSString).appendingPathComponent(
-                String(repeating: "x", count: 200) + ".sock")
+            scratch.url.appendingPathComponent(String(repeating: "x", count: 200) + ".sock").path(percentEncoded: false)
         let relay = SerialSocketRelay(
             path: longPath, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
@@ -219,7 +222,7 @@ struct SerialSocketRelayTests {
     @Test("start and stop are idempotent")
     func startStopIdempotent() {
         let pipe = Pipe()
-        let path = tempSocketPath()
+        let path = socketPath
         let relay = SerialSocketRelay(
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()

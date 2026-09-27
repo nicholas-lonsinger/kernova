@@ -22,7 +22,7 @@ struct CLIWaitTests {
     @Test("A failure reported while the wait runs ends it carrying Kernova's own message")
     func aFailureEndsTheWaitWithItsMessage() throws {
         let ended = try outcome(
-            .running, tag: "wait-fail",
+            .running,
             answering: [
                 info(status: "installing"),
                 event(.failure(id: alpha, name: "Alpha", message: "The install could not run.")),
@@ -38,7 +38,7 @@ struct CLIWaitTests {
         // and the failure behind it, so a wait that settled for the first frame
         // would report a failure it could not explain.
         let ended = try outcome(
-            .running, tag: "wait-error-status",
+            .running,
             answering: [
                 info(status: "installing"),
                 event(.statusChanged(id: alpha, name: "Alpha", from: "installing", to: "error")),
@@ -51,7 +51,7 @@ struct CLIWaitTests {
     @Test("A failure that reaches the wire ahead of the info answer ends the wait too")
     func aFailureAheadOfTheInfoAnswerEndsTheWait() throws {
         let ended = try outcome(
-            .agent, tag: "wait-fail-early",
+            .agent,
             answering: [
                 event(.failure(id: alpha, name: "Alpha", message: "The disk went away.")),
                 info(status: "running"),
@@ -63,7 +63,7 @@ struct CLIWaitTests {
     @Test("A virtual machine that leaves the library ends the wait")
     func aRemovedVirtualMachineEndsTheWait() throws {
         let ended = try outcome(
-            .stopped, tag: "wait-removed",
+            .stopped,
             answering: [info(status: "running"), event(.removed(id: alpha, name: "Alpha"))])
         #expect(ended.failure?.code == .notFound)
         #expect(ended.failure?.message == "\u{201C}Alpha\u{201D} left the library.")
@@ -74,7 +74,7 @@ struct CLIWaitTests {
     @Test("A failure naming another virtual machine is not this wait's")
     func anotherVirtualMachinesFailureIsIgnored() throws {
         let ended = try outcome(
-            .running, tag: "wait-other-vm",
+            .running,
             answering: [
                 info(status: "stopped"),
                 event(.failure(id: beta, name: "Beta", message: "Beta's disk went away.")),
@@ -95,7 +95,7 @@ struct CLIWaitTests {
         // being waited for is not coming. Ending on the event *after* that
         // baseline is what proves the wait read it and went on.
         let ended = try outcome(
-            .running, tag: "wait-resting-error",
+            .running,
             answering: [
                 info(status: "error"),
                 event(.statusChanged(id: alpha, name: "Alpha", from: "error", to: "running")),
@@ -108,7 +108,7 @@ struct CLIWaitTests {
 
     @Test("A virtual machine already in the state ends the wait on the snapshot")
     func theBaselineEndsTheWait() throws {
-        let ended = try outcome(.running, tag: "wait-baseline", answering: [info(status: "running")])
+        let ended = try outcome(.running, answering: [info(status: "running")])
         #expect(ended.failure == nil)
         #expect(ended.verbs == subscribeThenRead)
     }
@@ -116,7 +116,7 @@ struct CLIWaitTests {
     @Test("The status the wait names ends it when it arrives as an event")
     func aStatusEventEndsTheWait() throws {
         let ended = try outcome(
-            .stopped, tag: "wait-status",
+            .stopped,
             answering: [
                 info(status: "running"),
                 event(.statusChanged(id: alpha, name: "Alpha", from: "running", to: "stopped")),
@@ -127,7 +127,7 @@ struct CLIWaitTests {
     @Test("A current agent ends an agent wait")
     func theAgentConditionEndsOnACurrentAgent() throws {
         let ended = try outcome(
-            .agent, tag: "wait-agent",
+            .agent,
             answering: [
                 info(status: "running", agentStatus: "outdated"),
                 event(.agentStatusChanged(id: alpha, name: "Alpha", status: "current")),
@@ -142,7 +142,7 @@ struct CLIWaitTests {
         // The deadline is the assertion here, so it is the one place a small
         // injected timeout is the correct value.
         let ended = try outcome(
-            .running, tag: "wait-deadline", timeout: 1,
+            .running, timeout: 1,
             answering: [info(status: "stopped")], holdingOpen: true)
         #expect(ended.failure?.code == .timedOut)
         #expect(ended.failure?.message == "\u{201C}Alpha\u{201D} was not running within 1 seconds.")
@@ -160,10 +160,10 @@ struct CLIWaitTests {
     /// places an event before or after that answer to choose which of the two
     /// the tool reads first.
     private func outcome(
-        _ until: WaitCondition, tag: String, timeout: Double = testWaitBackstop,
+        _ until: WaitCondition, timeout: Double = testWaitBackstop,
         answering frames: [VMCommandResponse], holdingOpen: Bool = false
     ) throws -> WaitOutcome {
-        let listener = try TestCommandSocket(tag: tag)
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }

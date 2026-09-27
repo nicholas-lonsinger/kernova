@@ -579,9 +579,7 @@ struct VMRunLockTests {
 
     @Test("The real lock rides the bundle directory across a rename, and a probe sees it until it is dropped")
     func realLockRidesTheDirectory() throws {
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VMRunLockTests-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: parent) }
+        let parent = TestScratchDirectory(prefix: "VMRunLockTests").url
         let bundle = parent.appendingPathComponent("V.kernova", isDirectory: true)
         let moved = parent.appendingPathComponent("Moved.kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)

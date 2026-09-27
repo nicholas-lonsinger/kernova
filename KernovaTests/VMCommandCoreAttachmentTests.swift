@@ -13,6 +13,7 @@ import Testing
 @MainActor
 struct VMCommandCoreAttachmentTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandCoreAttachmentTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -81,7 +82,7 @@ struct VMCommandCoreAttachmentTests {
     }
 
     private func externalPath(_ suffix: String) -> String {
-        FileManager.default.temporaryDirectory
+        scratch.url
             .appendingPathComponent("\(UUID().uuidString)-\(suffix)")
             .path(percentEncoded: false)
     }
@@ -120,7 +121,6 @@ struct VMCommandCoreAttachmentTests {
                     kind: .virtio)
             ]
         }
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 100)
 
@@ -141,7 +141,6 @@ struct VMCommandCoreAttachmentTests {
         diskImages.createDiskImageError = DiskImageError.writeFailed(NSError(domain: "t", code: 1))
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         let refusal = await commandError {
             try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 32)
@@ -160,7 +159,6 @@ struct VMCommandCoreAttachmentTests {
         diskImages.createDiskImageError = DiskImageError.templateMissing(sizeInGB: 32)
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         let refusal = await commandError {
             try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 32)
@@ -178,7 +176,6 @@ struct VMCommandCoreAttachmentTests {
         diskImages.holdCreateDiskImage()
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         let creation = Task { @MainActor in
             try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 8)
@@ -578,7 +575,7 @@ struct VMCommandCoreAttachmentTests {
     func createRemovableMediaAttaches() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString) Removable Disk.asif")
 
         try await harness.core.createRemovableMedia(
@@ -601,7 +598,7 @@ struct VMCommandCoreAttachmentTests {
             diskImages.createDiskImageError = error
             let harness = makeHarness(diskImages: diskImages)
             let instance = makeInstance(in: harness)
-            let destination = FileManager.default.temporaryDirectory
+            let destination = scratch.url
                 .appendingPathComponent("\(UUID().uuidString).asif")
 
             let refusal = await commandError {
@@ -623,7 +620,7 @@ struct VMCommandCoreAttachmentTests {
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID))
         instance.beginSessionContextForTesting()
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString).asif")
 
         let creation = Task { @MainActor in
@@ -664,7 +661,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness(diskImages: diskImages)
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        let destination = FileManager.default.temporaryDirectory
+        let destination = scratch.url
             .appendingPathComponent("\(UUID().uuidString).asif")
 
         let creation = Task { @MainActor in

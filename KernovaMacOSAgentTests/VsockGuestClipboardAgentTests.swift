@@ -146,6 +146,7 @@ final class FakePasteboard: Pasteboard, @unchecked Sendable {
 @Suite("VsockGuestClipboardAgent state machine", .caseScoped)
 struct VsockGuestClipboardAgentTests {
     private let stagingRoot = TestStagingRoot()
+    private let scratch = TestScratchDirectory(prefix: "KernovaAgentClip")
 
     // Every `…ForTesting` lifecycle poll in this suite is the no-signal kind —
     // `liveChannelForTesting` and `inboundPromiseGenerationForTesting` read
@@ -284,7 +285,6 @@ struct VsockGuestClipboardAgentTests {
         // pasteboard (Finder ⌘C).
         let contents = Data((0..<(300 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
         let url = try writeTempFile(name: "notes.bin", data: contents)
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         pasteboard.setItem([
             (type: .fileURL, data: Data(url.absoluteString.utf8))
         ])
@@ -343,7 +343,6 @@ struct VsockGuestClipboardAgentTests {
         // Finder copies an empty file, so the guest offers one: the stat gate
         // keeps the rep at `byteCount == 0` rather than dropping it.
         let url = try writeTempFile(name: "empty.bin", data: Data())
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         pasteboard.setItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
         await MainActor.run { agent.checkClipboardChange() }
 
@@ -400,7 +399,6 @@ struct VsockGuestClipboardAgentTests {
 
         let contents = Data((0..<(300 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
         let url = try writeTempFile(name: "notes.bin", data: contents)
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         pasteboard.setItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
         await MainActor.run { agent.checkClipboardChange() }
 
@@ -449,7 +447,6 @@ struct VsockGuestClipboardAgentTests {
 
         let png = try makeTestPNG()
         let url = try writeTempFile(name: "picture.png", data: png)
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         pasteboard.setItem([
             (type: .fileURL, data: Data(url.absoluteString.utf8))
         ])
@@ -489,8 +486,6 @@ struct VsockGuestClipboardAgentTests {
 
         let a = try writeTempFile(name: "a.txt", data: Data("aaa".utf8))
         let b = try writeTempFile(name: "b.bin", data: Data([1, 2, 3, 4]))
-        defer { try? FileManager.default.removeItem(at: a.deletingLastPathComponent()) }
-        defer { try? FileManager.default.removeItem(at: b.deletingLastPathComponent()) }
         // A multi-select Finder ⌘C leaves one file URL per pasteboard item.
         pasteboard.setItems([
             [(type: .fileURL, data: Data(a.absoluteString.utf8))],
@@ -542,7 +537,6 @@ struct VsockGuestClipboardAgentTests {
         // Copy [the staged file, a fresh file]: the staging-root file is dropped
         // per-file; only the fresh file is offered back to the host.
         let fresh = try writeTempFile(name: "fresh.txt", data: Data("fresh".utf8))
-        defer { try? FileManager.default.removeItem(at: fresh.deletingLastPathComponent()) }
         pasteboard.setItems([
             [(type: .fileURL, data: Data(staged.absoluteString.utf8))],
             [(type: .fileURL, data: Data(fresh.absoluteString.utf8))],
@@ -576,7 +570,6 @@ struct VsockGuestClipboardAgentTests {
         let folder = try writeTempFolder(
             name: "Project",
             files: [("README.md", Data("readme".utf8)), ("sub/n.txt", Data("nested".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
         pasteboard.setItem([(type: .fileURL, data: Data(folder.absoluteString.utf8))])
         await MainActor.run { agent.checkClipboardChange() }
 
@@ -631,7 +624,6 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
         let folder = try writeTempFolder(name: "Walked", files: [("a.txt", Data("a".utf8))])
-        defer { try? FileManager.default.removeItem(at: folder.deletingLastPathComponent()) }
         let walked = AsyncGate()
         let walks = Box(0)
         await MainActor.run {
@@ -682,9 +674,7 @@ struct VsockGuestClipboardAgentTests {
         // Two copied folders a stat walk sizes at 0: one empty, one holding only
         // a subdirectory and a zero-byte file.
         let empty = try writeTempFolder(name: "Empty", files: [])
-        defer { try? FileManager.default.removeItem(at: empty.deletingLastPathComponent()) }
         let scaffold = try writeTempFolder(name: "Scaffold", files: [("sub/.keep", Data())])
-        defer { try? FileManager.default.removeItem(at: scaffold.deletingLastPathComponent()) }
         pasteboard.setItems([
             [(type: .fileURL, data: Data(empty.absoluteString.utf8))],
             [(type: .fileURL, data: Data(scaffold.absoluteString.utf8))],
@@ -808,7 +798,6 @@ struct VsockGuestClipboardAgentTests {
         // A Finder ⌘C leaves the file's URL beside its path as text; the file is
         // deleted, renamed or unmounted before the poll reads the snapshot.
         let gone = try writeTempFile(name: "gone.txt", data: Data("bye".utf8))
-        defer { try? FileManager.default.removeItem(at: gone.deletingLastPathComponent()) }
         try FileManager.default.removeItem(at: gone)
         pasteboard.setItem([
             (type: .fileURL, data: Data(gone.absoluteString.utf8)),
@@ -847,14 +836,12 @@ struct VsockGuestClipboardAgentTests {
         _ = try await awaitOffer(on: hostChannel)
 
         let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
-        defer { try? FileManager.default.removeItem(at: readable.deletingLastPathComponent()) }
         // A mode-000 file stats exactly like a readable one, so only asking for
         // the open permission separates them.
         let sealed = try writeTempFile(name: "sealed.txt", data: Data("secret".utf8))
         defer {
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o644], ofItemAtPath: sealed.path)
-            try? FileManager.default.removeItem(at: sealed.deletingLastPathComponent())
         }
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
 
@@ -900,12 +887,10 @@ struct VsockGuestClipboardAgentTests {
         // channel comes up — a VM resumed from a save, the host app restarted,
         // or clipboard sharing toggled off and on.
         let readable = try writeTempFile(name: "readable.txt", data: Data("body".utf8))
-        defer { try? FileManager.default.removeItem(at: readable.deletingLastPathComponent()) }
         let sealed = try writeTempFile(name: "sealed.txt", data: Data("secret".utf8))
         defer {
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o644], ofItemAtPath: sealed.path)
-            try? FileManager.default.removeItem(at: sealed.deletingLastPathComponent())
         }
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: sealed.path)
         pasteboard.setItems([
@@ -1068,7 +1053,6 @@ struct VsockGuestClipboardAgentTests {
 
         // A valid archive whose stream will nonetheless end with a wrong digest.
         let src = try writeTempFolder(name: "Broken", files: [("f.txt", Data("x".utf8))])
-        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
         try hostChannel.send(
@@ -2835,8 +2819,7 @@ struct VsockGuestClipboardAgentTests {
     }
 
     private func writeTempFolder(name: String, files: [(String, Data)]) throws -> URL {
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaAgentFolder-\(UUID().uuidString)", isDirectory: true)
+        let parent = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let folder = parent.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (path, data) in files {
@@ -2849,8 +2832,7 @@ struct VsockGuestClipboardAgentTests {
     }
 
     private func writeTempFile(name: String, data: Data) throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("KernovaAgentClip-\(UUID().uuidString)", isDirectory: true)
+        let dir = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent(name)
         try data.write(to: url)

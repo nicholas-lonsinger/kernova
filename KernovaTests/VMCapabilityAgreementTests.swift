@@ -15,6 +15,7 @@ import Testing
 @MainActor
 struct VMCapabilityAgreementTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCapabilityAgreementTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -99,8 +100,7 @@ struct VMCapabilityAgreementTests {
         case .createRemovableMedia:
             try await core.createRemovableMedia(
                 vm, sizeInGB: 1,
-                destinationURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("\(UUID().uuidString).asif"))
+                destinationURL: scratch.url.appendingPathComponent("\(UUID().uuidString).asif"))
         case .editSharedDirectories: try core.removeSharedDirectory(vm, directory: UUID())
         case .editUSBAccessories: try await core.attachUSBAccessory(vm, accessory: 42)
         case .forgetUSBPairing: try core.forgetUSBPairing(vm, key: "unknown")

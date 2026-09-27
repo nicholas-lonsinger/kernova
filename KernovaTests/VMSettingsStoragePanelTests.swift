@@ -11,6 +11,7 @@ import Virtualization
 @MainActor
 struct VMSettingsStoragePanelTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMSettingsStoragePanelTests")
 
     private func makeViewModel() -> VMLibraryViewModel {
         makeSettingsViewModel(preferences: preferences)
@@ -51,10 +52,9 @@ struct VMSettingsStoragePanelTests {
 
     @Test("A file change while the pane is hidden leaves the badge live afterwards")
     func missingBadgeStaysLiveAcrossReappearance() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-settings-storage-\(UUID().uuidString)", isDirectory: true)
+        let directory = scratch.url.appendingPathComponent(
+            "kernova-settings-storage", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("scratch.img")
         let path = url.path(percentEncoded: false)
         FileManager.default.createFile(atPath: path, contents: Data([0]))

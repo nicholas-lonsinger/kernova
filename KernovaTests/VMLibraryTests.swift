@@ -7,6 +7,7 @@ import KernovaTestSupport
 @Suite("VMLibrary Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryTests {
+    private let scratch = TestScratchDirectory(prefix: "VMLibraryTests")
     /// What the library asked a user to be told, in place of a presenter.
     ///
     /// Fresh per test (the struct is re-instantiated).
@@ -51,7 +52,7 @@ struct VMLibraryTests {
     func initDoesNotReadStorage() {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
@@ -81,7 +82,6 @@ struct VMLibraryTests {
         storage.bundles[bundleURL] = config
         let staging = VMBundleLayout(bundleURL: bundleURL).restoreStagingURL
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
         try Data("half-cloned".utf8).write(to: staging.appendingPathComponent("Disk.asif"))
 
         _ = try library.bundleReader.read(at: bundleURL)
@@ -105,8 +105,7 @@ struct VMLibraryTests {
     @Test("hasLoadedLibrary flips even when the bundle listing fails")
     func hasLoadedLibraryFlipsWhenListingFails() async {
         let storage = MockVMStorageService()
-        storage.listVMBundlesError = VMStorageError.bundleNotFound(
-            FileManager.default.temporaryDirectory)
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -122,7 +121,7 @@ struct VMLibraryTests {
     func loadVMsKeepsArrivalsAddedDuringTheRead() async {
         let storage = MockVMStorageService()
         let onDisk = VMConfiguration(name: "On Disk", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(onDisk.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = onDisk
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -155,9 +154,9 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
@@ -174,9 +173,9 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
@@ -219,9 +218,9 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         let config1 = VMConfiguration(name: "First VM", guestOS: .linux, bootMode: .efi)
         let config2 = VMConfiguration(name: "Second VM", guestOS: .linux, bootMode: .efi)
-        let url1 = FileManager.default.temporaryDirectory
+        let url1 = scratch.url
             .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
-        let url2 = FileManager.default.temporaryDirectory
+        let url2 = scratch.url
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url1] = config1
         storage.bundles[url2] = config2
@@ -240,11 +239,11 @@ struct VMLibraryTests {
         let storage = MockVMStorageService()
         // Add a good bundle and a bad bundle
         let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
-        let goodURL = FileManager.default.temporaryDirectory
+        let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = goodConfig
 
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("bad-bundle.kernova", isDirectory: true)
         // Register the URL so listVMBundles returns it, but mark it to fail on load
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
@@ -265,7 +264,7 @@ struct VMLibraryTests {
     func loadVMsFallsBackWhenStoredIDInvalid() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Only VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
@@ -576,7 +575,7 @@ struct VMLibraryTests {
     func reconcileAddsNewBundles() {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Discovered VM", guestOS: .linux, bootMode: .efi)
-        let bundleURL = FileManager.default.temporaryDirectory
+        let bundleURL = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[bundleURL] = config
 
@@ -725,7 +724,7 @@ struct VMLibraryTests {
         library.selectedID = removed.id
 
         // Only keep the remaining instance's bundle on disk
-        let bundleURL = FileManager.default.temporaryDirectory
+        let bundleURL = scratch.url
             .appendingPathComponent("\(remaining.id.uuidString).kernova", isDirectory: true)
         storage.bundles = [bundleURL: remaining.configuration]
 
@@ -738,7 +737,7 @@ struct VMLibraryTests {
     func reconcilePresentsErrorForFailedConfigs() {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
-        let goodURL = FileManager.default.temporaryDirectory
+        let goodURL = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = config
 
@@ -746,7 +745,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
@@ -765,9 +764,7 @@ struct VMLibraryTests {
         let (library, storage, _, _) = makeLibrary()
         failures.reset()
 
-        storage.listVMBundlesError = VMStorageError.bundleNotFound(
-            FileManager.default.temporaryDirectory
-        )
+        storage.listVMBundlesError = VMStorageError.bundleNotFound(scratch.url)
 
         library.reconcileWithDisk()
 
@@ -781,7 +778,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
@@ -802,7 +799,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk suppression is maintained after full reload")
     func reconcileSuppressionMaintainedAfterReload() async {
         let storage = MockVMStorageService()
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
@@ -832,7 +829,7 @@ struct VMLibraryTests {
     @Test("reconcileWithDisk does not re-present errors already reported by loadVMs")
     func reconcileDoesNotDuplicateLoadVMsErrors() async {
         let storage = MockVMStorageService()
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("broken-vm.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
@@ -858,10 +855,10 @@ struct VMLibraryTests {
     func unreadableHostStateKeepsTheBundleOut() async {
         let storage = MockVMStorageService()
         let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
-        let goodURL = FileManager.default.temporaryDirectory
+        let goodURL = scratch.url
             .appendingPathComponent("\(goodConfig.id.uuidString).kernova", isDirectory: true)
         storage.bundles[goodURL] = goodConfig
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = scratch.url
             .appendingPathComponent("unreadable-host-state.kernova", isDirectory: true)
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadHostStateFailURLs = [badURL]
@@ -901,7 +898,7 @@ struct VMLibraryTests {
     func reconcileKeepsOutAnUnreadableHostState() {
         let storage = MockVMStorageService()
         let (library, _, _, _) = makeLibrary(storageService: storage)
-        let bundleURL = FileManager.default.temporaryDirectory
+        let bundleURL = scratch.url
             .appendingPathComponent("unreadable-sidecar.kernova", isDirectory: true)
         storage.bundles[bundleURL] = VMConfiguration(
             name: "Unreadable VM", guestOS: .linux, bootMode: .efi)
@@ -927,7 +924,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
 
         // Introduce the bad bundle after construction so it is new to reconcileWithDisk
-        let bundleURL = FileManager.default.temporaryDirectory
+        let bundleURL = scratch.url
             .appendingPathComponent("recoverable.kernova", isDirectory: true)
         let config = VMConfiguration(name: "Recoverable VM", guestOS: .linux, bootMode: .efi)
         storage.bundles[bundleURL] = config
@@ -970,7 +967,7 @@ struct VMLibraryTests {
             source: .downloadLatest,
             downloadDestinationPath: "/tmp/restore.ipsw"
         )
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 
@@ -985,7 +982,7 @@ struct VMLibraryTests {
     func loadVMsAssignsStoppedWithoutInstallContext() async {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Installed VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
 

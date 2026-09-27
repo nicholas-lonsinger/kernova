@@ -6,6 +6,7 @@ import KernovaTestSupport
 @Suite("VMBundleLayout Tests", .caseScoped)
 struct VMBundleLayoutTests {
     private let bundleURL = URL(fileURLWithPath: "/tmp/TestVM.bundle", isDirectory: true)
+    private let scratch = TestScratchDirectory(prefix: "VMBundleLayoutTests")
 
     // MARK: - Path Computed Properties
 
@@ -113,20 +114,15 @@ struct VMBundleLayoutTests {
 
     @Test("hasSaveFile returns false when no save file exists")
     func hasSaveFileReturnsFalse() {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         #expect(layout.hasSaveFile == false)
     }
 
     @Test("hasSaveFile returns true when save file exists on disk")
     func hasSaveFileReturnsTrue() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         FileManager.default.createFile(atPath: layout.saveFileURL.path(percentEncoded: false), contents: Data([0x00]))
 
         #expect(layout.hasSaveFile == true)
@@ -148,20 +144,15 @@ struct VMBundleLayoutTests {
 
     @Test("onDiskBytes is nil when the disk image does not exist")
     func diskOnDiskBytesReturnsNilForMissingFile() {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         #expect(mainDiskOnDiskBytes(layout) == nil)
     }
 
     @Test("onDiskBytes is non-nil for an existing file")
     func diskOnDiskBytesReturnsSize() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         let testData = Data(repeating: 0xAB, count: 4096)
         try testData.write(to: layout.diskImageURL)
 
@@ -173,12 +164,9 @@ struct VMBundleLayoutTests {
 
     @Test("onDiskBytes is the physical allocation, below the logical size for sparse files")
     func diskOnDiskBytesReturnsSparseSize() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         let path = layout.diskImageURL.path(percentEncoded: false)
 
         // Create a sparse file via ftruncate: 10 MB logical size, 0 bytes physically allocated
@@ -198,12 +186,9 @@ struct VMBundleLayoutTests {
 
     @Test("capacityBytes reads the virtual capacity from a shdw header")
     func diskCapacityBytesReadsASIFHeader() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         // Minimal `shdw` header: magic at 0, sector count (big-endian) at 0x30.
         var header = Data(count: 0x38)
         header.replaceSubrange(0..<4, with: Data("shdw".utf8))
@@ -216,12 +201,9 @@ struct VMBundleLayoutTests {
 
     @Test("capacityBytes is the logical file size for a non-ASIF file")
     func diskCapacityBytesLogicalSizeForNonASIF() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         // A raw image (no `shdw` magic): apparent size *is* the capacity.
         try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
 
@@ -230,12 +212,11 @@ struct VMBundleLayoutTests {
 
     @Test("capacityBytes resolves an external (absolute) path's logical size")
     func diskCapacityBytesExternalAbsolutePath() throws {
-        let fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).img")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let fileURL = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
         try Data(repeating: 0xCD, count: 2048).write(to: fileURL)
-        defer { try? FileManager.default.removeItem(at: fileURL) }
 
-        let layout = VMBundleLayout(bundleURL: FileManager.default.temporaryDirectory)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         #expect(
             layout.diskSizes(
                 forRelativePath: fileURL.path(percentEncoded: false), isInternal: false
@@ -245,20 +226,15 @@ struct VMBundleLayoutTests {
 
     @Test("capacityBytes is nil for a missing file")
     func diskCapacityBytesNilForMissingFile() {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         #expect(mainDiskCapacityBytes(layout) == nil)
     }
 
     @Test("capacityBytes is nil for a malformed ASIF rather than its file size")
     func diskCapacityBytesNilForMalformedASIF() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         // `shdw` magic but an out-of-bounds sector count (1 sector = 512 bytes,
         // below the 1 MB floor). A recognizable ASIF must report unknown — not
         // fall back to the apparent file size, which a sparse container doesn't
@@ -274,12 +250,9 @@ struct VMBundleLayoutTests {
 
     @Test("capacityBytes rejects a sector count that overflows when ×512")
     func diskCapacityBytesNilForOverflowingSectorCount() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
 
-        let layout = VMBundleLayout(bundleURL: tempDir)
+        let layout = VMBundleLayout(bundleURL: scratch.url)
         // A crafted sector count whose `× 512` overflows UInt64 and *wraps* back
         // to exactly 1 GB — inside the sanity window. A wrapping multiply would
         // report a fabricated 1 GB capacity; the checked multiply must reject it.

@@ -13,6 +13,7 @@ import Virtualization
 @MainActor
 struct VMCommandCoreTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandCoreTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -1587,7 +1588,6 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Doomed")
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         // A bundle holding neither claims neither, and the VM heads the list it
         // belongs to rather than sitting in front of it — no comma splice.
@@ -2193,8 +2193,8 @@ struct VMCommandCoreTests {
     @Test("delete never removes an external another VM still references")
     func deleteKeepsSharedExternals() async throws {
         let harness = makeHarness()
-        let sharedPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("shared-\(UUID().uuidString).img")
+        let sharedPath = scratch.url
+            .appendingPathComponent("shared.img")
             .path(percentEncoded: false)
         let sharedID = UUID()
         let target = makeInstance(in: harness, name: "Target") {
@@ -2222,8 +2222,8 @@ struct VMCommandCoreTests {
     @Test("A permanent delete of an external bypasses the Trash")
     func permanentDeleteRemovesExternalsOutright() async throws {
         let harness = makeHarness()
-        let externalPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("external-\(UUID().uuidString).img")
+        let externalPath = scratch.url
+            .appendingPathComponent("external.img")
             .path(percentEncoded: false)
         let diskID = UUID()
         let instance = makeInstance(in: harness, name: "Target") {
@@ -2243,10 +2243,9 @@ struct VMCommandCoreTests {
     }
 
     /// A `.kernova`-shaped source with its `config.json` on disk, under a
-    /// per-call temp parent, because the import copies real files. The caller removes the parent, not this leaf.
+    /// per-call parent, because the import copies real files.
     private func makeImportSource(name: String, storage: MockVMStorageService) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
@@ -2258,7 +2257,6 @@ struct VMCommandCoreTests {
     func importGoesThroughTheAuthority() async throws {
         let harness = makeHarness()
         let picked = try makeImportSource(name: "Picked", storage: harness.storage)
-        defer { try? FileManager.default.removeItem(at: picked.deletingLastPathComponent()) }
         harness.authority.substitute = picked
 
         let summary = try await harness.core.importVM(
@@ -2278,7 +2276,6 @@ struct VMCommandCoreTests {
     func importTakesOnTheBundlesPairings() async throws {
         let harness = makeHarness()
         let source = try makeImportSource(name: "Paired", storage: harness.storage)
-        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
         let pairing = USBAccessoryPairing(
             key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
             receptacleLabel: nil)
@@ -2289,7 +2286,6 @@ struct VMCommandCoreTests {
         _ = try await harness.core.importVM(from: source, waitForOutcome: true)
 
         let imported = try #require(harness.library.instances.first)
-        defer { try? FileManager.default.removeItem(at: imported.bundleURL) }
         #expect(harness.library.arrivals.isEmpty)
         #expect(imported.usbPairings.pairings.map(\.key) == [pairing.key])
     }
@@ -3064,7 +3060,6 @@ struct VMCommandCoreTests {
             .id(instance.id), password: "analytical-engine")
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         try Data().write(to: instance.bundleLayout.saveFileURL)
 
         try await harness.core.start(instance)

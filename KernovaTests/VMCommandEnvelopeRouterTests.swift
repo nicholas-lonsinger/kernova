@@ -31,6 +31,7 @@ private struct TestTransport {
 @MainActor
 struct VMCommandEnvelopeRouterTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandEnvelopeRouterTests")
 
     private struct Harness {
         let transport: TestTransport
@@ -646,7 +647,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A trashing removal refuses over the wire until consent comes with it")
     func trashingRemovalAsksForConsentOverTheWire() async throws {
         let harness = makeHarness()
-        let path = FileManager.default.temporaryDirectory
+        let path = scratch.url
             .appendingPathComponent("\(UUID().uuidString)-external.img")
             .path(percentEncoded: false)
         let disk = StorageDisk(path: path, label: "External", isInternal: false)

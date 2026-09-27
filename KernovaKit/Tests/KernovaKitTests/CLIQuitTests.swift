@@ -11,7 +11,7 @@ import Testing
 struct CLIQuitTests {
     @Test("The tool returns from a quit only once the app closes the connection")
     func quitWaitsForTheConnectionToClose() throws {
-        let listener = try TestCommandSocket(tag: "quit")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
 
         let client = try VMCommandClient(socketPath: listener.path)

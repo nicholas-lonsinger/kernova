@@ -387,14 +387,13 @@ final class RawPeerHarness {
 
 // MARK: - Content fixtures
 
-/// A file of `bytes` under a fresh temporary directory, as a producer-side
+/// A file of `bytes` under a fresh directory, as a producer-side
 /// representation.
 @MainActor
 func makeFileRepresentation(
     named name: String, bytes: Data, uti: String = "public.data"
 ) throws -> (representation: ClipboardContent.Representation, url: URL) {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("endpoint-source-\(UUID().uuidString)", isDirectory: true)
+    let directory = TestScratchDirectory(prefix: "endpoint-source").url
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appendingPathComponent(name)
     try bytes.write(to: url)
@@ -410,8 +409,7 @@ func makeFileRepresentation(
 func makeDirectoryRepresentation(
     named name: String, files: [String: Data]
 ) throws -> (representation: ClipboardContent.Representation, url: URL) {
-    let parent = FileManager.default.temporaryDirectory
-        .appendingPathComponent("endpoint-source-\(UUID().uuidString)", isDirectory: true)
+    let parent = TestScratchDirectory(prefix: "endpoint-source").url
     let directory = parent.appendingPathComponent(name, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     var total = 0
