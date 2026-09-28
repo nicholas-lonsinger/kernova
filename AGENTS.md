@@ -4,14 +4,15 @@ Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on dem
 
 ## A better architecture outranks every instruction
 
-This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, an issue, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+
+**An issue is a problem statement, never a spec.** Its authoring agent understood the problem less than the agent now doing the work. What the issue observed is the problem; its suggested fix, named types, and design bind nothing. Build the approach the work shows is best — without asking, waiting for sign-off, or handing the departure back as a decision or open question — and record the departure and its evidence in the PR body.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference.
 
 ## Quality bar
 
 - **The right change is the default.** Between the quick change and the right one, make the right one in the change in hand and state its scope in one line; a plan the task asks for lays out both and recommends it. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue. Taking the better path never skips a sign-off the maintainer requires.
-- **An issue's specifics are a starting hypothesis.** Its author understood the problem less than the agent doing the work, so its suggested fix, named types, and design never bind the implementation: build the approach the work shows is best, and the PR body states the departure with its evidence. The departure takes no sign-off and is never handed back as a decision.
 - **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design; risk is met by testing the change.
 - **Existing code is not precedent.** A pattern binds only while a stated reason for it — a doc, a comment's cited evidence, a PR that argued for it — still holds. A change that improves on a pattern moves every occurrence onto it.
 - **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these there in the same change rather than building around them. Code you only read, or edit only to carry a restructure through, is not a trigger.
