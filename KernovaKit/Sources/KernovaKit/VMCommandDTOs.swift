@@ -463,14 +463,14 @@ extension CommandErrorDTO {
                 + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
                 + "."
         case .invalidState(let vm, let current, let allowed, let settings):
-            // The status and the verbs by display name, never their raw values:
+            // The status and the verbs in a person's words, never their raw values:
             // those are the wire's vocabulary, and this sentence goes in front
             // of a person. A refused setting is named by its key and the value
             // asked for, the spelling `set` takes. A verb every state admits is
             // left out, since naming it says nothing.
             {
                 let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
-                let state = VMStatus.displayName(forWireName: current).lowercased()
+                let state = VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)
                 let refused = settings.enumerated().map { index, entry in
                     index == 0
                         ? "\(entry.key) cannot be set to \u{201C}\(entry.value)\u{201D}"

@@ -341,7 +341,7 @@ final class DetailContainerViewController: NSViewController {
 
         backing.update(
             display: display,
-            isPaused: instance.status == .paused,
+            isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
             settings: instance.displayViewSettings
         )

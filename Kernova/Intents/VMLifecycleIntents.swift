@@ -86,7 +86,8 @@ struct PauseVMIntent: AppIntent {
 struct ResumeVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Lets a paused guest run again.", categoryName: "Virtual Machines")
+        "Lets a paused guest run again, or reads a suspended session back.",
+        categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity

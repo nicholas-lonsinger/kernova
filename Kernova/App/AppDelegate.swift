@@ -430,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// One call for every state the stop slot stands for: the consent a
-    /// cold-paused VM's discard needs arrives as the verb's own refusal, which
+    /// suspended VM's discard needs arrives as the verb's own refusal, which
     /// raises the sheet.
     @objc func stopVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }

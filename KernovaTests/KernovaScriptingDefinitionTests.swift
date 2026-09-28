@@ -204,6 +204,15 @@ struct KernovaScriptingDefinitionTests {
         #expect(try enumerators("VM state")["preparing"] == VMScriptState.preparing.code)
     }
 
+    @Test("A suspended VM reports its own term, apart from a paused one")
+    func suspendedIsItsOwnState() throws {
+        let declared = try enumerators("VM state")
+        #expect(VMScriptState(wireName: VMStatus.suspended.rawValue) == .suspended)
+        #expect(VMScriptState(.suspended).term == "suspended")
+        #expect(declared["suspended"] == VMScriptState.suspended.code)
+        #expect(VMScriptState.suspended.code != VMScriptState.paused.code)
+    }
+
     @Test("Every way the core can stop a guest has a term a script can name")
     func everyStopDispositionHasAnEnumerator() throws {
         let declared = try enumerators("VM stop method")

@@ -7,7 +7,7 @@ extension KernovaCommand {
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
-        /// Resume a paused guest first, then ask it to shut down.
+        /// ``StopDisposition/resumeThenShutDown``.
         case resumeFirst
         /// Terminate the guest immediately, losing unsaved state.
         case force
@@ -25,7 +25,7 @@ extension KernovaCommand {
         static func help(for value: StopMethod) -> ArgumentHelp? {
             switch value {
             case .graceful: "Ask the guest to shut down (the default)."
-            case .resumeFirst: "Resume a paused guest, then ask it to shut down."
+            case .resumeFirst: "Resume a paused or suspended guest, then ask it to shut down."
             case .force: "Terminate the guest immediately, losing unsaved state."
             }
         }
@@ -164,12 +164,12 @@ extension KernovaCommand {
         }
     }
 
-    /// `kernova resume <vm>` — let a paused guest run again.
+    /// `kernova resume <vm>` — let a paused or suspended guest run again.
     struct Resume: VerbCommand {
         /// What `kernova resume --help` says.
         static let configuration = CommandConfiguration(
             commandName: "resume",
-            abstract: "Resume a paused guest.",
+            abstract: "Resume a paused guest, or read a suspended session back.",
             discussion: "Nothing is brought in front of you; `kernova open` is the verb that puts "
                 + "a display there.")
 

@@ -737,7 +737,7 @@ final class VirtualizationService {
     }
 
     /// `true` when `error` is a failed save-file restore — the one start/resume
-    /// failure that rests at cold-paused instead of `.error` or `.stopped`.
+    /// failure that rests at `.suspended` instead of `.error` or `.stopped`.
     static func isRestoreFailure(_ error: Error) -> Bool {
         guard let virtualizationError = error as? VirtualizationError,
             case .restoreFailed = virtualizationError

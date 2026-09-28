@@ -62,8 +62,8 @@ struct MainMenuValidationTests {
         #expect(item.title == "Install")
     }
 
-    @Test("A cold-paused VM's stop item discards the saved state")
-    func stopRetitlesForColdPausedVM() throws {
+    @Test("A suspended VM's stop item discards the saved state")
+    func stopRetitlesForSuspendedVM() throws {
         let instance = makeMenuInstance(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
         let fixture = makeFixture(instance: instance)

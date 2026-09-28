@@ -269,7 +269,7 @@ final class VMActivity {
     /// the VM presents none.
     var attachableSessionID: UUID? { hasLiveSession ? liveSessionID : nil }
 
-    var isColdPaused: Bool { phase.presented == .suspended }
+    var isSuspended: Bool { phase.presented == .suspended }
 
     var isLivePaused: Bool { phase.isLivePaused }
 

@@ -93,11 +93,11 @@ struct SidebarViewControllerTests {
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
-    @Test("statusDisplayNSColor is orange for cold-paused")
-    func statusColorColdPaused() {
-        let coldPaused = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
-        #expect(coldPaused.isColdPaused)
-        #expect(coldPaused.statusDisplayNSColor == .systemOrange)
+    @Test("statusDisplayNSColor is orange for a suspended VM")
+    func statusColorSuspended() {
+        let suspended = VMInstanceFixture.make(phase: .suspended)
+        #expect(suspended.status == .suspended)
+        #expect(suspended.statusDisplayNSColor == .systemOrange)
     }
 
     // MARK: - Agent indicator gating
@@ -151,10 +151,10 @@ struct SidebarViewControllerTests {
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
-    @Test("Agent indicator suppressed for a cold-paused VM")
-    func agentSuppressedWhenColdPaused() {
+    @Test("Agent indicator suppressed for a suspended VM")
+    func agentSuppressedWhenSuspended() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .suspended)  // no live VM
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -436,10 +436,10 @@ struct SidebarViewControllerTests {
         await copying.settle()
     }
 
-    @Test("Context menu for a cold-paused VM offers Discard Saved State, not Stop/Suspend")
-    func contextMenuColdPaused() throws {
+    @Test("Context menu for a suspended VM offers Discard Saved State, not Stop/Suspend")
+    func contextMenuSuspended() throws {
         let viewModel = makeViewModel()
-        let instance = viewModel.library.admitFixture(phase: .suspended)  // no live VM ⇒ cold-paused
+        let instance = viewModel.library.admitFixture(phase: .suspended)
         // A suspend slot on disk: every predicate a suspended VM is judged by
         // reads the file, not the status.
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -478,8 +478,8 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Force Stop…", in: runningMenu)?.action != stop?.action)
     }
 
-    @Test("A cold-paused VM's stop slot raises the discard confirmation once")
-    func stopSlotOnAColdPausedVMAsksOnce() async throws {
+    @Test("A suspended VM's stop slot raises the discard confirmation once")
+    func stopSlotOnASuspendedVMAsksOnce() async throws {
         let viewModel = makeViewModel()
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
@@ -503,10 +503,10 @@ struct SidebarViewControllerTests {
         #expect(presenter.forceStopInstances.map(\.id) == [suspended.id])
     }
 
-    @Test("Context menu enables delete for a cold-paused VM but keeps Clone disabled")
-    func contextMenuColdPausedEnablesDelete() throws {
+    @Test("Context menu enables delete for a suspended VM but keeps Clone disabled")
+    func contextMenuSuspendedEnablesDelete() throws {
         let viewModel = makeViewModel()
-        let instance = viewModel.library.admitFixture(phase: .suspended)  // no live VM ⇒ cold-paused
+        let instance = viewModel.library.admitFixture(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
         let controller = SidebarViewController(viewModel: viewModel)
 

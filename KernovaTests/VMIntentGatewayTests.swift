@@ -61,11 +61,51 @@ struct VMIntentGatewayTests {
         #expect(String(localized: subtitle) == "Running")
     }
 
+    @Test("An entity tells a suspended VM from a paused one in its State and subtitle")
+    func entityTellsSuspendedFromPaused() throws {
+        let suspended = VMEntity(VMIntentFixtures.info(status: "suspended"))
+        let paused = VMEntity(VMIntentFixtures.info(status: "paused"))
+
+        #expect(suspended.status == "suspended")
+        #expect(paused.status == "paused")
+        #expect(String(localized: try #require(suspended.displayRepresentation.subtitle)) == "Suspended")
+        #expect(String(localized: try #require(paused.displayRepresentation.subtitle)) == "Paused")
+    }
+
+    @Test("An entity for a VM another copy holds is subtitled as held, not by its status")
+    func entityNamesAHeldVM() throws {
+        let entity = VMEntity(VMIntentFixtures.info(status: "stopped", heldByAnotherCopy: true))
+
+        #expect(entity.status == "stopped")
+        #expect(
+            String(localized: try #require(entity.displayRepresentation.subtitle))
+                == VMStatus.heldByAnotherCopyDisplayName)
+    }
+
+    @Test("Get State answers a suspended VM's wire status and says it is suspended")
+    func getStateAnswersSuspended() {
+        let answer = GetVMStateIntent.answer(for: VMIntentFixtures.info(name: "Tahoe", status: "suspended"))
+
+        #expect(answer.value == "suspended")
+        #expect(answer.dialog == "Tahoe is suspended.")
+    }
+
+    @Test("Get State says a VM another copy holds is in use there")
+    func getStateNamesAHeldVM() {
+        let answer = GetVMStateIntent.answer(
+            for: VMIntentFixtures.info(name: "Tahoe", status: "stopped", heldByAnotherCopy: true))
+
+        #expect(answer.value == "stopped")
+        #expect(answer.dialog == "Tahoe is in use by another copy of Kernova.")
+    }
+
     @Test("A VM still copying into place reads back as preparing, which is no VMStatus")
     func entityNamesThePreparingWireStatus() {
         #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
-        #expect(VMStatus.displayName(forWireName: VMStatus.preparingWireName) == "Preparing")
-        #expect(VMStatus.displayName(forWireName: "initialBoot") == "Initial Boot")
+        #expect(
+            VMStatus.displayName(forWireName: VMStatus.preparingWireName, heldByAnotherCopy: false)
+                == "Preparing")
+        #expect(VMStatus.displayName(forWireName: "initialBoot", heldByAnotherCopy: false) == "Initial Boot")
     }
 
     @Test("The Spotlight record carries the name and the guest, and no runtime status")

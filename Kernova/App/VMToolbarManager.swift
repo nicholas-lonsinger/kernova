@@ -383,7 +383,7 @@ final class VMToolbarManager: NSObject {
         group.subitems[LifecycleSegment.pause.rawValue].isEnabled = isAvailable(
             .pause, on: instance)
 
-        // The graceful stop excludes cold-paused, which the discard-saved-state
+        // The graceful stop excludes suspended, which the discard-saved-state
         // capability covers instead; the label names that consequence.
         let stop = group.subitems[LifecycleSegment.stop.rawValue]
         let stopAction = capabilities.stopAction(for: instance)

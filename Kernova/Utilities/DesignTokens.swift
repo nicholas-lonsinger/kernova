@@ -48,7 +48,7 @@ enum StatusColor {
     /// window's idle states).
     static let inactive = NSColor.secondaryLabelColor
     /// Transitional or attention-needed (preparing/starting/saving/restoring/
-    /// installing/cold-paused; agent outdated/unresponsive/expected-missing).
+    /// installing/suspended; agent outdated/unresponsive/expected-missing).
     static let warning = NSColor.systemOrange
     /// Healthy / running (running VM, agent current).
     static let running = NSColor.systemGreen

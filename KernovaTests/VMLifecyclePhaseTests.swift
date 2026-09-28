@@ -69,7 +69,7 @@ struct VMLifecyclePhaseTests {
                 status: .error, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
                 hasActiveDisplay: false, isAtRest: true),
             Row(
-                status: .paused, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
+                status: .suspended, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
                 hasActiveDisplay: true, isAtRest: true),
             Row(
                 status: .running, presented: nil, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
@@ -190,14 +190,21 @@ struct VMLifecyclePhaseTests {
         }
     }
 
-    @Test("The two paused meanings are distinct and report the one status the wire has")
-    func pausedMeaningsAreDistinct() {
+    @Test("A live-paused VM and a suspended one report distinct statuses")
+    func pausedAndSuspendedAreDistinct() {
         let livePaused = VMLifecyclePhase.livePaused(sessionID: Self.session)
         #expect(livePaused.isLivePaused)
         #expect(!VMLifecyclePhase.suspended.isLivePaused)
-        #expect(VMLifecyclePhase.suspended.status == .paused)
+        #expect(VMLifecyclePhase.suspended.status == .suspended)
         #expect(livePaused.status == .paused)
         // A hot resume presents the paused guest it started from until it ends.
         #expect(VMLifecyclePhase.operating(.resuming, from: livePaused).isLivePaused)
+    }
+
+    @Test("A base-status operation started from a suspended VM presents it suspended")
+    func baseStatusOperationFromSuspendedPresentsSuspended() {
+        let discarding = VMLifecyclePhase.operating(.discardingSavedState, from: .suspended)
+        #expect(discarding.presented == .suspended)
+        #expect(discarding.status == .suspended)
     }
 }

@@ -101,7 +101,7 @@ struct VMSleepWakeCoordinatorTests {
         #expect(running1.status == .paused)
         #expect(running2.status == .paused)
         #expect(stopped.status == .stopped)
-        #expect(suspended.status == .paused)
+        #expect(suspended.status == .suspended)
         #expect(!failures.showError)
     }
 
@@ -263,7 +263,7 @@ struct VMSleepWakeCoordinatorTests {
 
         #expect(virtService.resumeCallCount == 1)
         #expect(sleepPaused.status == .running)
-        #expect(suspended.status == .paused)
+        #expect(suspended.status == .suspended)
     }
 
     @Test("A failed wake resume is reported, and a second wake has nothing left to resume")

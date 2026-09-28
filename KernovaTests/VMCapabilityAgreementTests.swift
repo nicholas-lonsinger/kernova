@@ -50,7 +50,7 @@ struct VMCapabilityAgreementTests {
     /// The capabilities `capability`'s verb is gated on, or `nil` for one
     /// with no verb.
     ///
-    /// Stop, Force Stop and the cold-paused discard are one verb, whose gate
+    /// Stop, Force Stop and the suspended discard are one verb, whose gate
     /// takes either of two capabilities.
     private func gates(of capability: VMCapability) -> [VMCapability]? {
         guard capability.verb != nil else { return nil }

@@ -716,7 +716,8 @@ extension VMCommandCore {
         }
     }
 
-    /// Resumes a paused VM then requests a graceful ACPI shutdown.
+    /// Resumes a paused VM, or restores a suspended one, then requests a
+    /// graceful ACPI shutdown.
     private func resumeThenShutDown(_ instance: VMInstance) async throws {
         do {
             try await resumeOrRestore(instance)
@@ -816,7 +817,7 @@ extension VMCommandCore {
         // offering the graceful shutdown here would chain one onto the other.
         let alternatives =
             instance.activity.decide(.sessionAction(.requestStop), posture: .commit) == .admit
-                && instance.status != .paused
+                && !instance.isLivePaused
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
         let title: String

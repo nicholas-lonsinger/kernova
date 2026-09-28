@@ -25,7 +25,7 @@ final class VMDisplayPlacementController {
         /// The user closed the window (red button / ⌘W): the VM keeps running
         /// headless — nothing pops back into the main window.
         case userClose
-        /// App-initiated dismissal — the VM stopped/errored/cold-paused out
+        /// App-initiated dismissal — the VM stopped/errored/suspended out
         /// from under the window, or the whole GUI is being dismissed.
         case appDismissal
         /// Explicit Pop In: the display returns to the main window's detail

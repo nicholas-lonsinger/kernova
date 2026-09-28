@@ -67,8 +67,13 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Bundle Path")
     var bundlePath: String
 
+    /// Whether another running copy of Kernova holds the VM, which is what
+    /// the subtitle reads in place of ``status``.
+    let heldByAnotherCopy: Bool
+
     init(_ info: VMInfo) {
         self.id = info.id
+        self.heldByAnotherCopy = info.heldByAnotherCopy
         self.name = info.name
         self.status = info.status
         self.guestOS = info.guestOS
@@ -86,7 +91,9 @@ struct VMEntity: IndexedEntity {
     }
 
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(name)", subtitle: "\(VMStatus.displayName(forWireName: status))")
+        DisplayRepresentation(
+            title: "\(name)",
+            subtitle: "\(VMStatus.displayName(forWireName: status, heldByAnotherCopy: heldByAnotherCopy))")
     }
 
     /// What Spotlight holds for this VM: the name it is found by, and the

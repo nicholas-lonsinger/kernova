@@ -28,10 +28,7 @@ func attachNetworkCoordinator(
         isVMNetworkingEntitled: isVMNetworkingEntitled,
         retryDelays: retryDelays,
         vmnetRematerializeDelays: vmnetRematerializeDelays,
-        isEligible: { [weak instance] in
-            guard let instance else { return false }
-            return instance.status == .running || instance.status == .paused
-        },
+        isEligible: { [weak instance] in instance?.hasLiveSession ?? false },
         choice: { [weak instance] in instance?.configuration.networkChoice },
         onPendingChange: { [weak instance] pending in
             instance?.sessionContext?.networkAttachmentPending = pending

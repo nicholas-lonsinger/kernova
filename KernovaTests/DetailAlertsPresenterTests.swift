@@ -351,12 +351,12 @@ struct DetailAlertsPresenterTests {
         // A capturable suspend slot: every predicate a suspended VM is judged
         // by needs one on disk, not just the status.
         try VMInstanceFixture.writeSaveFile(for: vm)
-        #expect(vm.isColdPaused)
+        #expect(vm.isSuspended)
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
 
-        // A cold-paused VM can now check-point before reverting, so the
+        // A suspended VM can now check-point before reverting, so the
         // snapshot-first button is offered — but the copy still names the
         // suspended session that revert alone would replace.
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
@@ -566,7 +566,7 @@ struct DetailAlertsPresenterTests {
     }
 
     @Test("Reverting a suspended VM to a disks-only snapshot says its saved session is discarded")
-    func revertAlertOnAColdTargetFromColdPaused() throws {
+    func revertAlertOnAColdTargetFromSuspended() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.activity.placeForTesting(.suspended)

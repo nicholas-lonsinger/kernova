@@ -10,12 +10,12 @@ import KernovaTestSupport
 struct VMInstanceTests {
     private let scratch = TestScratchDirectory(prefix: "VMInstanceTests")
 
-    /// Every phase that reports a status other than `.paused` — what the
-    /// display-projection loops enumerate, since the paused pair is covered on
-    /// its own.
+    /// Every phase that reports a status other than `.paused` or `.suspended`
+    /// — what the display-projection loops enumerate, since that pair is
+    /// covered on its own.
     private static var nonPausedPhases: [VMLifecyclePhase] {
         [.stopped, .initialBoot, .failed(message: "Boot failed."), .running(sessionID: UUID())]
-            + VMLifecyclePhaseFixtures.operations.filter { $0.status != .paused }
+            + VMLifecyclePhaseFixtures.operations.filter { $0.status != .paused && $0.status != .suspended }
     }
 
     private static let oneSnapshot = VMSnapshotManifest(
@@ -43,8 +43,8 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("A cold-paused VM's suspend slot is captured as a suspended-mode snapshot")
-    func coldPausedTakesASuspendedSnapshot() throws {
+    @Test("A suspended VM's suspend slot is captured as a suspended-mode snapshot")
+    func suspendSlotTakesASuspendedSnapshot() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
@@ -56,11 +56,11 @@ struct VMInstanceTests {
     }
 
     @Test(
-        "A cold-paused VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
+        "A suspended VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
     )
-    func coldPausedWithNoSaveFileCannotBeCaptured() {
+    func suspendedWithNoSaveFileCannotBeCaptured() {
         let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
         #expect(!instance.hasSaveFile)
 
         #expect(instance.snapshotCaptureMode == nil)
@@ -310,25 +310,25 @@ struct VMInstanceTests {
         #expect(instance.activity.decideAsIfSavedStateDiscarded(edit, posture: .commit) != .admit)
     }
 
-    // MARK: - isColdPaused
+    // MARK: - isSuspended
 
-    @Test("isColdPaused is true when paused with no live session")
-    func isColdPausedTrue() {
+    @Test("isSuspended is true when the VM rests on its suspend slot")
+    func isSuspendedTrue() {
         let instance = VMInstanceFixture.make(phase: .suspended)
         #expect(instance.session == nil)
-        #expect(instance.isColdPaused == true)
+        #expect(instance.isSuspended == true)
     }
 
-    @Test("isColdPaused is false when stopped")
-    func isColdPausedFalseWhenStopped() {
+    @Test("isSuspended is false when stopped")
+    func isSuspendedFalseWhenStopped() {
         let instance = VMInstanceFixture.make(phase: .stopped)
-        #expect(instance.isColdPaused == false)
+        #expect(instance.isSuspended == false)
     }
 
-    @Test("isColdPaused is false when running")
-    func isColdPausedFalseWhenRunning() {
+    @Test("isSuspended is false when running")
+    func isSuspendedFalseWhenRunning() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        #expect(instance.isColdPaused == false)
+        #expect(instance.isSuspended == false)
     }
 
     // MARK: - hasLiveSession
@@ -399,8 +399,8 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("isKeepingAppAlive is false when cold-paused")
-    func isKeepingAppAliveColdPaused() {
+    @Test("isKeepingAppAlive is false when suspended")
+    func isKeepingAppAliveSuspended() {
         let instance = VMInstanceFixture.make(phase: .suspended)
         #expect(instance.session == nil)
         #expect(instance.isKeepingAppAlive == false)
@@ -449,25 +449,25 @@ struct VMInstanceTests {
 
     // MARK: - Status Display Properties
 
-    @Test("statusDisplayName returns Suspended when cold-paused")
-    func statusDisplayNameColdPaused() {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.isColdPaused == true)
-        #expect(instance.statusDisplayName == "Suspended")
+    @Test("statusDisplayName tells a suspended VM from a live-paused one")
+    func statusDisplayNameSuspendedAndPaused() {
+        #expect(VMInstanceFixture.make(phase: .suspended).statusDisplayName == "Suspended")
+        #expect(VMInstanceFixture.make(phase: .livePaused(sessionID: UUID())).statusDisplayName == "Paused")
     }
 
-    @Test("statusDisplayName delegates to status.displayName for non-paused states")
+    @Test("statusDisplayName delegates to status.displayName in every phase")
     func statusDisplayNameDelegates() {
-        for phase in Self.nonPausedPhases {
-            #expect(VMInstanceFixture.make(phase: phase).statusDisplayName == phase.status.displayName)
+        for phase in VMLifecyclePhaseFixtures.all {
+            #expect(VMInstanceFixture.make(phase: phase).statusDisplayName == phase.status.displayName, "\(phase)")
         }
     }
 
-    @Test("statusDisplayNSColor returns systemOrange when cold-paused")
-    func statusDisplayNSColorColdPaused() {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.isColdPaused == true)
-        #expect(instance.statusDisplayNSColor == .systemOrange)
+    @Test("statusDisplayNSColor is orange when suspended and the in-memory colour when live-paused")
+    func statusDisplayNSColorSuspendedAndPaused() {
+        #expect(VMInstanceFixture.make(phase: .suspended).statusDisplayNSColor == .systemOrange)
+        #expect(
+            VMInstanceFixture.make(phase: .livePaused(sessionID: UUID())).statusDisplayNSColor
+                == StatusColor.pausedInMemory)
     }
 
     @Test("statusDisplayNSColor maps non-paused states")
@@ -482,13 +482,12 @@ struct VMInstanceTests {
         #expect(VMInstanceFixture.make(phase: .failed(message: "Boot failed.")).statusDisplayNSColor == .systemRed)
     }
 
-    @Test("statusToolTip mentions disk when cold-paused")
-    func statusToolTipColdPaused() {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.isColdPaused == true)
-        let tip = instance.statusToolTip
-        #expect(tip != nil)
-        #expect(tip!.contains("disk"))
+    @Test("statusToolTip names disk when suspended and memory when live-paused")
+    func statusToolTipSuspendedAndPaused() {
+        #expect(VMInstanceFixture.make(phase: .suspended).statusToolTip == "VM state is saved to disk")
+        #expect(
+            VMInstanceFixture.make(phase: .livePaused(sessionID: UUID())).statusToolTip
+                == "VM is paused in memory")
     }
 
     @Test("statusToolTip returns nil for every phase but the two that carry one")

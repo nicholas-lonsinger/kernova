@@ -118,7 +118,8 @@ enum VMLifecyclePhase: Sendable, Equatable {
         case .initialBoot: .initialBoot
         case .failed: .error
         case .running: .running
-        case .livePaused, .suspended: .paused
+        case .livePaused: .paused
+        case .suspended: .suspended
         case .operating(let operation):
             switch operation.kind.declaration.status {
             case .shows(let status): status
