@@ -20,7 +20,8 @@ enum VMIntentFixtures {
         hasSavedState: Bool = false,
         isEphemeral: Bool = false,
         snapshotCount: Int = 0,
-        bundlePath: String = "/tmp/vm.kernova"
+        bundlePath: String = "/tmp/vm.kernova",
+        heldByAnotherCopy: Bool = false
     ) -> VMInfo {
         VMInfo(
             id: id,
@@ -37,7 +38,7 @@ enum VMIntentFixtures {
             hasSavedState: hasSavedState,
             isEphemeral: isEphemeral,
             snapshotCount: snapshotCount,
-            bundlePath: bundlePath, heldByAnotherCopy: false)
+            bundlePath: bundlePath, heldByAnotherCopy: heldByAnotherCopy)
     }
 
     static func snapshot(

@@ -23,6 +23,32 @@ struct VMStatusTests {
         #expect(VMStatus.snapshotting.displayName == "Taking Snapshot")
     }
 
+    @Test("phrase reads each status mid-sentence, the held VM included")
+    func phrase() {
+        let rows: [(VMStatus, String)] = [
+            (.stopped, "stopped"),
+            (.starting, "starting"),
+            (.running, "running"),
+            (.paused, "paused"),
+            (.suspended, "suspended"),
+            (.saving, "suspending"),
+            (.snapshotting, "taking a snapshot"),
+            (.restoring, "restoring"),
+            (.installing, "installing"),
+            (.initialBoot, "not yet booted"),
+            (.error, "in an error state"),
+        ]
+        for (status, phrase) in rows {
+            #expect(status.phrase(heldByAnotherCopy: false) == phrase)
+            #expect(VMStatus.phrase(forWireName: status.rawValue, heldByAnotherCopy: false) == phrase)
+            #expect(status.phrase(heldByAnotherCopy: true) == "in use by another copy of Kernova")
+        }
+        #expect(VMStatus.phrase(forWireName: VMStatus.preparingWireName, heldByAnotherCopy: false) == "preparing")
+        #expect(
+            VMStatus.phrase(forWireName: "teleporting", heldByAnotherCopy: true)
+                == "in use by another copy of Kernova")
+    }
+
     // MARK: - Transition Label
 
     @Test("transitionLabel returns a label for the write-in-place transitions only")

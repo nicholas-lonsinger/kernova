@@ -22,12 +22,15 @@ struct GetVMStateIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let info = try await gateway.info(vm.id)
-        let spoken = VMStatus.displayName(
-            forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)
-        return .result(
-            value: info.status,
-            dialog: IntentDialog("\(info.name) is \(spoken.lowercased())."))
+        let answer = Self.answer(for: try await gateway.info(vm.id))
+        return .result(value: answer.value, dialog: IntentDialog("\(answer.dialog)"))
+    }
+
+    /// The value this intent returns for `info`, and the sentence its dialog
+    /// speaks.
+    static func answer(for info: VMInfo) -> (value: String, dialog: String) {
+        let state = VMStatus.phrase(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)
+        return (info.status, "\(info.name) is \(state).")
     }
 }
 
