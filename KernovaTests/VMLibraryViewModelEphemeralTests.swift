@@ -153,7 +153,7 @@ struct VMLibraryViewModelEphemeralTests {
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
 
-        #expect(harness.instance.status == .paused)
+        #expect(harness.instance.status == .suspended)
     }
 
     @Test("A VM with a disks-only baseline rests stopped after a power-off")
@@ -350,7 +350,7 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(harness.virtualization.saveCallCount == 1)
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(harness.instance.status == .paused)
+        #expect(harness.instance.status == .suspended)
     }
 
     // MARK: - Discard Saved State

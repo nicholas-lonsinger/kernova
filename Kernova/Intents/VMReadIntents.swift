@@ -23,7 +23,8 @@ struct GetVMStateIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         let info = try await gateway.info(vm.id)
-        let spoken = VMStatus.displayName(forWireName: info.status)
+        let spoken = VMStatus.displayName(
+            forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)
         return .result(
             value: info.status,
             dialog: IntentDialog("\(info.name) is \(spoken.lowercased())."))

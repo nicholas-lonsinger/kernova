@@ -64,8 +64,10 @@ struct VMIntentGatewayTests {
     @Test("A VM still copying into place reads back as preparing, which is no VMStatus")
     func entityNamesThePreparingWireStatus() {
         #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
-        #expect(VMStatus.displayName(forWireName: VMStatus.preparingWireName) == "Preparing")
-        #expect(VMStatus.displayName(forWireName: "initialBoot") == "Initial Boot")
+        #expect(
+            VMStatus.displayName(forWireName: VMStatus.preparingWireName, heldByAnotherCopy: false)
+                == "Preparing")
+        #expect(VMStatus.displayName(forWireName: "initialBoot", heldByAnotherCopy: false) == "Initial Boot")
     }
 
     @Test("The Spotlight record carries the name and the guest, and no runtime status")

@@ -93,11 +93,11 @@ struct SidebarViewControllerTests {
         #expect(instance.statusDisplayNSColor == .systemOrange)
     }
 
-    @Test("statusDisplayNSColor is orange for cold-paused")
-    func statusColorColdPaused() {
-        let coldPaused = VMInstanceFixture.make(phase: .suspended)  // no live VM ⇒ cold-paused
-        #expect(coldPaused.isColdPaused)
-        #expect(coldPaused.statusDisplayNSColor == .systemOrange)
+    @Test("statusDisplayNSColor is orange for a suspended VM")
+    func statusColorSuspended() {
+        let suspended = VMInstanceFixture.make(phase: .suspended)
+        #expect(suspended.status == .suspended)
+        #expect(suspended.statusDisplayNSColor == .systemOrange)
     }
 
     // MARK: - Agent indicator gating
@@ -154,7 +154,7 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator suppressed for a cold-paused VM")
     func agentSuppressedWhenColdPaused() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .suspended)  // no live VM
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 

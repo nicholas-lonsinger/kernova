@@ -458,7 +458,7 @@ final class VMInstance {
     var hasLiveVirtualMachine: Bool { activity.hasLiveVirtualMachine }
     var hasLiveSession: Bool { activity.hasLiveSession }
     var attachableSessionID: UUID? { activity.attachableSessionID }
-    var isColdPaused: Bool { activity.isColdPaused }
+    var isSuspended: Bool { activity.isSuspended }
     var isLivePaused: Bool { activity.isLivePaused }
     var holdsLiveIdentity: Bool { activity.holdsLiveIdentity }
     var heldByAnotherCopy: Bool { activity.heldByAnotherCopy }
@@ -1143,7 +1143,7 @@ final class VMInstance {
     /// skipped for Linux guests: the SPICE port must be declared at config-build
     /// time, so sharing is restart-only there.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
-        guard status == .running || status == .paused else { return }
+        guard hasLiveSession else { return }
 
         // Ahead of the live-VM guard: the coordinator exists exactly while the
         // session has a network device, which is the guard this hot swap needs.

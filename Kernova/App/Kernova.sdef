@@ -12,6 +12,7 @@
 			<enumerator name="starting" code="KsSg" description="Booting."/>
 			<enumerator name="running" code="KsRn" description="The guest is up."/>
 			<enumerator name="paused" code="KsPs" description="The guest is frozen in memory."/>
+			<enumerator name="suspended" code="KsSu" description="The guest's state is saved to disk; resuming restores it."/>
 			<enumerator name="saving" code="KsSv" description="Writing the guest's state to the bundle's suspend slot."/>
 			<enumerator name="snapshotting" code="KsSn" description="Capturing a named restore point."/>
 			<enumerator name="restoring" code="KsRs" description="Reading a saved session or a restore point back."/>
@@ -23,7 +24,7 @@
 
 		<enumeration name="VM stop method" code="KvSM" description="How a stop reaches a powered-off guest.">
 			<enumerator name="shut down" code="KmSd" description="Ask the guest to power itself off."/>
-			<enumerator name="resume then shut down" code="KmRs" description="Resume a paused guest, then ask it to power off."/>
+			<enumerator name="resume then shut down" code="KmRs" description="Resume a paused or suspended guest, then ask it to power off."/>
 			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
 		</enumeration>
 

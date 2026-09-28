@@ -816,7 +816,7 @@ extension VMCommandCore {
         // offering the graceful shutdown here would chain one onto the other.
         let alternatives =
             instance.activity.decide(.sessionAction(.requestStop), posture: .commit) == .admit
-                && instance.status != .paused
+                && !instance.isLivePaused
             ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
             : []
         let title: String

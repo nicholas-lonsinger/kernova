@@ -470,7 +470,8 @@ extension CommandErrorDTO {
             // left out, since naming it says nothing.
             {
                 let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
-                let state = VMStatus.displayName(forWireName: current).lowercased()
+                let state = VMStatus.displayName(forWireName: current, heldByAnotherCopy: false)
+                    .lowercased()
                 let refused = settings.enumerated().map { index, entry in
                     index == 0
                         ? "\(entry.key) cannot be set to \u{201C}\(entry.value)\u{201D}"

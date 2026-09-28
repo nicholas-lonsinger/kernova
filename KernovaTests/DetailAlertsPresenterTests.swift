@@ -351,7 +351,7 @@ struct DetailAlertsPresenterTests {
         // A capturable suspend slot: every predicate a suspended VM is judged
         // by needs one on disk, not just the status.
         try VMInstanceFixture.writeSaveFile(for: vm)
-        #expect(vm.isColdPaused)
+        #expect(vm.isSuspended)
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
         let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)

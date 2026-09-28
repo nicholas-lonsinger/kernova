@@ -14,6 +14,7 @@ struct VMStatusTests {
         #expect(VMStatus.starting.displayName == "Starting")
         #expect(VMStatus.running.displayName == "Running")
         #expect(VMStatus.paused.displayName == "Paused")
+        #expect(VMStatus.suspended.displayName == "Suspended")
         #expect(VMStatus.saving.displayName == "Suspending")
         #expect(VMStatus.restoring.displayName == "Restoring")
         #expect(VMStatus.installing.displayName == "Installing")
@@ -33,6 +34,7 @@ struct VMStatusTests {
         #expect(VMStatus.starting.transitionLabel == nil)
         #expect(VMStatus.running.transitionLabel == nil)
         #expect(VMStatus.paused.transitionLabel == nil)
+        #expect(VMStatus.suspended.transitionLabel == nil)
         #expect(VMStatus.installing.transitionLabel == nil)
         #expect(VMStatus.initialBoot.transitionLabel == nil)
         #expect(VMStatus.error.transitionLabel == nil)
@@ -46,6 +48,7 @@ struct VMStatusTests {
         #expect(VMStatus.starting.rawValue == "starting")
         #expect(VMStatus.running.rawValue == "running")
         #expect(VMStatus.paused.rawValue == "paused")
+        #expect(VMStatus.suspended.rawValue == "suspended")
         #expect(VMStatus.saving.rawValue == "saving")
         #expect(VMStatus.snapshotting.rawValue == "snapshotting")
         #expect(VMStatus.restoring.rawValue == "restoring")
@@ -56,12 +59,27 @@ struct VMStatusTests {
 
     @Test("A wire status reads back in words, preparing included")
     func wireNamesReadBackInWords() {
-        #expect(VMStatus.displayName(forWireName: "running") == "Running")
-        #expect(VMStatus.displayName(forWireName: "initialBoot") == "Initial Boot")
+        #expect(VMStatus.displayName(forWireName: "running", heldByAnotherCopy: false) == "Running")
+        #expect(VMStatus.displayName(forWireName: "suspended", heldByAnotherCopy: false) == "Suspended")
+        #expect(VMStatus.displayName(forWireName: "initialBoot", heldByAnotherCopy: false) == "Initial Boot")
         // Not a VMStatus case, and the one wire name that still has words.
         #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
-        #expect(VMStatus.displayName(forWireName: VMStatus.preparingWireName) == "Preparing")
+        #expect(
+            VMStatus.displayName(forWireName: VMStatus.preparingWireName, heldByAnotherCopy: false)
+                == "Preparing")
         // A name from no vocabulary this build knows falls back to itself.
-        #expect(VMStatus.displayName(forWireName: "teleporting") == "teleporting")
+        #expect(VMStatus.displayName(forWireName: "teleporting", heldByAnotherCopy: false) == "teleporting")
+    }
+
+    @Test("A VM another copy holds reads as held, whatever status this copy sees")
+    func heldByAnotherCopyWinsOverStatus() {
+        #expect(VMStatus.stopped.displayName(heldByAnotherCopy: true) == VMStatus.heldByAnotherCopyDisplayName)
+        #expect(VMStatus.suspended.displayName(heldByAnotherCopy: false) == "Suspended")
+        #expect(
+            VMStatus.displayName(forWireName: "stopped", heldByAnotherCopy: true)
+                == VMStatus.heldByAnotherCopyDisplayName)
+        #expect(
+            VMStatus.displayName(forWireName: "teleporting", heldByAnotherCopy: true)
+                == VMStatus.heldByAnotherCopyDisplayName)
     }
 }

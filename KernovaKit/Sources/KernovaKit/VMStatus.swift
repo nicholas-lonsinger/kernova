@@ -11,7 +11,11 @@ public enum VMStatus: String, Sendable {
     case stopped
     case starting
     case running
+    /// Paused with its memory held live by this session.
     case paused
+    /// Its memory lives in the bundle's save slot rather than in a session, so
+    /// it survives quitting Kernova; resuming restores it.
+    case suspended
     case saving
     /// Capturing a named snapshot: the guest is paused while its state is
     /// written, then put back the way it was found.
@@ -37,6 +41,7 @@ public enum VMStatus: String, Sendable {
         case .starting: "Starting"
         case .running: "Running"
         case .paused: "Paused"
+        case .suspended: "Suspended"
         case .saving: "Suspending"
         case .snapshotting: "Taking Snapshot"
         case .restoring: "Restoring"
@@ -46,13 +51,24 @@ public enum VMStatus: String, Sendable {
         }
     }
 
-    /// A status read off the wire, in the words a person reads.
+    /// What a person reads for a VM in this status: ``heldByAnotherCopyDisplayName``
+    /// when another copy of Kernova holds it, since the status this copy sees
+    /// then says nothing about what the VM is doing.
+    public func displayName(heldByAnotherCopy: Bool) -> String {
+        heldByAnotherCopy ? Self.heldByAnotherCopyDisplayName : displayName
+    }
+
+    /// A status read off the wire, in the words a person reads, by the same
+    /// rule as ``displayName(heldByAnotherCopy:)``.
     ///
     /// Answers for ``preparingWireName``, which is no case of this type, and
     /// falls back to the raw name for anything else — which only a peer from
     /// another vocabulary could send.
-    public static func displayName(forWireName wireName: String) -> String {
-        if let known = VMStatus(rawValue: wireName) { return known.displayName }
+    public static func displayName(forWireName wireName: String, heldByAnotherCopy: Bool) -> String {
+        if let known = VMStatus(rawValue: wireName) {
+            return known.displayName(heldByAnotherCopy: heldByAnotherCopy)
+        }
+        if heldByAnotherCopy { return heldByAnotherCopyDisplayName }
         return wireName == preparingWireName ? "Preparing" : wireName
     }
 

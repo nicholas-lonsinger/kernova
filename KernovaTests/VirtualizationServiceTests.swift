@@ -781,7 +781,7 @@ struct VirtualizationServiceTests {
     )
     func suspendedCaptureClonesTheSlotAndRestsPaused() async throws {
         let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isColdPaused)
+        #expect(fixture.instance.isSuspended)
         try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         let snapshot = VMSnapshotCaptureRequest(name: "Suspended")
 
@@ -826,7 +826,7 @@ struct VirtualizationServiceTests {
     @Test("A cold-paused VM with no save file offers no capture and is refused one")
     func suspendedCaptureNeedsASaveFile() async throws {
         let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isColdPaused)
+        #expect(fixture.instance.isSuspended)
         #expect(!fixture.instance.hasSaveFile)
         #expect(fixture.instance.snapshotCaptureMode == nil)
 
@@ -844,7 +844,7 @@ struct VirtualizationServiceTests {
     @Test("Reverting to a suspended-state capture restores the cloned suspend slot and disks")
     func revertRoundTripsASuspendedCapture() async throws {
         let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isColdPaused)
+        #expect(fixture.instance.isSuspended)
         try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
         let checkpoint = try await capture(
             fixture.instance, VMSnapshotCaptureRequest(name: "Suspended checkpoint"))
@@ -912,7 +912,7 @@ struct VirtualizationServiceTests {
         }
 
         #expect(instance.hasSaveFile)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
         #expect(instance.errorMessage == nil)
     }
 
@@ -1187,8 +1187,8 @@ struct VirtualizationServiceTests {
 
         holding.activity.placeForTesting(holding.restingPhase(withoutSlot: .stopped))
 
-        #expect(holding.status == .paused)
-        #expect(holding.isColdPaused)
+        #expect(holding.status == .suspended)
+        #expect(holding.isSuspended)
         #expect(holding.errorMessage == nil)
         #expect(holding.hasSaveFile)
 

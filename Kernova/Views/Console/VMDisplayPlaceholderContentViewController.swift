@@ -83,7 +83,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.displayMode
-                _ = self.instance.isColdPaused
+                _ = self.instance.isSuspended
                 _ = self.instance.hasLiveVirtualMachine
             },
             apply: { [weak self] in
@@ -109,7 +109,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
         case .popOut: return .poppedOut
         case .hidden: return .displayClosed
         case .inline:
-            if instance.isColdPaused { return .suspended }
+            if instance.isSuspended { return .suspended }
             if instance.hasLiveVirtualMachine { return .live }
             return .noDisplay
         }

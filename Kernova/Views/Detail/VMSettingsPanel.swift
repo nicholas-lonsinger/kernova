@@ -148,7 +148,7 @@ extension VMSettingsPanel {
     /// Whether the guest holds a session a configuration change waits out —
     /// live, or suspended to disk — which a "takes effect on next start"
     /// caption names.
-    var guestHoldsSession: Bool { instance.hasLiveVirtualMachine || instance.isColdPaused }
+    var guestHoldsSession: Bool { instance.hasLiveVirtualMachine || instance.isSuspended }
 
     /// Whether a control writing `value` to `key` takes a change right now
     /// (``VMCapabilityCatalog/isAvailable(_:writing:on:)``) — the gate of a

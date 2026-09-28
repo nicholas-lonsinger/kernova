@@ -155,7 +155,7 @@ struct VMLibraryViewModelTests {
         viewModel.selectedID = instance.id
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
         #expect(instance.activity.admits(.operation(.deleting)))
         await viewModel.delete(instance)
 
@@ -1214,7 +1214,7 @@ struct VMLibraryViewModelTests {
         await viewModel.save(instance)
 
         #expect(virtService.saveCallCount == 1)
-        #expect(instance.status == .paused)
+        #expect(instance.status == .suspended)
     }
 
     // MARK: - Duplicate Machine ID Boot Guard
@@ -1315,7 +1315,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.suspended)
-        #expect(other.isColdPaused)
+        #expect(other.isSuspended)
 
         await viewModel.start(starting)
 
@@ -3010,7 +3010,7 @@ struct VMLibraryViewModelTests {
         #expect(user.status == .running)
         try await viewModel.saveForTermination(quit)
         #expect(virtService.saveCallCount == 1)
-        #expect(quit.status == .paused)
+        #expect(quit.status == .suspended)
     }
 
     @Test("tryForceStop throws on failure")
@@ -4299,7 +4299,7 @@ struct VMLibraryViewModelTests {
         // The failed restore and the following VM's boot, both through `start`.
         #expect(virtService.startCallCount == 2)
         #expect(virtService.resumeCallCount == 0)
-        #expect(suspended.status == .paused)
+        #expect(suspended.status == .suspended)
         #expect(suspended.errorMessage == nil)
         #expect(presenter.showError == true)
         // Exactly one surfacing, not two: the report routes through the same

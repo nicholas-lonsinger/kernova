@@ -80,27 +80,24 @@ extension VMInstance {
         vsockDropService?.reportUnreadableDrop()
     }
 
-    /// Display name that distinguishes cold-paused ("Suspended") and live-paused
-    /// ("Paused"), and names a VM another copy of Kernova holds.
+    /// What a person reads for this VM's status.
     var statusDisplayName: String {
-        if heldByAnotherCopy { return VMStatus.heldByAnotherCopyDisplayName }
-        return isColdPaused ? "Suspended" : status.displayName
+        status.displayName(heldByAnotherCopy: heldByAnotherCopy)
     }
 
     /// Color used to tint the sidebar's OS icon.
     ///
     /// A VM another copy of Kernova holds is the running color dimmed.
-    /// Cold-paused and running-while-awaiting-network-reattach are orange,
-    /// live-paused is yellow, and the remaining states follow `status`.
+    /// Running-while-awaiting-network-reattach is orange, and the remaining
+    /// states follow `status`.
     var statusDisplayNSColor: NSColor {
         if heldByAnotherCopy { return StatusColor.heldByAnotherCopy }
-        if isColdPaused { return StatusColor.warning }
         if status == .running && networkAttachmentPending { return StatusColor.warning }
         switch status {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
         case .stopped: return .systemGray
-        case .starting, .saving, .snapshotting, .restoring, .installing, .initialBoot:
+        case .starting, .suspended, .saving, .snapshotting, .restoring, .installing, .initialBoot:
             return StatusColor.warning
         case .running: return StatusColor.running
         case .paused: return StatusColor.pausedInMemory
@@ -138,10 +135,11 @@ extension VMInstance {
                 "The network interface is unavailable. Kernova reconnects automatically when one is available."
             }
         }
-        guard status == .paused else { return nil }
-        return isColdPaused
-            ? "VM state is saved to disk"
-            : "VM is paused in memory"
+        return switch status {
+        case .paused: "VM is paused in memory"
+        case .suspended: "VM state is saved to disk"
+        default: nil
+        }
     }
 
     /// What the stop slot — the toolbar segment and the menu item sharing it —

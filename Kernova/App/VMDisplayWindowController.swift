@@ -77,7 +77,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         backing.applyDropRegistration()
         backing.update(
             display: instance.session?.displayHandle,
-            isPaused: instance.status == .paused,
+            isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
             settings: instance.displayViewSettings
         )
@@ -229,13 +229,13 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             apply: { [weak self] in
                 guard let self else { return }
                 let status = self.instance.status
-                if status == .stopped || status == .error || self.instance.isColdPaused {
+                if status == .stopped || status == .error || self.instance.isSuspended {
                     // The VM went away out from under the window.
                     self.onRequestDismissal?()
                 } else {
                     self.backingView.update(
                         display: self.instance.session?.displayHandle,
-                        isPaused: status == .paused,
+                        isPaused: self.instance.isLivePaused,
                         transitionText: status.transitionLabel,
                         settings: self.instance.displayViewSettings
                     )

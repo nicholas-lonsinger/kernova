@@ -1364,7 +1364,7 @@ struct VMCommandCoreAttachmentTests {
         // A confirmation can land long after the fact, and the slot on disk may
         // be a newer one this recovery knows nothing about.
         #expect(instance.hasSaveFile)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
     }
 
     @Test("A resume-failed removal discards the saved state before it edits the device set")
@@ -1417,7 +1417,7 @@ struct VMCommandCoreAttachmentTests {
         // The refusal is raised before the discard, so the session survives a
         // removal that was never going to happen.
         #expect(instance.hasSaveFile)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
     }
 
     /// The alert the recovery is confirmed from is window-modal, so every other
@@ -1481,6 +1481,6 @@ struct VMCommandCoreAttachmentTests {
         }
 
         #expect(instance.hasSaveFile)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
     }
 }

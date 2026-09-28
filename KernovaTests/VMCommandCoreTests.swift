@@ -246,6 +246,18 @@ struct VMCommandCoreTests {
         #expect(harness.core.list().map(\.status) == ["stopped", "running"])
     }
 
+    @Test("list and info tell a suspended VM from a live-paused one")
+    func readsTellSuspendedFromPaused() throws {
+        let harness = makeHarness()
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+        let paused = makeInstance(in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
+
+        #expect(harness.core.list().map(\.status) == ["suspended", "paused"])
+        #expect(try harness.core.info(.id(suspended.id)).status == "suspended")
+        #expect(try harness.core.info(.id(paused.id)).status == "paused")
+    }
+
     @Test("info reports the VM's shape and status")
     func infoReportsTheVM() throws {
         let harness = makeHarness()
@@ -703,7 +715,7 @@ struct VMCommandCoreTests {
         #expect(offered.id == item.id)
         // The saved state is kept, and the VM rests where a Resume is offered.
         #expect(instance.hasSaveFile)
-        #expect(instance.isColdPaused)
+        #expect(instance.isSuspended)
     }
 
     // MARK: - Allowed verbs

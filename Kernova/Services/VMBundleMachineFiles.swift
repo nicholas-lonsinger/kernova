@@ -207,7 +207,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         } catch {
             // The bundle's own saved state describes the guest RAM that belongs
             // to the disks the swaps above already replaced, and a bundle
-            // holding one rests the VM at `.paused` — offering a resume that
+            // holding one rests the VM at `.suspended` — offering a resume that
             // would run pre-revert RAM on post-revert disks. Dropping it rests
             // the VM at `.stopped` instead.
             try? manager.removeItem(at: layout.saveFileURL)

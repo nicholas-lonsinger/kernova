@@ -29,8 +29,7 @@ enum TableRenderer {
 
     /// A VM's status as a person reads it.
     private static func status(_ wireName: String, heldByAnotherCopy: Bool) -> String {
-        heldByAnotherCopy
-            ? VMStatus.heldByAnotherCopyDisplayName : VMStatus.displayName(forWireName: wireName)
+        VMStatus.displayName(forWireName: wireName, heldByAnotherCopy: heldByAnotherCopy)
     }
 
     /// One VM's full description, as a field-per-line block.
