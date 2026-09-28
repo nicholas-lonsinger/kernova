@@ -12,7 +12,7 @@ import Testing
 /// drag-reorder index math, and the status-dependent context menu. Pure
 /// layout/rendering is left to manual verification, per the project's testing
 /// guidance.
-@Suite("Sidebar Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("Sidebar Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct SidebarViewControllerTests {
     /// Shared by the view model (selection/order) and the sidebar's own use of
@@ -442,7 +442,6 @@ struct SidebarViewControllerTests {
         let instance = viewModel.library.admitFixture(phase: .suspended)  // no live VM ⇒ cold-paused
         // A suspend slot on disk: every predicate a suspended VM is judged by
         // reads the file, not the status.
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -465,7 +464,6 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let running = viewModel.library.admitFixture(name: "Running", phase: .running(sessionID: UUID()))
         let suspended = viewModel.library.admitFixture(name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         let controller = SidebarViewController(viewModel: viewModel)
         let runningMenu = controller.buildContextMenu(for: running)
@@ -486,7 +484,6 @@ struct SidebarViewControllerTests {
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
         let suspended = viewModel.library.admitFixture(name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         let controller = SidebarViewController(viewModel: viewModel)
         let discard = try #require(
@@ -510,7 +507,6 @@ struct SidebarViewControllerTests {
     func contextMenuColdPausedEnablesDelete() throws {
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(phase: .suspended)  // no live VM ⇒ cold-paused
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         let controller = SidebarViewController(viewModel: viewModel)
 
@@ -650,7 +646,6 @@ struct SidebarViewControllerTests {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: phase.phase)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         if case .settled(.suspended) = phase {
             try VMInstanceFixture.writeSaveFile(for: instance)
         }

@@ -9,7 +9,7 @@ import Testing
 /// core: a session action never releases the operation holding the VM, only
 /// that operation's ending moves it back to rest, and a request landing
 /// anywhere in between is decided against the operation that holds it.
-@Suite("VMCommandCore Operation Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore Operation Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreOperationTests {
     private let preferences = makeTestPreferences()
@@ -98,7 +98,6 @@ struct VMCommandCoreOperationTests {
         let session = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: session))
         instance.beginSessionContextForTesting()
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         accessories.accessories.append(MockUSBAccessoryService.accessory(registryID: 42, serial: "A1"))
         accessories.suspendNextAttach = true
 
@@ -133,7 +132,6 @@ struct VMCommandCoreOperationTests {
         let harness = makeHarness(virtualization: virtualization)
         let session = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: session))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
 
         let pause = Task { @MainActor in try await harness.core.pause(.id(instance.id)) }
         await virtualization.waitUntilSuspended()
@@ -170,7 +168,6 @@ struct VMCommandCoreOperationTests {
         let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: session), snapshots: [snapshot])
-        defer { VMInstanceFixture.removeBundle(of: instance) }
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
@@ -222,7 +219,6 @@ struct VMCommandCoreOperationTests {
         let instance = makeInstance(
             in: harness, name: "Reverting", phase: .running(sessionID: UUID()),
             snapshots: [snapshot])
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         let sharing = instance.configuration.clipboardSharingEnabled
 
         let revert = Task { @MainActor in
@@ -377,7 +373,6 @@ struct VMCommandCoreOperationTests {
             let harness = makeHarness(virtualization: virtualization)
             let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
             let instance = makeInstance(in: harness, phase: resting, snapshots: [snapshot])
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             if resting == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
             let capabilities = harness.library.capabilities
             let offered: VMCapability = resting == .suspended ? .resume : .start

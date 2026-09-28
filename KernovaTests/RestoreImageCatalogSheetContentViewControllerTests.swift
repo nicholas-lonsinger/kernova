@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("RestoreImageCatalogSheetContentViewController Tests", .admissionGated)
+@Suite("RestoreImageCatalogSheetContentViewController Tests", .caseScoped)
 @MainActor
 struct RestoreImageCatalogSheetContentViewControllerTests {
     private func host(_ major: Int, _ minor: Int, _ patch: Int) -> OperatingSystemVersion {

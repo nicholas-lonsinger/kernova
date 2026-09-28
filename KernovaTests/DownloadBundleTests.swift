@@ -4,16 +4,12 @@ import Testing
 
 @testable import Kernova
 
-@Suite("DownloadBundle Tests", .admissionGated)
+@Suite("DownloadBundle Tests", .caseScoped)
 struct DownloadBundleTests {
-    /// Creates a unique temp directory for a single test and returns it.
-    ///
-    /// The caller is responsible for removing it (typically via `defer`).
-    private static func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DownloadBundleTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    private let scratch = TestScratchDirectory(prefix: "DownloadBundleTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     private static let defaultMetadataURL: URL = {
@@ -47,9 +43,7 @@ struct DownloadBundleTests {
 
     @Test("prepareForFreshDownload creates Info.plist and empty data file at bundle root")
     func prepareForFreshDownloadCreatesLayout() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundleURL = temp.appendingPathComponent("RestoreImage.kernovadownload")
+        let bundleURL = scratch.url.appendingPathComponent("RestoreImage.kernovadownload")
         let bundle = DownloadBundle(url: bundleURL)
         let metadata = Self.makeMetadata()
 
@@ -66,9 +60,7 @@ struct DownloadBundleTests {
 
     @Test("partialByteCount reflects file size after appends")
     func partialByteCountTracksFileSize() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
@@ -85,9 +77,7 @@ struct DownloadBundleTests {
 
     @Test("truncateData zeroes the data file")
     func truncateDataZeroesFile() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let handle = try FileHandle(forWritingTo: bundle.dataURL)
@@ -101,9 +91,7 @@ struct DownloadBundleTests {
 
     @Test("loadMetadata throws on malformed Info.plist")
     func loadMetadataThrowsOnGarbage() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         try Data("not a plist".utf8).write(to: bundle.infoPlistURL, options: .atomic)
@@ -114,9 +102,7 @@ struct DownloadBundleTests {
 
     @Test("finalize moves data to the destination and leaves disposal to the caller")
     func finalizeMovesDataToDestination() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let payload = Data(repeating: 0x42, count: 8192)
@@ -124,7 +110,7 @@ struct DownloadBundleTests {
         try handle.write(contentsOf: payload)
         try handle.close()
 
-        let destination = temp.appendingPathComponent("R.ipsw")
+        let destination = scratch.url.appendingPathComponent("R.ipsw")
         try bundle.finalize(to: destination)
 
         #expect(FileManager.default.fileExists(atPath: destination.path))
@@ -139,9 +125,7 @@ struct DownloadBundleTests {
 
     @Test("finalize replaces an existing file at the destination")
     func finalizeReplacesExistingDestination() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
         try bundle.prepareForFreshDownload(with: Self.makeMetadata())
 
         let fresh = Data(repeating: 0xBE, count: 2048)
@@ -149,7 +133,7 @@ struct DownloadBundleTests {
         try handle.write(contentsOf: fresh)
         try handle.close()
 
-        let destination = temp.appendingPathComponent("R.ipsw")
+        let destination = scratch.url.appendingPathComponent("R.ipsw")
         try Data(repeating: 0x00, count: 100).write(to: destination)
 
         try bundle.finalize(to: destination)
@@ -160,9 +144,7 @@ struct DownloadBundleTests {
 
     @Test("isResumable requires the data file, not just the bundle directory")
     func isResumableRequiresDataFile() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundle = DownloadBundle(url: temp.appendingPathComponent("R.kernovadownload"))
+        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
 
         // Absent bundle.
         #expect(!bundle.exists)
@@ -253,7 +235,7 @@ struct DownloadBundleTests {
     }
 }
 
-@Suite("DownloadSpeedSmoother Tests", .admissionGated)
+@Suite("DownloadSpeedSmoother Tests", .caseScoped)
 struct DownloadSpeedSmootherTests {
     @Test("First sample returns zero speed")
     func firstSampleReturnsZero() {

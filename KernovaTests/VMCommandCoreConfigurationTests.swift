@@ -8,10 +8,11 @@ import Testing
 /// The configuration verbs against a real library: the keyspace read and
 /// written through the core's own gates, the shared-directory edits a caller
 /// names by path, and every refusal each of them owes.
-@Suite("VMCommandCore Configuration Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore Configuration Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreConfigurationTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandCoreConfigurationTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -48,8 +49,8 @@ struct VMCommandCoreConfigurationTests {
 
     /// A folder that really is one, so the share verb's directory check passes.
     private func makeFolder(_ name: String) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-share-\(name)-\(UUID().uuidString)", isDirectory: true)
+        let url = scratch.url.appendingPathComponent(
+            "kernova-share-\(name)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -1152,10 +1153,9 @@ struct VMCommandCoreConfigurationTests {
     func shareAddRefusesANonDirectory() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-share-\(UUID().uuidString).txt")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("kernova-share.txt")
         try Data("not a folder".utf8).write(to: file)
-        defer { try? FileManager.default.removeItem(at: file) }
 
         // The VM would refuse to start on a share naming a file, so the entry
         // is refused where it is entered.

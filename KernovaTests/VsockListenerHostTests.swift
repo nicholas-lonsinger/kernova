@@ -9,7 +9,7 @@ import Virtualization
 @testable import Kernova
 
 @MainActor
-@Suite("VsockListenerHost", .admissionGated)
+@Suite("VsockListenerHost", .caseScoped)
 struct VsockListenerHostTests {
     /// `configureAcceptedSocket` must raise `SO_SNDBUF` on the accepted fd.
     ///

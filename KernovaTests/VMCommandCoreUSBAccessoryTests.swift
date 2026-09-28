@@ -9,7 +9,7 @@ import Testing
 /// the capability refusal a build without passthrough owes, the two listings,
 /// the state gate an edit is admitted by, and the vocabulary each failure comes
 /// back in.
-@Suite("VMCommandCore USB Accessory Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore USB Accessory Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreUSBAccessoryTests {
     private let preferences = makeTestPreferences()

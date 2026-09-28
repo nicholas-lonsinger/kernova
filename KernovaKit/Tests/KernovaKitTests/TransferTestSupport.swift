@@ -56,13 +56,11 @@ func drainUntilPeerCloses(_ fd: Int32, timeout: TimeInterval = 5) throws -> Data
 
 /// A scratch tree holding one incompressible file of `byteCount` bytes, so its
 /// archive is as big as the tree and the wire has something to carry.
-func makeBulkyTree(named name: String, byteCount: Int) throws -> (scratch: URL, source: URL) {
-    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
-        "bulky-\(UUID().uuidString)", isDirectory: true)
-    let source = scratch.appendingPathComponent(name, isDirectory: true)
+func makeBulkyTree(named name: String, byteCount: Int) throws -> URL {
+    let source = TestScratchDirectory(prefix: "bulky").url.appendingPathComponent(name, isDirectory: true)
     try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
     try randomBytes(count: byteCount).write(to: source.appendingPathComponent("big.bin"))
-    return (scratch, source)
+    return source
 }
 
 /// What a pull for a folder registers: the name to unpack under, and the size

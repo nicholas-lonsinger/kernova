@@ -8,7 +8,7 @@ import Testing
 /// The per-transfer data connection end to end: a real
 /// ``ClipboardTransferSender`` and ``ClipboardTransferReceiver`` over a
 /// socketpair with both ends running, in both header orders.
-@Suite("ClipboardTransferStream", .admissionGated)
+@Suite("ClipboardTransferStream", .caseScoped)
 struct ClipboardTransferStreamTests {
     /// What a stubbed dial throws, shaped like the guest dialler's own error —
     /// a plain enum carrying its reason — so a test can look for that reason in
@@ -17,19 +17,17 @@ struct ClipboardTransferStreamTests {
         case refused(String)
     }
 
-    /// A unique scratch directory removed when the test ends.
-    private func makeScratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("transfer-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "transfer-tests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     /// A tree exercising every shape the archive's key set carries: nesting, an
     /// empty directory, unicode names, a symlink, a package, and the exec bit.
-    private func makeFixtureTree(in scratch: URL) throws -> URL {
+    private func makeFixtureTree(in root: URL) throws -> URL {
         let fm = FileManager.default
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
         let nested = source.appendingPathComponent("a/b/c", isDirectory: true)
         try fm.createDirectory(at: nested, withIntermediateDirectories: true)
         try "top".write(
@@ -105,13 +103,11 @@ struct ClipboardTransferStreamTests {
     @Test("a file round-trips byte-identically under its offer's name")
     func fileRoundTrips() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let payload = patternedBytes(count: 512 * 1024, multiplier: 7, offset: 3)
-        let file = scratch.appendingPathComponent("payload.bin")
+        let file = scratch.url.appendingPathComponent("payload.bin")
         try payload.write(to: file)
 
         let transferID: UInt64 = 0x21
@@ -136,12 +132,10 @@ struct ClipboardTransferStreamTests {
     @Test("a folder round-trips its whole tree — nesting, unicode, a symlink, a package, the exec bit")
     func folderRoundTrips() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let source = try makeFixtureTree(in: scratch)
+        let source = try makeFixtureTree(in: scratch.url)
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
         let transferID: UInt64 = 0x31
         harness.pull(
@@ -186,11 +180,7 @@ struct ClipboardTransferStreamTests {
 
     @Test("a zero-byte file round-trips, and so does an empty inline payload")
     func zeroByteRoundTrips() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-
-        let empty = scratch.appendingPathComponent("empty.bin")
+        let empty = scratch.url.appendingPathComponent("empty.bin")
         try Data().write(to: empty)
 
         let fileHarness = TransferHarness()
@@ -219,9 +209,6 @@ struct ClipboardTransferStreamTests {
 
     @Test("a payload larger than every buffer in the pipeline round-trips byte-identically")
     func multiBufferPayloadRoundTrips() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
@@ -229,7 +216,7 @@ struct ClipboardTransferStreamTests {
         // size several hundred times over, so nothing about the transfer fits in
         // one pass at any stage.
         let byteCount = 104 * 1024 * 1024 + 7
-        let file = scratch.appendingPathComponent("big.bin")
+        let file = scratch.url.appendingPathComponent("big.bin")
         try Data(repeating: 0x5A, count: byteCount).write(to: file)
 
         let transferID: UInt64 = 0x51
@@ -371,12 +358,10 @@ struct ClipboardTransferStreamTests {
     @Test("a supersession mid-stream retires the pull quietly and stops the send")
     func supersessionRetiresQuietly() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         for index in 0..<24 {
             try Data(repeating: UInt8(index), count: 1024 * 1024)
@@ -412,12 +397,10 @@ struct ClipboardTransferStreamTests {
     @Test("a receiver that gives up retires the pull quietly and stops the send")
     func receiverCancelStopsTheSend() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
@@ -451,8 +434,6 @@ struct ClipboardTransferStreamTests {
     @Test("cancelling a generation reaches the receiver already streaming under it")
     func generationCancelStopsALiveReceiver() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
@@ -462,7 +443,7 @@ struct ClipboardTransferStreamTests {
         // receiver rather than only the awaiter beside it. Cancelled and held
         // exactly as `receiverCancelStopsTheSend` is, and for the same
         // reasons.
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try randomBytes(count: 64 * 1024).write(to: source.appendingPathComponent("big.bin"))
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
@@ -557,9 +538,7 @@ struct ClipboardTransferStreamTests {
     /// trailer to carry its reason across.
     @Test("a peer that stops draining an archive is a stall, not an unreadable source")
     func aStalledArchiveWriteIsAStallNotAnUnreadableSource() async throws {
-        let fm = FileManager.default
-        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
-        defer { try? fm.removeItem(at: treeScratch) }
+        let source = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
         let (near, peer) = try makeRawSocketPair()
         defer { ClipboardDataConnection.end(fd: peer) }
         let sender = ClipboardTransferSender(
@@ -708,8 +687,8 @@ struct ClipboardTransferStreamTests {
     /// A regular file rather than a socketpair, so the whole payload is there to
     /// be read whatever the receiver does with it, and a `dup` of the descriptor
     /// still reports how far it got after the receiver closed its own.
-    private func acceptedFile(_ bytes: Data, in scratch: URL) throws -> Int32 {
-        let url = scratch.appendingPathComponent("payload-\(UUID().uuidString)")
+    private func acceptedFile(_ bytes: Data, in root: URL) throws -> Int32 {
+        let url = root.appendingPathComponent("payload")
         try bytes.write(to: url)
         let fd = Darwin.open(url.path, O_RDONLY)
         try #require(fd >= 0)
@@ -733,12 +712,10 @@ struct ClipboardTransferStreamTests {
         "a peer that goes quiet mid-archive is a stall, not an extract failure, and is not drained for a trailer"
     )
     func aQuietPeerMidArchiveIsAStall() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider, socketTimeout: 0.3)
         defer { harness.tearDown() }
-        let (treeScratch, source) = try makeBulkyTree(named: "Project", byteCount: 2 << 20)
-        defer { try? fm.removeItem(at: treeScratch) }
+        let source = try makeBulkyTree(named: "Project", byteCount: 2 << 20)
 
         // The peer end stays open and silent behind a prefix short enough to sit
         // inside the socket's own send buffer, so nothing here parks: the
@@ -773,12 +750,9 @@ struct ClipboardTransferStreamTests {
     /// supersession retires quietly instead of reporting a corrupt payload.
     @Test("an extract failure over a healthy connection is searched for the sender's ending")
     func aHealthyConnectionIsSearchedForItsTrailer() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
         // Not an archive at all, ended by an abort trailer naming a code no
         // build defines: the extract gives up at the first byte, the whole
@@ -793,7 +767,7 @@ struct ClipboardTransferStreamTests {
             transferID: transferID, generation: 34,
             plan: folderPlan(named: "Project", advertised: 64),
             source: .accepted(
-                fd: try acceptedFile(payload, in: scratch),
+                fd: try acceptedFile(payload, in: scratch.url),
                 reply: archiveReply(transferID: transferID)))
         let collector = harness.collector
         receiver.start(
@@ -810,12 +784,9 @@ struct ClipboardTransferStreamTests {
 
     @Test("a sender streaming past the tail allowance is not read to the end for its trailer")
     func surplusPastTheTailAllowanceIsNotRead() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
         // Not an archive at all, so the extract gives up near the front of a
         // stream with megabytes still to come — and the trailer at the end of
@@ -827,7 +798,7 @@ struct ClipboardTransferStreamTests {
             + ClipboardTransferTrailer(ending: .aborted(rawCode: "superseded")).encoded
 
         let transferID: UInt64 = 0x1D4
-        let fd = try acceptedFile(payload, in: scratch)
+        let fd = try acceptedFile(payload, in: scratch.url)
         // Shares its file offset with the descriptor the receiver is handed, so
         // it still reports how far the receiver read after that one is closed.
         let offsetObserver = dup(fd)
@@ -932,12 +903,10 @@ struct ClipboardTransferStreamTests {
     @Test("a source file that cannot be read is refused rather than archived")
     func unreadableInlineSourceIsRefused() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let file = scratch.appendingPathComponent("locked.png")
+        let file = scratch.url.appendingPathComponent("locked.png")
         try patternedBytes(count: 2048, multiplier: 23, offset: 7).write(to: file)
         try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
         let transferID: UInt64 = 0xE2
@@ -958,14 +927,11 @@ struct ClipboardTransferStreamTests {
     /// archived route rather than being refused for being too big to hold.
     @Test("an inline file that outgrew its offer is archived, not refused")
     func grownInlineFileIsArchived() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness(maxResidentInlineBytes: 4096)
         defer { harness.tearDown() }
 
         let payload = patternedBytes(count: 64 * 1024, multiplier: 29, offset: 3)
-        let file = scratch.appendingPathComponent("grew.png")
+        let file = scratch.url.appendingPathComponent("grew.png")
         try payload.write(to: file)
         let transferID: UInt64 = 0xE3
         // The offer measured 1 KiB; the file is 64 KiB by the time the transfer
@@ -987,13 +953,10 @@ struct ClipboardTransferStreamTests {
 
     @Test("a sender that cannot meet the requester's ceiling refuses before any byte")
     func senderRefusesOverTheRequestersCeiling() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let file = scratch.appendingPathComponent("big.bin")
+        let file = scratch.url.appendingPathComponent("big.bin")
         try Data(repeating: 0x11, count: 8192).write(to: file)
         let transferID: UInt64 = 0xE1
         harness.pull(
@@ -1013,13 +976,10 @@ struct ClipboardTransferStreamTests {
 
     @Test("a volume with no room refuses the transfer before anything is staged")
     func diskFullPreflightRefusesTheTransfer() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness(freeSpaceProvider: { _ in 0 })
         defer { harness.tearDown() }
 
-        let file = scratch.appendingPathComponent("payload.bin")
+        let file = scratch.url.appendingPathComponent("payload.bin")
         try Data(repeating: 0x22, count: 4096).write(to: file)
         let transferID: UInt64 = 0xF1
         harness.pull(
@@ -1038,8 +998,6 @@ struct ClipboardTransferStreamTests {
     @Test("a volume that fills mid-extract stops the transfer and removes the partial tree")
     func diskFullMidExtractStopsTheTransfer() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         // Room at the pre-flight, none once the extract is under way.
         let checks = Box(0)
         let harness = TransferHarness(
@@ -1050,7 +1008,7 @@ struct ClipboardTransferStreamTests {
             }, extractPacingBytes: 4096)
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try patternedBytes(count: 512 * 1024, multiplier: 17, offset: 4)
             .write(to: source.appendingPathComponent("a.bin"))
@@ -1073,12 +1031,10 @@ struct ClipboardTransferStreamTests {
     @Test("a payload that outgrows what its offer advertised is refused as an overrun")
     func overCeilingExtractIsRefused() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness(minimumExtractAllowance: 4096, extractPacingBytes: 1024)
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try patternedBytes(count: 256 * 1024, multiplier: 19, offset: 6)
             .write(to: source.appendingPathComponent("a.bin"))
@@ -1127,13 +1083,11 @@ struct ClipboardTransferStreamTests {
     @Test("an archive that unpacks to more than one file does not answer a file pull")
     func multiEntryArchiveIsAnInvalidFilePayload() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try "one".write(
             to: source.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
@@ -1186,12 +1140,10 @@ struct ClipboardTransferStreamTests {
     @Test("a folder's progress climbs in payload units, not in compressed wire bytes")
     func folderProgressIsInPayloadUnits() async throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
-        let source = scratch.appendingPathComponent("source", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("source", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         // Part incompressible, so the wire carries enough to report progress
         // several times over, and part not, so payload units and wire bytes are
@@ -1230,14 +1182,11 @@ struct ClipboardTransferStreamTests {
 
     @Test("both directions report the transfer, in the same units and without chunk stages")
     func metricsDescribeBothDirections() async throws {
-        let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
         let harness = TransferHarness()
         defer { harness.tearDown() }
 
         let payload = Data(repeating: 0x44, count: 1024 * 1024)
-        let file = scratch.appendingPathComponent("payload.bin")
+        let file = scratch.url.appendingPathComponent("payload.bin")
         try payload.write(to: file)
         let transferID: UInt64 = 0x161
         harness.pull(

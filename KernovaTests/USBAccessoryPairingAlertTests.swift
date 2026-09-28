@@ -7,7 +7,7 @@ import Testing
 @testable import Kernova
 
 /// What the prompt says, and what each of its buttons answers with.
-@Suite("USB Accessory Pairing Alert Tests", .admissionGated)
+@Suite("USB Accessory Pairing Alert Tests", .caseScoped)
 @MainActor
 struct USBAccessoryPairingAlertTests {
     private final class Answer {

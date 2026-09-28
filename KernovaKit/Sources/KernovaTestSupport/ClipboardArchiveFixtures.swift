@@ -29,13 +29,14 @@ public func clipboardArchiveBytes(ofFileAt fileURL: URL, named name: String? = n
 
 /// Extracts archived-transfer payload bytes into a fresh directory, which it
 /// returns: a folder's tree lands directly inside it, a file's one entry as its
-/// single child.
+/// single child. The directory sits in the running test case's own scratch,
+/// which the case's end removes.
 ///
 /// - Throws: whatever the extract reports for a truncated or corrupt archive;
 ///   the partial output is removed in that case.
 public func extractedClipboardArchive(_ bytes: Data, named name: String = "out") throws -> URL {
-    let destination = FileManager.default.temporaryDirectory
-        .appendingPathComponent("archive-fixture-\(UUID().uuidString)", isDirectory: true)
+    let destination = TestScratchDirectory.forCase(prefix: "archive-fixture").url
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
         .appendingPathComponent(name, isDirectory: true)
     try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
     do {

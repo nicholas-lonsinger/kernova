@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("Recovery boot admission", .admissionGated)
+@Suite("Recovery boot admission", .caseScoped)
 @MainActor
 struct VMInstanceRecoveryEligibilityTests {
     private func admitsRecovery(_ instance: VMInstance) -> Bool {

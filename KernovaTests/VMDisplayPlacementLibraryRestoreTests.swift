@@ -10,7 +10,7 @@ import Testing
 /// The active-but-not-key case is the one that must do nothing: the user is
 /// already in another Kernova window (the library's own placeholder button, for
 /// instance), so re-showing the library would reorder windows under them.
-@Suite("VMDisplayPlacementController.libraryRestore", .admissionGated)
+@Suite("VMDisplayPlacementController.libraryRestore", .caseScoped)
 struct VMDisplayPlacementLibraryRestoreTests {
     @Test("Popping in from the key display window of an active app focuses the library")
     func keyAndActiveFocuses() {

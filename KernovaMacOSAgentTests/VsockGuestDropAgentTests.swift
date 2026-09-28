@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Unit tests for the guest side of a display drop: pulling each offered file,
 /// landing it in Downloads with Finder's own naming, revealing the result, and
 /// what it reports when the drop is cancelled or cannot be written.
-@Suite("VsockGuestDropAgent", .admissionGated)
+@Suite("VsockGuestDropAgent", .caseScoped)
 struct VsockGuestDropAgentTests {
     // MARK: - Harness
 
@@ -27,10 +27,7 @@ struct VsockGuestDropAgentTests {
         let stagingRoot = TestStagingRoot()
 
         init(freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil) throws {
-            root = FileManager.default.temporaryDirectory
-                .appendingPathComponent(
-                    "VsockGuestDropAgentTests-\(UUID().uuidString)",
-                    isDirectory: true)
+            root = TestScratchDirectory(prefix: "VsockGuestDropAgentTests").url
             downloads = root.appendingPathComponent("Downloads", isDirectory: true)
             try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
@@ -72,7 +69,6 @@ struct VsockGuestDropAgentTests {
             agent.stop()
             host.close()
             dialled.closeAll()
-            try? FileManager.default.removeItem(at: root)
         }
 
         /// Names of the entries in the fake Downloads folder, sorted.

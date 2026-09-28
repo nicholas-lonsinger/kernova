@@ -10,26 +10,22 @@ import Testing
 /// on repetitive data — so every guard and every readout that reasons about "how big is
 /// this" has to be expressed in the tree's unit, not the wire's. These are the
 /// tests that fail when one of them slips back to counting wire bytes.
-@Suite("ClipboardDirectoryAccounting", .admissionGated)
+@Suite("ClipboardDirectoryAccounting", .caseScoped)
 struct ClipboardDirectoryAccountingTests {
-    private func makeScratch() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent(
-            "diraccounting-\(UUID().uuidString)", isDirectory: true)
-    }
+    private let scratch = TestScratchDirectory(prefix: "diraccounting")
 
     /// A tree whose archive is a fraction of the tree it unpacks to: one file of
     /// a single repeated byte, which LZ4 shrinks to a couple of KiB whatever its
     /// size.
     private func makeCompressibleTree(
         uncompressedBytes: Int
-    ) throws -> (scratch: URL, source: URL) {
+    ) throws -> URL {
         let fm = FileManager.default
-        let scratch = makeScratch()
-        let source = scratch.appendingPathComponent("Logs", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("Logs", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
         try Data(repeating: 0x20, count: uncompressedBytes)
             .write(to: source.appendingPathComponent("big.log"))
-        return (scratch, source)
+        return source
     }
 
     /// A folder representation the sender streams as its tree, carrying the
@@ -43,14 +39,12 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("a volume that fills is caught while the tree is being written, not per wire byte")
     func diskGuardIsPacedByTheTreeNotTheWire() async throws {
-        let fm = FileManager.default
         // Roomy at the pre-flight and below the margin from the first extracted
         // byte, so the only check that can refuse is the one the extract runs.
         let probe = StagingProbe(freeSpace: { $0 == 0 ? 100 << 30 : 1024 })
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 4 * 1024 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 4 * 1024 * 1024)
         // The point: this whole archive fits inside a single read off the socket,
         // so a guard clocked on arriving wire bytes has nothing to fire on, while
         // the tree it writes runs to megabytes.
@@ -74,7 +68,6 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("the receiver paces its extract guard on its own quantum, not on the read buffer")
     func extractGuardTakesThePacingTheReceiverWasGiven() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe(freeSpace: { $0 == 0 ? 100 << 30 : 1024 })
         // A tree smaller than every other quantum in the pipeline: the transport
         // reads 64 KiB at a time and the production pacing is a megabyte, so a
@@ -87,8 +80,7 @@ struct ClipboardDirectoryAccountingTests {
         let harness = TransferHarness(
             freeSpaceProvider: probe.provider, extractPacingBytes: tree / 8)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: tree)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: tree)
 
         let transferID: UInt64 = 0x62
         harness.pull(
@@ -103,13 +95,11 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("a folder within its advertised size plus the container's overhead still arrives")
     func extractAllowsContainerOverhead() async throws {
-        let fm = FileManager.default
         // A small floor so it doesn't swallow the test; the production value
         // exists for byte-free trees, not for this shape.
         let harness = TransferHarness(minimumExtractAllowance: 4096)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 256 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 256 * 1024)
 
         let transferID: UInt64 = 0x63
         // Advertised honestly: the archive still carries per-entry headers on top
@@ -131,11 +121,9 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("the delivered folder is sized by its tree, not by the archive that carried it")
     func deliveredFolderCarriesTheTreesSize() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
         // Driven by hand so the test owns the exact bytes the digest covers.
         let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
 
@@ -170,11 +158,9 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("the requester's ceiling stops a folder by the tree it unpacks to, not by the wire")
     func senderCeilingIsMeasuredInTheTreesUnit() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
         // A ceiling the wire never comes close to: the whole archive is a couple
         // of KiB, so a guard counting wire bytes lets the half-megabyte tree
         // through to a requester that said it had room for 64 KiB.
@@ -197,11 +183,9 @@ struct ClipboardDirectoryAccountingTests {
 
     @Test("a folder whose tree fits the requester's ceiling still arrives")
     func senderCeilingPassesATreeThatFits() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 512 * 1024)
 
         let transferID: UInt64 = 0x66
         harness.pull(
@@ -221,11 +205,9 @@ struct ClipboardDirectoryAccountingTests {
         // second paste of the same representation reuses the id of a pull that
         // timed out. The record of that cancellation must not outlive the
         // registration that replaces it.
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeCompressibleTree(uncompressedBytes: 4096)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeCompressibleTree(uncompressedBytes: 4096)
 
         let transferID: UInt64 = 0x67
         harness.expect(transferID: transferID, plan: folderPlan(named: "Logs", advertised: 4096))

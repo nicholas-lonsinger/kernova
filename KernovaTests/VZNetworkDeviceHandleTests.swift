@@ -2,7 +2,7 @@ import KernovaTestSupport
 import Testing
 @testable import Kernova
 
-@Suite("VZNetworkDeviceHandle Tests", .admissionGated)
+@Suite("VZNetworkDeviceHandle Tests", .caseScoped)
 @MainActor
 struct VZNetworkDeviceHandleTests {
     private struct Harness {

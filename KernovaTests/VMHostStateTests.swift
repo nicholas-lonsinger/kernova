@@ -6,7 +6,7 @@ import Testing
 
 /// The host-state model and its coding: what a round trip preserves, and what
 /// a key the JSON does not carry decodes to.
-@Suite("VMHostState Tests", .admissionGated)
+@Suite("VMHostState Tests", .caseScoped)
 struct VMHostStateTests {
     /// Every field away from its default, so a field the custom `init(from:)`
     /// misses fails the round trip instead of decoding to the default.

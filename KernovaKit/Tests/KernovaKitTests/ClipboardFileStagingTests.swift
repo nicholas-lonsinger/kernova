@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardFileStaging", .admissionGated)
+@Suite("ClipboardFileStaging", .caseScoped)
 struct ClipboardFileStagingTests {
     private let stagingRoot = TestStagingRoot()
 

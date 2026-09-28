@@ -30,7 +30,7 @@ import Testing
 /// `presentDeleteSheet` through the follow-up call/`stop()`, so the off-main
 /// resolution Task can't run until the test `await`s the captured handle's
 /// `.value` — event-driven, no polling.
-@Suite("DetailAlertsPresenter Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("DetailAlertsPresenter Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct DetailAlertsPresenterTests {
     private let preferences = makeTestPreferences()
@@ -350,7 +350,6 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.suspended)
         // A capturable suspend slot: every predicate a suspended VM is judged
         // by needs one on disk, not just the status.
-        defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         #expect(vm.isColdPaused)
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
@@ -505,7 +504,6 @@ struct DetailAlertsPresenterTests {
         hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         let vm = makeInstance(in: viewModel, hostState: hostState)
         vm.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id))
 
@@ -521,7 +519,6 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
 
         let alert = presenter.forceStopAlertForTesting(vm)
@@ -573,7 +570,6 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
         vm.activity.placeForTesting(.suspended)
-        defer { VMInstanceFixture.removeBundle(of: vm) }
         try VMInstanceFixture.writeSaveFile(for: vm)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 

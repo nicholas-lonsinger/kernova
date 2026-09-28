@@ -4,22 +4,14 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardArchive", .admissionGated)
+@Suite("ClipboardArchive", .caseScoped)
 struct ClipboardArchiveTests {
-    /// A unique scratch directory removed when the test ends.
-    private func makeScratch() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("aar-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
+    private let scratch = TestScratchDirectory(prefix: "aar-tests")
 
     @Test("estimatedByteCount sums regular-file sizes only")
     func estimateSumsFiles() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-        let root = scratch.appendingPathComponent("tree", isDirectory: true)
+        let root = scratch.url.appendingPathComponent("tree", isDirectory: true)
         let sub = root.appendingPathComponent("sub", isDirectory: true)
         try fm.createDirectory(at: sub, withIntermediateDirectories: true)
         try Data("hello".utf8).write(to: root.appendingPathComponent("a.txt"))
@@ -37,16 +29,14 @@ struct ClipboardArchiveTests {
     @Test("estimatedByteCount is 0 for a tree carrying no file bytes")
     func estimateZeroForByteFreeTrees() throws {
         let fm = FileManager.default
-        let scratch = try makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
 
-        let empty = scratch.appendingPathComponent("empty", isDirectory: true)
+        let empty = scratch.url.appendingPathComponent("empty", isDirectory: true)
         try fm.createDirectory(at: empty, withIntermediateDirectories: true)
         #expect(ClipboardArchive.estimatedByteCount(at: empty) == 0)
 
         // Only subdirectories and zero-byte files: nothing to sum, yet the tree
         // is real and streams intact (ClipboardArchiveStreamTests).
-        let scaffold = scratch.appendingPathComponent("scaffold", isDirectory: true)
+        let scaffold = scratch.url.appendingPathComponent("scaffold", isDirectory: true)
         try fm.createDirectory(
             at: scaffold.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)

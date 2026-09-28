@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("AttachmentRowView Tests", .admissionGated, .scopedWindows)
+@Suite("AttachmentRowView Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct AttachmentRowViewTests {
     private func makeRow(

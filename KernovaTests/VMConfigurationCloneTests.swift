@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMConfiguration Clone Tests", .admissionGated)
+@Suite("VMConfiguration Clone Tests", .caseScoped)
 struct VMConfigurationCloneTests {
     private func makeConfig(
         name: String = "My VM",

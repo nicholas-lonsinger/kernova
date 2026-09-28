@@ -13,7 +13,7 @@ import Testing
 /// No arm of it terminates: unhiding is a person asking for the app, so a
 /// window that closed mid-hide is answered by making the app reachable rather
 /// than by quitting under them.
-@Suite("AppResidencyController unhide", .serialized, .admissionGated, .scopedWindows)
+@Suite("AppResidencyController unhide", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppResidencyUnhideTests {
     private let preferences = makeTestPreferences()

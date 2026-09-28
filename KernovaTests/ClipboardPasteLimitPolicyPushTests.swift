@@ -12,7 +12,7 @@ import Testing
 /// diff for `applyLivePolicy` to carry — without an explicit re-push a running
 /// guest keeps enforcing the value it was handed at connect, and the two ends
 /// silently disagree until the next reconnect.
-@Suite("Clipboard paste ceiling policy push", .serialized, .admissionGated)
+@Suite("Clipboard paste ceiling policy push", .serialized, .caseScoped)
 @MainActor
 struct ClipboardPasteLimitPolicyPushTests {
     private func makeInstance(in library: VMLibrary, preferences: AppPreferences) -> VMInstance {

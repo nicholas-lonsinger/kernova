@@ -10,7 +10,7 @@ import Testing
 /// The container owns what happens *between* panes: sizing the window to the
 /// one being selected, and re-arming its "more below" cue so an overflowing
 /// pane says so on every arrival rather than only its first.
-@Suite("Settings Tab Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("Settings Tab Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct SettingsTabViewControllerTests {
     private let preferences: AppPreferences

@@ -8,7 +8,7 @@ import Testing
 /// The projections every surface reads off a phase, over every fixture phase.
 ///
 /// Admission's own reading of a phase is ``VMAdmissionTests``'.
-@Suite("VMLifecyclePhase Tests", .admissionGated)
+@Suite("VMLifecyclePhase Tests", .caseScoped)
 @MainActor
 struct VMLifecyclePhaseTests {
     private static let session = VMLifecyclePhaseFixtures.session

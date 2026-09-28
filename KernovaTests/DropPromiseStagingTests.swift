@@ -6,7 +6,7 @@ import Testing
 
 /// Unit tests for `DropPromiseStaging` — where a promise drag's files wait for
 /// the guest's pull, which can come long after the drag is over.
-@Suite("DropPromiseStaging", .admissionGated)
+@Suite("DropPromiseStaging", .caseScoped)
 struct DropPromiseStagingTests {
     private let stagingRoot = TestStagingRoot()
 

@@ -4,7 +4,7 @@ import KernovaTestSupport
 
 @testable import KernovaKit
 
-@Suite("ControlChannelFrames")
+@Suite("ControlChannelFrames", .caseScoped)
 struct ControlChannelFramesTests {
     // MARK: - Builders
 

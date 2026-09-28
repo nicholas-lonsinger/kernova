@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SnapshotSectionView Tests", .admissionGated, .scopedWindows)
+@Suite("SnapshotSectionView Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct SnapshotSectionViewTests {
     /// Records what the section asks its host to do.

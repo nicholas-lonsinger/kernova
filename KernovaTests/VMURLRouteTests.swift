@@ -7,7 +7,7 @@ import Testing
 
 /// How a delivered URL reads: which route it names, which VM it addresses, and
 /// what a link Kernova cannot act on is refused for.
-@Suite("Kernova link routes", .admissionGated)
+@Suite("Kernova link routes", .caseScoped)
 struct VMURLRouteTests {
     private func delivery(_ text: String) throws -> VMURLRoute.Delivery {
         VMURLRoute.delivery(of: try #require(URL(string: text)))

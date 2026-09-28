@@ -12,7 +12,7 @@ import Testing
 /// Nothing here asserts what Virtualization *accepts* — the two checks this
 /// owns are the form's (a blank field, a mismatch), and the framework's verdict
 /// is passed through as written.
-@Suite("Guest Account Password Alert", .admissionGated)
+@Suite("Guest Account Password Alert", .caseScoped)
 @MainActor
 struct GuestAccountPasswordAlertTests {
     private final class Answers {

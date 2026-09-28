@@ -4,8 +4,10 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMConfiguration Tests", .admissionGated)
+@Suite("VMConfiguration Tests", .caseScoped)
 struct VMConfigurationTests {
+    private let scratch = TestScratchDirectory(prefix: "VMConfigurationTests")
+
     /// Builds a complete `VMConfiguration` JSON string with all required fields populated.
     ///
     /// Pass extra comma-separated JSON fields via `extraFields` to add or override entries.
@@ -34,11 +36,8 @@ struct VMConfigurationTests {
     }
 
     /// Creates a throwaway `.kernova` bundle directory containing `config.json`.
-    ///
-    /// Callers remove it via the returned URL in a `defer`.
-    private static func makeBundle(_ configuration: VMConfiguration) throws -> URL {
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(configuration.id.uuidString).kernova", isDirectory: true)
+    private func makeBundle(_ configuration: VMConfiguration) throws -> URL {
+        let bundleURL = scratch.url.appendingPathComponent("\(configuration.id.uuidString).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         let data = try VMConfiguration.makeJSONEncoder().encode(configuration)
         try data.write(to: VMBundleLayout(bundleURL: bundleURL).configURL)
@@ -1549,8 +1548,7 @@ struct VMConfigurationTests {
         let config = VMConfiguration(
             name: "Round Trip", guestOS: .linux, bootMode: .efi, cpuCount: 4,
             createdAt: Date(timeIntervalSince1970: 1_750_000_000))
-        let bundleURL = try Self.makeBundle(config)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let bundleURL = try makeBundle(config)
 
         let loaded = try VMConfiguration.load(fromBundle: bundleURL)
         #expect(loaded == config)
@@ -1558,10 +1556,8 @@ struct VMConfigurationTests {
 
     @Test("VMConfiguration.load(fromBundle:) throws when config.json is absent")
     func loadFromBundleMissingConfig() throws {
-        let bundleURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("\(UUID().uuidString).kernova", isDirectory: true)
+        let bundleURL = scratch.url.appendingPathComponent("\(UUID().uuidString).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: bundleURL) }
 
         #expect(throws: (any Error).self) {
             try VMConfiguration.load(fromBundle: bundleURL)

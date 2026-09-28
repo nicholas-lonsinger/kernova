@@ -14,7 +14,7 @@ import Testing
 /// `hasUserWindow(countingMiniaturized:)` layers on top also sees the windows of
 /// every test running alongside this one in the shared test host, so it has no
 /// deterministic answer here.
-@Suite("AppWindowRegistry presence", .serialized, .admissionGated, .scopedWindows)
+@Suite("AppWindowRegistry presence", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppWindowRegistryPresenceTests {
     private let preferences = makeTestPreferences()

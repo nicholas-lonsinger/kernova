@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for the gate every automatic status-item open passes through —
 /// the readout's own and the staged-line reveal a refusal raises.
-@Suite("ClipboardProgressStatusItemPresenter.allowsAutomaticOpen", .admissionGated)
+@Suite("ClipboardProgressStatusItemPresenter.allowsAutomaticOpen", .caseScoped)
 struct ClipboardProgressStatusItemPresenterTests {
     private func allows(visible: Bool, onScreen: Bool, menuOpen: Bool) -> Bool {
         ClipboardProgressStatusItemPresenter.allowsAutomaticOpen(

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("UniqueName Tests", .admissionGated)
+@Suite("UniqueName Tests", .caseScoped)
 struct UniqueNameTests {
     @Test("returns the prefix unchanged when it's free")
     func freePrefix() {

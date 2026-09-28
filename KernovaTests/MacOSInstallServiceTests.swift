@@ -11,25 +11,19 @@ import Testing
 /// IPSW, so it is exercised manually; this suite pins the seam that
 /// regressed — VZ is only ever handed a symlink-free URL.
 @MainActor
-@Suite("MacOSInstallService Tests", .admissionGated)
+@Suite("MacOSInstallService Tests", .caseScoped)
 struct MacOSInstallServiceTests {
-    private func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacOSInstallServiceTests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // The temp directory itself sits under a symlink (`/var` → `/private/var`),
-        // so resolve the baseline to keep assertions about *our* symlinks honest.
-        return dir.resolvingSymlinksInPath()
+    private let scratch = TestScratchDirectory(prefix: "MacOSInstallServiceTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     // MARK: - resolveRestoreImage
 
     @Test("resolveRestoreImage returns a real path unchanged")
     func resolveRestoreImageRealPath() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let image = dir.appendingPathComponent("RestoreImage.ipsw")
+        let image = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         FileManager.default.createFile(atPath: image.path(percentEncoded: false), contents: Data([0]))
 
         let resolved = try MacOSInstallService.resolveRestoreImage(at: image)
@@ -45,16 +39,13 @@ struct MacOSInstallServiceTests {
     /// valid download.
     @Test("resolveRestoreImage resolves a symlinked parent directory")
     func resolveRestoreImageSymlinkedParent() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let realDir = dir.appendingPathComponent("RealDownloads")
+        let realDir = scratch.url.appendingPathComponent("RealDownloads")
         try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
         let realImage = realDir.appendingPathComponent("RestoreImage.ipsw")
         FileManager.default.createFile(atPath: realImage.path(percentEncoded: false), contents: Data([0]))
 
         // Stand in for the container's `Downloads` symlink.
-        let linkedDir = dir.appendingPathComponent("Downloads")
+        let linkedDir = scratch.url.appendingPathComponent("Downloads")
         try FileManager.default.createSymbolicLink(at: linkedDir, withDestinationURL: realDir)
 
         let viaSymlink = linkedDir.appendingPathComponent("RestoreImage.ipsw")
@@ -65,13 +56,10 @@ struct MacOSInstallServiceTests {
 
     @Test("resolveRestoreImage resolves a symlink to the image file itself")
     func resolveRestoreImageSymlinkedFile() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let realImage = dir.appendingPathComponent("Real.ipsw")
+        let realImage = scratch.url.appendingPathComponent("Real.ipsw")
         FileManager.default.createFile(atPath: realImage.path(percentEncoded: false), contents: Data([0]))
 
-        let link = dir.appendingPathComponent("Link.ipsw")
+        let link = scratch.url.appendingPathComponent("Link.ipsw")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: realImage)
 
         let resolved = try MacOSInstallService.resolveRestoreImage(at: link)
@@ -80,10 +68,7 @@ struct MacOSInstallServiceTests {
 
     @Test("resolveRestoreImage throws restoreImageNotFound for a missing file")
     func resolveRestoreImageMissing() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let missing = dir.appendingPathComponent("Absent.ipsw")
+        let missing = scratch.url.appendingPathComponent("Absent.ipsw")
 
         #expect {
             try MacOSInstallService.resolveRestoreImage(at: missing)
@@ -100,13 +85,10 @@ struct MacOSInstallServiceTests {
     /// VZ would then reject with its own misleading wording.
     @Test("resolveRestoreImage throws restoreImageNotFound for a dangling symlink")
     func resolveRestoreImageDanglingSymlink() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let link = dir.appendingPathComponent("Dangling.ipsw")
+        let link = scratch.url.appendingPathComponent("Dangling.ipsw")
         try FileManager.default.createSymbolicLink(
             atPath: link.path(percentEncoded: false),
-            withDestinationPath: dir.appendingPathComponent("Gone.ipsw").path(percentEncoded: false)
+            withDestinationPath: scratch.url.appendingPathComponent("Gone.ipsw").path(percentEncoded: false)
         )
 
         #expect {
@@ -124,14 +106,11 @@ struct MacOSInstallServiceTests {
     /// `Downloads` spelling, which the user cannot act on.
     @Test("A missing image under a symlinked parent reports the resolved path")
     func resolveRestoreImageMissingReportsResolvedPath() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let realDir = dir.appendingPathComponent("RealDownloads")
+        let realDir = scratch.url.appendingPathComponent("RealDownloads")
         try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
 
         // Parent symlink is intact; the image itself is absent.
-        let linkedDir = dir.appendingPathComponent("Downloads")
+        let linkedDir = scratch.url.appendingPathComponent("Downloads")
         try FileManager.default.createSymbolicLink(at: linkedDir, withDestinationURL: realDir)
 
         let missing = linkedDir.appendingPathComponent("RestoreImage.ipsw")
@@ -150,10 +129,7 @@ struct MacOSInstallServiceTests {
 
     @Test("resolveRestoreImage throws restoreImageNotAFile for a directory")
     func resolveRestoreImageDirectory() throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let asDirectory = dir.appendingPathComponent("RestoreImage.ipsw")
+        let asDirectory = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         try FileManager.default.createDirectory(at: asDirectory, withIntermediateDirectories: true)
 
         #expect {

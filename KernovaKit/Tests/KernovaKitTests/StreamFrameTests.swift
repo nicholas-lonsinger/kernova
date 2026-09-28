@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import KernovaKit
 
-@Suite("StreamFrame", .admissionGated)
+@Suite("StreamFrame", .caseScoped)
 struct StreamFrameTests {
     // MARK: - encode
 

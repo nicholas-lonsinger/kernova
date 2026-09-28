@@ -12,13 +12,12 @@ import Testing
 /// alongside `DownloadServiceTests`. `fetchLatestRestoreImage` is absent by
 /// design — it is a direct `VZMacOSRestoreImage.latestSupported` call with no
 /// injectable seam.
-@Suite("IPSWService Tests", .admissionGated)
+@Suite("IPSWService Tests", .caseScoped)
 struct IPSWServiceTests {
-    private static func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("IPSWServiceTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    private let scratch = TestScratchDirectory(prefix: "IPSWServiceTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     private static func makeService(fileSystem: any FileSystemOperating) -> IPSWService {
@@ -39,9 +38,7 @@ struct IPSWServiceTests {
         // skip-existing fast path, which reports the file it found without
         // issuing a request — so a completed call is proof the delegation is
         // wired, not that the network is reachable.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let preExisting = Data(repeating: 0x99, count: 2048)
         try preExisting.write(to: destination)
 
@@ -64,9 +61,7 @@ struct IPSWServiceTests {
         // The replace-first step runs before any request, so a trash failure
         // surfaces as `DownloadError.freshDownloadCleanupFailed` — reachable
         // only if the flag made it through to the download service.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let fileSystem = MockFileSystem()
         fileSystem.trashError = CocoaError(.fileWriteNoPermission)
@@ -84,9 +79,7 @@ struct IPSWServiceTests {
 
     @Test("discardResumeData trashes the bundle beside the destination")
     func discardResumeDataTrashesBundle() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let fileSystem = MockFileSystem()
         Self.makeService(fileSystem: fileSystem).discardResumeData(at: destination)
@@ -97,9 +90,7 @@ struct IPSWServiceTests {
 
     @Test("discardResumeData bypasses the Trash when asked to delete immediately")
     func discardResumeDataPermanentlyRemovesBundle() throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let fileSystem = MockFileSystem()
         Self.makeService(fileSystem: fileSystem)

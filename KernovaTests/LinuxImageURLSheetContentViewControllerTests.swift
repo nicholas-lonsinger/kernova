@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxImageURLSheetContentViewController Tests", .admissionGated)
+@Suite("LinuxImageURLSheetContentViewController Tests", .caseScoped)
 @MainActor
 struct LinuxImageURLSheetContentViewControllerTests {
     private static let digest =

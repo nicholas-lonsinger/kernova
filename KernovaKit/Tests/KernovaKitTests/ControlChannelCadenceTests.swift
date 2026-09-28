@@ -1,8 +1,9 @@
 import Testing
 import Foundation
+import KernovaTestSupport
 @testable import KernovaKit
 
-@Suite("ControlChannelCadence")
+@Suite("ControlChannelCadence", .caseScoped)
 struct ControlChannelCadenceTests {
     @Test("Production cadence keeps the unresponsive stage ahead of terminate")
     func productionOrdersItsStages() {

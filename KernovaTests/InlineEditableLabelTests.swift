@@ -5,7 +5,7 @@ import Testing
 @testable import Kernova
 
 /// The shared inline-edit state machine every editable name and note runs on.
-@Suite("Inline Editable Label Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("Inline Editable Label Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct InlineEditableLabelTests {
     private func makeLabel(

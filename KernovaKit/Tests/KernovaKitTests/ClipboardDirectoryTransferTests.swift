@@ -6,18 +6,14 @@ import Testing
 
 /// A folder crossing the real sender and receiver over one data connection, with
 /// no archive file at either end.
-@Suite("ClipboardDirectoryTransfer", .admissionGated)
+@Suite("ClipboardDirectoryTransfer", .caseScoped)
 struct ClipboardDirectoryTransferTests {
-    private func makeScratch() -> URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent(
-            "dirtransfer-\(UUID().uuidString)", isDirectory: true)
-    }
+    private let scratch = TestScratchDirectory(prefix: "dirtransfer")
 
     /// A small source tree with nesting, a symlink, and an empty folder.
-    private func makeSourceTree() throws -> (scratch: URL, source: URL) {
+    private func makeSourceTree() throws -> URL {
         let fm = FileManager.default
-        let scratch = makeScratch()
-        let source = scratch.appendingPathComponent("Project", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("Project", isDirectory: true)
         try fm.createDirectory(
             at: source.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
@@ -30,7 +26,7 @@ struct ClipboardDirectoryTransferTests {
             to: source.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
         try fm.createSymbolicLink(
             atPath: source.appendingPathComponent("link").path, withDestinationPath: "README.md")
-        return (scratch, source)
+        return source
     }
 
     /// A folder representation the sender streams as its tree, carrying the
@@ -113,8 +109,7 @@ struct ClipboardDirectoryTransferTests {
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
 
         let transferID: UInt64 = 0x41
         let estimate = ClipboardArchive.estimatedByteCount(at: source)
@@ -155,9 +150,7 @@ struct ClipboardDirectoryTransferTests {
         let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let scratch = makeScratch()
-        defer { try? fm.removeItem(at: scratch) }
-        let source = scratch.appendingPathComponent("Empty", isDirectory: true)
+        let source = scratch.url.appendingPathComponent("Empty", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
 
         let transferID: UInt64 = 0x42
@@ -176,12 +169,10 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a digest mismatch in the trailer deletes the extracted tree")
     func digestMismatchDeletesTree() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
         let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
 
         let transferID: UInt64 = 0x43
@@ -212,12 +203,10 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a truncated archive aborts with extract.error and leaves no tree")
     func truncationAborts() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
         let half = Data(try clipboardArchiveBytes(ofDirectoryAt: source).dropLast(64))
 
         let transferID: UInt64 = 0x44
@@ -243,13 +232,11 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("cancelling mid-extract deletes the partial tree before the pull is told")
     func cancelDeletesPartialTree() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
         let advertised = 8 * 1024 * 1024
-        let (scratch, source) = try makeBulkyTree(named: "Project", byteCount: advertised)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeBulkyTree(named: "Project", byteCount: advertised)
 
         // Driven receiver-first rather than through the inbox: the inbox resolves
         // a cancelled pull out of `failAwaiters` the moment it is asked, which
@@ -308,12 +295,10 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a cancellation outranks the abort trailer the sender ended with")
     func cancellationOutranksTheAbortTrailer() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
         let truncated = Data(try clipboardArchiveBytes(ofDirectoryAt: source).dropLast(64))
 
         let transferID: UInt64 = 0x4A
@@ -338,12 +323,10 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a cancellation that lands with the whole stream already buffered leaves no tree")
     func cancellationWithTheWholeStreamBufferedLeavesNoTree() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
         let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
 
         let transferID: UInt64 = 0x4B
@@ -367,12 +350,10 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a peer that aborts mid-extract deletes the partial tree")
     func peerAbortDeletesPartialTree() async throws {
-        let fm = FileManager.default
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeBulkyTree(named: "Project", byteCount: 256 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeBulkyTree(named: "Project", byteCount: 256 * 1024)
         let bytes = try clipboardArchiveBytes(ofDirectoryAt: source)
         let half = Data(bytes.prefix(bytes.count / 2))
 
@@ -402,11 +383,9 @@ struct ClipboardDirectoryTransferTests {
         // Flow control is the kernel's, so a peer that takes the reply and then
         // neither reads nor closes leaves the encode parked inside `write(2)`;
         // the connection's own bound is what ends it.
-        let fm = FileManager.default
         let harness = TransferHarness(socketTimeout: 0.3)
         defer { harness.tearDown() }
-        let (scratch, source) = try makeBulkyTree(named: "Project", byteCount: 4 * 1024 * 1024)
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeBulkyTree(named: "Project", byteCount: 4 * 1024 * 1024)
 
         // Signalled before the harness is torn down, so the peer's thread always
         // unwinds.
@@ -435,11 +414,9 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("a transfer that failed frees its id, so the same outbox serves a second send for it")
     func failedTransferFreesItsIdOnTheSameOutbox() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
 
         // The peer takes the reply and vanishes, so the send fails under it.
         let collector = harness.collector
@@ -480,7 +457,6 @@ struct ClipboardDirectoryTransferTests {
         let transfer = try #require(received.value)
         #expect(transfer.isComplete)
         let tree = try extractedClipboardArchive(transfer.payload, named: "Project")
-        defer { try? fm.removeItem(at: tree.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: tree.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")
@@ -521,11 +497,9 @@ struct ClipboardDirectoryTransferTests {
 
     @Test("the sender aborts a folder that outgrows the requester's ceiling")
     func abortsPastAcceptCeiling() async throws {
-        let fm = FileManager.default
         let harness = TransferHarness()
         defer { harness.tearDown() }
-        let (scratch, source) = try makeSourceTree()
-        defer { try? fm.removeItem(at: scratch) }
+        let source = try makeSourceTree()
 
         let transferID: UInt64 = 0x49
         harness.pull(

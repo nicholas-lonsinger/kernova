@@ -6,7 +6,7 @@ import Testing
 
 /// The bound a queue of blocking jobs is held to, and that every job submitted
 /// under it still runs.
-@Suite("BoundedWorkQueue", .admissionGated)
+@Suite("BoundedWorkQueue", .caseScoped)
 struct BoundedWorkQueueTests {
     /// Counts jobs as they start and finish, and reports the high-water mark of
     /// how many ran at once.

@@ -11,10 +11,11 @@ import Testing
 ///
 /// A verb may still fail past its gate — a missing item, a consent it asks
 /// for, a deadline — which is not admission's answer and not what this pins.
-@Suite("VMCapability Agreement Tests", .serialized, .admissionGated)
+@Suite("VMCapability Agreement Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCapabilityAgreementTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCapabilityAgreementTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -99,8 +100,7 @@ struct VMCapabilityAgreementTests {
         case .createRemovableMedia:
             try await core.createRemovableMedia(
                 vm, sizeInGB: 1,
-                destinationURL: FileManager.default.temporaryDirectory
-                    .appendingPathComponent("\(UUID().uuidString).asif"))
+                destinationURL: scratch.url.appendingPathComponent("\(UUID().uuidString).asif"))
         case .editSharedDirectories: try core.removeSharedDirectory(vm, directory: UUID())
         case .editUSBAccessories: try await core.attachUSBAccessory(vm, accessory: 42)
         case .forgetUSBPairing: try core.forgetUSBPairing(vm, key: "unknown")
@@ -165,7 +165,6 @@ struct VMCapabilityAgreementTests {
                     name: "Agreeing", phase: .stopped, guestOS: guestOS, snapshots: [snapshot],
                     library: harness.library, preferences: preferences)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
-                defer { VMInstanceFixture.removeBundle(of: instance) }
                 // The slot the operation started from is a file, as every
                 // predicate reads it.
                 if operation.startedFrom == .suspended {
@@ -206,7 +205,6 @@ struct VMCapabilityAgreementTests {
                     name: "Agreeing", phase: phase, guestOS: guestOS, snapshots: [snapshot],
                     library: harness.library, preferences: preferences)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
-                defer { VMInstanceFixture.removeBundle(of: instance) }
                 if phase == .suspended {
                     try VMInstanceFixture.writeSaveFile(for: instance)
                 }

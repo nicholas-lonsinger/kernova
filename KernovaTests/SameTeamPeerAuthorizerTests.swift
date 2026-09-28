@@ -8,7 +8,7 @@ import Testing
 ///
 /// The `SecCode` half needs a second signed process to exercise; this covers the
 /// comparison it feeds, which is where the decision is actually made.
-@Suite("Same-team peer authorizer", .admissionGated)
+@Suite("Same-team peer authorizer", .caseScoped)
 struct SameTeamPeerAuthorizerTests {
     @Test("The same team is admitted")
     func sameTeamIsAdmitted() {

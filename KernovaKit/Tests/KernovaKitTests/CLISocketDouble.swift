@@ -23,13 +23,12 @@ final class TestCommandSocket: @unchecked Sendable {
     private var accepted: Int32?
     private var isClosed = false
 
-    /// Binds a listening socket under a short path — `sockaddr_un.sun_path`
-    /// holds 104 bytes, which a temporary directory plus a full UUID overruns.
-    init(tag: String) throws {
-        let short = UUID().uuidString.prefix(8).lowercased()
-        path = (NSTemporaryDirectory() as NSString)
-            .appendingPathComponent("knv-\(tag)-\(short).sock")
-        unlink(path)
+    /// Binds a listening socket in a scratch directory of its own, under a
+    /// short leaf — `sockaddr_un.sun_path` holds 104 bytes.
+    init() throws {
+        let scratch = TestScratchDirectory(prefix: "knv")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        path = scratch.url.appendingPathComponent("c.sock").path
         descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw TestFailure("server socket() failed: errno \(errno)") }
         var address = try UnixSocketAddress.make(path: path)
@@ -137,14 +136,14 @@ enum CLIWire {
     /// The command line is parsed by the root command, so the request is the
     /// one the tool would have sent — only the socket it reaches is the test's.
     static func exchange(
-        _ arguments: [String], answering response: VMCommandResponse, tag: String
+        _ arguments: [String], answering response: VMCommandResponse
     ) throws -> (sent: [VMCommandRequest.Verb], answer: VMCommandResponse) {
         let command = try #require(
             try KernovaCommand.parseAsRoot(arguments) as? any VerbCommand,
             "\(arguments) did not parse to a command that builds its own request")
         let request = try command.verb()
 
-        let listener = try TestCommandSocket(tag: tag)
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }

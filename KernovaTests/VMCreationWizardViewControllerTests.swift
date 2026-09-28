@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMCreationWizardViewController Tests", .admissionGated, .scopedWindows)
+@Suite("VMCreationWizardViewController Tests", .caseScoped, .scopedWindows)
 @MainActor
 struct VMCreationWizardViewControllerTests {
     @Test("Initial OS-selection step: Back hidden, Next enabled, Create hidden")

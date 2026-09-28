@@ -7,10 +7,11 @@ import KernovaTestSupport
 /// The detail pane across the library's empty-until-read interval. The app now
 /// presents its window before the library has been read, so the pane has to
 /// distinguish "no VMs" from "no VMs *yet*".
-@Suite("DetailContainer library-load state", .serialized, .admissionGated, .scopedWindows)
+@Suite("DetailContainer library-load state", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "DetailContainerLibraryLoadTests")
 
     private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
         -> VMLibraryViewModel
@@ -66,7 +67,7 @@ struct DetailContainerLibraryLoadTests {
     private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Library VM", guestOS: .linux, bootMode: .efi)
-        let url = FileManager.default.temporaryDirectory
+        let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
         storage.bundles[url] = config
         return (storage, config)

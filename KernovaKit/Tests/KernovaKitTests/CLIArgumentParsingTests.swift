@@ -7,7 +7,7 @@ import Testing
 @testable import KernovaCLICore
 
 /// What a typed command line means, decided before anything is connected to.
-@Suite("CLI argument parsing", .admissionGated)
+@Suite("CLI argument parsing", .caseScoped)
 struct CLIArgumentParsingTests {
     /// Parses `arguments` as the root command and returns what it resolved to.
     private func parse(_ arguments: [String]) throws -> ParsableCommand {

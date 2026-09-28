@@ -9,7 +9,7 @@ import Testing
 /// takes the device back, that a device VZ already lost still clears, and that
 /// a warm snapshot ends once its files are written, owing back what it had to
 /// take off.
-@Suite("VMLifecycleCoordinator USB Accessory Tests", .admissionGated)
+@Suite("VMLifecycleCoordinator USB Accessory Tests", .caseScoped)
 @MainActor
 struct VMLifecycleCoordinatorUSBAccessoryTests {
     private func makeCoordinator(

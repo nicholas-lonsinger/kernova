@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("AttachmentInfoPopover Tests", .admissionGated)
+@Suite("AttachmentInfoPopover Tests", .caseScoped)
 @MainActor
 struct AttachmentInfoPopoverContentViewControllerTests {
     /// The controller holds `onCommitNotes` strongly, so the box the caller

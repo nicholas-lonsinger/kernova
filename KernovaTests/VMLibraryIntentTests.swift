@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -10,7 +11,7 @@ import Testing
 ///
 /// Driven through the gateway rather than through the intents, which resolve
 /// their `@Dependency` only inside a live intent session.
-@Suite("VM Library Intent Tests")
+@Suite("VM Library Intent Tests", .caseScoped)
 @MainActor
 struct VMLibraryIntentTests {
     private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
@@ -144,10 +145,9 @@ struct VMLibraryIntentTests {
 
     @Test("A picked bundle resolves to the file it names")
     func bundleFileNamesItsFile() async throws {
-        let picked = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Imported-\(UUID().uuidString).kernova", isDirectory: true)
+        let picked = TestScratchDirectory(prefix: "VMLibraryIntentTests").url
+            .appendingPathComponent("Imported.kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: picked, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: picked) }
 
         let resolved = try await VMBundleFile.defaultQuery.entities(
             for: [try FileEntityIdentifier.file(url: picked)])

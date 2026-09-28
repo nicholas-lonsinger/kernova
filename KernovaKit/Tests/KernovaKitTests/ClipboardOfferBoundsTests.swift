@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardOfferBounds", .admissionGated)
+@Suite("ClipboardOfferBounds", .caseScoped)
 struct ClipboardOfferBoundsTests {
     private func rep(
         uti: String = "public.data", byteCount: UInt64, filename: String = "a.bin"

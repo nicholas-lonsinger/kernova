@@ -7,7 +7,7 @@ import Testing
 
 /// What the configuration verbs actually put on the wire, and what they do with
 /// the answer, against a real socket.
-@Suite("CLI configuration wire", .admissionGated)
+@Suite("CLI configuration wire", .caseScoped)
 struct CLIConfigurationWireTests {
     private let settings = [
         ConfigurationEntry(key: "cpus", value: "4"),
@@ -24,12 +24,12 @@ struct CLIConfigurationWireTests {
     func getAsksForTheKeysItWasGiven() throws {
         let answered = VMCommandResponse(result: .configuration(settings))
 
-        let everything = try CLIWire.exchange(["get", "Alpha"], answering: answered, tag: "get-all")
+        let everything = try CLIWire.exchange(["get", "Alpha"], answering: answered)
         #expect(everything.sent == [.configuration(.idOrName("Alpha"), keys: nil)])
         #expect(try everything.answer.payload() == .configuration(settings))
 
         let named = try CLIWire.exchange(
-            ["get", "Alpha", "memory", "cpus"], answering: answered, tag: "get-named")
+            ["get", "Alpha", "memory", "cpus"], answering: answered)
         #expect(named.sent == [.configuration(.idOrName("Alpha"), keys: ["memory", "cpus"])])
     }
 
@@ -40,8 +40,7 @@ struct CLIConfigurationWireTests {
                 name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
         ]
         let exchanged = try CLIWire.exchange(
-            ["get", "--keys"], answering: VMCommandResponse(result: .configurationKeys(keyspace)),
-            tag: "get-keys")
+            ["get", "--keys"], answering: VMCommandResponse(result: .configurationKeys(keyspace)))
 
         #expect(exchanged.sent == [.configurationKeys])
         #expect(try exchanged.answer.payload() == .configurationKeys(keyspace))
@@ -53,7 +52,7 @@ struct CLIConfigurationWireTests {
     func setSendsOneRequestForEveryAssignment() throws {
         let exchanged = try CLIWire.exchange(
             ["set", "Alpha", "cpus=4", "memory=8"],
-            answering: VMCommandResponse(result: .configuration(settings)), tag: "set")
+            answering: VMCommandResponse(result: .configuration(settings)))
 
         // One request, not one per assignment: the app applies them together or
         // not at all, which a second round trip would give up.
@@ -69,7 +68,7 @@ struct CLIConfigurationWireTests {
         let passthrough = [ConfigurationEntry(key: "clipboard.passthrough", value: "true")]
         let exchanged = try CLIWire.exchange(
             ["set", "Alpha", "clipboard.passthrough=true", "--yes"],
-            answering: VMCommandResponse(result: .configuration(passthrough)), tag: "set-yes")
+            answering: VMCommandResponse(result: .configuration(passthrough)))
 
         #expect(
             exchanged.sent == [
@@ -88,8 +87,7 @@ struct CLIConfigurationWireTests {
                             kind: .enableClipboardPassthrough,
                             title: "Turn On Automatic Clipboard Passthrough?",
                             message: "\u{201C}Alpha\u{201D} will read whatever you copy.",
-                            confirmTitle: "Turn On", dismissTitle: "Cancel")))),
-            tag: "set-consent")
+                            confirmTitle: "Turn On", dismissTitle: "Cancel")))))
 
         do {
             _ = try exchanged.answer.payload()
@@ -106,8 +104,7 @@ struct CLIConfigurationWireTests {
         let refusal = "There is no setting called \u{201C}cpu\u{201D}."
         let exchanged = try CLIWire.exchange(
             ["set", "Alpha", "cpu=4"],
-            answering: VMCommandResponse(result: .failure(.invalidArgument(message: refusal))),
-            tag: "set-bad-key")
+            answering: VMCommandResponse(result: .failure(.invalidArgument(message: refusal))))
 
         do {
             _ = try exchanged.answer.payload()
@@ -128,15 +125,14 @@ struct CLIConfigurationWireTests {
         ]
         let named = try CLIWire.exchange(
             ["share", "list", "Alpha"],
-            answering: VMCommandResponse(result: .sharedDirectories(shares)), tag: "share-list")
+            answering: VMCommandResponse(result: .sharedDirectories(shares)))
 
         #expect(named.sent == [.sharedDirectories(.idOrName("Alpha"))])
         #expect(try named.answer.payload() == .sharedDirectories(shares))
 
         let identified = try CLIWire.exchange(
             ["share", "list", identifier.uuidString, "--id"],
-            answering: VMCommandResponse(result: .sharedDirectories(shares)),
-            tag: "share-list-id")
+            answering: VMCommandResponse(result: .sharedDirectories(shares)))
         #expect(identified.sent == [.sharedDirectories(.id(identifier))])
     }
 
@@ -144,7 +140,7 @@ struct CLIConfigurationWireTests {
     func shareAddSendsThePathAndItsAccess() throws {
         let exchanged = try CLIWire.exchange(
             ["share", "add", "Alpha", "/tmp/Work", "--read-only"],
-            answering: VMCommandResponse(result: .ok), tag: "share-add")
+            answering: VMCommandResponse(result: .ok))
 
         #expect(
             exchanged.sent == [
@@ -157,7 +153,7 @@ struct CLIConfigurationWireTests {
     func shareRemoveSendsThePath() throws {
         let exchanged = try CLIWire.exchange(
             ["share", "remove", "Alpha", "/tmp/Work"],
-            answering: VMCommandResponse(result: .ok), tag: "share-remove")
+            answering: VMCommandResponse(result: .ok))
 
         #expect(
             exchanged.sent == [

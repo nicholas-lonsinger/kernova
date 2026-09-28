@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for `AppResidencyController.residencyOutcome` — what the window reconcile does
 /// once no window is on screen (#793).
-@Suite("AppResidencyController residency outcome", .admissionGated)
+@Suite("AppResidencyController residency outcome", .caseScoped)
 struct AppResidencyOutcomeTests {
     private func outcome(
         hasVisibleUserWindow: Bool = false,

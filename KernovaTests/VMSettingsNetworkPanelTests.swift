@@ -8,7 +8,7 @@ import Virtualization
 @testable import Kernova
 
 /// The Network panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Network Panel Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("VM Settings Network Panel Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMSettingsNetworkPanelTests {
     private let preferences = makeTestPreferences()
@@ -836,10 +836,9 @@ struct VMSettingsNetworkPanelTests {
             // Suspended carries no live `VZVirtualMachine` — there is no
             // session to hot-swap an attachment on — and its saved state pins
             // the device the picker would change.
-            let (vc, instance) = makeNetworkController(
+            let (vc, _) = makeNetworkController(
                 interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]),
                 isReadOnly: true, phase: phase, holdsSavedState: phase == .suspended)
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             #expect(settingsNetworkModePopUp(in: vc.view)?.isEnabled == false)
         }
     }

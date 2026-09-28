@@ -14,10 +14,15 @@ import Testing
 /// `ClipboardServicing` so the assertions are deterministic: the poll's outbound
 /// grab is recorded, and the inbound publish's write lands on the private
 /// pasteboard.
-@Suite("ClipboardPassthroughCoordinator", .admissionGated)
+@Suite("ClipboardPassthroughCoordinator", .caseScoped)
 @MainActor
 struct ClipboardPassthroughCoordinatorTests {
     private let stagingRoot = TestStagingRoot()
+    private let scratch = TestScratchDirectory(prefix: "kernova-passthrough")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
 
     /// In-memory `ClipboardServicing` for the coordinator: records outbound grabs
     /// and lets a test simulate a new inbound guest offer. `@Observable` so the
@@ -174,13 +179,6 @@ struct ClipboardPassthroughCoordinatorTests {
             })
     }
 
-    private func makeScratchDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-passthrough-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
-    }
-
     @Test("A host clipboard change is forwarded to the guest on poll")
     func pollForwardsHostChange() {
         let h = makeHarness()
@@ -282,9 +280,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let empty = directory.appendingPathComponent("empty.txt")
+        let empty = scratch.url.appendingPathComponent("empty.txt")
         try Data().write(to: empty)
         writeFileURLs([empty], to: h.pasteboard)
 
@@ -301,10 +297,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let kept = directory.appendingPathComponent("kept.txt")
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let kept = scratch.url.appendingPathComponent("kept.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("kept".utf8).write(to: kept)
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([kept, doomed], to: h.pasteboard)
@@ -326,9 +320,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([doomed], to: h.pasteboard)
 
@@ -347,10 +339,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let kept = directory.appendingPathComponent("kept.txt")
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let kept = scratch.url.appendingPathComponent("kept.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("kept".utf8).write(to: kept)
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([kept, doomed], to: h.pasteboard)
@@ -371,9 +361,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([doomed], to: h.pasteboard)
 
@@ -392,10 +380,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let kept = directory.appendingPathComponent("kept.txt")
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let kept = scratch.url.appendingPathComponent("kept.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("kept".utf8).write(to: kept)
         try Data("doomed".utf8).write(to: doomed)
         try FileManager.default.removeItem(at: doomed)
@@ -422,9 +408,7 @@ struct ClipboardPassthroughCoordinatorTests {
         defer { h.pasteboard.releaseGlobally() }
         h.service.supportsBinaryRepresentations = false
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
@@ -446,9 +430,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
@@ -475,9 +457,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
@@ -499,9 +479,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
@@ -525,9 +503,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("notes.txt")
+        let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
         writeFileURLs([file], to: h.pasteboard)
 
@@ -560,10 +536,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let h = makeHarness()
         defer { h.pasteboard.releaseGlobally() }
 
-        let directory = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let kept = directory.appendingPathComponent("kept.txt")
-        let doomed = directory.appendingPathComponent("doomed.txt")
+        let kept = scratch.url.appendingPathComponent("kept.txt")
+        let doomed = scratch.url.appendingPathComponent("doomed.txt")
         try Data("kept".utf8).write(to: kept)
         try Data("doomed".utf8).write(to: doomed)
         writeFileURLs([kept, doomed], to: h.pasteboard)

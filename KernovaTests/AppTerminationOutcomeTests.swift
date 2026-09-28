@@ -5,7 +5,7 @@ import Testing
 
 /// Unit tests for `AppTerminationController.terminationOutcome` — what the termination gate
 /// replies to a quit request (#805).
-@Suite("AppTerminationController outcome", .admissionGated)
+@Suite("AppTerminationController outcome", .caseScoped)
 struct AppTerminationOutcomeTests {
     private func outcome(
         hasCompletedSavePass: Bool = false,

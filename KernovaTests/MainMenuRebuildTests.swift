@@ -10,7 +10,7 @@ import Testing
 ///
 /// The menus come from `makeMainMenu()` rather than `install()`, which writes
 /// `NSApp.mainMenu` in the shared test host.
-@Suite("MainMenuController rebuilds", .serialized, .admissionGated)
+@Suite("MainMenuController rebuilds", .serialized, .caseScoped)
 @MainActor
 struct MainMenuRebuildTests {
     private let preferences = makeTestPreferences()

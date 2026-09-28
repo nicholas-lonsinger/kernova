@@ -6,9 +6,10 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMLifecycleCoordinator Tests", .admissionGated)
+@Suite("VMLifecycleCoordinator Tests", .caseScoped)
 @MainActor
 struct VMLifecycleCoordinatorTests {
+    private let scratch = TestScratchDirectory(prefix: "VMLifecycleCoordinatorTests")
     /// The pinned catalog image the `.catalogVersion` cases install from.
     private static let pinnedRestoreImageURL = URL(
         string: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw")
@@ -434,8 +435,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS with downloadLatest context downloads the resolved image, named after it")
     func installMacOSDownload() async throws {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("installLatest-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("installLatest", isDirectory: true)
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
         // What the wizard persisted: the fallback name it shows before its own
@@ -467,8 +468,8 @@ struct VMLifecycleCoordinatorTests {
         // sidecar cleanup are keyed to, so it has to name the file the bytes
         // land in. Read on the failure path: a successful install clears the
         // context before anything can inspect it.
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("latestDestination-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("latestDestination", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
@@ -503,7 +504,7 @@ struct VMLifecycleCoordinatorTests {
         let pinned = try #require(Self.pinnedRestoreImageURL)
         let context = MacOSInstallContext(
             source: .catalogVersion,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
+            downloadDestinationPath: scratch.url
                 .appendingPathComponent("UniversalMac_15.6.1_24G90_Restore.ipsw")
                 .path(percentEncoded: false),
             remoteURL: pinned,
@@ -527,7 +528,7 @@ struct VMLifecycleCoordinatorTests {
         let (coordinator, _, _, ipswService, _) = makeCoordinator()
         let context = MacOSInstallContext(
             source: .catalogVersion,
-            downloadDestinationPath: FileManager.default.temporaryDirectory
+            downloadDestinationPath: scratch.url
                 .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
         )
         let instance = VMInstanceFixture.make { $0.installContext = context }
@@ -635,8 +636,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS throws CancellationError on cancel and preserves installContext")
     func installMacOSCancelPreservesContext() async {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cancelPreservesContext-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("cancelPreservesContext", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = CancellationError()
         // Already naming the file the resolved image derives, so nothing but the
@@ -663,8 +664,8 @@ struct VMLifecycleCoordinatorTests {
         // The disposal belongs to the download, which holds the destination's
         // claim while it runs — trashing from the coordinator could reach a
         // bundle another VM is streaming into.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshDownloadTrash-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("freshDownloadTrash", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
 
         // The persisted destination is the one the resolved image derives, so
@@ -696,8 +697,8 @@ struct VMLifecycleCoordinatorTests {
         // file at the derived destination is one the user never saw, so
         // honoring the flag would trash bytes nobody agreed to lose.
         // Read on the failure path: a successful install clears the context.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshDownloadMoved-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("freshDownloadMoved", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
 
@@ -736,8 +737,8 @@ struct VMLifecycleCoordinatorTests {
         // A download that fails leaves the context for the retry Start — with
         // the flag already spent, so the retry resumes the partial rather than
         // trashing it and starting over.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshDownloadOnce-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("freshDownloadOnce", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
 
@@ -767,8 +768,8 @@ struct VMLifecycleCoordinatorTests {
         // The download reports that it could not clear the way for the
         // replacement; the install must fail rather than install the file the
         // user asked to replace.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshDownloadTrashFails-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("freshDownloadTrashFails", isDirectory: true)
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: temp)
         // The destination the resolved image derives, so the replacement is
@@ -811,8 +812,8 @@ struct VMLifecycleCoordinatorTests {
         // filename before this guard is reached. A pinned source is what keeps
         // such a path: "Download Latest" always names its destination from the
         // URL it resolved, which is always an `.ipsw`.
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("rejectNonIPSW-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("rejectNonIPSW", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         // Path doesn't end in .ipsw — guard must fire before any trash attempt.
         let context = MacOSInstallContext(
@@ -840,8 +841,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS without requestedFreshDownload leaves existing file alone")
     func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("noFreshDownload-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("noFreshDownload", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
 
         let context = MacOSInstallContext(
@@ -865,8 +866,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS preserves IPSW resume data when download is cancelled")
     func installMacOSCancelPreservesResumeData() async {
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cancelResumeData-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("cancelResumeData", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = CancellationError()
         // The destination the resolved image derives, so the cancel is the only
@@ -890,8 +891,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
     func installMacOSURLCancelPreservesResumeData() async {
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("urlCancelResumeData-\(UUID().uuidString)", isDirectory: true)
+        let temp = scratch.url
+            .appendingPathComponent("urlCancelResumeData", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: temp)
         ipswService.downloadError = NSError(
             domain: NSURLErrorDomain,
@@ -915,8 +916,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("installMacOS preserves IPSW resume data on non-cancel download failure")
     func installMacOSFailurePreservesResumeData() async {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("networkFailure-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("networkFailure", isDirectory: true)
         let (coordinator, _, _, ipswService, _) = makeCoordinator(downloadsDirectory: downloads)
         ipswService.downloadError = DownloadError.downloadFailed(URLError(.notConnectedToInternet))
         // Already naming the file the resolved image derives, so the retry
@@ -955,8 +956,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("A latest install whose destination move cannot be saved fails before the download")
     func installMacOSLatestWhoseDestinationMoveFailsStopsBeforeTheDownload() async {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("latestMoveUnsaved-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("latestMoveUnsaved", isDirectory: true)
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
         let context = MacOSInstallContext(
@@ -981,8 +982,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("A Download & Replace whose flag cannot be cleared fails before anything is replaced")
     func installMacOSFreshDownloadWhoseClearFailsReplacesNothing() async {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("freshClearUnsaved-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("freshClearUnsaved", isDirectory: true)
         let (coordinator, _, installService, ipswService, _) = makeCoordinator(
             downloadsDirectory: downloads)
         // Honored, not lapsed: nothing is written before the flag's clear.
@@ -1032,10 +1033,9 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("A local IPSW whose heal cannot be saved still installs from the resolved file")
     func installMacOSLocalIPSWWhoseHealFailsInstallsFromTheResolvedFile() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("localIPSWHeal-\(UUID().uuidString)", isDirectory: true)
+        let directory = scratch.url
+            .appendingPathComponent("localIPSWHeal", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         let picked = directory.appendingPathComponent("Picked.ipsw")
         try Data("restore image".utf8).write(to: picked)
         let bookmark = try #require(SecurityScopedBookmark.make(for: picked))
@@ -1084,8 +1084,8 @@ struct VMLifecycleCoordinatorTests {
     }
 
     private func makeLinuxFixture() throws -> LinuxFixture {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("linuxImage-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("linuxImage", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
 
         let contents = Data("kernova linux image fixture".utf8)
@@ -1125,7 +1125,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage resolves, downloads, verifies and attaches the ISO")
     func downloadLinuxImageHappyPath() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let entry = makeLinuxCatalogEntry()
         let instance = makeLinuxInstance(
             context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
@@ -1168,7 +1167,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage records the catalog image the ISO came from")
     func downloadLinuxImageRecordsTheCatalogImage() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(
             source: .catalogEntry(
                 makeLinuxCatalogEntry(distribution: "Ubuntu Desktop", version: "26.04 LTS")))
@@ -1184,7 +1182,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage records nothing for a user-supplied URL")
     func downloadLinuxImageRecordsNothingForAURL() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1196,7 +1193,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A failed Linux download records no image")
     func downloadLinuxImageFailureRecordsNoImage() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
@@ -1210,7 +1206,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage keeps a pre-existing main disk and puts the ISO in front of it")
     func downloadLinuxImageKeepsExistingDisks() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let existing = StorageDisk(
             path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
@@ -1228,7 +1223,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage over an empty configured disk list synthesizes the main disk")
     func downloadLinuxImageSynthesizesMainDiskForEmptyList() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture) { $0.storageDisks = [] }
 
@@ -1243,7 +1237,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A Linux download whose destination cannot be saved fails before the download")
     func downloadLinuxImageWhoseDestinationFailsStopsBeforeTheDownload() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
         fixture.storage.saveConfigurationError = NSError(domain: "test", code: 1)
@@ -1262,7 +1255,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A Linux installer whose attach cannot be saved fails the setup and attaches nothing")
     func downloadLinuxImageWhoseAttachFailsAttachesNothing() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // Already naming the resolved destination, so the attach is the one
         // write the pipeline makes.
         let destination = fixture.downloads.appendingPathComponent(
@@ -1288,7 +1280,6 @@ struct VMLifecycleCoordinatorTests {
     func downloadLinuxImagePersistsDestination() async throws {
         // Read on the failure path: a successful run clears the context.
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.downloadError = DownloadError.downloadFailed(
             URLError(.notConnectedToInternet))
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
@@ -1309,7 +1300,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A persisted destination outside Downloads is replaced by the resolved filename")
     func downloadLinuxImageRederivesDestination() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // A hand-edited config.json, and a name from a resolution that has since
         // been superseded: neither may decide where the bytes land.
         let stale = URL(fileURLWithPath: "/Users/Shared/../../etc/passwd")
@@ -1331,7 +1321,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("linuxDownloadDestination names the file inside Downloads, never from the persisted path")
     func linuxDownloadDestinationIgnoresPersisted() throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
 
         let derived = fixture.coordinator.linuxDownloadDestination(
             persisted: URL(fileURLWithPath: "/Users/Shared/old.iso"), filename: "debian.iso")
@@ -1355,7 +1344,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A checksum mismatch trashes the image, discards its bundle, and keeps the context")
     func downloadLinuxImageChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The mirror's manifest and the bytes disagree — a truncated or
         // tampered-with download.
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
@@ -1390,7 +1378,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A file already at the destination is verified rather than trusted")
     func downloadLinuxImageVerifiesTheSkipExistingPath() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The download returns without fetching, exactly as the service does
         // when a completed file with no resumable bundle is already there.
         fixture.downloadService.downloadedContents = nil
@@ -1412,7 +1399,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A file already in Downloads under the mirror's own name is never touched")
     func downloadLinuxImageLeavesACollidingFileAlone() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The mirror names its ISO after a file the user already has. Nothing
         // the mirror chooses may decide which file is downloaded over, adopted
         // in place of a download, or trashed for failing a digest.
@@ -1440,7 +1426,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A digest failure trashes only the file the download wrote")
     func downloadLinuxImageMismatchSparesACollidingFile() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
             sha256: String(repeating: "a", count: 64))
         let resolved = fixture.resolveService.resolveResult
@@ -1463,7 +1448,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A file in Downloads hashing to the published digest is adopted instead of downloaded")
     func downloadLinuxImageAdoptsAMatchingLocalFile() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // What a browser download of the same image leaves behind: the mirror's
         // own name, the mirror's own bytes.
         let resolved = fixture.resolveService.resolveResult
@@ -1505,7 +1489,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A same-named file of the right length but the wrong bytes is downloaded past")
     func downloadLinuxImageRefusesAMatchingLengthImposter() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // Everything the cheap checks can see agrees; only the digest does not.
         let resolved = fixture.resolveService.resolveResult
         let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
@@ -1530,7 +1513,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL pick with no digest never probes Downloads")
     func downloadLinuxImageSkipsTheProbeWithoutADigest() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The very bytes the pipeline is about to fetch are already there under
         // the source's name — and with no digest published, nothing can say so.
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
@@ -1551,7 +1533,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A destination already on disk is not probed against the candidate")
     func downloadLinuxImageSkipsTheProbeWhenTheDestinationExists() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The state the first adoption leaves behind: both names in Downloads,
         // holding the same bytes. A second VM from the same catalog entry must
         // not read the candidate end to end only to be refused the link.
@@ -1579,7 +1560,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A refused adoption falls through to the download and its verify step")
     func downloadLinuxImageDownloadsWhenAdoptionIsRefused() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // What a transfer already streaming to the destination looks like from
         // here: the file matches, and the adoption is refused anyway.
         fixture.downloadService.adoptExistingFileResult = false
@@ -1604,7 +1584,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A source name already shaped like the destination is not adopted onto itself")
     func downloadLinuxImageDoesNotAdoptTheDestinationItself() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // Nothing stops a source publishing the discriminated name this app
         // would derive for it, and a file cannot be linked onto itself.
         let isoURL = fixture.resolveService.resolveResult.isoURL
@@ -1630,7 +1609,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage throws CancellationError from the resolve step and keeps the context")
     func downloadLinuxImageCancelDuringResolve() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveError = CancellationError()
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
@@ -1648,7 +1626,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A cancelled download surfaces as CancellationError however URLSession words it")
     func downloadLinuxImageURLCancel() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.downloadError = NSError(
             domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: nil)
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
@@ -1664,7 +1641,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A resolution failure leaves the VM in .error with the context intact")
     func downloadLinuxImageResolveFailure() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
             pattern: "debian-13.*-arm64-netinst.iso")
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
@@ -1681,7 +1657,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("The setup state walks Download then Verify as the pipeline runs")
     func downloadLinuxImageDrivesTheSetupState() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         fixture.downloadService.progressSamples = [
             DownloadProgress(bytesWritten: 10, totalBytes: 100, bytesPerSecond: 5)
         ]
@@ -1720,7 +1695,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL pick downloads, verifies against the supplied digest and attaches the ISO")
     func downloadLinuxImageFromVerifiedURL() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1742,7 +1716,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL pick with no digest attaches the ISO without a verify step")
     func downloadLinuxImageFromUnverifiedURL() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // What the server serves is not what any digest names — with none
         // supplied there is nothing to hold it to, which is what the wizard
         // told the user.
@@ -1770,7 +1743,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL pick whose bytes miss the supplied digest is trashed, not attached")
     func downloadLinuxImageFromURLChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         let wrong = String(repeating: "0", count: 64)
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(sha256: wrong)
         let context = LinuxInstallContext(
@@ -1796,7 +1768,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL edited past admission is refused before anything is downloaded")
     func downloadLinuxImageFromEditedURL() async throws {
         let fixture = try makeLinuxFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.downloads) }
         // The real resolve is what refuses this; the mock's job here is only to
         // report that the refusal reached the pipeline.
         fixture.resolveService.resolveError = LinuxImageURLError.insecureURL
@@ -1983,8 +1954,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("normalizedDownloadDestination keeps Downloads paths and redirects others to the default")
     func normalizedDownloadDestinationEnforcesDownloads() throws {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Downloads-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("Downloads", isDirectory: true)
         let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
         #expect(coordinator.normalizedDownloadDestination(for: inDownloads) == inDownloads)
@@ -1998,8 +1969,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("Every destination a hand-edited config can name lands inside Downloads")
     func normalizedDownloadDestinationContainsEveryCandidate() throws {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("normalizedDestination-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("normalizedDestination", isDirectory: true)
         let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
 
         // Traversal out of Downloads, the directory itself spelled two ways,
@@ -2039,8 +2010,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("latestDownloadDestination names the download after the URL the install resolved")
     func latestDestinationFollowsTheResolvedURL() throws {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("latestFollowsURL-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("latestFollowsURL", isDirectory: true)
         let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(
@@ -2059,8 +2030,8 @@ struct VMLifecycleCoordinatorTests {
 
     @Test("An off-convention latest URL still lands on a name unique to it")
     func latestDestinationForOffConventionURL() throws {
-        let downloads = FileManager.default.temporaryDirectory
-            .appendingPathComponent("latestOffConvention-\(UUID().uuidString)", isDirectory: true)
+        let downloads = scratch.url
+            .appendingPathComponent("latestOffConvention", isDirectory: true)
         let (coordinator, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
         let persisted = downloads.appendingPathComponent(RestoreImageFilename.fallback)
         let resolved = try #require(URL(string: "https://example.com/restore.ipsw"))

@@ -6,21 +6,17 @@ import Testing
 @testable import Kernova
 
 /// Linking the bundled `kernova` tool somewhere a shell will find it.
-@Suite("Command line tool installer", .admissionGated)
+@Suite("Command line tool installer", .caseScoped)
 struct CommandLineToolInstallerTests {
-    /// A fresh directory the test owns, removed when it ends.
-    private func makeTemporaryDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("knv-install-\(UUID().uuidString.prefix(8))", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    private let scratch = TestScratchDirectory(prefix: "knv-install")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     @Test("Installing writes a link pointing at the bundled tool")
     func installWritesASymlink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
 
         try CommandLineToolInstaller.installSymlink(at: destination)
 
@@ -31,9 +27,7 @@ struct CommandLineToolInstallerTests {
 
     @Test("A link is written, never a copy — so an app update carries the tool with it")
     func installWritesALinkNotACopy() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
 
         try CommandLineToolInstaller.installSymlink(at: destination)
 
@@ -44,9 +38,7 @@ struct CommandLineToolInstallerTests {
 
     @Test("Something already at the path is left alone")
     func installRefusesAnOccupiedPath() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         let existing = Data("someone else's tool".utf8)
         try existing.write(to: destination)
 
@@ -59,9 +51,7 @@ struct CommandLineToolInstallerTests {
 
     @Test("A live link somewhere else is the user's, and is refused")
     func installRefusesAnExistingLink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(
             at: destination, withDestinationURL: URL(fileURLWithPath: "/usr/bin/env"))
 
@@ -73,12 +63,10 @@ struct CommandLineToolInstallerTests {
 
     @Test("A dangling link into a Kernova bundle is ours, and is repointed")
     func installReplacesAStaleKernovaLink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         // The shape the installer writes, for an app that has since moved.
         let vanished =
-            directory
+            scratch.url
             .appendingPathComponent("Gone.app/Contents/Helpers/kernova")
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: vanished)
 
@@ -96,12 +84,10 @@ struct CommandLineToolInstallerTests {
 
     @Test("A dangling link pointing anywhere else is left alone")
     func installRefusesADanglingForeignLink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(
             at: destination,
-            withDestinationURL: directory.appendingPathComponent("some-other-tool"))
+            withDestinationURL: scratch.url.appendingPathComponent("some-other-tool"))
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
         #expect(throws: InstallFailure.exists) {
@@ -123,10 +109,8 @@ struct CommandLineToolInstallerTests {
     /// ours to point at this one.
     @Test("A live link into another Kernova names that copy, and is repointed")
     func installRepointsAnotherCopysLink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let other = try makeTool("Other.app/Contents/Helpers/kernova", in: directory)
-        let destination = directory.appendingPathComponent("kernova")
+        let other = try makeTool("Other.app/Contents/Helpers/kernova", in: scratch.url)
+        let destination = scratch.url.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: other)
 
         guard
@@ -135,7 +119,7 @@ struct CommandLineToolInstallerTests {
             Issue.record("expected a link into another copy")
             return
         }
-        #expect(app.path == directory.appendingPathComponent("Other.app").path)
+        #expect(app.path == scratch.url.appendingPathComponent("Other.app").path)
 
         try CommandLineToolInstaller.installSymlink(at: destination)
 
@@ -146,10 +130,8 @@ struct CommandLineToolInstallerTests {
 
     @Test("A relative link is read from its own folder")
     func relativeLinkIsReadFromItsFolder() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        _ = try makeTool("Other.app/Contents/Helpers/kernova", in: directory)
-        let bin = directory.appendingPathComponent("bin", isDirectory: true)
+        _ = try makeTool("Other.app/Contents/Helpers/kernova", in: scratch.url)
+        let bin = scratch.url.appendingPathComponent("bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let destination = bin.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(
@@ -162,14 +144,12 @@ struct CommandLineToolInstallerTests {
             Issue.record("expected a link into another copy")
             return
         }
-        #expect(app.path == directory.appendingPathComponent("Other.app").path)
+        #expect(app.path == scratch.url.appendingPathComponent("Other.app").path)
     }
 
     @Test("A link into this copy's own tool is its own, and is rewritten")
     func installRewritesThisCopysLink() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let destination = directory.appendingPathComponent("kernova")
+        let destination = scratch.url.appendingPathComponent("kernova")
         // The test host is a built Kernova.app, which carries the tool.
         try #require(
             FileManager.default.fileExists(
@@ -186,10 +166,8 @@ struct CommandLineToolInstallerTests {
 
     @Test("A live link into a kernova outside an app's Contents/Helpers is left alone")
     func installRefusesALinkOutsideAnAppBundle() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let loose = try makeTool("Tools/Contents/Helpers/kernova", in: directory)
-        let destination = directory.appendingPathComponent("kernova")
+        let loose = try makeTool("Tools/Contents/Helpers/kernova", in: scratch.url)
+        let destination = scratch.url.appendingPathComponent("kernova")
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: loose)
 
         #expect(CommandLineToolInstaller.occupant(at: destination) == .somethingElse)
@@ -200,10 +178,8 @@ struct CommandLineToolInstallerTests {
 
     @Test("A free path holds nothing")
     func freePathHoldsNothing() throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
         #expect(
-            CommandLineToolInstaller.occupant(at: directory.appendingPathComponent("kernova"))
+            CommandLineToolInstaller.occupant(at: scratch.url.appendingPathComponent("kernova"))
                 == .nothing)
     }
 

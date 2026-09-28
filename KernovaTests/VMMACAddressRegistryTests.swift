@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMMACAddressRegistry Tests", .serialized, .admissionGated)
+@Suite("VMMACAddressRegistry Tests", .serialized, .caseScoped)
 @MainActor
 struct VMMACAddressRegistryTests {
     /// What the registry asked a user to be told, in place of a presenter.

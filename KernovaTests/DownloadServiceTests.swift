@@ -10,17 +10,14 @@ import Testing
 /// canned responses keyed by `Range` header presence so the same suite can
 /// exercise fresh downloads, resume happy paths, file-changed scenarios, and
 /// 416 handling without touching the network.
-@Suite("DownloadService Tests", .serialized, .admissionGated)
+@Suite("DownloadService Tests", .serialized, .caseScoped)
 struct DownloadServiceTests {
     // MARK: - Test infrastructure
 
-    /// Creates a unique temp directory for a single test.
-    private static func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "DownloadServiceTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    private let scratch = TestScratchDirectory(prefix: "DownloadServiceTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     /// Builds a `DownloadService` whose `URLSession` routes every request through `StubURLProtocol`.
@@ -53,9 +50,7 @@ struct DownloadServiceTests {
 
     @Test("Fresh download writes bytes to destination and trashes the bundle")
     func freshDownloadCompletes() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xAA, count: 256 * 1024 + 100)
         StubURLProtocol.handler = { request in
@@ -91,9 +86,7 @@ struct DownloadServiceTests {
         // The bytes reaching the destination IS the success condition; disposing
         // of the husk afterwards is cleanup. A Trash failure must not fail a
         // download whose image is already complete and correctly in place.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xAA, count: 4096)
         StubURLProtocol.handler = { request in
@@ -130,9 +123,7 @@ struct DownloadServiceTests {
         // keyed on `exists`, a husk kept the fast path from firing, the absent
         // `data` file computed a 0 resume offset (so no Range header), and the
         // whole multi-GB image was fetched again — only to fail disposal again.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -178,9 +169,7 @@ struct DownloadServiceTests {
 
     @Test("Resume sends Range/If-Range and appends 206 body to existing bytes")
     func resumeAppendsPartialContent() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -227,9 +216,7 @@ struct DownloadServiceTests {
 
     @Test("File-changed (200 on Range request) truncates bundle and restarts")
     func fileChangedRestartsFromZero() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -273,9 +260,7 @@ struct DownloadServiceTests {
 
     @Test("416 with full file on disk finalizes without re-downloading")
     func unsatisfiableRangeWithCompleteFileFinalizes() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -321,9 +306,7 @@ struct DownloadServiceTests {
         // the partial-body length, not the full file size — so a 206 with no
         // (or unparseable) Content-Range must throw rather than feed a wrong
         // total into the progress UI.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -372,9 +355,7 @@ struct DownloadServiceTests {
 
     @Test("4xx server error throws DownloadError.downloadFailed")
     func httpErrorThrows() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         StubURLProtocol.handler = { request in
             .response(url: (request.url ?? Self.remoteURL), statusCode: 404, body: Data(), headers: [:])
@@ -398,9 +379,7 @@ struct DownloadServiceTests {
 
     @Test("Skip-existing fast path returns immediately when destination already exists")
     func skipExistingFastPath() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let preExisting = Data(repeating: 0x99, count: 2048)
         try preExisting.write(to: destination)
 
@@ -428,9 +407,7 @@ struct DownloadServiceTests {
 
     @Test("Mid-stream network failure throws downloadFailed and preserves the bundle")
     func midStreamErrorPreservesBundle() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         // Deliver enough partial bytes (≥ writeChunkSize) so at least one
         // chunked write commits to disk before the error fires.
@@ -471,9 +448,7 @@ struct DownloadServiceTests {
 
     @Test("Corrupt Info.plist causes the bundle to be discarded and download to restart fresh")
     func corruptBundleIsDiscarded() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
 
         // Hand-craft a bundle with garbage in Info.plist and bogus data.
@@ -505,9 +480,7 @@ struct DownloadServiceTests {
 
     @Test("Bundle with different originalURL is discarded; fresh download issued")
     func urlMismatchDiscardsBundle() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -551,9 +524,7 @@ struct DownloadServiceTests {
         // request — the start doesn't line up with what we asked for. Writing
         // the body at our requested offset would leave a corrupt prefix on
         // disk. The service must trash the bundle and throw rather than splice.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -605,9 +576,7 @@ struct DownloadServiceTests {
         // bytes (it shrank). Our bytes-on-disk are no longer a valid prefix
         // of the file. The service must discard so the next Start runs a
         // fresh 200 GET via `loadResumeMetadata`'s no-bundle path.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -651,9 +620,7 @@ struct DownloadServiceTests {
 
     @Test("Resume emits an initial progress callback at the existing offset")
     func resumeIncludesInitialProgress() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
         let bundleURL = DownloadService.resumeBundleURL(for: destination)
         let bundle = DownloadBundle(url: bundleURL)
 
@@ -726,9 +693,7 @@ struct DownloadServiceTests {
         // refactor removes both, the chunk gets written, the stream finishes
         // cleanly, `streamBytes` returns success, and the
         // `Issue.record("Expected CancellationError")` below fires.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundleURL = scratch.url.appendingPathComponent("R.kernovadownload")
         let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
             with: DownloadBundleMetadata(
@@ -784,9 +749,7 @@ struct DownloadServiceTests {
         // post-loop `try Task.checkCancellation()` in production code,
         // `streamBytes` would proceed past the loop and the caller would
         // happily finalize a partial file. The added check rescues us.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundleURL = scratch.url.appendingPathComponent("R.kernovadownload")
         let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
             with: DownloadBundleMetadata(
@@ -837,9 +800,7 @@ struct DownloadServiceTests {
         // produces `URLSession.didCompleteWithError(nil)` even though the
         // body is truncated. Without the size-check after the loop, the
         // caller would finalize partial bytes onto the user's destination.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let bundleURL = temp.appendingPathComponent("R.kernovadownload")
+        let bundleURL = scratch.url.appendingPathComponent("R.kernovadownload")
         let bundle = DownloadBundle(url: bundleURL)
         try bundle.prepareForFreshDownload(
             with: DownloadBundleMetadata(
@@ -882,9 +843,7 @@ struct DownloadServiceTests {
 
     @Test("Progress callbacks report monotonically non-decreasing bytesWritten")
     func progressIsMonotonic() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         // Build a payload comfortably larger than the 256 KB write-chunk so
         // multiple progress reports fire.
@@ -920,9 +879,7 @@ struct DownloadServiceTests {
         // What an unbounded body looks like from here: more bytes arriving than
         // the resolution said the file holds, with no stated length to have
         // caught it up front. Left unchecked they fill the volume.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("installer.iso")
+        let destination = scratch.url.appendingPathComponent("installer.iso")
 
         StubURLProtocol.handler = { request in
             .unboundedResponse(
@@ -957,9 +914,7 @@ struct DownloadServiceTests {
         // ceiling on its own, over it once the partial is counted. The stated
         // total is the ceiling exactly, so only the per-chunk check can catch
         // this — the source overruns the range it declared.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("installer.iso")
+        let destination = scratch.url.appendingPathComponent("installer.iso")
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
 
         let prefix = Data(repeating: 0x11, count: 3000)
@@ -1003,9 +958,7 @@ struct DownloadServiceTests {
         // the user that transfer again on every Start, so nothing moves: the
         // progress handler never fires, which is what "before its body" means
         // from outside the service.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("installer.iso")
+        let destination = scratch.url.appendingPathComponent("installer.iso")
 
         StubURLProtocol.handler = { request in
             .fullResponse(
@@ -1045,9 +998,7 @@ struct DownloadServiceTests {
         // already hold is what makes the invalidation certain: a bundle left
         // holding zero bytes resumes from offset 0, so the next attempt asks
         // for the whole file instead of walking back into the same ceiling.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("installer.iso")
+        let destination = scratch.url.appendingPathComponent("installer.iso")
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
 
         try bundle.prepareForFreshDownload(
@@ -1098,9 +1049,7 @@ struct DownloadServiceTests {
         // the bundle sitting at the ceiling. Kept, it would send every later
         // Start back into the same check at the same offset, and the VM could
         // never finish setup.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("installer.iso")
+        let destination = scratch.url.appendingPathComponent("installer.iso")
         let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
 
         try bundle.prepareForFreshDownload(
@@ -1150,8 +1099,6 @@ struct DownloadServiceTests {
 
     @Test("A transfer that fits its ceiling, and one with no ceiling at all, both complete")
     func sizeCeilingStopsOnlyWhatRunsPastIt() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
         let payload = Data(repeating: 0x66, count: 4096)
         StubURLProtocol.handler = { request in
             .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
@@ -1162,13 +1109,13 @@ struct DownloadServiceTests {
 
         // Exactly the stated size is the file the source promised, not an
         // overrun.
-        let exact = temp.appendingPathComponent("exact.iso")
+        let exact = scratch.url.appendingPathComponent("exact.iso")
         try await service.download(
             from: Self.remoteURL, to: exact, expectedSizeBytes: 4096, progressHandler: { _ in })
         #expect(try Data(contentsOf: exact) == payload)
 
         // No ceiling: the transfer runs as it did before there was one.
-        let unbounded = temp.appendingPathComponent("unbounded.iso")
+        let unbounded = scratch.url.appendingPathComponent("unbounded.iso")
         try await service.download(
             from: Self.remoteURL, to: unbounded, expectedSizeBytes: nil, progressHandler: { _ in })
         #expect(try Data(contentsOf: unbounded) == payload)
@@ -1181,9 +1128,7 @@ struct DownloadServiceTests {
         // waits and then skips over the finished image, so exactly one GET goes
         // out however the two interleave — and only one writer ever touches the
         // bundle's truncate / append / move sequence.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
         let requests = RequestCounter()
@@ -1213,9 +1158,7 @@ struct DownloadServiceTests {
 
     @Test("Download & Replace trashes the existing image first and issues a fresh GET")
     func discardExistingDownloadTrashesThenDownloads() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let payload = Data(repeating: 0xCD, count: 4096)
         StubURLProtocol.handler = { request in
@@ -1244,9 +1187,7 @@ struct DownloadServiceTests {
 
     @Test("Download & Replace surfaces a trash failure and never contacts the server")
     func discardExistingDownloadCleanupFailureThrows() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
 
         let requests = RequestCounter()
         StubURLProtocol.handler = { request in
@@ -1280,10 +1221,8 @@ struct DownloadServiceTests {
 
     @Test("Adoption links the file, moves no bytes and discards the superseded bundle")
     func adoptExistingFileLinksInPlace() async throws {
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let source = temp.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
-        let destination = temp.appendingPathComponent("debian-13.6.0-arm64-netinst-a1b2c3d4.iso")
+        let source = scratch.url.appendingPathComponent("debian-13.6.0-arm64-netinst.iso")
+        let destination = scratch.url.appendingPathComponent("debian-13.6.0-arm64-netinst-a1b2c3d4.iso")
         let payload = Data(repeating: 0x7E, count: 8192)
         try payload.write(to: source)
         // A partial from an earlier attempt at the same destination: superseded
@@ -1318,10 +1257,8 @@ struct DownloadServiceTests {
         // The download's own skip-existing path owns this case: it adopts the
         // file at the destination and the caller's verify step holds it to the
         // digest. Linking over it is neither possible nor wanted.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let source = temp.appendingPathComponent("image.iso")
-        let destination = temp.appendingPathComponent("image-a1b2c3d4.iso")
+        let source = scratch.url.appendingPathComponent("image.iso")
+        let destination = scratch.url.appendingPathComponent("image-a1b2c3d4.iso")
         try Data(repeating: 0x01, count: 512).write(to: source)
         let occupant = Data(repeating: 0x02, count: 256)
         try occupant.write(to: destination)
@@ -1337,10 +1274,8 @@ struct DownloadServiceTests {
     func adoptExistingFileRefusesWhenTheLinkFails() async throws {
         // The candidate is gone by the time the link is attempted — deleted
         // between the caller's probe and this call.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let source = temp.appendingPathComponent("vanished.iso")
-        let destination = temp.appendingPathComponent("vanished-a1b2c3d4.iso")
+        let source = scratch.url.appendingPathComponent("vanished.iso")
+        let destination = scratch.url.appendingPathComponent("vanished-a1b2c3d4.iso")
 
         let service = Self.makeServiceWithStub()
         let adopted = await service.adoptExistingFile(at: source, as: destination)
@@ -1353,10 +1288,8 @@ struct DownloadServiceTests {
     func adoptExistingFileRefusesADestinationUnderTransfer() async throws {
         // The claim `download` holds is what makes this safe: an adoption that
         // waited for the transfer and then linked would race its finalize.
-        let temp = try Self.makeTempDir()
-        defer { try? FileManager.default.removeItem(at: temp) }
-        let destination = temp.appendingPathComponent("RestoreImage.ipsw")
-        let source = temp.appendingPathComponent("RestoreImage-source.ipsw")
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
+        let source = scratch.url.appendingPathComponent("RestoreImage-source.ipsw")
         try Data(repeating: 0x33, count: 1024).write(to: source)
 
         let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)

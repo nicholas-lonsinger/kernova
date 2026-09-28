@@ -13,7 +13,7 @@ import Testing
 /// assert the structural invariants that keep it still — rather than counting
 /// characters, which a proportional unit suffix (KB vs MB) would defeat.
 @MainActor
-@Suite("Guest setup subtitle width stability", .admissionGated)
+@Suite("Guest setup subtitle width stability", .caseScoped)
 struct GuestSetupSubtitleTests {
     /// The exact font `GuestSetupProgressViewController` gives its detail labels.
     private static let font = NSFont.monospacedDigitSystemFont(

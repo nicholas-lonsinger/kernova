@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("FileDigest Tests", .admissionGated)
+@Suite("FileDigest Tests", .caseScoped)
 @MainActor
 struct FileDigestTests {
     /// Collects the main-actor progress callbacks for assertion after the fact.
@@ -14,10 +14,15 @@ struct FileDigestTests {
         func append(_ value: Double) { values.append(value) }
     }
 
+    private let scratch = TestScratchDirectory(prefix: "FileDigestTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
     /// Writes `contents` to a throwaway file and hands back its URL.
     private func makeFile(_ contents: Data) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FileDigestTests-\(UUID().uuidString).bin")
+        let url = scratch.url.appendingPathComponent("\(UUID().uuidString).bin")
         try contents.write(to: url)
         return url
     }
@@ -27,7 +32,6 @@ struct FileDigestTests {
         // FIPS 180-2 test vector, so this asserts against the algorithm rather
         // than against a second call into CryptoKit.
         let url = try makeFile(Data("abc".utf8))
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let digest = try await FileDigest.sha256(of: url) { _ in }
 
@@ -37,7 +41,6 @@ struct FileDigestTests {
     @Test("An empty file digests to the published empty-input hash")
     func emptyFile() async throws {
         let url = try makeFile(Data())
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let digest = try await FileDigest.sha256(of: url) { _ in }
 
@@ -52,7 +55,6 @@ struct FileDigestTests {
             contents[index] = UInt8(index % 251)
         }
         let url = try makeFile(contents)
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let digest = try await FileDigest.sha256(of: url) { _ in }
 
@@ -63,7 +65,6 @@ struct FileDigestTests {
     @Test("Progress finishes at 1 for a file that was read")
     func progressReachesOne() async throws {
         let url = try makeFile(Data("kernova".utf8))
-        defer { try? FileManager.default.removeItem(at: url) }
 
         let samples = Samples()
         _ = try await FileDigest.sha256(of: url) { fraction in samples.append(fraction) }
@@ -74,8 +75,7 @@ struct FileDigestTests {
 
     @Test("A missing file surfaces the read failure")
     func missingFile() async {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FileDigestTests-absent-\(UUID().uuidString).bin")
+        let url = scratch.url.appendingPathComponent("absent.bin")
 
         await #expect(throws: (any Error).self) {
             try await FileDigest.sha256(of: url) { _ in }

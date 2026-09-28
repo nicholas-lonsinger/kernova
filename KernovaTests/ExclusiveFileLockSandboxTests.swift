@@ -6,7 +6,7 @@ import Testing
 
 /// `ExclusiveFileLock` on a directory, run inside the sandboxed app test host,
 /// where `ProcessStagingRoot` locks its staging roots.
-@Suite("ExclusiveFileLock in the sandboxed host", .admissionGated)
+@Suite("ExclusiveFileLock in the sandboxed host", .caseScoped)
 struct ExclusiveFileLockSandboxTests {
     private let staging = TestStagingRoot()
 

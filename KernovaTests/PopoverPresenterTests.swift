@@ -11,7 +11,7 @@ import KernovaTestSupport
 /// `xcodebuild test` headless execution. Manual verification of presentation
 /// timing belongs to integration testing of the call sites in the detail
 /// pane.
-@Suite("PopoverPresenter Tests", .admissionGated)
+@Suite("PopoverPresenter Tests", .caseScoped)
 @MainActor
 struct PopoverPresenterTests {
     @Test("isShown is false before show")

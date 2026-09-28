@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("WindowAutosaveScope", .admissionGated)
+@Suite("WindowAutosaveScope", .caseScoped)
 struct WindowAutosaveScopeTests {
     @Test("The app's windows keep the autosave names every install has saved state under")
     func appNamesAreStable() throws {

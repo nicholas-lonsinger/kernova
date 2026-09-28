@@ -6,7 +6,7 @@ import Testing
 
 /// The one timer loop behind both peers' heartbeat and liveness tasks: what a
 /// tick costs, and the two ways the loop ends.
-@Suite("repeatingClockTask")
+@Suite("repeatingClockTask", .caseScoped)
 struct RepeatingClockTaskTests {
     // MARK: - Harness
 

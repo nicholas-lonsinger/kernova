@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaTestSupport
 
-@Suite("Backstop self-diagnosis", .admissionGated)
+@Suite("Backstop self-diagnosis", .caseScoped)
 struct BackstopDiagnosisTests {
     @Test("an on-time backstop with no system sleep reports its numbers without a machine-state hint")
     func onTimeBackstop() {

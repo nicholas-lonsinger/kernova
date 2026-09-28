@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardContent", .admissionGated)
+@Suite("ClipboardContent", .caseScoped)
 struct ClipboardContentTests {
     // MARK: - Digest
 
@@ -352,7 +352,7 @@ struct ClipboardContentTests {
     }
 }
 
-@Suite("ClipboardSnapshotPolicy", .admissionGated)
+@Suite("ClipboardSnapshotPolicy", .caseScoped)
 struct ClipboardSnapshotPolicyTests {
     @Test("transient marker types are skipped")
     func transientMarkersSkipped() {
@@ -480,7 +480,7 @@ struct ClipboardSnapshotPolicyTests {
     }
 }
 
-@Suite("ClipboardContent.isConcealed", .admissionGated)
+@Suite("ClipboardContent.isConcealed", .caseScoped)
 struct ClipboardContentConcealedTests {
     @Test("defaults to false")
     func defaultsFalse() {

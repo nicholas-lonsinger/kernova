@@ -9,7 +9,7 @@ import Testing
 /// ``VMAdmission``: each row is what the request should get in each column, so
 /// a change to a declaration or to the settled switch shows up as a cell that
 /// no longer matches.
-@Suite("VMAdmission Tests", .admissionGated)
+@Suite("VMAdmission Tests", .caseScoped)
 @MainActor
 struct VMAdmissionTests {
     nonisolated private static let session = UUID()

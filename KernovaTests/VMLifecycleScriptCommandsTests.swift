@@ -12,7 +12,7 @@ import Testing
 /// Every command is built from the dictionary's own description, the way Cocoa
 /// builds it, and its verb is run directly: the event take-over itself needs
 /// Cocoa's Apple event handling around it, which only a live script exercises.
-@Suite("VM lifecycle script commands", .admissionGated)
+@Suite("VM lifecycle script commands", .caseScoped)
 @MainActor
 struct VMLifecycleScriptCommandsTests {
     private func makeCommand<Command: VMScriptCommand>(

@@ -6,7 +6,7 @@ import Testing
 /// Pins the wire spelling of every clipboard failure code, which the producing
 /// side sends and the host's clipboard window maps to a message: a renamed raw
 /// value silently degrades a real failure to the generic fallback sentence.
-@Suite("ClipboardErrorCode", .admissionGated)
+@Suite("ClipboardErrorCode", .caseScoped)
 struct ClipboardErrorCodeTests {
     @Test("every code round-trips through its wire spelling")
     func roundTrips() {

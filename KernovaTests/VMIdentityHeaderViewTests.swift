@@ -1,9 +1,10 @@
 import AppKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("VMIdentityHeaderView Tests")
+@Suite("VMIdentityHeaderView Tests", .caseScoped)
 @MainActor
 struct VMIdentityHeaderViewTests {
     private func makeInstance(name: String = "Test VM", cpuCount: Int = 4) -> VMInstance {

@@ -7,10 +7,11 @@ import Virtualization
 @testable import Kernova
 
 /// The Storage panel's own behavior, drilled into through the shell.
-@Suite("VM Settings Storage Panel Tests", .serialized, .admissionGated, .scopedWindows)
+@Suite("VM Settings Storage Panel Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMSettingsStoragePanelTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMSettingsStoragePanelTests")
 
     private func makeViewModel() -> VMLibraryViewModel {
         makeSettingsViewModel(preferences: preferences)
@@ -51,10 +52,9 @@ struct VMSettingsStoragePanelTests {
 
     @Test("A file change while the pane is hidden leaves the badge live afterwards")
     func missingBadgeStaysLiveAcrossReappearance() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kernova-settings-storage-\(UUID().uuidString)", isDirectory: true)
+        let directory = scratch.url.appendingPathComponent(
+            "kernova-settings-storage", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("scratch.img")
         let path = url.path(percentEncoded: false)
         FileManager.default.createFile(atPath: path, contents: Data([0]))
@@ -99,9 +99,8 @@ struct VMSettingsStoragePanelTests {
         #expect(visibleLockHints(in: running.view) == [groupedFormLockHintText])
 
         // A suspended VM's saved state pins both, so both sections say so.
-        let (suspended, suspendedVM, _) = makeController(
+        let (suspended, _, _) = makeController(
             guestOS: .linux, isReadOnly: true, phase: .suspended, holdsSavedState: true)
-        defer { VMInstanceFixture.removeBundle(of: suspendedVM) }
         #expect(
             Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
     }

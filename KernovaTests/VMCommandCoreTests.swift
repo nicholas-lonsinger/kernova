@@ -9,10 +9,11 @@ import Virtualization
 /// The command core, driven with no view model and no presenter anywhere in
 /// sight: every verb's happy and refused paths, selector resolution, the state
 /// gates, and the consent refusals with the payload each carries.
-@Suite("VMCommandCore Tests", .serialized, .admissionGated)
+@Suite("VMCommandCore Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandCoreTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -338,7 +339,6 @@ struct VMCommandCoreTests {
     func everyBringUpReadiesTheDisplay() async throws {
         let harness = makeHarness()
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         let running = makeInstance(
             in: harness, name: "Running", phase: .running(sessionID: UUID()))
@@ -564,7 +564,6 @@ struct VMCommandCoreTests {
         // start-on-launch VM whose earlier resume failed comes up in.
         let harness = makeSuspendingHarness()
         let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         let restore = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
@@ -664,7 +663,6 @@ struct VMCommandCoreTests {
     func resumeJoinsTheRestoreAlreadyInFlight() async throws {
         let harness = makeSuspendingHarness()
         let instance = makeInstance(in: harness, name: "Restoring", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         let first = Task { @MainActor in try await harness.core.resume(.id(instance.id)) }
@@ -685,7 +683,6 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
             $0.removableMedia = [item]
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         // A restore assembles the same configuration a boot does, so it fails
         // over an unopenable attachment in the same way.
@@ -740,7 +737,6 @@ struct VMCommandCoreTests {
     func allowedVerbsForAColdPausedVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         // No live VM to terminate and no graceful stop, but the discard rides
@@ -884,7 +880,6 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Suspended", phase: .stopped, guestOS: .macOS)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         #expect(harness.core.capabilities.isApplicable(.startInRecovery, to: instance))
 
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -914,7 +909,6 @@ struct VMCommandCoreTests {
                 fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
                 enablesRemoteLogin: false)
         }
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         try await harness.core.start(.id(instance.id), recovery: false)
@@ -933,7 +927,6 @@ struct VMCommandCoreTests {
     func suspendedStopIsAdmittedByTheDiscardCapability() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         // Nothing to shut down gracefully — the discard half of the stop slot's
@@ -1188,7 +1181,6 @@ struct VMCommandCoreTests {
         let twin = makeInstance(in: harness, name: "Twin", phase: .suspended) {
             $0.genericMachineIdentifierData = identity
         }
-        defer { VMInstanceFixture.removeBundle(of: twin) }
         try VMInstanceFixture.writeSaveFile(for: twin)
 
         // Cold-paused: the resume builds a fresh VM and claims the identity.
@@ -1268,7 +1260,6 @@ struct VMCommandCoreTests {
             $0.networkEnabled = true
             $0.macAddress = "aa:bb:cc:dd:ee:11"
         }
-        defer { VMInstanceFixture.removeBundle(of: reverting) }
         // Captured while the VM still carried the address the holder has since
         // taken: the revert puts it back, and the resume that follows would put
         // it on the holder's network.
@@ -1351,7 +1342,6 @@ struct VMCommandCoreTests {
         let twin = makeInstance(in: harness, name: "Twin", phase: .suspended) {
             $0.genericMachineIdentifierData = identity
         }
-        defer { VMInstanceFixture.removeBundle(of: twin) }
         try VMInstanceFixture.writeSaveFile(for: twin)
 
         let error = try #require(
@@ -1406,7 +1396,6 @@ struct VMCommandCoreTests {
     func forceStopOfAColdPausedVMIsADiscard() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         let error = try #require(
@@ -1461,7 +1450,6 @@ struct VMCommandCoreTests {
     func gracefulStopOfAColdPausedVMAsksForConsent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         // Not a shutdown at heart: `VirtualizationService.stop` discards the
@@ -1490,7 +1478,6 @@ struct VMCommandCoreTests {
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
@@ -1601,7 +1588,6 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Doomed")
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
 
         // A bundle holding neither claims neither, and the VM heads the list it
         // belongs to rather than sitting in front of it — no comma splice.
@@ -2156,7 +2142,6 @@ struct VMCommandCoreTests {
         harness.storage.deleteVMBundleError = VMStorageError.bundleNotFound(
             URL(filePath: "/tmp/Doomed.kernova"))
         let instance = makeInstance(in: harness, name: "Doomed", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         await #expect(throws: CommandError.self) {
@@ -2208,8 +2193,8 @@ struct VMCommandCoreTests {
     @Test("delete never removes an external another VM still references")
     func deleteKeepsSharedExternals() async throws {
         let harness = makeHarness()
-        let sharedPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("shared-\(UUID().uuidString).img")
+        let sharedPath = scratch.url
+            .appendingPathComponent("shared.img")
             .path(percentEncoded: false)
         let sharedID = UUID()
         let target = makeInstance(in: harness, name: "Target") {
@@ -2237,8 +2222,8 @@ struct VMCommandCoreTests {
     @Test("A permanent delete of an external bypasses the Trash")
     func permanentDeleteRemovesExternalsOutright() async throws {
         let harness = makeHarness()
-        let externalPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("external-\(UUID().uuidString).img")
+        let externalPath = scratch.url
+            .appendingPathComponent("external.img")
             .path(percentEncoded: false)
         let diskID = UUID()
         let instance = makeInstance(in: harness, name: "Target") {
@@ -2258,10 +2243,9 @@ struct VMCommandCoreTests {
     }
 
     /// A `.kernova`-shaped source with its `config.json` on disk, under a
-    /// per-call temp parent, because the import copies real files. The caller removes the parent, not this leaf.
+    /// per-call parent, because the import copies real files.
     private func makeImportSource(name: String, storage: MockVMStorageService) throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("\(name).kernova", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
@@ -2273,7 +2257,6 @@ struct VMCommandCoreTests {
     func importGoesThroughTheAuthority() async throws {
         let harness = makeHarness()
         let picked = try makeImportSource(name: "Picked", storage: harness.storage)
-        defer { try? FileManager.default.removeItem(at: picked.deletingLastPathComponent()) }
         harness.authority.substitute = picked
 
         let summary = try await harness.core.importVM(
@@ -2293,7 +2276,6 @@ struct VMCommandCoreTests {
     func importTakesOnTheBundlesPairings() async throws {
         let harness = makeHarness()
         let source = try makeImportSource(name: "Paired", storage: harness.storage)
-        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
         let pairing = USBAccessoryPairing(
             key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
             receptacleLabel: nil)
@@ -2304,7 +2286,6 @@ struct VMCommandCoreTests {
         _ = try await harness.core.importVM(from: source, waitForOutcome: true)
 
         let imported = try #require(harness.library.instances.first)
-        defer { try? FileManager.default.removeItem(at: imported.bundleURL) }
         #expect(harness.library.arrivals.isEmpty)
         #expect(imported.usbPairings.pairings.map(\.key) == [pairing.key])
     }
@@ -2639,7 +2620,6 @@ struct VMCommandCoreTests {
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
             in: harness, name: "Ephemeral", phase: .suspended, hostState: .ephemeral(baseline: baseline.id))
-        defer { VMInstanceFixture.removeBundle(of: instance) }
         try VMInstanceFixture.writeSaveFile(for: instance)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
@@ -3080,7 +3060,6 @@ struct VMCommandCoreTests {
             .id(instance.id), password: "analytical-engine")
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         try Data().write(to: instance.bundleLayout.saveFileURL)
 
         try await harness.core.start(instance)

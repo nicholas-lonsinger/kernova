@@ -8,7 +8,7 @@ import Testing
 /// Unit tests for the one derivation of clipboard refusal copy — the clipboard
 /// window's banner, the status-item notice popover, and the dropdown's per-VM
 /// line all read from it.
-@Suite("Clipboard Transfer Wording Tests", .admissionGated)
+@Suite("Clipboard Transfer Wording Tests", .caseScoped)
 struct ClipboardTransferWordingTests {
     private let limit = ClipboardPasteLimit.defaultBytes
     private let vm = "Build VM"

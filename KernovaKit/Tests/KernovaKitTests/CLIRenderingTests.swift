@@ -6,7 +6,7 @@ import Testing
 @testable import KernovaCLICore
 
 /// What the tool prints, for a person and for a script.
-@Suite("CLI rendering", .admissionGated)
+@Suite("CLI rendering", .caseScoped)
 struct CLIRenderingTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),

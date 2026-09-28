@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMGuestOS Tests", .admissionGated)
+@Suite("VMGuestOS Tests", .caseScoped)
 struct VMGuestOSTests {
     // MARK: - Default Resource Values
 

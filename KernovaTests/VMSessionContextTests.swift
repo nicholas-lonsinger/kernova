@@ -23,7 +23,7 @@ private final class RetainingAcceptor: VsockDataConnectionAccepting {
 /// The session context as the unit scoping rests on: what one boot attempt
 /// opens, what a teardown releases, and that a projection off it still reaches
 /// every observer the loose fields used to.
-@Suite("VMSessionContext", .admissionGated)
+@Suite("VMSessionContext", .caseScoped)
 @MainActor
 struct VMSessionContextTests {
     private func makeInstance(

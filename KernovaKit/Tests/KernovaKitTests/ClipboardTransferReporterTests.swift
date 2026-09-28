@@ -36,7 +36,7 @@ private final class AtomicFlag: @unchecked Sendable {
     func set() { lock.withLock { flag = true } }
 }
 
-@Suite("ClipboardTransferReporter", .admissionGated)
+@Suite("ClipboardTransferReporter", .caseScoped)
 @MainActor
 struct ClipboardTransferReporterTests {
     /// A reporter whose dwell only fires when the test says so.

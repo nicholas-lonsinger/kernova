@@ -3,7 +3,7 @@ import AppKit
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("MicrophonePermissionPopoverContentViewController Tests", .admissionGated)
+@Suite("MicrophonePermissionPopoverContentViewController Tests", .caseScoped)
 @MainActor
 struct MicrophonePermissionPopoverContentViewControllerTests {
     @Test("loadView fits the CalloutStyle width")

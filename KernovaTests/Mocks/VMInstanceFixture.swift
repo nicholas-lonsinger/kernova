@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 @testable import Kernova
 
 /// A `VMInstance` whose bundle is read from `files`, with nothing wired into a
@@ -51,11 +52,10 @@ enum VMInstanceFixture {
         return read(url, from: files)
     }
 
-    /// Writes a fixture bundle as a real directory under the temporary
-    /// directory, read and written through ``CoordinatedBundleFileAccess``,
-    /// and reads it back as a load would — for a test that drives the real
-    /// machine files or reads the bundle's files back off disk. The caller
-    /// takes it away again with ``removeBundle(of:)``.
+    /// Writes a fixture bundle as a real directory at ``bundleURL(for:)``,
+    /// read and written through ``CoordinatedBundleFileAccess``, and reads it
+    /// back as a load would — for a test that drives the real machine files or
+    /// reads the bundle's files back off disk.
     ///
     /// `snapshots` is written before the read; each snapshot's MAC address is
     /// whatever its own `config.json` on disk holds when the bundle is read.
@@ -88,25 +88,19 @@ enum VMInstanceFixture {
 
     /// The bundle a fixture VM with identifier `id` lives at — for a
     /// configuration that names paths inside it before the instance exists.
+    /// It sits in the running test case's own scratch, which the case's end
+    /// removes.
     nonisolated static func bundleURL(for id: UUID) -> URL {
-        FileManager.default.temporaryDirectory
+        TestScratchDirectory.forCase(prefix: "VMFixtures").url
             .appendingPathComponent("\(id.uuidString).kernova", isDirectory: true)
     }
 
     /// Puts a suspend slot in `instance`'s bundle, creating the bundle
     /// directory — what every predicate that follows the file reads
     /// (``VMInstance/holdsSuspendedSession``).
-    ///
-    /// The bundle is a real directory under the temporary directory, so a test
-    /// that writes one takes it away again with ``removeBundle(of:)``.
     static func writeSaveFile(for instance: VMInstance) throws {
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
         try Data("suspend slot".utf8).write(to: instance.bundleLayout.saveFileURL)
-    }
-
-    /// Takes away the bundle directory a fixture wrote into.
-    static func removeBundle(of instance: VMInstance) {
-        try? FileManager.default.removeItem(at: instance.bundleURL)
     }
 }

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMStatus Tests", .admissionGated)
+@Suite("VMStatus Tests", .caseScoped)
 struct VMStatusTests {
     // MARK: - Display Name
 

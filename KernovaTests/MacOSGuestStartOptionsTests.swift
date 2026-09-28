@@ -6,7 +6,7 @@ import Virtualization
 
 /// The one-shot start options a macOS boot carries: a recovery boot, an armed
 /// guest account, and the exclusion between them.
-@Suite("macOS Guest Start Options", .admissionGated)
+@Suite("macOS Guest Start Options", .caseScoped)
 @MainActor
 struct MacOSGuestStartOptionsTests {
     private func makeCredentials(

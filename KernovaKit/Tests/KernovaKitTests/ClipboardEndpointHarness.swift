@@ -20,7 +20,6 @@ final class EndpointSide {
     let channel: VsockChannel
     /// The ceiling `maxPasteBytes` reads, so a test can move it mid-connection.
     let pasteLimit: Box<Int>
-    private let stagingRoot: TestStagingRoot?
 
     init(
         channel: VsockChannel,
@@ -40,12 +39,9 @@ final class EndpointSide {
         let clock = TestEngineClock()
         self.clock = clock
         if receives {
-            let root = TestStagingRoot()
-            stagingRoot = root
             staging = ClipboardFileStaging(
-                label: label, root: root.root, freeSpaceProvider: freeSpaceProvider)
+                label: label, root: TestStagingRoot().root, freeSpaceProvider: freeSpaceProvider)
         } else {
-            stagingRoot = nil
             staging = nil
         }
         let limit = self.pasteLimit
@@ -387,14 +383,13 @@ final class RawPeerHarness {
 
 // MARK: - Content fixtures
 
-/// A file of `bytes` under a fresh temporary directory, as a producer-side
+/// A file of `bytes` under a fresh directory, as a producer-side
 /// representation.
 @MainActor
 func makeFileRepresentation(
     named name: String, bytes: Data, uti: String = "public.data"
 ) throws -> (representation: ClipboardContent.Representation, url: URL) {
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("endpoint-source-\(UUID().uuidString)", isDirectory: true)
+    let directory = TestScratchDirectory(prefix: "endpoint-source").url
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appendingPathComponent(name)
     try bytes.write(to: url)
@@ -410,8 +405,7 @@ func makeFileRepresentation(
 func makeDirectoryRepresentation(
     named name: String, files: [String: Data]
 ) throws -> (representation: ClipboardContent.Representation, url: URL) {
-    let parent = FileManager.default.temporaryDirectory
-        .appendingPathComponent("endpoint-source-\(UUID().uuidString)", isDirectory: true)
+    let parent = TestScratchDirectory(prefix: "endpoint-source").url
     let directory = parent.appendingPathComponent(name, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     var total = 0

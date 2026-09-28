@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("KernovaVersionComparison", .admissionGated)
+@Suite("KernovaVersionComparison", .caseScoped)
 struct KernovaVersionComparisonTests {
     // MARK: - isAtLeast
 

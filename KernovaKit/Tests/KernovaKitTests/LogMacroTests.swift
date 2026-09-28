@@ -6,7 +6,7 @@ import Testing
 
 @testable import KernovaLoggingMacros
 
-@Suite("#log expansion", .admissionGated)
+@Suite("#log expansion", .caseScoped)
 struct LogMacroTests {
     @Test("A message with no interpolation forwards one literal segment")
     func literalOnly() {

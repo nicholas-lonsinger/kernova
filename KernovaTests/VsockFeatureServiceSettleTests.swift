@@ -22,7 +22,7 @@ private enum ServiceKind: String, CaseIterable, Sendable, CustomStringConvertibl
 /// The settle contract itself, asserted once per conforming service rather than
 /// inside each service's own suite: a fifth feature channel that forgets to
 /// notify its owner fails here instead of shipping.
-@Suite("Vsock feature service settle contract", .admissionGated)
+@Suite("Vsock feature service settle contract", .caseScoped)
 @MainActor
 struct VsockFeatureServiceSettleTests {
     private let stagingRoot = TestStagingRoot()

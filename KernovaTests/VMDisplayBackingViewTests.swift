@@ -6,23 +6,21 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMDisplayBackingView Tests", .admissionGated)
+@Suite("VMDisplayBackingView Tests", .caseScoped)
 @MainActor
 struct VMDisplayBackingViewTests {
     private let stagingRoot = TestStagingRoot()
+    private let scratch = TestScratchDirectory(prefix: "VMDisplayBackingViewTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
 
     /// A display whose promise staging has a root of its own.
     private func makeBacking() -> VMDisplayBackingView {
         let backing = VMDisplayBackingView(frame: .zero)
         backing.staging = DropPromiseStaging(root: stagingRoot.root)
         return backing
-    }
-
-    /// A directory for files a test drags, removed with the staging root.
-    private func makeScratchDirectory() throws -> URL {
-        let scratch = stagingRoot.parent.appendingPathComponent("scratch", isDirectory: true)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        return scratch
     }
 
     private func settings(autoResize: Bool, capturesSystemKeys: Bool) -> VMDisplayViewSettings {
@@ -407,8 +405,7 @@ struct VMDisplayBackingViewTests {
     @Test("a mixed drag is offered once, with the promised files written")
     func mixedPromiseDragIsOfferedTogether() async throws {
         let backing = makeBacking()
-        let scratch = try makeScratchDirectory()
-        let concrete = scratch.appendingPathComponent("dropped.txt")
+        let concrete = scratch.url.appendingPathComponent("dropped.txt")
         try Data("a".utf8).write(to: concrete)
 
         backing.dropAvailability = { .available }
@@ -501,10 +498,9 @@ struct VMDisplayBackingViewTests {
     @Test("a dragged item its promise speaks for is not sent as its URL as well")
     func promisedItemIsNotAlsoSentAsItsURL() async throws {
         let backing = makeBacking()
-        let scratch = try makeScratchDirectory()
-        let concrete = scratch.appendingPathComponent("dropped.txt")
+        let concrete = scratch.url.appendingPathComponent("dropped.txt")
         try Data("a".utf8).write(to: concrete)
-        let derivative = scratch.appendingPathComponent("derivative.jpeg")
+        let derivative = scratch.url.appendingPathComponent("derivative.jpeg")
         try Data("b".utf8).write(to: derivative)
 
         backing.dropAvailability = { .available }

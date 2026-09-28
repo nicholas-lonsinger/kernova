@@ -8,7 +8,7 @@ import Testing
 
 /// How `clone` and `import` wait for the copy they start: inside the one
 /// request that starts it, against a real socket where one is reached.
-@Suite("CLI arrival wait", .admissionGated)
+@Suite("CLI arrival wait", .caseScoped)
 struct CLIArrivalWaitTests {
     private let settled = VMSummary(
         id: UUID(uuidString: "44444444-5555-6666-7777-888888888888") ?? UUID(),
@@ -35,7 +35,7 @@ struct CLIArrivalWaitTests {
     @Test("An import waits in its one request, and --timeout bounds that request end to end")
     func importDeadlineBoundsTheOneRequest() throws {
         let source = "/Users/somebody/Alpha.kernova"
-        let listener = try TestCommandSocket(tag: "arrival-deadline")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
@@ -61,7 +61,7 @@ struct CLIArrivalWaitTests {
     @Test("A waited import answers the settled row from its one request")
     func aWaitedImportAnswersTheSettledRow() throws {
         let source = "/Users/somebody/Alpha.kernova"
-        let listener = try TestCommandSocket(tag: "arrival-settled")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
@@ -76,7 +76,7 @@ struct CLIArrivalWaitTests {
 
     @Test("A copy that failed reaches the caller as its own refusal, never as a success")
     func aFailedCopySurfacesItsRefusal() throws {
-        let listener = try TestCommandSocket(tag: "arrival-fail")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
@@ -103,7 +103,7 @@ struct CLIArrivalWaitTests {
 
     @Test("An answer of the wrong shape refuses rather than being printed as a row")
     func anUnexpectedAnswerRefuses() throws {
-        let listener = try TestCommandSocket(tag: "arrival-shape")
+        let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }

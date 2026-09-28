@@ -7,7 +7,7 @@ import Testing
 
 /// Holding on until Launch Services has let a bundle go, and leaving a running
 /// app alone while doing it.
-@Suite("App registry wait", .admissionGated)
+@Suite("App registry wait", .caseScoped)
 struct AppRegistryWaitTests {
     private let bundle = URL(fileURLWithPath: "/Applications/Kernova.app")
 

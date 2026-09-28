@@ -8,7 +8,7 @@ import Testing
 /// The pieces of a guest account that stand on their own: the three values it is
 /// made of, what each of them says about itself, and what the install leaves
 /// behind for the boot chained after it.
-@Suite("Guest Provisioning Lifecycle", .admissionGated)
+@Suite("Guest Provisioning Lifecycle", .caseScoped)
 @MainActor
 struct GuestProvisioningLifecycleTests {
     private func makeCoordinator() -> (VMLifecycleCoordinator, MockMacOSInstallService) {

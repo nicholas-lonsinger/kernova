@@ -6,7 +6,7 @@ import Testing
 
 /// The drop channel: independent jobs rather than a supersession chain, a
 /// send-only host end, and a verdict that crosses back as a `DropComplete`.
-@Suite("ClipboardEndpoint drops", .admissionGated)
+@Suite("ClipboardEndpoint drops", .caseScoped)
 @MainActor
 struct ClipboardEndpointDropTests {
     private func dropRep(_ name: String, _ bytes: Data) throws

@@ -105,11 +105,25 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     var publishBundleError: (any Error)?
     var discardStagedBundleError: (any Error)?
 
-    /// Runs on the main actor once a publish's rename has landed and before
-    /// the publishing arrival resumes — the window between the rename and the
-    /// arrival's adoption. The publish runs detached while the main actor
-    /// waits on it, so the hop cannot deadlock.
-    var afterPublish: (@MainActor () -> Void)?
+    private var afterPublish: (@MainActor () -> Void)?
+
+    /// Runs `body` with `hook` installed to run on the main actor once each
+    /// publish's rename has landed and before the publishing arrival resumes —
+    /// the window between the rename and the arrival's adoption. The publish
+    /// runs detached while the main actor waits on it, so the hop cannot
+    /// deadlock.
+    ///
+    /// The hook is gone once `body` ends, so one capturing the library that
+    /// owns this store keeps neither alive past it.
+    func withAfterPublish<Value>(
+        _ hook: @escaping @MainActor () -> Void,
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async rethrows -> Value {
+        afterPublish = hook
+        defer { afterPublish = nil }
+        return try await body()
+    }
 
     /// Holds a publish on its own thread, after its rename has landed, until
     /// signalled — the arrival stays past the point a cancel stops it while the

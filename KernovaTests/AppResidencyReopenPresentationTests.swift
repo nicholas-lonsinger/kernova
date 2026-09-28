@@ -11,7 +11,7 @@ import Testing
 /// A reopen with a window already on screen must present nothing: that window
 /// owns the presentation, and re-presenting the library would drag it forward
 /// over a per-VM display or clipboard window the status item opened alone.
-@Suite("AppResidencyController.reopenPresentation", .admissionGated)
+@Suite("AppResidencyController.reopenPresentation", .caseScoped)
 struct AppResidencyReopenPresentationTests {
     @Test("A reopen with a window already on screen presents nothing")
     func windowOnScreenPresentsNothing() {

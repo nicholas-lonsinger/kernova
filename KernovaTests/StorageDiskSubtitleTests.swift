@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("StorageDiskSubtitle Tests", .admissionGated)
+@Suite("StorageDiskSubtitle Tests", .caseScoped)
 @MainActor
 struct StorageDiskSubtitleTests {
     private func makeInstanceWithBundle() throws -> VMInstance {
@@ -32,7 +32,6 @@ struct StorageDiskSubtitleTests {
     @Test("In-bundle ASIF disk shows on-disk and allocated read live from the file")
     func asifDiskShowsOnDiskAndAllocated() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let disk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Scratch", isInternal: true, kind: .virtio)
         try writeDiskFile(
@@ -49,7 +48,6 @@ struct StorageDiskSubtitleTests {
     @Test("In-bundle non-ASIF disk shows on-disk and the logical size as allocated")
     func nonASIFDiskShowsLogicalSizeAsAllocated() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let disk = StorageDisk(
             path: "AdditionalDisks/raw.img", label: "Raw", isInternal: true, kind: .virtio)
         // A raw image isn't a sparse container, so its apparent size *is* its
@@ -67,7 +65,6 @@ struct StorageDiskSubtitleTests {
     @Test("In-bundle disk with no file shows the generic label")
     func missingFileShowsGenericLabel() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let disk = StorageDisk(
             path: "AdditionalDisks/missing.asif", label: "Gone", isInternal: true, kind: .virtio)
 
@@ -77,7 +74,6 @@ struct StorageDiskSubtitleTests {
     @Test("External disk with an unreadable file falls back to its path")
     func externalDiskFallsBackToPathWhenUnreadable() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         // No file at this path, so neither figure is readable — the row degrades
         // to the path rather than showing nothing.
         let disk = StorageDisk(path: "/tmp/data.asif", label: "Data", isInternal: false)
@@ -88,13 +84,11 @@ struct StorageDiskSubtitleTests {
     @Test("External raw disk shows on-disk and allocated read live from the file")
     func externalRawDiskShowsOnDiskAndAllocated() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         // A real external file (absolute path, raw — no ASIF header): its
         // apparent size is the capacity, so the row shows both figures, exactly
         // like an in-bundle disk.
-        let fileURL = FileManager.default.temporaryDirectory
+        let fileURL = TestScratchDirectory(prefix: "StorageDiskSubtitleTests").url
             .appendingPathComponent("\(UUID().uuidString).img")
-        defer { try? FileManager.default.removeItem(at: fileURL) }
         try writeDiskFile(at: fileURL, totalBytes: 16384, capacitySectors: nil)
         let disk = StorageDisk(
             path: fileURL.path(percentEncoded: false), label: "Data", isInternal: false)
@@ -108,7 +102,6 @@ struct StorageDiskSubtitleTests {
     @Test("Main disk is measured exactly the same way as additional disks")
     func mainDiskUsesSameLiveMeasurement() throws {
         let instance = try makeInstanceWithBundle()
-        defer { try? FileManager.default.removeItem(at: instance.bundleURL) }
         let main = instance.effectiveStorageDisks[0]
         try writeDiskFile(
             at: instance.bundleURL.appendingPathComponent(main.path),

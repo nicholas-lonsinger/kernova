@@ -4,13 +4,12 @@ import Testing
 
 @testable import Kernova
 
-@Suite("SerialLogWriter", .admissionGated)
+@Suite("SerialLogWriter", .caseScoped)
 struct SerialLogWriterTests {
-    private func makeTempDir() throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        return tempDir
+    private let scratch = TestScratchDirectory(prefix: "SerialLogWriterTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
     private func contents(of url: URL) -> String? {
@@ -21,10 +20,8 @@ struct SerialLogWriterTests {
 
     @Test("Writes append to the log file")
     func writesAppend() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("hello ".utf8))
@@ -36,10 +33,8 @@ struct SerialLogWriterTests {
 
     @Test("A new writer appends to an existing log")
     func newWriterAppends() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let first = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         first.write(Data("run1\n".utf8))
@@ -54,10 +49,8 @@ struct SerialLogWriterTests {
 
     @Test("Reaching the cap rotates the log to serial.log.1 and starts fresh")
     func rotationAtCap() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
         writer.write(Data("0123456789".utf8))  // 10 bytes ≥ cap → rotates
@@ -70,10 +63,8 @@ struct SerialLogWriterTests {
 
     @Test("A second rotation replaces the previous serial.log.1")
     func secondRotationReplacesPrevious() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
         writer.write(Data("first-gen".utf8))  // rotation 1
@@ -87,10 +78,8 @@ struct SerialLogWriterTests {
 
     @Test("An oversized pre-existing log is cleared on open, not archived")
     func oversizedExistingLogIsClearedOnOpen() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
         try Data("stale-history".utf8).write(to: logURL)
         try Data("prior-generation".utf8).write(to: rotatedURL)
 
@@ -104,10 +93,8 @@ struct SerialLogWriterTests {
 
     @Test("An under-cap pre-existing log is kept and appended to")
     func underCapExistingLogIsKept() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
         try Data("old\n".utf8).write(to: logURL)
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
@@ -120,10 +107,8 @@ struct SerialLogWriterTests {
 
     @Test("Writes after close are dropped without error")
     func writeAfterCloseIsDropped() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
         writer.write(Data("kept".utf8))
@@ -136,8 +121,7 @@ struct SerialLogWriterTests {
 
     @Test("A failed open drops writes without crashing")
     func failedOpenDropsWrites() {
-        let missingDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let missingDir = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let logURL = missingDir.appendingPathComponent("serial.log")
         let rotatedURL = missingDir.appendingPathComponent("serial.log.1")
 
@@ -150,10 +134,8 @@ struct SerialLogWriterTests {
 
     @Test("Empty writes never trigger rotation")
     func emptyWriteIsIgnored() throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        let logURL = tempDir.appendingPathComponent("serial.log")
-        let rotatedURL = tempDir.appendingPathComponent("serial.log.1")
+        let logURL = scratch.url.appendingPathComponent("serial.log")
+        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
 
         let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 4)
         writer.write(Data("full".utf8))  // exactly at cap → rotates

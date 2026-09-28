@@ -9,7 +9,7 @@ import Testing
 /// password: when the verb refuses and the sheet goes up, what each of the
 /// three answers carries back into the re-issued start, and what a start that
 /// never reached a boot leaves behind.
-@Suite("Guest Account Resume Prompt", .serialized, .admissionGated)
+@Suite("Guest Account Resume Prompt", .serialized, .caseScoped)
 @MainActor
 struct GuestAccountResumePromptTests {
     private let presenter = MockVMLibraryPresenting()

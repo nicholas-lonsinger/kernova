@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("KernovaOSVersion", .admissionGated)
+@Suite("KernovaOSVersion", .caseScoped)
 struct KernovaOSVersionTests {
     // MARK: - displayString
 

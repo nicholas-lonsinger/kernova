@@ -5,7 +5,7 @@ import Testing
 @testable import Kernova
 
 /// What a pairing matches, and what a set does when one is written or dropped.
-@Suite("USB Accessory Pairing Tests", .admissionGated)
+@Suite("USB Accessory Pairing Tests", .caseScoped)
 @MainActor
 struct USBAccessoryPairingTests {
     private func pairing(

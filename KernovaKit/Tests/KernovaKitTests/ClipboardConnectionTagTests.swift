@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardConnectionTag", .admissionGated)
+@Suite("ClipboardConnectionTag", .caseScoped)
 struct ClipboardConnectionTagTests {
     @Test("successive tags are distinct and increase")
     func sequenceIncreases() {

@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("LinuxImageCatalogEntry Tests", .admissionGated)
+@Suite("LinuxImageCatalogEntry Tests", .caseScoped)
 struct LinuxImageCatalogEntryTests {
     @Test("Identity is the slug, so two editions of one version stay distinct")
     func slugIsIdentity() {
@@ -85,7 +85,7 @@ struct LinuxImageCatalogEntryTests {
     }
 }
 
-@Suite("LinuxImageCatalogService Tests", .admissionGated)
+@Suite("LinuxImageCatalogService Tests", .caseScoped)
 struct LinuxImageCatalogServiceTests {
     private func json(images: String) -> Data {
         Data(

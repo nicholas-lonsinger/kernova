@@ -14,7 +14,7 @@ import Testing
 /// suite. What is left is safe here because the test host is already `.regular`,
 /// so the `setActivationPolicy(.regular)` inside `prepareToPresentWindow()` is a
 /// no-op.
-@Suite("AppResidencyController presentation", .serialized, .admissionGated)
+@Suite("AppResidencyController presentation", .serialized, .caseScoped)
 @MainActor
 struct AppResidencyPresentationTests {
     private let preferences = makeTestPreferences()

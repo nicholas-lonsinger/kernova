@@ -11,7 +11,7 @@ import Testing
 /// A Cancel stops what its own readout showed: the click carries the id the bar
 /// was rendered for, and it has to reach that operation through whichever VM
 /// owns it rather than whatever is newest by the time it lands.
-@Suite("AppClipboardReadout", .admissionGated)
+@Suite("AppClipboardReadout", .caseScoped)
 @MainActor
 struct AppClipboardReadoutTests {
     private func makeInstance(name: String) -> VMInstance {

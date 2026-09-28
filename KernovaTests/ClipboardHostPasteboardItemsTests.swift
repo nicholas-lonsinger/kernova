@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// Each spec promises a set of types and serves their bytes lazily through
 /// `provide`; the tests drive that closure directly, so they cover both the
 /// grouping and the on-demand read without touching a real `NSPasteboard`.
-@Suite("HostClipboardPublisher pasteboard items", .admissionGated)
+@Suite("HostClipboardPublisher pasteboard items", .caseScoped)
 struct ClipboardHostPasteboardItemsTests {
     private let stagingRoot = TestStagingRoot()
 
@@ -154,8 +154,7 @@ struct ClipboardHostPasteboardItemsTests {
 
         // A folder rep arrives already unpacked: its transfer extracted the tree
         // as the archive streamed, so the rep points at the tree itself.
-        let tree = fm.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let tree = TestScratchDirectory(prefix: "ClipboardHostPasteboardItemsTests").url
             .appendingPathComponent("Project", isDirectory: true)
         try fm.createDirectory(
             at: tree.appendingPathComponent("sub"), withIntermediateDirectories: true)
@@ -163,7 +162,6 @@ struct ClipboardHostPasteboardItemsTests {
             to: tree.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
         try "nested".write(
             to: tree.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
-        defer { try? fm.removeItem(at: tree.deletingLastPathComponent()) }
 
         let content = ClipboardContent(representations: [
             .init(

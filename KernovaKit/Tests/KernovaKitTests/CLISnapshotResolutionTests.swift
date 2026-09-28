@@ -7,7 +7,7 @@ import Testing
 
 /// Which snapshot a typed argument names, decided from the listing the tool
 /// already read rather than by the app.
-@Suite("CLI snapshot resolution", .admissionGated)
+@Suite("CLI snapshot resolution", .caseScoped)
 struct CLISnapshotResolutionTests {
     private let base = SnapshotSummary(
         id: UUID(uuidString: "11111111-1111-1111-1111-111111111111") ?? UUID(),

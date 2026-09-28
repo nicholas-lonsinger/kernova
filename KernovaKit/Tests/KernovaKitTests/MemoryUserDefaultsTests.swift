@@ -5,7 +5,7 @@ import Testing
 /// What every test reading preferences through `makeTestDefaults` rests on:
 /// Foundation's typed accessors still resolve through the overridden trio, and
 /// a write reaches no domain another process can read.
-@Suite("MemoryUserDefaults", .admissionGated)
+@Suite("MemoryUserDefaults", .caseScoped)
 struct MemoryUserDefaultsTests {
     @Test("Typed accessors read back what the typed setters wrote")
     func typedAccessorsResolveThroughTheOverrides() {

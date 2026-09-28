@@ -4,7 +4,7 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardTransferID", .admissionGated)
+@Suite("ClipboardTransferID", .caseScoped)
 struct ClipboardTransferIDTests {
     @Test("ids encode (generation, repIndex, direction) and decode their generation")
     func roundTrips() {

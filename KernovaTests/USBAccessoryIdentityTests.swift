@@ -8,7 +8,7 @@ import Testing
 /// assigns it back: the key is built from what survives a re-enumeration, it
 /// says which of the two things it is, and two units that report the same
 /// serial do not collapse onto one key.
-@Suite("USB Accessory Identity Tests", .admissionGated)
+@Suite("USB Accessory Identity Tests", .caseScoped)
 struct USBAccessoryIdentityTests {
     private let descriptor = USBDeviceDescriptor(
         usbVersion: 0x0310, deviceClass: 0, deviceSubClass: 0, deviceProtocol: 0,

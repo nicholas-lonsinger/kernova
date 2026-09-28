@@ -5,7 +5,7 @@ import Testing
 @testable import KernovaKit
 
 /// Unit tests for the Cancel affordance on the dropdown's transfer readout.
-@Suite("ClipboardProgressMenuItemView", .admissionGated)
+@Suite("ClipboardProgressMenuItemView", .caseScoped)
 @MainActor
 struct ClipboardProgressMenuItemViewTests {
     private func makeSnapshot(isCancellable: Bool, pendingBehind: Int = 0)

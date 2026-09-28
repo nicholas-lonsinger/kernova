@@ -8,7 +8,7 @@ import Testing
 /// asks admission for, how its three levels read that one decision, and the
 /// surfaces derived from them. What admission decides for each request is
 /// ``VMAdmissionTests``'.
-@Suite("VMCapabilityCatalog Tests", .serialized, .admissionGated)
+@Suite("VMCapabilityCatalog Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCapabilityCatalogTests {
     private let preferences = makeTestPreferences()
@@ -145,7 +145,6 @@ struct VMCapabilityCatalogTests {
 
         let harness = makeHarness()
         let suspended = makeInstance(in: harness, phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(
             VMCapability.takeSnapshot.request(on: suspended)
@@ -211,7 +210,6 @@ struct VMCapabilityCatalogTests {
         for phase: VMLifecyclePhase in [.stopped, .failed(message: "Boot failed."), .suspended] {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase)
-            defer { VMInstanceFixture.removeBundle(of: instance) }
 
             // With no slot on disk, every at-rest phase answers the same way.
             #expect(harness.catalog.isApplicable(.start, to: instance), "\(phase)")
@@ -289,7 +287,6 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.stopAction(for: running) == .stop)
 
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(harness.catalog.stopAction(for: suspended) == .discardSavedState)
 
@@ -297,7 +294,6 @@ struct VMCapabilityCatalogTests {
         let ephemeral = makeInstance(
             in: harness, name: "Ephemeral VM", phase: .suspended, snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
-        defer { VMInstanceFixture.removeBundle(of: ephemeral) }
         try VMInstanceFixture.writeSaveFile(for: ephemeral)
         #expect(harness.catalog.stopAction(for: ephemeral) == .revertToBaseline)
     }
@@ -310,7 +306,6 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isStopActionAvailable(on: running))
 
         let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        defer { VMInstanceFixture.removeBundle(of: suspended) }
         try VMInstanceFixture.writeSaveFile(for: suspended)
         #expect(!harness.catalog.isAvailable(.stop, on: suspended))
         #expect(harness.catalog.isAvailable(.discardSavedState, on: suspended))
@@ -423,7 +418,6 @@ struct VMCapabilityCatalogTests {
         for phase in restoring {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase)
-            defer { VMInstanceFixture.removeBundle(of: instance) }
             try VMInstanceFixture.writeSaveFile(for: instance)
 
             for capability: VMCapability in [.start, .resume] {

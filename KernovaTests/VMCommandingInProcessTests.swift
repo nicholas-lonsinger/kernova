@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -7,7 +8,7 @@ import Testing
 /// The four facade requirements no wire verb routes — the delete sheet's and
 /// the snapshot pane's reads, and the start-failure recovery — reached through
 /// `any VMCommanding` rather than a concrete implementation.
-@Suite("VMCommanding In-Process Requirements Tests")
+@Suite("VMCommanding In-Process Requirements Tests", .caseScoped)
 @MainActor
 struct VMCommandingInProcessTests {
     /// A double behind the existential, so each read below is exercised as a

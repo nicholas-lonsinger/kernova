@@ -7,10 +7,11 @@ import KernovaTestSupport
 import UniformTypeIdentifiers
 @testable import Kernova
 
-@Suite("VsockClipboardService", .admissionGated)
+@Suite("VsockClipboardService", .caseScoped)
 @MainActor
 struct VsockClipboardServiceTests {
     private let stagingRoot = TestStagingRoot()
+    private let scratch = TestScratchDirectory(prefix: "VsockClipboardServiceTests")
 
     // MARK: - Helpers
 
@@ -246,13 +247,10 @@ struct VsockClipboardServiceTests {
 
         // A host-side folder in the buffer (paste/drop intake) is a source rep
         // with a stat-walk estimate — no archive exists yet.
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let folder = parent.appendingPathComponent("Project", isDirectory: true)
+        let folder = scratch.url.appendingPathComponent("Project", isDirectory: true)
         try FileManager.default.createDirectory(
             at: folder.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: parent) }
         try Data("readme".utf8).write(to: folder.appendingPathComponent("README.md"))
         try Data("nested".utf8).write(to: folder.appendingPathComponent("sub/n.txt"))
         service.clipboardContent = ClipboardContent(representations: [
@@ -292,7 +290,6 @@ struct VsockClipboardServiceTests {
 
         // The streamed bytes are the archive, and they extract back to the tree.
         let dest = try extractedClipboardArchive(received.payload)
-        defer { try? FileManager.default.removeItem(at: dest.deletingLastPathComponent()) }
         #expect(
             try String(contentsOf: dest.appendingPathComponent("README.md"), encoding: .utf8)
                 == "readme")
@@ -318,12 +315,9 @@ struct VsockClipboardServiceTests {
 
         // Two folders a stat walk sizes at 0: one empty, one holding only a
         // subdirectory and zero-byte files. Both are ordinary Finder copies.
-        let parent = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: parent) }
-        let empty = parent.appendingPathComponent("Empty", isDirectory: true)
+        let empty = scratch.url.appendingPathComponent("Empty", isDirectory: true)
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
-        let scaffold = parent.appendingPathComponent("Scaffold", isDirectory: true)
+        let scaffold = scratch.url.appendingPathComponent("Scaffold", isDirectory: true)
         try FileManager.default.createDirectory(
             at: scaffold.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)
@@ -352,12 +346,10 @@ struct VsockClipboardServiceTests {
         // the streamed `.aar` rebuilds its tree.
         let emptyOut = try await pullAndExtractArchive(
             from: service, generation: offer.generation, repIndex: 0, uti: offer.repInfo[0].uti)
-        defer { try? FileManager.default.removeItem(at: emptyOut.deletingLastPathComponent()) }
         #expect(try FileManager.default.contentsOfDirectory(atPath: emptyOut.path).isEmpty)
 
         let scaffoldOut = try await pullAndExtractArchive(
             from: service, generation: offer.generation, repIndex: 1, uti: offer.repInfo[1].uti)
-        defer { try? FileManager.default.removeItem(at: scaffoldOut.deletingLastPathComponent()) }
         var isDir: ObjCBool = false
         #expect(
             FileManager.default.fileExists(
@@ -1262,12 +1254,10 @@ struct VsockClipboardServiceTests {
 
         // The bytes the "guest" streams are the archive of a small tree, sent
         // with no declared total — the compressed size isn't knowable up front.
-        let src = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let src = scratch.url
             .appendingPathComponent("MyFolder", isDirectory: true)
         try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
         try "x".write(to: src.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
         let aarBytes = try clipboardArchiveBytes(ofDirectoryAt: src)
 
         let responder = FakeGuestResponder(service: service, guest: guest)
@@ -1331,12 +1321,9 @@ struct VsockClipboardServiceTests {
         // Two trees a stat walk sizes at 0 — an empty folder and one holding only
         // a subdirectory and a zero-byte file — archived as the guest would serve
         // them at request time.
-        let src = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: src) }
-        let empty = src.appendingPathComponent("Empty", isDirectory: true)
+        let empty = scratch.url.appendingPathComponent("Empty", isDirectory: true)
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
-        let scaffold = src.appendingPathComponent("Scaffold", isDirectory: true)
+        let scaffold = scratch.url.appendingPathComponent("Scaffold", isDirectory: true)
         try FileManager.default.createDirectory(
             at: scaffold.appendingPathComponent("sub", isDirectory: true),
             withIntermediateDirectories: true)

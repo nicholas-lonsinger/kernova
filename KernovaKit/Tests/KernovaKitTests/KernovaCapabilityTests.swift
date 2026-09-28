@@ -6,7 +6,7 @@ import Testing
 /// `KernovaCapability.logDescription(of:)` — the #145 log-redaction helper that
 /// keeps peer-supplied capability strings out of the persisted log while
 /// keeping recognized tags diagnosable.
-@Suite("KernovaCapability", .admissionGated)
+@Suite("KernovaCapability", .caseScoped)
 struct KernovaCapabilityTests {
     @Test("Recognized tags render verbatim in offer order")
     func recognizedTagsRenderVerbatim() {

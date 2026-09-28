@@ -1,17 +1,5 @@
 import Foundation
 
-/// A directory under the temporary directory for one test to own and remove.
-///
-/// Symlinks resolved, so the `/var` → `/private/var` link is not what a path
-/// comparison trips on.
-func makeScratchDirectory() throws -> URL {
-    let url = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .resolvingSymlinksInPath()
-        .appendingPathComponent("knv-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
-}
-
 /// The shape Settings → Advanced installs, built in a scratch directory: a
 /// `Kernova.app` carrying the tool at `Contents/Helpers/kernova`, and a
 /// `bin/kernova` link to it.

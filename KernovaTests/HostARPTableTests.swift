@@ -1,10 +1,11 @@
 import Darwin
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("HostARPTable Tests")
+@Suite("HostARPTable Tests", .caseScoped)
 struct HostARPTableTests {
     // MARK: - Route messages, as the kernel lays them out
 

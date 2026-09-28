@@ -5,7 +5,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("GuestSetupDescriptor Tests", .admissionGated)
+@Suite("GuestSetupDescriptor Tests", .caseScoped)
 @MainActor
 struct GuestSetupDescriptorTests {
     // MARK: - macOS install

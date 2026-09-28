@@ -7,7 +7,7 @@ import Testing
 
 /// The `kernova:` link front door: which verb a link runs, what it waits for
 /// before running one, and where a refusal lands when nobody is waiting for it.
-@Suite("Kernova link gateway", .admissionGated)
+@Suite("Kernova link gateway", .caseScoped)
 @MainActor
 struct VMURLGatewayTests {
     /// What the gateway did, in the order it did it.

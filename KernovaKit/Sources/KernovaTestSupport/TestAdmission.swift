@@ -99,13 +99,6 @@ public enum TestAdmission {
     /// here too, for a runner that forwards it verbatim.
     private static let environmentKey = "KERNOVA_TEST_ADMISSION_WIDTH"
 
-    /// Marks a task that already holds a permit, so a trait applied at more than
-    /// one level in a suite hierarchy admits once rather than once per level.
-    /// Without it a case inheriting the trait from a suite *and* its nested
-    /// suite would wait for a second permit while holding the first, deadlocking
-    /// at any width below the number of such cases in flight.
-    @TaskLocal public static var isAdmitted = false
-
     /// Concurrent test cases admitted per process; 0 disables gating entirely.
     ///
     /// A queued case's execution-time allowance is already running — Swift

@@ -11,7 +11,7 @@ import Testing
 ///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``,
 /// for the reason `AppResidencyPresentationTests` gives.
-@Suite("AppResidencyController summon", .serialized, .admissionGated, .scopedWindows)
+@Suite("AppResidencyController summon", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppResidencySummonTests {
     private let preferences = makeTestPreferences()

@@ -9,7 +9,7 @@ import Testing
 /// What the tool resolves as the app to start, how it asks for it, and how long
 /// it waits for it — all decided without driving `NSWorkspace`, which no test
 /// does.
-@Suite("CLI app launch", .admissionGated)
+@Suite("CLI app launch", .caseScoped)
 struct CLIAppLaunchTests {
     private func locate(_ path: String) -> String? {
         EnclosingAppBundle.locate(executable: URL(fileURLWithPath: path))?.path
@@ -33,8 +33,8 @@ struct CLIAppLaunchTests {
 
     @Test("A tool outside any app resolves nothing, rather than guessing")
     func looseToolResolvesNothing() throws {
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         #expect(locate(scratch.appendingPathComponent("bin/kernova").path) == nil)
         #expect(locate("/kernova") == nil)
     }
@@ -45,8 +45,7 @@ struct CLIAppLaunchTests {
     /// to start.
     @Test("The installed tool resolves through its symlink into the app it links at")
     func installedSymlinkResolvesItsApp() throws {
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
         let installed = try InstalledToolFixture(in: scratch)
 
         let located = try #require(EnclosingAppBundle.locate(executable: installed.link))

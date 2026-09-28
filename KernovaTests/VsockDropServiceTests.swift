@@ -9,9 +9,15 @@ import UniformTypeIdentifiers
 /// Unit tests for the host side of dragging files onto the VM display: the offer
 /// it announces, the bytes it streams when the guest pulls, and what it reports
 /// when a drop is cancelled or the guest cannot finish it.
-@Suite("VsockDropService", .admissionGated)
+@Suite("VsockDropService", .caseScoped)
 @MainActor
 struct VsockDropServiceTests {
+    private let scratch = TestScratchDirectory(prefix: "VsockDropServiceTests")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+    }
+
     // MARK: - Harness
 
     /// A socketpair, the service under test on one end, and a frame recorder
@@ -102,19 +108,10 @@ struct VsockDropServiceTests {
 
     // MARK: - Fixtures
 
-    /// A fresh directory under the temp root, removed by the caller.
-    private func makeScratchDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VsockDropServiceTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     /// A path with nothing at the end of it, which a drag can only find out
     /// about once the off-main pass stats it.
     private func missingFileURL() -> URL {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("does-not-exist-\(UUID().uuidString)")
+        scratch.url.appendingPathComponent("does-not-exist-\(UUID().uuidString)")
     }
 
     private func makeFile(in directory: URL, named name: String, bytes: Data) throws -> URL {
@@ -156,10 +153,8 @@ struct VsockDropServiceTests {
     func offersEveryDroppedFile() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let first = try makeFile(in: scratch, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
-        let second = try makeFile(in: scratch, named: "data.bin", bytes: Data(repeating: 0x42, count: 34))
+        let first = try makeFile(in: scratch.url, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
+        let second = try makeFile(in: scratch.url, named: "data.bin", bytes: Data(repeating: 0x42, count: 34))
 
         #expect(harness.service.startDrop(urls: [first, second]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -177,9 +172,7 @@ struct VsockDropServiceTests {
     func offersAFolderWithItsEstimate() async throws {
         let harness = try Harness(directoryByteCount: { _ in 4_096 })
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let folder = scratch.appendingPathComponent("Photos", isDirectory: true)
+        let folder = scratch.url.appendingPathComponent("Photos", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         #expect(harness.service.startDrop(urls: [folder]))
@@ -238,11 +231,9 @@ struct VsockDropServiceTests {
     func partiallyUnreadableDropReportsTheSkippedItems() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let readable = try makeFile(
-            in: scratch, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
-        let missing = scratch.appendingPathComponent("gone-\(UUID().uuidString).bin")
+            in: scratch.url, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
+        let missing = scratch.url.appendingPathComponent("gone.bin")
 
         #expect(harness.service.startDrop(urls: [readable, missing]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -264,16 +255,14 @@ struct VsockDropServiceTests {
     func brokenSymlinkIsSkipped() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let readable = try makeFile(
-            in: scratch, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
+            in: scratch.url, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
         // A dangling link stats like a file — its own path length is its size —
         // so nothing short of following it tells the two apart.
         _ = try makeSymlink(
-            in: scratch, named: "broken",
-            to: scratch.appendingPathComponent("nothing-\(UUID().uuidString)"))
-        let broken = scratch.appendingPathComponent("broken")
+            in: scratch.url, named: "broken",
+            to: scratch.url.appendingPathComponent("nothing"))
+        let broken = scratch.url.appendingPathComponent("broken")
 
         #expect(harness.service.startDrop(urls: [broken, readable]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -289,12 +278,10 @@ struct VsockDropServiceTests {
     func unopenableFileIsSkipped() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let readable = try makeFile(
-            in: scratch, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
+            in: scratch.url, named: "notes.txt", bytes: Data(repeating: 0x41, count: 12))
         let locked = try makeFile(
-            in: scratch, named: "noperm.bin", bytes: Data(repeating: 0x42, count: 34))
+            in: scratch.url, named: "noperm.bin", bytes: Data(repeating: 0x42, count: 34))
         try makeUnopenable(locked)
 
         #expect(harness.service.startDrop(urls: [locked, readable]))
@@ -311,11 +298,9 @@ struct VsockDropServiceTests {
     func symlinkSendsItsTargetsBytes() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let payload = Data("the target's bytes".utf8)
-        let target = try makeFile(in: scratch, named: "target.txt", bytes: payload)
-        let link = try makeSymlink(in: scratch, named: "shortcut.txt", to: target)
+        let target = try makeFile(in: scratch.url, named: "target.txt", bytes: payload)
+        let link = try makeSymlink(in: scratch.url, named: "shortcut.txt", to: target)
 
         #expect(harness.service.startDrop(urls: [link]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -328,7 +313,6 @@ struct VsockDropServiceTests {
         let xid = transferID(generation: 1, repIndex: 0)
         let received = try await harness.pull(generation: 1, transferID: xid, uti: rep.uti)
         let unpacked = try extractedClipboardArchive(received.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(
             try Data(contentsOf: unpacked.appendingPathComponent("shortcut.txt")) == payload)
         #expect(harness.failure == nil)
@@ -341,10 +325,8 @@ struct VsockDropServiceTests {
     func gatherTimeSkipIsAnnouncedInTheVerdict() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let readable = try makeFile(in: scratch, named: "notes.txt", bytes: Data("a".utf8))
-        let missing = scratch.appendingPathComponent("gone-\(UUID().uuidString).bin")
+        let readable = try makeFile(in: scratch.url, named: "notes.txt", bytes: Data("a".utf8))
+        let missing = scratch.url.appendingPathComponent("gone.bin")
 
         #expect(harness.service.startDrop(urls: [readable, missing]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -366,9 +348,7 @@ struct VsockDropServiceTests {
         // still observe would have been read on the drag's own actor.
         let harness = try Harness(runOffMainActor: { _ in })
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
 
@@ -382,10 +362,8 @@ struct VsockDropServiceTests {
     func streamsTheRequestedFile() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let payload = Data((0..<2_048).map { UInt8($0 & 0xFF) })
-        let file = try makeFile(in: scratch, named: "blob.bin", bytes: payload)
+        let file = try makeFile(in: scratch.url, named: "blob.bin", bytes: payload)
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -402,7 +380,6 @@ struct VsockDropServiceTests {
 
         let wire = received.payload
         let unpacked = try extractedClipboardArchive(wire)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         // Nothing on the connection repeats the offer's name: the archive's one
         // entry is what lands the file under it.
         #expect(
@@ -418,9 +395,7 @@ struct VsockDropServiceTests {
     func streamsTheRequestedFolder() async throws {
         let harness = try Harness(directoryByteCount: { _ in 8 })
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let folder = scratch.appendingPathComponent("Photos", isDirectory: true)
+        let folder = scratch.url.appendingPathComponent("Photos", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         _ = try makeFile(in: folder, named: "one.txt", bytes: Data("hello".utf8))
 
@@ -440,7 +415,6 @@ struct VsockDropServiceTests {
         // The tree's entries are relative to the folder, so its own name is not
         // in the archive — the receiver supplies it.
         let unpacked = try extractedClipboardArchive(wire, named: "Photos")
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(unpacked.lastPathComponent == "Photos")
         #expect(
             try Data(contentsOf: unpacked.appendingPathComponent("one.txt"))
@@ -456,12 +430,10 @@ struct VsockDropServiceTests {
     func unreadableAtPullTimeIsSkippedNotFatal() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let locked = try makeFile(
-            in: scratch, named: "locked.bin", bytes: Data(repeating: 0x42, count: 64))
+            in: scratch.url, named: "locked.bin", bytes: Data(repeating: 0x42, count: 64))
         let payload = Data("still here".utf8)
-        let readable = try makeFile(in: scratch, named: "notes.txt", bytes: payload)
+        let readable = try makeFile(in: scratch.url, named: "notes.txt", bytes: payload)
 
         #expect(harness.service.startDrop(urls: [locked, readable]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -480,7 +452,6 @@ struct VsockDropServiceTests {
             generation: 1, transferID: transferID(generation: 1, repIndex: 1), uti: reps[1].uti)
         #expect(second.isComplete)
         let unpacked = try extractedClipboardArchive(second.payload)
-        defer { try? FileManager.default.removeItem(at: unpacked) }
         #expect(try Data(contentsOf: unpacked.appendingPathComponent("notes.txt")) == payload)
 
         try harness.guest.send(makeDropCompleteFrame(generation: 1, outcome: .completed))
@@ -496,10 +467,8 @@ struct VsockDropServiceTests {
     func everyItemUnreadableAtPullTimeSaysNothingWasSent() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let first = try makeFile(in: scratch, named: "one.bin", bytes: Data("one".utf8))
-        let second = try makeFile(in: scratch, named: "two.bin", bytes: Data("two".utf8))
+        let first = try makeFile(in: scratch.url, named: "one.bin", bytes: Data("one".utf8))
+        let second = try makeFile(in: scratch.url, named: "two.bin", bytes: Data("two".utf8))
 
         #expect(harness.service.startDrop(urls: [first, second]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -524,15 +493,13 @@ struct VsockDropServiceTests {
     func skipsAtBothStagesAreCountedTogether() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         _ = try makeSymlink(
-            in: scratch, named: "broken",
-            to: scratch.appendingPathComponent("nothing-\(UUID().uuidString)"))
-        let broken = scratch.appendingPathComponent("broken")
-        let locked = try makeFile(in: scratch, named: "locked.bin", bytes: Data("locked".utf8))
+            in: scratch.url, named: "broken",
+            to: scratch.url.appendingPathComponent("nothing"))
+        let broken = scratch.url.appendingPathComponent("broken")
+        let locked = try makeFile(in: scratch.url, named: "locked.bin", bytes: Data("locked".utf8))
         let payload = Data("still here".utf8)
-        let readable = try makeFile(in: scratch, named: "notes.txt", bytes: payload)
+        let readable = try makeFile(in: scratch.url, named: "notes.txt", bytes: payload)
 
         #expect(harness.service.startDrop(urls: [broken, locked, readable]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -560,13 +527,11 @@ struct VsockDropServiceTests {
     func losingEveryItemAcrossBothStagesSaysNothingWasSent() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         _ = try makeSymlink(
-            in: scratch, named: "broken",
-            to: scratch.appendingPathComponent("nothing-\(UUID().uuidString)"))
-        let broken = scratch.appendingPathComponent("broken")
-        let locked = try makeFile(in: scratch, named: "locked.bin", bytes: Data("locked".utf8))
+            in: scratch.url, named: "broken",
+            to: scratch.url.appendingPathComponent("nothing"))
+        let broken = scratch.url.appendingPathComponent("broken")
+        let locked = try makeFile(in: scratch.url, named: "locked.bin", bytes: Data("locked".utf8))
 
         #expect(harness.service.startDrop(urls: [broken, locked]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -590,14 +555,12 @@ struct VsockDropServiceTests {
         // queued, retired without ever opening a bar.
         let harness = try Harness(progressRevealDelay: 60)
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
 
-        let first = try await dropLosingOneItem(harness, generation: 1, in: scratch)
+        let first = try await dropLosingOneItem(harness, generation: 1)
         #expect(first.failure == .itemsSkipped(note: harness.skippedNote()))
 
         // A clean drag in between, which the guest serves to its end.
-        let plain = try makeFile(in: scratch, named: "plain.txt", bytes: Data("plain".utf8))
+        let plain = try makeFile(in: scratch.url, named: "plain.txt", bytes: Data("plain".utf8))
         #expect(harness.service.startDrop(urls: [plain]))
         try await harness.recorder.waitForFrames { harness.recorder.dropOffers.count == 2 }
         let clean = try #require(harness.recorder.dropOffers.last?.repInfo)
@@ -609,7 +572,7 @@ struct VsockDropServiceTests {
         // A third drag loses an item exactly as the first did. Same sentence,
         // separate gesture over separate files — so it is owed its own message
         // rather than collapsed into the one still standing.
-        let third = try await dropLosingOneItem(harness, generation: 3, in: scratch)
+        let third = try await dropLosingOneItem(harness, generation: 3)
         #expect(third.failure == .itemsSkipped(note: harness.skippedNote()))
         #expect(third.date != first.date)
     }
@@ -617,13 +580,13 @@ struct VsockDropServiceTests {
     /// Runs one drag of a readable file beside one that turns unreadable between
     /// the offer and the guest's pull, returning the refusal it leaves standing.
     private func dropLosingOneItem(
-        _ harness: Harness, generation: UInt64, in scratch: URL
+        _ harness: Harness, generation: UInt64
     ) async throws -> ClipboardTransferFinish {
         let standing = harness.reports.finish
         let locked = try makeFile(
-            in: scratch, named: "locked-\(generation).bin", bytes: Data("locked".utf8))
+            in: scratch.url, named: "locked-\(generation).bin", bytes: Data("locked".utf8))
         let readable = try makeFile(
-            in: scratch, named: "notes-\(generation).txt", bytes: Data("still here".utf8))
+            in: scratch.url, named: "notes-\(generation).txt", bytes: Data("still here".utf8))
 
         #expect(harness.service.startDrop(urls: [locked, readable]))
         try await harness.recorder.waitForFrames {
@@ -655,10 +618,8 @@ struct VsockDropServiceTests {
     func aSecondDropIsCountedBehindTheOneStreaming() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let first = try makeFile(in: scratch, named: "a.txt", bytes: Data(repeating: 0x41, count: 8))
-        let second = try makeFile(in: scratch, named: "b.txt", bytes: Data(repeating: 0x42, count: 8))
+        let first = try makeFile(in: scratch.url, named: "a.txt", bytes: Data(repeating: 0x41, count: 8))
+        let second = try makeFile(in: scratch.url, named: "b.txt", bytes: Data(repeating: 0x42, count: 8))
 
         // The guest serves drops one job at a time, so the second waits its turn
         // with nothing of its own in flight.
@@ -685,9 +646,7 @@ struct VsockDropServiceTests {
     func cancelFromTheReadoutStopsTheDrop() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -715,9 +674,7 @@ struct VsockDropServiceTests {
     func cancelAfterCompletionIsANoOp() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -748,9 +705,7 @@ struct VsockDropServiceTests {
     func completionIsSilent() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -764,9 +719,7 @@ struct VsockDropServiceTests {
     func failureRaisesAHostComposedIssue() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -789,9 +742,7 @@ struct VsockDropServiceTests {
     func failureCopyDoesNotDenyPartialProgress() async throws {
         let harness = try Harness()
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -858,10 +809,8 @@ struct VsockDropServiceTests {
         let deadlines = ManualDeadlines()
         let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
         let file = try makeFile(
-            in: scratch, named: "big.bin", bytes: Data(repeating: 0x43, count: 64))
+            in: scratch.url, named: "big.bin", bytes: Data(repeating: 0x43, count: 64))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -882,10 +831,8 @@ struct VsockDropServiceTests {
         let deadlines = ManualDeadlines()
         let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let first = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
-        let second = try makeFile(in: scratch, named: "b.txt", bytes: Data("b".utf8))
+        let first = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
+        let second = try makeFile(in: scratch.url, named: "b.txt", bytes: Data("b".utf8))
 
         #expect(harness.service.startDrop(urls: [first]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -923,9 +870,7 @@ struct VsockDropServiceTests {
         let deadlines = ManualDeadlines()
         let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -953,10 +898,8 @@ struct VsockDropServiceTests {
         let deadlines = ManualDeadlines()
         let harness = try Harness(scheduleDropDeadline: deadlines.schedule)
         defer { harness.tearDown() }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let first = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
-        let second = try makeFile(in: scratch, named: "b.txt", bytes: Data("b".utf8))
+        let first = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
+        let second = try makeFile(in: scratch.url, named: "b.txt", bytes: Data("b".utf8))
 
         #expect(harness.service.startDrop(urls: [first]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -986,7 +929,8 @@ struct VsockDropServiceTests {
     /// A directory standing in for the one a promise drag writes into, holding
     /// the single file the drop then offers.
     private func makeStagedDrop() throws -> (directory: URL, file: URL) {
-        let directory = try makeScratchDirectory()
+        let directory = scratch.url.appendingPathComponent("staged", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return (directory, try makeFile(in: directory, named: "promised.png", bytes: Data("p".utf8)))
     }
 
@@ -1094,9 +1038,7 @@ struct VsockDropServiceTests {
     @Test("stopping clears the readout and answers for a drop still in flight")
     func stopReportsAbandonedDrops() async throws {
         let harness = try Harness()
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -1115,9 +1057,7 @@ struct VsockDropServiceTests {
     @Test("stopping after a cancelled drop reports nothing — the user already knows")
     func stopIsSilentAfterACancel() async throws {
         let harness = try Harness()
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -1141,9 +1081,7 @@ struct VsockDropServiceTests {
     @Test("the channel ending settles the service, so the display stops offering drops")
     func channelEndSettlesTheService() async throws {
         let harness = try Harness()
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         #expect(harness.service.startDrop(urls: [file]))
         try await harness.recorder.waitForFrames { !harness.recorder.dropOffers.isEmpty }
@@ -1164,9 +1102,7 @@ struct VsockDropServiceTests {
     @Test("a folder still being sized when the channel goes reports the interruption")
     func pendingFolderWalkReportsInterruption() async throws {
         let harness = try Harness(directoryByteCount: { _ in 4_096 })
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let folder = scratch.appendingPathComponent("Photos", isDirectory: true)
+        let folder = scratch.url.appendingPathComponent("Photos", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         // The drop is accepted and its offer deferred behind the size walk. This
@@ -1197,18 +1133,14 @@ struct VsockDropServiceTests {
         // service — and a service left connected keeps offering the display a
         // drop it cannot send.
         try await waitForChange { !harness.service.isConnected }
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
         #expect(!harness.service.startDrop(urls: [file]))
     }
 
     @Test("a drop is refused once the service has stopped")
     func refusesADropAfterStop() async throws {
         let harness = try Harness()
-        let scratch = try makeScratchDirectory()
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let file = try makeFile(in: scratch, named: "a.txt", bytes: Data("a".utf8))
+        let file = try makeFile(in: scratch.url, named: "a.txt", bytes: Data("a".utf8))
 
         harness.recorder.cancel()
         harness.service.stop()

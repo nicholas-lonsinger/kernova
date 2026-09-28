@@ -14,7 +14,7 @@ import Testing
 /// `MockVMCommanding`, which the router tests already drive against the real
 /// core.
 @MainActor
-@Suite("VM Command Socket Listener", .admissionGated)
+@Suite("VM Command Socket Listener", .caseScoped)
 struct VMCommandSocketListenerTests {
     // MARK: - Harness
 

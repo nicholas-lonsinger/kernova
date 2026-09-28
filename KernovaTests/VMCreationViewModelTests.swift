@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("VMCreationViewModel Tests", .admissionGated)
+@Suite("VMCreationViewModel Tests", .caseScoped)
 @MainActor
 struct VMCreationViewModelTests {
     /// The standardized directory a path sits in.

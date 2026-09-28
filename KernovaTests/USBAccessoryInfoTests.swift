@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("USB Accessory Info Tests", .admissionGated)
+@Suite("USB Accessory Info Tests", .caseScoped)
 struct USBAccessoryInfoTests {
     /// A well-formed 18-byte device descriptor, USB 2.0 §9.6.1.
     ///

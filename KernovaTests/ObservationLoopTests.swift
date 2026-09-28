@@ -3,7 +3,7 @@ import Foundation
 import KernovaTestSupport
 @testable import Kernova
 
-@Suite("ObservationLoop Tests", .admissionGated)
+@Suite("ObservationLoop Tests", .caseScoped)
 @MainActor
 struct ObservationLoopTests {
     @Observable

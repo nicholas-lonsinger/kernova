@@ -4,7 +4,7 @@ import Testing
 
 @testable import Kernova
 
-@Suite("VMSnapshot Tests", .admissionGated)
+@Suite("VMSnapshot Tests", .caseScoped)
 struct VMSnapshotTests {
     private func makeSnapshot(
         name: String, offsetSeconds: TimeInterval = 0, notes: String = ""
