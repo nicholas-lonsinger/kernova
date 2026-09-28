@@ -14,8 +14,7 @@ import KernovaKit
 enum VMStopMethod: String, AppEnum {
     /// Request an ACPI shutdown and let the guest power itself off.
     case shutDown
-    /// Resume a paused or suspended guest first, then request the shutdown it
-    /// cannot receive until it runs.
+    /// ``StopDisposition/resumeThenShutDown``.
     case resumeThenShutDown
     /// Terminate the virtual machine immediately, losing unsaved guest state.
     case force

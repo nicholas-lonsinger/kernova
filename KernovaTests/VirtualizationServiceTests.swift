@@ -777,9 +777,9 @@ struct VirtualizationServiceTests {
     // MARK: - Suspended-state snapshots
 
     @Test(
-        "A suspended-state capture clones the suspend slot and the disks, leaves the bundle's slot in place, and rests paused"
+        "A suspended-state capture clones the suspend slot and the disks, leaves the bundle's slot in place, and rests suspended"
     )
-    func suspendedCaptureClonesTheSlotAndRestsPaused() async throws {
+    func suspendedCaptureClonesTheSlotAndRestsSuspended() async throws {
         let fixture = try makeRevertFixture(phase: .suspended)
         #expect(fixture.instance.isSuspended)
         try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)

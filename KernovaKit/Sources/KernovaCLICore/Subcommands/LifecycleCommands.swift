@@ -7,7 +7,7 @@ extension KernovaCommand {
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
-        /// Resume a paused or suspended guest first, then ask it to shut down.
+        /// ``StopDisposition/resumeThenShutDown``.
         case resumeFirst
         /// Terminate the guest immediately, losing unsaved state.
         case force
