@@ -61,7 +61,7 @@ enum VMCapability: CaseIterable, Hashable {
     /// The wire verb this capability performs, or `nil` for an affordance only
     /// the GUI offers.
     ///
-    /// Not injective: the graceful stop, the forceful one and the cold-paused
+    /// Not injective: the graceful stop, the forceful one and the suspended
     /// discard are one verb on the wire and three differently-gated commands in
     /// the UI.
     var verb: VMVerb? {

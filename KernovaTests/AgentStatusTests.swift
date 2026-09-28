@@ -81,7 +81,7 @@ struct AgentStatusTests {
     func waitingWithPriorVersionButNotLiveStaysWaiting() {
         // Stopped VM with a previously-installed agent. The synthesizer
         // returns `.waiting` here; the VMRowView further suppresses the
-        // sidebar icon for stopped/cold-paused VMs with a prior agent
+        // sidebar icon for stopped/suspended VMs with a prior agent
         // so the user doesn't see a nag.
         let result = AgentStatus.synthesize(
             upstream: .waiting,

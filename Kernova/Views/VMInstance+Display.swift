@@ -119,7 +119,7 @@ extension VMInstance {
 
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     var statusToolTip: String? {
-        if heldByAnotherCopy { return VMStatus.heldByAnotherCopyDisplayName + "." }
+        if heldByAnotherCopy { return statusDisplayName + "." }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
         if status == .running, networkAttachmentPending {

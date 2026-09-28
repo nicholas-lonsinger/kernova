@@ -317,11 +317,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.startVMInRecovery(_:)): .startInRecovery
         case #selector(AppDelegate.pauseVM(_:)): .pause
         case #selector(AppDelegate.resumeVM(_:)): .resume
-        // Cold-paused VMs have no live VM to stop — `stopVM(_:)` routes them to
+        // Suspended VMs have no live VM to stop — `stopVM(_:)` routes them to
         // the discard-saved-state confirmation instead, so the menu bar's one
         // stop item covers both capabilities and is validated against both.
         case #selector(AppDelegate.stopVM(_:)): .stop
-        // Cold-paused is excluded: the retitled stop item ("Discard Saved
+        // Suspended is excluded: the retitled stop item ("Discard Saved
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop

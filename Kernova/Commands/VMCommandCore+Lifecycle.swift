@@ -716,7 +716,8 @@ extension VMCommandCore {
         }
     }
 
-    /// Resumes a paused VM then requests a graceful ACPI shutdown.
+    /// Resumes a paused VM, or restores a suspended one, then requests a
+    /// graceful ACPI shutdown.
     private func resumeThenShutDown(_ instance: VMInstance) async throws {
         do {
             try await resumeOrRestore(instance)

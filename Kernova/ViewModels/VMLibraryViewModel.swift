@@ -840,8 +840,8 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Resumes a paused VM then requests a graceful ACPI shutdown — the
-    /// stop-paused sheet's default action.
+    /// Resumes a paused VM, or restores a suspended one, then requests a
+    /// graceful ACPI shutdown — the stop-paused sheet's default action.
     func resumeAndStop(_ instance: VMInstance) async {
         await run(on: instance) {
             try await self.commands.stop(
@@ -1501,7 +1501,7 @@ final class VMLibraryViewModel {
     ///
     /// Two refusals reach here, both raised by a Stop the user asked for that
     /// only the core can tell is destructive: a live-paused guest that cannot
-    /// receive the request, and a cold-paused Ephemeral VM whose stop discards
+    /// receive the request, and a suspended Ephemeral VM whose stop discards
     /// its suspended session. Every other confirmation is raised by the
     /// `request…` method that opens its own sheet and knows the arguments —
     /// which VM, which snapshot, Trash or immediate — that the prompt alone

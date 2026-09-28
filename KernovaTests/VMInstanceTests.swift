@@ -43,8 +43,8 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("A cold-paused VM's suspend slot is captured as a suspended-mode snapshot")
-    func coldPausedTakesASuspendedSnapshot() throws {
+    @Test("A suspended VM's suspend slot is captured as a suspended-mode snapshot")
+    func suspendSlotTakesASuspendedSnapshot() throws {
         let instance = VMInstanceFixture.make(phase: .suspended)
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)
@@ -56,9 +56,9 @@ struct VMInstanceTests {
     }
 
     @Test(
-        "A cold-paused VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
+        "A suspended VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
     )
-    func coldPausedWithNoSaveFileCannotBeCaptured() {
+    func suspendedWithNoSaveFileCannotBeCaptured() {
         let instance = VMInstanceFixture.make(phase: .suspended)
         #expect(instance.isSuspended)
         #expect(!instance.hasSaveFile)
@@ -399,8 +399,8 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("isKeepingAppAlive is false when cold-paused")
-    func isKeepingAppAliveColdPaused() {
+    @Test("isKeepingAppAlive is false when suspended")
+    func isKeepingAppAliveSuspended() {
         let instance = VMInstanceFixture.make(phase: .suspended)
         #expect(instance.session == nil)
         #expect(instance.isKeepingAppAlive == false)

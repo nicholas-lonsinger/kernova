@@ -173,11 +173,11 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.phase == .stopped)
     }
 
-    @Test("A capture of a cold-paused VM is stamped as memory-and-disks and lands in the manifest")
-    func coldPausedCaptureIsWarm() async throws {
+    @Test("A capture of a suspended VM is stamped as memory-and-disks and lands in the manifest")
+    func suspendedCaptureIsWarm() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .suspended)
-        // A capturable suspend slot: `canTakeSnapshot` for a cold-paused VM
+        // A capturable suspend slot: `canTakeSnapshot` for a suspended VM
         // needs one on disk, not just the status.
         try FileManager.default.createDirectory(
             at: instance.bundleURL, withIntermediateDirectories: true)

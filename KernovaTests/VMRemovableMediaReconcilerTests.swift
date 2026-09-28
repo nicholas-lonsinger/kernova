@@ -238,8 +238,8 @@ struct VMRemovableMediaReconcilerTests {
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("apply is a no-op for a cold-paused VM, which has no session to attach to")
-    func liveRemovableNoopWhenColdPaused() async throws {
+    @Test("apply is a no-op for a suspended VM, which has no session to attach to")
+    func liveRemovableNoopWhenSuspended() async throws {
         let mock = MockRemovableMediaDeviceService()
         let harness = makeHarness(removableMediaDeviceService: mock)
         let instance = VMInstanceFixture.make()

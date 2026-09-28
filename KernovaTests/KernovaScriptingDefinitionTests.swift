@@ -208,6 +208,7 @@ struct KernovaScriptingDefinitionTests {
     func suspendedIsItsOwnState() throws {
         let declared = try enumerators("VM state")
         #expect(VMScriptState(wireName: VMStatus.suspended.rawValue) == .suspended)
+        #expect(VMScriptState(.suspended).term == "suspended")
         #expect(declared["suspended"] == VMScriptState.suspended.code)
         #expect(VMScriptState.suspended.code != VMScriptState.paused.code)
     }

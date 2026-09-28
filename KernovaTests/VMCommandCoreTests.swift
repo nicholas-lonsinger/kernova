@@ -746,7 +746,7 @@ struct VMCommandCoreTests {
     }
 
     @Test("A VM holding a saved state reports the discard as its stop, and no settings edit")
-    func allowedVerbsForAColdPausedVM() throws {
+    func allowedVerbsForASuspendedVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -1195,7 +1195,7 @@ struct VMCommandCoreTests {
         }
         try VMInstanceFixture.writeSaveFile(for: twin)
 
-        // Cold-paused: the resume builds a fresh VM and claims the identity.
+        // Suspended: the resume builds a fresh VM and claims the identity.
         #expect(twin.holdsSuspendedSession)
         let error = try #require(
             await commandError { try await harness.core.resume(.id(twin.id)) })
@@ -1404,8 +1404,8 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.forceStopCallCount == 1)
     }
 
-    @Test("A cold-paused VM's force stop is worded as discarding its saved state")
-    func forceStopOfAColdPausedVMIsADiscard() async throws {
+    @Test("A suspended VM's force stop is worded as discarding its saved state")
+    func forceStopOfASuspendedVMIsADiscard() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -1458,8 +1458,8 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.stopCallCount == 1)
     }
 
-    @Test("A cold-paused VM's graceful stop asks the consent its force path does")
-    func gracefulStopOfAColdPausedVMAsksForConsent() async throws {
+    @Test("A suspended VM's graceful stop asks the consent its force path does")
+    func gracefulStopOfASuspendedVMAsksForConsent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: instance)
@@ -1484,8 +1484,8 @@ struct VMCommandCoreTests {
         #expect(instance.phase == .stopped)
     }
 
-    @Test("A cold-paused Ephemeral VM's graceful stop asks the consent its force path does")
-    func gracefulStopOfAColdPausedEphemeralVMAsksForConsent() async throws {
+    @Test("A suspended Ephemeral VM's graceful stop asks the consent its force path does")
+    func gracefulStopOfASuspendedEphemeralVMAsksForConsent() async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(
@@ -2625,7 +2625,7 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotManifest.currentID == nil)
     }
 
-    @Test("A cold-paused ephemeral stop throws when its baseline could not come back")
+    @Test("A suspended ephemeral stop throws when its baseline could not come back")
     func failedDiscardRevertThrowsFromStop() async throws {
         let harness = makeHarness()
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState

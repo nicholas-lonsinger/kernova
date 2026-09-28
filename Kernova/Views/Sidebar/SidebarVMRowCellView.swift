@@ -412,7 +412,7 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// `.waiting` was dismissed for this VM or turned off app-wide by
     /// `installPromptDisabled`, and — the outermost gate — whenever the VM has
     /// no live session: every state the badge renders is a statement about *this*
-    /// session's control channel. On a stopped or cold-paused VM `agentStatus`
+    /// session's control channel. On a stopped or suspended VM `agentStatus`
     /// degrades to `.waiting`, and the badge would report "guest agent not
     /// installed" for a VM whose agent state is unknown.
     static func visibleAgentStatus(

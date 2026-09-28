@@ -147,11 +147,11 @@ struct VMLibraryViewModelTests {
         #expect(presenter.lastDeleteSheetPermanently == true)
     }
 
-    @Test("deleteVM removes a cold-paused VM without a discard-saved-state pass")
-    func deleteVMColdPaused() async {
+    @Test("deleteVM removes a suspended VM without a discard-saved-state pass")
+    func deleteVMSuspended() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        instance.activity.placeForTesting(.suspended)  // no live VM ⇒ cold-paused ("Suspended")
+        instance.activity.placeForTesting(.suspended)
         viewModel.selectedID = instance.id
         storage.bundles[instance.bundleURL] = instance.configuration
 
@@ -1309,8 +1309,8 @@ struct VMLibraryViewModelTests {
         #expect(starting.status == .stopped)
     }
 
-    @Test("start proceeds when the machine ID twin is cold-paused (it holds no VZ identity)")
-    func startProceedsWhenMachineIDTwinIsColdPaused() async {
+    @Test("start proceeds when the machine ID twin is suspended (it holds no VZ identity)")
+    func startProceedsWhenMachineIDTwinIsSuspended() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel)
@@ -1353,7 +1353,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
-        // Cold-paused: paused with no `virtualMachine`, so the resume would build
+        // Suspended: no `virtualMachine`, so the resume would build
         // a fresh one and claim the identity.
         resuming.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: resuming)
@@ -4190,7 +4190,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("startAutomaticVMsForLaunch resumes a marked VM with saved state")
-    func autoStartResumesColdPaused() async throws {
+    func autoStartResumesSuspended() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let saved = makeAutoStartInstance(in: viewModel.library, name: "Suspended")
         saved.activity.placeForTesting(.suspended)
@@ -4274,8 +4274,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
-    @Test("startAutomaticVMsForLaunch leaves a failed restore cold-paused and carries on")
-    func autoStartRestoreFailureRestsColdPausedAndContinues() async throws {
+    @Test("startAutomaticVMsForLaunch leaves a failed restore suspended and carries on")
+    func autoStartRestoreFailureRestsSuspendedAndContinues() async throws {
         let virtService = MockVirtualizationService()
         virtService.restoreError = VirtualizationError.restoreFailed(
             underlying: NSError(domain: "test", code: 1))

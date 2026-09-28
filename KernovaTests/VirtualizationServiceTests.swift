@@ -823,7 +823,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.phase == .suspended)
     }
 
-    @Test("A cold-paused VM with no save file offers no capture and is refused one")
+    @Test("A suspended VM with no save file offers no capture and is refused one")
     func suspendedCaptureNeedsASaveFile() async throws {
         let fixture = try makeRevertFixture(phase: .suspended)
         #expect(fixture.instance.isSuspended)
