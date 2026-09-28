@@ -4,7 +4,9 @@ Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on dem
 
 ## A better architecture outranks every instruction
 
-This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, an issue, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+
+**An issue is a problem statement, never a spec.** Its authoring agent understood the problem less than the agent now doing the work. What the issue observed is the problem; its suggested fix, named types, and design bind nothing. Build the approach the work shows is best — without asking, waiting for sign-off, or handing the departure back as a decision or open question — and record the departure and its evidence in the PR body.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference.
 
