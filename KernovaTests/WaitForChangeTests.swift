@@ -8,6 +8,32 @@ import Testing
 @Suite("waitForChange Tests", .caseScoped)
 @MainActor
 struct WaitForChangeTests {
+    @Observable
+    @MainActor
+    final class Subject {
+        var value = 0
+    }
+
+    @Test("A wait returns in a turn where its predicate holds")
+    func waitReturnsWhileThePredicateHolds() async throws {
+        let subject = Subject()
+        let waiter = Task { @MainActor in
+            try await waitForChange { subject.value == 1 }
+            return subject.value
+        }
+        await drainMainQueue()
+
+        // The production wait answers from a main-actor task this change
+        // enqueues. The flip back is enqueued behind that task and ahead of the
+        // waiter's resumption.
+        subject.value = 1
+        Task { @MainActor in subject.value = 0 }
+        await drainMainQueue()
+        subject.value = 1
+
+        #expect(try await waiter.value == 1)
+    }
+
     @Test("A predicate that holds only once the deadline re-reads it fails the wait")
     func unobservedPredicateFailsTheWait() async {
         let timeout: TimeInterval = 0.2

@@ -589,9 +589,10 @@ func expectEOF(on channel: VsockChannel) async {
 // MARK: - waitForChange
 
 /// Production's ``waitForObservedChange(until:before:)`` as a test wait: it
-/// throws `TestFailure` when `timeout` passes first, and when the predicate
-/// holds only once the deadline re-reads it — no observed change made it hold,
-/// so what it reads is not observed.
+/// returns in a turn where the predicate holds, and throws `TestFailure` when
+/// `timeout` passes first, or when the predicate holds only once the deadline
+/// re-reads it — no observed change made it hold, so what it reads is not
+/// observed.
 ///
 /// The predicate carries the production wait's contract. One over plain
 /// non-observed state keeps `waitUntil`.
@@ -601,17 +602,24 @@ func waitForChange(
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
     let stopwatch = BackstopStopwatch()
-    let held = await waitForObservedChange(
-        until: predicate,
-        before: ObservedChangeDeadline(seconds: timeout, clock: MonotonicEngineClock()))
-    guard held else {
-        throw TestFailure.backstop(
-            "Observed condition not met within \(timeout) s", stopwatch: stopwatch, timeout: timeout)
-    }
-    guard stopwatch.elapsed < timeout else {
-        throw TestFailure.backstop(
-            "Condition held only when the deadline re-read it: no observed change to what the predicate reads made it hold",
-            stopwatch: stopwatch, timeout: timeout)
+    // The production wait answers from the observation loop's apply, a hop
+    // before this caller resumes, and work queued between the two can move the
+    // state again — so the answer is re-read here, in the caller's own turn.
+    while !predicate() {
+        let remaining = timeout - stopwatch.elapsed
+        guard remaining > 0,
+            await waitForObservedChange(
+                until: predicate,
+                before: ObservedChangeDeadline(seconds: remaining, clock: MonotonicEngineClock()))
+        else {
+            throw TestFailure.backstop(
+                "Observed condition not met within \(timeout) s", stopwatch: stopwatch, timeout: timeout)
+        }
+        guard stopwatch.elapsed < timeout else {
+            throw TestFailure.backstop(
+                "Condition held only when the deadline re-read it: no observed change to what the predicate reads made it hold",
+                stopwatch: stopwatch, timeout: timeout)
+        }
     }
 }
 
