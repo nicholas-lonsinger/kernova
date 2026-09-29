@@ -18,6 +18,8 @@ Keystrokes a screen-control tool sends into a VM's display can reach the guest a
 
 Spotlight and Siri see Kernova's intents only from a build installed in `/Applications` and launched once. A build running from DerivedData shows only its app row in Spotlight while Shortcuts still lists and runs every intent, which reads like broken intent metadata. `ditto` the build to `/Applications/Kernova.app`, confirm no other on-disk copy outranks it, and launch that copy.
 
+When the check is done, quit that copy with its own `kernova quit`, unregister it with `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u /Applications/Kernova.app`, and delete it with `rm -rf`, then confirm with `make ghosts` that no `/Applications` copy remains. Not the Trash: a bundle there stays registered and can win the election until the Trash is emptied.
+
 Start the log stream before acting, over `processIdentifier == <that copy's PID> OR process == "linkd" OR process == "searchtoold" OR process == "assistantd"`. The framework's `com.apple.appintents:Execution` lines are debug-level, so `log show` afterwards never has them, and a narrower capture cannot tell whether a request reached Kernova.
 
 To run an intent without the Shortcuts editor, write a `WFWorkflowActions` plist whose action identifier is `app.kernova.<IntentTypeName>` and whose parameters are keyed by property name. A file parameter bound to Shortcut Input is `{"Value":{"Type":"ExtensionInput"},"WFSerializationType":"WFTextTokenAttachment"}`. Convert the plist with `plutil -convert binary1`, since `shortcuts sign` rejects XML, then run `shortcuts sign --mode anyone --input <plist> --output <name>.shortcut`.
