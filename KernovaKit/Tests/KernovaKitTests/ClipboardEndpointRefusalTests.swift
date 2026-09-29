@@ -297,13 +297,12 @@ struct ClipboardEndpointRefusalTests {
         harness.side.channel.close()
         try await harness.side.recorder.waitForEnd()
 
-        let stopwatch = BackstopStopwatch()
         #expect(await harness.side.serveDataOffMain(generation: 1, repIndex: 0, uti: textUTI) == nil)
-        // The deadline *is* the assertion: no reply is coming, so a fire that
-        // parks to `lazyPullTimeout` holds the pasteboard past its own budget.
-        #expect(stopwatch.elapsed < 5)
         let refusal = try await harness.side.recorder.waitForRefusal()
         #expect(refusal.gesture == .paste)
+        // The reason is the assertion: a fire that parked would resolve only at
+        // `lazyPullTimeout`, as `.timedOut`.
+        #expect(refusal.failure == .transferFailed)
     }
 
     // MARK: - What a refusal leaves on the readout
