@@ -405,4 +405,62 @@ struct VMCommandCoreArrivalTests {
         #expect(storage.deleteVMBundleCallCount == 0)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, clone.id])
     }
+
+    // MARK: - The MAC Address Follows the Machine Identity
+
+    /// The configuration of the clone of a source carrying `mac`, with its
+    /// device on or off, taken under `identity`.
+    private func clonedConfiguration(
+        ofSourceWith mac: String?, networkEnabled: Bool, identity: CloneMachineIdentity
+    ) async throws -> VMConfiguration {
+        let harness = makeHarness()
+        let source = RegisteredVMInstanceFixture.register(
+            name: "Source", phase: .stopped, guestOS: .linux, library: harness.library,
+            preferences: preferences
+        ) {
+            $0.networkEnabled = networkEnabled
+            $0.macAddress = mac
+        }
+        let row = try await harness.core.clone(
+            .id(source.id), machineIdentity: identity, waitForOutcome: true)
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        return clone.configuration
+    }
+
+    @Test("A clone that keeps the machine identity keeps the source's MAC address")
+    func keepIdentityCloneKeepsMACAddress() async throws {
+        let config = try await clonedConfiguration(
+            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, identity: .keep)
+        #expect(config.macAddress == "aa:bb:cc:dd:ee:01")
+    }
+
+    @Test("A keep-identity clone of a source with no MAC address is given none")
+    func keepIdentityCloneOfAddresslessSourceStaysAddressless() async throws {
+        let config = try await clonedConfiguration(
+            ofSourceWith: nil, networkEnabled: false, identity: .keep)
+        #expect(config.macAddress == nil)
+    }
+
+    @Test("A new-identity clone gets a fresh MAC address")
+    func newIdentityCloneGetsFreshMACAddress() async throws {
+        let config = try await clonedConfiguration(
+            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, identity: .new)
+        let mac = try #require(config.macAddress)
+        #expect(mac != "aa:bb:cc:dd:ee:01")
+        #expect(GuestMACAddress.normalized(mac) == mac)
+    }
+
+    @Test("A new-identity clone of a source with networking off and no address is given none")
+    func newIdentityCloneOfAddresslessSourceStaysAddressless() async throws {
+        let config = try await clonedConfiguration(
+            ofSourceWith: nil, networkEnabled: false, identity: .new)
+        #expect(config.macAddress == nil)
+    }
+
+    @Test("A new-identity clone of a networked source with no address gets one")
+    func newIdentityCloneOfNetworkedAddresslessSourceGetsOne() async throws {
+        let config = try await clonedConfiguration(
+            ofSourceWith: nil, networkEnabled: true, identity: .new)
+        #expect(config.macAddress != nil)
+    }
 }

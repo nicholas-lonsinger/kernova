@@ -17,8 +17,8 @@ enum VMCloneIdentity: String, AppEnum {
     case followPreference
     /// Mint a fresh identity, so both VMs can run at once.
     case new
-    /// Keep the source's identity, so the clone is the same machine to its
-    /// guest — and cannot run beside the source.
+    /// Keep the source's identity and MAC address, so the clone is the same
+    /// machine to its guest and its network — and cannot run beside the source.
     case keep
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Machine Identity")

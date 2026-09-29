@@ -211,9 +211,13 @@ extension VMCommandCore {
         let existingNames = library.entries.map(\.name)
         var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
 
-        clonedConfig.macAddress = GuestMACAddress.random()
-
         if generateNewID {
+            // A source with no address and no device leaves minting to the
+            // change that gives the clone one (`applyNetworkMode`).
+            clonedConfig.macAddress = nil
+            if instance.configuration.macAddress != nil || clonedConfig.networkEnabled {
+                clonedConfig.mintMACAddressIfNeeded()
+            }
             if clonedConfig.guestOS == .macOS {
                 clonedConfig.machineIdentifierData = VZMacMachineIdentifier().dataRepresentation
             }

@@ -3,9 +3,10 @@ import KernovaKit
 import KernovaLogging
 
 /// The uniqueness of each VM's MAC address across the library: the refusal of
-/// an edit that would give two guests one address, and the traces of a pair the
-/// app did not author (docs/NETWORKING.md, a MAC address belongs to one virtual
-/// machine).
+/// an edit that would give two guests one address, the refusal to run two
+/// holders on one network, and the traces of every pair — a keep-identity clone
+/// and its source among them (docs/NETWORKING.md, a MAC address belongs to one
+/// virtual machine).
 ///
 /// A VM holds the address its configuration carries and the one each of its
 /// snapshots was taken with, until that snapshot is deleted: a revert puts
@@ -171,9 +172,8 @@ final class VMMACAddressRegistry {
     ///
     /// Import, load and reconcile admit whatever address a bundle arrives
     /// carrying, so this is where a pair the app never authored becomes
-    /// traceable. Runs once each of those has taken in the bundle's snapshots,
-    /// which are the paths a VM the app did not author an address for enters
-    /// by.
+    /// traceable; a keep-identity clone and its source are recorded alike.
+    /// Runs once each of those has taken in the bundle's snapshots.
     func logDuplicateMACAddressHolders() {
         let addresses = Set(
             instances.flatMap { vm in
