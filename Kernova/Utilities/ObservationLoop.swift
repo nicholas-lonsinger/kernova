@@ -47,6 +47,9 @@ final class ObservationLoop {
 /// each time one of them changes, and automatically re-registering after each
 /// fire so the loop continues indefinitely.
 ///
+/// `apply` runs in a main-actor task the change itself enqueues, so main-actor
+/// work enqueued after the change runs after it.
+///
 /// Both closures run on the main actor; use `[weak self]` captures inside them
 /// to avoid retain cycles. The returned ``ObservationLoop`` must be retained by
 /// the caller — dropping it or calling ``ObservationLoop/cancel()`` stops the

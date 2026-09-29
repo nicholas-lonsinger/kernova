@@ -1,3 +1,5 @@
+import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -6,18 +8,19 @@ import Testing
 @Suite("waitForChange Tests", .caseScoped)
 @MainActor
 struct WaitForChangeTests {
-    @Test("A predicate that holds only once the backstop wakes the wait fails it")
+    @Test("A predicate that holds only once the deadline re-reads it fails the wait")
     func unobservedPredicateFailsTheWait() async {
-        let timeout = Duration.milliseconds(200)
+        let timeout: TimeInterval = 0.2
         // Time passing is state no observation sees. The predicate starts
-        // holding at this instant, and the wait's own deadline, taken after it,
-        // is no earlier.
-        let holdsFrom = ContinuousClock.now.advanced(by: timeout)
+        // holding `timeout` after this reading, and the wait's deadline sleeps
+        // at least that long from a later one.
+        let clock = MonotonicEngineClock()
+        let start = clock.now
         do {
-            try await waitForChange(timeout: timeout) { ContinuousClock.now >= holdsFrom }
+            try await waitForChange(timeout: timeout) { clock.seconds(since: start) >= timeout }
             Issue.record("The wait returned")
         } catch let failure as TestFailure {
-            #expect(failure.message.contains("held only when the backstop woke the wait"))
+            #expect(failure.message.contains("held only when the deadline re-read it"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

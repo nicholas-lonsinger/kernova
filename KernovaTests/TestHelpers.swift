@@ -1,7 +1,6 @@
 import AppKit
 import Darwin
 import Foundation
-import Observation
 import KernovaKit
 import KernovaTestSupport
 import Testing
@@ -15,11 +14,11 @@ import Virtualization
 // blocking-bridge GCD hop (`offCooperativePool`) live in the shared
 // `KernovaTestSupport` package product — see its doc comments.
 //
-// `waitForChange` below is KernovaTests-only: it observes `@MainActor`
-// `@Observable` production state
-// directly via `withObservationTracking`, which only this bundle's tests need
-// — the GuestAgent/KernovaKit bundles' predicates read `Sendable` boxes
-// (`AtomicInt`, `PolicyBox`) with no such observable type to track.
+// `waitForChange` below is KernovaTests-only: it is built on the app's
+// `waitForObservedChange`, and only this bundle's tests wait on `@Observable`
+// production state — the GuestAgent/KernovaKit bundles' predicates read
+// `Sendable` boxes (`AtomicInt`, `PolicyBox`) with no such observable type to
+// track.
 
 // MARK: - In-memory defaults
 
@@ -589,105 +588,31 @@ func expectEOF(on channel: VsockChannel) async {
 
 // MARK: - waitForChange
 
-/// Event-driven replacement for `waitUntil` when the predicate reads
-/// `@Observable` state on a production object directly — i.e. there is no test
-/// double in the loop to call `AsyncGate.notify()`.
+/// Production's ``waitForObservedChange(until:before:)`` as a test wait: it
+/// throws `TestFailure` when `timeout` passes first, and when the predicate
+/// holds only once the deadline re-reads it — no observed change made it hold,
+/// so what it reads is not observed.
 ///
-/// `withObservationTracking` suspends the waiter until a property the predicate
-/// actually reads changes, then the loop re-checks — so the wait resolves on the
-/// mutation itself, not on a 50 ms poll tick. Like `AsyncGate`, an idle waiter
-/// adds **zero** wake-ups to the shared (and, on CI, contended) MainActor, and
-/// `timeout` is a stuck-condition backstop the happy path never reaches rather
-/// than the success deadline. This is the fix for the poll-budget flakes in the
-/// flaky-CI investigation.
-///
-/// The predicate must read every value it inspects through an `@Observable`
-/// getter so tracking registers a dependency, and it must be **side-effect-free**
-/// — it is evaluated several times per wait (the arming pass, the immediate-hit
-/// re-check, and each outer-loop iteration). Computed properties that read
-/// observed stored properties qualify (e.g. `agentStatus` reads `isUnresponsive`),
-/// but tracking only registers the properties actually read on the arming pass:
-/// a getter that short-circuits *before* reaching the property that will change
-/// won't wake the waiter. A predicate that holds only once the backstop wakes
-/// the wait read no state that changed under observation, and fails it — a
-/// predicate over plain non-observed state must keep `waitUntil`.
+/// The predicate carries the production wait's contract. One over plain
+/// non-observed state keeps `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: Duration = .seconds(testWaitBackstop),
+    timeout: TimeInterval = testWaitBackstop,
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
     let stopwatch = BackstopStopwatch()
-    let deadline = ContinuousClock.now.advanced(by: timeout)
-    while !predicate() {
-        if ContinuousClock.now >= deadline {
-            throw TestFailure.backstop(
-                "Observed condition not met within \(timeout)",
-                stopwatch: stopwatch, timeout: timeout)
-        }
-        let wake = await armObservationOnce(deadline: deadline, predicate: predicate)
-        if wake == .backstop, predicate() {
-            throw TestFailure.backstop(
-                "Condition held only when the backstop woke the wait: no observed change to what the predicate reads made it hold",
-                stopwatch: stopwatch, timeout: timeout)
-        }
+    let held = await waitForObservedChange(
+        until: predicate,
+        before: ObservedChangeDeadline(seconds: timeout, clock: MonotonicEngineClock()))
+    guard held else {
+        throw TestFailure.backstop(
+            "Observed condition not met within \(timeout) s", stopwatch: stopwatch, timeout: timeout)
     }
-}
-
-/// What resumed one ``armObservationOnce(deadline:predicate:)``.
-private enum ObservationWake {
-    /// A change to observed state the predicate read, or the predicate already
-    /// holding at arm time.
-    case woken
-    /// The deadline.
-    case backstop
-}
-
-/// Suspends until the next change to any `@Observable` property read by
-/// `predicate`, an immediate hit (the predicate already holds at arm time,
-/// closing the arm-vs-change race), or the `deadline` backstop — whichever
-/// comes first.
-///
-/// Mirrors `AsyncGate.armOnce`, but the wake source is observation tracking
-/// instead of an explicit `notify()`.
-@MainActor
-private func armObservationOnce(
-    deadline: ContinuousClock.Instant,
-    predicate: @escaping @MainActor () -> Bool
-) async -> ObservationWake {
-    // Captured so it can be cancelled once the wait resolves via observation (or
-    // the immediate-hit re-check); otherwise every happy-path arm would leak a
-    // Task sleeping until `deadline`, the opposite of the "zero wake-ups" goal.
-    var backstop: Task<Void, Never>?
-    let wake = await withCheckedContinuation { (cont: CheckedContinuation<ObservationWake, Never>) in
-        let once = ResumeOnce()
-        // Arm tracking over whatever observable state the predicate reads. The
-        // `onChange` fires once, during the willSet of the first such property
-        // to change; the awaiting task then resumes and the outer loop
-        // re-checks (by which point the setter has completed).
-        withObservationTracking {
-            _ = predicate()
-        } onChange: {
-            once.fire { cont.resume(returning: .woken) }
-        }
-        // Close the arm-vs-change race: a change may have landed between the
-        // outer while-check and arming. If the predicate already holds, resume
-        // now so the loop re-checks instead of waiting for a change that may
-        // never come.
-        if predicate() {
-            once.fire { cont.resume(returning: .woken) }
-            return
-        }
-        // Backstop: resume at the deadline so a genuinely stuck condition fails
-        // the wait instead of hanging.
-        backstop = Task { @MainActor in
-            try? await Task.sleep(until: deadline, clock: ContinuousClock())
-            once.fire { cont.resume(returning: .backstop) }
-        }
+    guard stopwatch.elapsed < timeout else {
+        throw TestFailure.backstop(
+            "Condition held only when the deadline re-read it: no observed change to what the predicate reads made it hold",
+            stopwatch: stopwatch, timeout: timeout)
     }
-    // Resolved (observation, immediate hit, or the backstop itself) — cancel the
-    // backstop so it doesn't linger asleep until `deadline`.
-    backstop?.cancel()
-    return wake
 }
 
 // MARK: - View-tree search
