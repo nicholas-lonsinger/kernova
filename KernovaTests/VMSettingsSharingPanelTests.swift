@@ -318,14 +318,15 @@ struct VMSettingsSharingPanelTests {
         return (vc, instance)
     }
 
-    /// Seeds the shared file monitor with `paths` and repaints the rows from
-    /// what it found — the two steps the panel takes on its own, awaited here so
-    /// the assertion doesn't race the probe.
+    /// Seeds the shared file monitor with `paths` and lets the panel repaint
+    /// its rows from what the probe found: the repaint is a main-actor task the
+    /// monitor's answer enqueues, so it has run once the main queue drains
+    /// behind it.
     private func seedMonitor(_ vc: VMSettingsViewController, paths: [String]) async throws {
         let panel = try #require(vc.settingsPanelForTesting(.sharing))
         await panel.context.fileMonitor.setPaths(
             Dictionary(uniqueKeysWithValues: paths.map { ($0, Data?.none) }))
-        panel.refresh()
+        await drainMainQueue()
     }
 
     private func sharedRows(in vc: VMSettingsViewController) -> [AttachmentRowView] {
@@ -381,10 +382,8 @@ struct VMSettingsSharingPanelTests {
         vc.showOverview()
         vc.showCategory(.sharing)
 
-        try await waitForChange {
-            panel.context.fileMonitor.exists(sharePath)
-        }
-        panel.refresh()
+        try await waitForChange { panel.context.fileMonitor.exists(sharePath) }
+        await drainMainQueue()
         #expect(findLabel(containing: "Missing \u{2014} \(sharePath)", in: panel.view) == nil)
     }
 

@@ -656,7 +656,9 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(instance.usbPairings.pairing(forKey: key) == nil)
 
         service.assignComposing(registryID: 20, serial: "MARKER", receptacle: "hub/Port-B@1")
-        try await waitForChange { service.attachedRegistryIDs.contains(20) }
+        try await waitForChange {
+            instance.liveUSBAccessories.contains { $0.accessory.registryID == 20 }
+        }
         #expect(!service.attachedRegistryIDs.contains(8))
     }
 

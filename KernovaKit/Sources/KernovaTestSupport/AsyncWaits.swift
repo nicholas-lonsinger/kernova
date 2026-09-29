@@ -288,8 +288,10 @@ public func waitUntil(
 ///
 /// The main queue is serial, so a block enqueued now runs last: this is an
 /// ordering barrier, not a wait — nothing is polled and no deadline decides it.
-/// Use it to assert on what a burst of `DispatchQueue.main.async` work left
-/// behind, from a `@MainActor` test body that queued the burst itself.
+/// Use it to assert on what already-queued work left behind, from a
+/// `@MainActor` test body: `DispatchQueue.main.async` blocks, and main-actor
+/// tasks — the main actor's executor is equivalent to the main dispatch queue
+/// ([MainActor](https://developer.apple.com/documentation/swift/mainactor)).
 public func drainMainQueue() async {
     await withCheckedContinuation { continuation in
         DispatchQueue.main.async { continuation.resume() }

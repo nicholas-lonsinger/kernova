@@ -19,12 +19,6 @@ struct ObservationLoopTests {
         func increment() { count += 1 }
     }
 
-    /// Yields the main actor multiple times so any queued `Task { @MainActor ... }`
-    /// enqueued by the observation helper has an opportunity to run before assertions.
-    private func drain() async {
-        for _ in 0..<5 { await Task.yield() }
-    }
-
     @Test("apply fires when a tracked property changes")
     func applyFiresOnChange() async {
         let subject = Subject()
@@ -38,7 +32,7 @@ struct ObservationLoopTests {
         #expect(counter.count == 0)
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
 
         #expect(counter.count == 1)
         _ = loop
@@ -55,15 +49,15 @@ struct ObservationLoopTests {
         )
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 1)
 
         subject.value = 2
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 2)
 
         subject.value = 3
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 3)
 
         _ = loop
@@ -80,7 +74,7 @@ struct ObservationLoopTests {
         )
 
         subject.other = 42
-        await drain()
+        await drainMainQueue()
 
         #expect(counter.count == 0)
         _ = loop
@@ -97,17 +91,17 @@ struct ObservationLoopTests {
         )
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 1)
 
         loop.cancel()
 
         subject.value = 2
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 1)
 
         subject.value = 3
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 1)
     }
 
@@ -126,7 +120,7 @@ struct ObservationLoopTests {
         loop.cancel()
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 0)
     }
 
@@ -143,7 +137,7 @@ struct ObservationLoopTests {
         loop.cancel()
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
 
         #expect(counter.count == 0)
     }
@@ -162,7 +156,7 @@ struct ObservationLoopTests {
     func waitResumesOnSatisfyingChange() async {
         let subject = Subject()
         let task = Task { @MainActor in await waitForObservedChange { subject.value == 2 } }
-        await drain()
+        await drainMainQueue()
 
         subject.value = 2
 
@@ -179,10 +173,10 @@ struct ObservationLoopTests {
             await waitForObservedChange { subject.value == 2 }
             counter.increment()
         }
-        await drain()
+        await drainMainQueue()
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
         #expect(counter.count == 0)
 
         subject.value = 2
@@ -200,13 +194,13 @@ struct ObservationLoopTests {
                 return subject.value == 1
             }
         }
-        await drain()
+        await drainMainQueue()
         subject.value = 1
         await task.value
 
         let afterResume = evaluations.count
         subject.value = 2
-        await drain()
+        await drainMainQueue()
 
         // A loop left armed would re-evaluate the predicate — and could resume a
         // continuation that has already fired.
@@ -229,14 +223,14 @@ struct ObservationLoopTests {
         )
 
         subject.value = 1
-        await drain()
+        await drainMainQueue()
         #expect(counterA.count == 1)
         #expect(counterB.count == 1)
 
         loopA.cancel()
 
         subject.value = 2
-        await drain()
+        await drainMainQueue()
         #expect(counterA.count == 1)
         #expect(counterB.count == 2)
 
