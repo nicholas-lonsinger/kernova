@@ -2256,19 +2256,10 @@ struct VMCommandCoreTests {
 
     /// A `.kernova`-shaped source with its `config.json` on disk, under a
     /// per-call parent, because the import copies real files.
-    private func makeImportSource(name: String) throws -> URL {
-        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent("\(name).kernova", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
-            .writeInitial(VMConfiguration(name: name, guestOS: .linux, bootMode: .efi))
-        return url
-    }
-
     @Test("An import takes the bundle the authority answered with, not the path asked about")
     func importGoesThroughTheAuthority() async throws {
         let harness = makeHarness()
-        let picked = try makeImportSource(name: "Picked")
+        let picked = try scratch.importSource(name: "Picked").url
         harness.authority.substitute = picked
 
         let summary = try await harness.core.importVM(
@@ -2287,7 +2278,7 @@ struct VMCommandCoreTests {
     @Test("An imported bundle's pairings are live once it publishes")
     func importTakesOnTheBundlesPairings() async throws {
         let harness = makeHarness()
-        let source = try makeImportSource(name: "Paired")
+        let source = try scratch.importSource(name: "Paired").url
         let pairing = USBAccessoryPairing(
             key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
             receptacleLabel: nil)

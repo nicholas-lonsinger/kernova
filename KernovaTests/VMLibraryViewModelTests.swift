@@ -4467,28 +4467,17 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Import
 
-    /// Builds a `.kernova`-shaped source bundle URL under a per-call-unique parent in the scratch.
-    ///
-    /// The parent lets two sources in one test share a leaf name. When `createOnDisk` is true (the
-    /// default), writes the bundle and its `config.json` on disk — `importVM` copies real files via
-    /// `FileManager`, so tests exercising a successful copy need an actual source directory;
-    /// tests modeling a missing/never-copied source (duplicate-UUID short-circuit,
-    /// copy-failure) pass `false`.
+    /// `importVM` copies real files, so a test whose copy succeeds needs the bundle on disk;
+    /// one modeling a never-copied source passes `createOnDisk: false`, which seeds `storage`.
     private func makeImportSource(
         name: String, storage: MockVMStorageService, createOnDisk: Bool = true
     ) throws -> (url: URL, config: VMConfiguration) {
-        let config = VMConfiguration(name: name, guestOS: .linux, bootMode: .efi)
-        let url = scratch.url
-            .appendingPathComponent("ImportSource-\(UUID().uuidString)", isDirectory: true)
-            .appendingPathComponent("\(name).kernova", isDirectory: true)
-        if createOnDisk {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            try VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess()).writeInitial(config)
-        } else {
+        let source = try scratch.importSource(name: name, onDisk: createOnDisk)
+        if !createOnDisk {
             // Nothing is copied, so the source only has to read.
-            storage.bundles[url] = config
+            storage.bundles[source.url] = source.config
         }
-        return (url, config)
+        return source
     }
 
     @Test("importVM imports a single bundle and adds its VM")
