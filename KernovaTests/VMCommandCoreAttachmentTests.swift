@@ -1239,9 +1239,9 @@ struct VMCommandCoreAttachmentTests {
 
         gate.release()
         try await attach.value()
-        try await waitForChange { harness.removableMediaDevices.detachCallCount == 1 }
+        try await waitForChange { instance.liveRemovableMedia.isEmpty }
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
-        #expect(instance.liveRemovableMedia.isEmpty)
+        #expect(harness.removableMediaDevices.detachCallCount == 1)
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
