@@ -586,6 +586,21 @@ func expectEOF(on channel: VsockChannel) async {
     }
 }
 
+// MARK: - VM idle
+
+extension VMInstance {
+    /// Whether this VM holds no operation and has none queued.
+    var isIdle: Bool { phase.isSettled && activity.queuedFollowUpCountForTesting == 0 }
+
+    /// Waits until ``isIdle``, so every follow-up this VM was handed has run.
+    ///
+    /// The queue is not observed, but it drains only as the observed `phase`
+    /// settles, so each check is woken by a `phase` change.
+    func waitUntilIdle() async throws {
+        try await waitForChange { [self] in isIdle }
+    }
+}
+
 // MARK: - waitForChange
 
 /// Production's ``waitForObservedChange(until:before:)`` as a test wait: it

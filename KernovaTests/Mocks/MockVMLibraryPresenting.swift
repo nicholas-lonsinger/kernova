@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 @testable import Kernova
 
@@ -8,7 +9,9 @@ import Foundation
 ///
 /// Exposes mirror accessors (`showError`, `instanceToDelete`, …) matching the
 /// view model's former observed flags so existing assertions read naturally.
+/// Observable, so a test waits on a presentation with `waitForChange`.
 @MainActor
+@Observable
 final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var errors: [String] = []
     /// Parallel to `errors`: the alert title each message was presented under.

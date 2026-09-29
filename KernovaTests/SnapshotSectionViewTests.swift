@@ -486,7 +486,7 @@ struct SnapshotSectionViewTests {
         // Escape: the field editor's cancel command, which the label turns into
         // `onRenameCancelled`.
         escape(nameLabel(named: "One", in: view))
-        await Task.yield()
+        await drainMainQueue()
 
         #expect(view.activeEdit == nil)
         #expect(findLabel(withText: "Two", in: view) != nil)
@@ -546,7 +546,7 @@ struct SnapshotSectionViewTests {
 
         view.beginNotesEditing(first.id)
         escape(nameLabel(named: "before", in: view))
-        await Task.yield()
+        await drainMainQueue()
 
         #expect(view.activeEdit == nil)
     }
@@ -601,7 +601,7 @@ struct SnapshotSectionViewTests {
         let field = allSubviews(InlineEditableLabel.self, in: view) { $0.isEditable }.first
         field?.stringValue = "tools configured"
         field.map { $0.controlTextDidEndEditing(Notification(name: .init("test"), object: $0)) }
-        await Task.yield()
+        await drainMainQueue()
 
         #expect(recorder.noted.count == 1)
         #expect(recorder.noted.first?.notes == "tools configured")
