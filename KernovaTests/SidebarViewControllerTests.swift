@@ -490,15 +490,11 @@ struct SidebarViewControllerTests {
             menuItem("Discard Saved State…", in: controller.buildContextMenu(for: suspended)))
 
         _ = NSApp.sendAction(try #require(discard.action), to: discard.target, from: discard)
-        // The item's action runs the verb in a task of its own, and a mock
-        // presenter is no observable to await, so the sheet's arrival is polled.
-        try await waitUntil { presenter.forceStopInstances.count == 1 }
+        // The item's action runs the verb in a task of its own.
+        try await waitForChange { presenter.forceStopInstances.count == 1 }
         // Then let whatever is still queued run, so the count below reads
-        // "exactly once" rather than "once so far": a main-queue barrier for
-        // anything dispatched there, and a few cooperative hops for a task
-        // still waiting to be scheduled.
+        // "exactly once" rather than "once so far".
         await drainMainQueue()
-        for _ in 0..<3 { await Task.yield() }
 
         #expect(presenter.forceStopInstances.map(\.id) == [suspended.id])
     }

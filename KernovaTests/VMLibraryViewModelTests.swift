@@ -3977,7 +3977,7 @@ struct VMLibraryViewModelTests {
             apply: { wakeCount += 1 })
 
         viewModel.keepInMenuBarOnQuit = false
-        for _ in 0..<5 { await Task.yield() }
+        await drainMainQueue()
 
         #expect(wakeCount == 1)
         loop.cancel()
@@ -5398,7 +5398,7 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
 
-        while instance.liveRemovableMedia.isEmpty { await Task.yield() }
+        try await waitForChange { !instance.liveRemovableMedia.isEmpty }
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.lastAttachedReadOnly == true)
@@ -5449,7 +5449,7 @@ struct VMLibraryViewModelTests {
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         viewModel.mountGuestAgentInstaller(on: instance)
-        await Task.yield()
+        try await instance.waitUntilIdle()
 
         #expect(presenter.showInstallerMountedAlert == true)
         #expect(presenter.installerMountedDelivery == .virtio)
@@ -5623,8 +5623,7 @@ struct VMLibraryViewModelTests {
                 RemovableMediaItem(id: idA, path: "/tmp/a.iso", readOnly: true),
             ]
         }
-        // Drain whatever the reconcile Task may have scheduled.
-        for _ in 0..<20 { await Task.yield() }
+        try await instance.waitUntilIdle()
 
         #expect(mock.detachCallCount == 0)
         #expect(mock.attachCallCount == 0)
@@ -5651,8 +5650,8 @@ struct VMLibraryViewModelTests {
         // The user's removal intent persists — config says "no media", live
         // still has it.
         viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
-        while !presenter.showError { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        try await instance.waitUntilIdle()
+        #expect(presenter.showError)
 
         // Detach failed → device still mounted → config must reflect that.
         let rolled = try #require(instance.configuration.removableMedia)
@@ -5680,8 +5679,8 @@ struct VMLibraryViewModelTests {
                 RemovableMediaItem(id: id, path: "/tmp/missing.iso", readOnly: true)
             ]
         }
-        while !presenter.showError { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        try await instance.waitUntilIdle()
+        #expect(presenter.showError)
 
         // Attach failed → device never mounted → config rolled back to nil.
         #expect(instance.configuration.removableMedia == nil)
@@ -5708,8 +5707,8 @@ struct VMLibraryViewModelTests {
         var newItem = oldItem
         newItem.path = "/tmp/new.iso"
         viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = [newItem] }
-        while !presenter.showError { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        try await instance.waitUntilIdle()
+        #expect(presenter.showError)
 
         // Swap failed → the rolled-back entry must still carry the persisted
         // label and note, not a bare reconstruction from path/readOnly alone.
@@ -5738,8 +5737,8 @@ struct VMLibraryViewModelTests {
         viewModel.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/new.iso", readOnly: true)]
         }
-        while !presenter.showError { await Task.yield() }
-        for _ in 0..<5 { await Task.yield() }
+        try await instance.waitUntilIdle()
+        #expect(presenter.showError)
 
         let rolled = try #require(instance.configuration.removableMedia)
         #expect(rolled.count == 1)

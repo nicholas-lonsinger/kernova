@@ -214,7 +214,8 @@ struct VMRemovableMediaReconcilerTests {
         ]
 
         harness.reconciler.apply(for: instance, old: old, new: new, under: .edit(.hotPlugMedia))
-        for _ in 0..<5 { await Task.yield() }
+        // Nothing owed: no reconcile holds the VM or waits to.
+        #expect(instance.isIdle)
 
         #expect(mock.attachCallCount == 0)
         #expect(mock.detachCallCount == 0)
@@ -231,7 +232,8 @@ struct VMRemovableMediaReconcilerTests {
         let new = configWithRemovable(old, path: "/tmp/install.iso")
 
         harness.reconciler.apply(for: instance, old: old, new: new, under: .edit(.hotPlugMedia))
-        for _ in 0..<5 { await Task.yield() }
+        // Nothing owed: no reconcile holds the VM or waits to.
+        #expect(instance.isIdle)
 
         #expect(mock.attachCallCount == 0)
         #expect(mock.detachCallCount == 0)
@@ -249,7 +251,8 @@ struct VMRemovableMediaReconcilerTests {
         let new = configWithRemovable(old, path: "/tmp/install.iso")
 
         harness.reconciler.apply(for: instance, old: old, new: new, under: .edit(.hotPlugMedia))
-        for _ in 0..<5 { await Task.yield() }
+        // Nothing owed: no reconcile holds the VM or waits to.
+        #expect(instance.isIdle)
 
         #expect(mock.attachCallCount == 0)
         #expect(mock.detachCallCount == 0)
@@ -399,7 +402,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
         }
-        for _ in 0..<10 { await Task.yield() }
+        try await instance.waitUntilIdle()
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
@@ -416,7 +419,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0 = configWithRemovable($0, path: "/tmp/install.iso")
         }
-        for _ in 0..<10 { await Task.yield() }
+        try await instance.waitUntilIdle()
 
         #expect(mock.attachCallCount == 1)
         #expect(mock.detachCallCount == 0)
