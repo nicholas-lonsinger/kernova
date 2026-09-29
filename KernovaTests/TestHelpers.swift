@@ -608,9 +608,9 @@ func expectEOF(on channel: VsockChannel) async {
 /// observed stored properties qualify (e.g. `agentStatus` reads `isUnresponsive`),
 /// but tracking only registers the properties actually read on the arming pass:
 /// a getter that short-circuits *before* reaching the property that will change
-/// won't wake the waiter, which then resolves only via the deadline backstop. A
-/// predicate over plain non-observed state would never be re-evaluated and must
-/// keep `waitUntil`.
+/// won't wake the waiter. A predicate that holds only once the backstop wakes
+/// the wait read no state that changed under observation, and fails it — a
+/// predicate over plain non-observed state must keep `waitUntil`.
 @MainActor
 func waitForChange(
     timeout: Duration = .seconds(testWaitBackstop),
@@ -624,8 +624,22 @@ func waitForChange(
                 "Observed condition not met within \(timeout)",
                 stopwatch: stopwatch, timeout: timeout)
         }
-        await armObservationOnce(deadline: deadline, predicate: predicate)
+        let wake = await armObservationOnce(deadline: deadline, predicate: predicate)
+        if wake == .backstop, predicate() {
+            throw TestFailure.backstop(
+                "Condition held only when the backstop woke the wait: no observed change to what the predicate reads made it hold",
+                stopwatch: stopwatch, timeout: timeout)
+        }
     }
+}
+
+/// What resumed one ``armObservationOnce(deadline:predicate:)``.
+private enum ObservationWake {
+    /// A change to observed state the predicate read, or the predicate already
+    /// holding at arm time.
+    case woken
+    /// The deadline.
+    case backstop
 }
 
 /// Suspends until the next change to any `@Observable` property read by
@@ -639,12 +653,12 @@ func waitForChange(
 private func armObservationOnce(
     deadline: ContinuousClock.Instant,
     predicate: @escaping @MainActor () -> Bool
-) async {
+) async -> ObservationWake {
     // Captured so it can be cancelled once the wait resolves via observation (or
     // the immediate-hit re-check); otherwise every happy-path arm would leak a
     // Task sleeping until `deadline`, the opposite of the "zero wake-ups" goal.
     var backstop: Task<Void, Never>?
-    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+    let wake = await withCheckedContinuation { (cont: CheckedContinuation<ObservationWake, Never>) in
         let once = ResumeOnce()
         // Arm tracking over whatever observable state the predicate reads. The
         // `onChange` fires once, during the willSet of the first such property
@@ -653,26 +667,27 @@ private func armObservationOnce(
         withObservationTracking {
             _ = predicate()
         } onChange: {
-            once.fire { cont.resume() }
+            once.fire { cont.resume(returning: .woken) }
         }
         // Close the arm-vs-change race: a change may have landed between the
         // outer while-check and arming. If the predicate already holds, resume
         // now so the loop re-checks instead of waiting for a change that may
         // never come.
         if predicate() {
-            once.fire { cont.resume() }
+            once.fire { cont.resume(returning: .woken) }
             return
         }
         // Backstop: resume at the deadline so a genuinely stuck condition fails
         // the wait instead of hanging.
         backstop = Task { @MainActor in
             try? await Task.sleep(until: deadline, clock: ContinuousClock())
-            once.fire { cont.resume() }
+            once.fire { cont.resume(returning: .backstop) }
         }
     }
     // Resolved (observation, immediate hit, or the backstop itself) — cancel the
     // backstop so it doesn't linger asleep until `deadline`.
     backstop?.cancel()
+    return wake
 }
 
 // MARK: - View-tree search

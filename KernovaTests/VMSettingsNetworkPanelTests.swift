@@ -82,6 +82,14 @@ struct VMSettingsNetworkPanelTests {
 
     // MARK: - IP Address row
 
+    /// Reads the host's table once and lets the pane repaint from what it
+    /// found: the repaint is a main-actor task a published address enqueues,
+    /// so it has run once the main queue drains behind it.
+    private func readGuestAddresses(_ viewModel: VMLibraryViewModel) async {
+        await viewModel.library.guestAddresses.readForTesting()
+        await drainMainQueue()
+    }
+
     @Test("A running Shared VM reads not seen, then fills in the address the host saw, on both surfaces")
     func runningSharedVMFillsInTheObservedAddress() async throws {
         let arpTable = ScriptedARPTable()
@@ -92,9 +100,9 @@ struct VMSettingsNetworkPanelTests {
         #expect(visibleLabel("Not seen on the network", in: vc.view))
 
         arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
-        await viewModel.library.guestAddresses.readForTesting()
+        await readGuestAddresses(viewModel)
 
-        try await waitForChange { visibleLabel("192.168.64.10", in: vc.view) }
+        #expect(visibleLabel("192.168.64.10", in: vc.view))
         #expect(visibleLabel("IP address", in: vc.view))
         // The Network card states the same address: nothing else re-renders it,
         // so the fill-in has to reach both.
@@ -110,9 +118,9 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(
             mode: .hostOnly, isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
 
-        await viewModel.library.guestAddresses.readForTesting()
+        await readGuestAddresses(viewModel)
 
-        try await waitForChange { visibleLabel("192.168.128.5", in: vc.view) }
+        #expect(visibleLabel("192.168.128.5", in: vc.view))
     }
 
     @Test("A stopped VM shows no IP Address row, whatever the host table still lists")
@@ -121,7 +129,7 @@ struct VMSettingsNetworkPanelTests {
             ScriptedARPTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]))
         let (vc, _) = makeNetworkController(viewModel: viewModel)
 
-        await viewModel.library.guestAddresses.readForTesting()
+        await readGuestAddresses(viewModel)
 
         #expect(!visibleLabel("IP address", in: vc.view))
     }
