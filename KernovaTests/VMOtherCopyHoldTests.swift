@@ -13,18 +13,16 @@ import Testing
 @Suite("Another copy's hold", .serialized, .caseScoped)
 @MainActor
 struct VMOtherCopyHoldTests {
-    /// An in-memory store that counts each run-lock probe by whether it ran
-    /// inside a coordinated write — so a test can tell the in-write check
-    /// from admission's probe, which runs before any write.
+    /// An in-memory store that counts each run-lock probe made inside a
+    /// coordinated write — so a test can tell the in-write check from
+    /// admission's probe, which runs before any write.
     private final class WriteObservingBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         let store = InMemoryVMBundleFiles()
         private let lock = NSLock()
         private var openWrites = 0
         private var inside = 0
-        private var outside = 0
 
         var probesInsideWrite: Int { lock.withLock { inside } }
-        var probesOutsideWrite: Int { lock.withLock { outside } }
 
         func lockBundle(at bundleURL: URL) throws -> (any VMBundleLockHolder)? {
             try store.lockBundle(at: bundleURL)
@@ -32,7 +30,7 @@ struct VMOtherCopyHoldTests {
 
         func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool {
             lock.withLock {
-                if openWrites > 0 { inside += 1 } else { outside += 1 }
+                if openWrites > 0 { inside += 1 }
             }
             return try store.isBundleLockedElsewhere(at: bundleURL)
         }

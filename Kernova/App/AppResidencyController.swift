@@ -452,11 +452,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// The resident app's reopen leg: present the library only when nothing is
     /// already on screen. Never requests activation — a reopen already carries
     /// one.
-    ///
-    /// `hasVisibleWindows` is ignored: AppKit's own count answers a different
-    /// question than ``reopenPresentation(hasOnScreenUserWindow:)`` — it counts
-    /// no untracked panel and reads a miniaturized window as absent.
-    func handleReopen(hasVisibleWindows: Bool) {
+    func handleReopen() {
         switch Self.reopenPresentation(hasOnScreenUserWindow: hasOnScreenUserWindow) {
         case .library:
             presentSummonedInterface()

@@ -107,6 +107,7 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
 
     private var afterPublish: (@MainActor () -> Void)?
 
+    // periphery:ignore:parameters isolation - `isolated` keeps `body` on the caller's actor
     /// Runs `body` with `hook` installed to run on the main actor once each
     /// publish's rename has landed and before the publishing arrival resumes —
     /// the window between the rename and the arrival's adoption. The publish

@@ -9,6 +9,7 @@ import Testing
 struct ClipboardRichTextPreviewViewTests {
     /// How the source colored the previewed text.
     enum SourceColor: CaseIterable, Sendable {
+        // periphery:ignore - reached through `allCases`, as a test argument
         /// No foreground color of its own.
         case none
         /// An explicit black, which the RTF reader keeps.

@@ -13,13 +13,6 @@ import Virtualization
 struct VMSettingsNetworkPanelTests {
     private let preferences = makeTestPreferences()
 
-    /// The Network panel, for the seams it owns rather than the shell.
-    private func networkPanel(in vc: VMSettingsViewController)
-        -> VMSettingsNetworkPanelViewController?
-    {
-        vc.settingsPanelForTesting(.network) as? VMSettingsNetworkPanelViewController
-    }
-
     private func makeViewModel(
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
         arpTable: ScriptedARPTable = ScriptedARPTable(),

@@ -1104,6 +1104,7 @@ final class VMActivity {
 
     // MARK: - Session Lifecycle
 
+    // periphery:ignore:parameters bringUp - an access token: its type admits the caller
     /// Installs the context `make` opens as the session context of the
     /// bring-up holding the VM, ending whatever attempt that bring-up had open
     /// first — so an attempt's pipes and security scopes are always released
@@ -1130,6 +1131,7 @@ final class VMActivity {
     }
     #endif
 
+    // periphery:ignore:parameters bringUp - an access token: its type admits the caller
     /// Takes the pipes and cold-attached removable media a configuration build
     /// produced into the bring-up's open session context.
     func adoptBuildResult(

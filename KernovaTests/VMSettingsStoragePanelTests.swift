@@ -117,13 +117,6 @@ struct VMSettingsStoragePanelTests {
         .compactMap(\.toolTip)
     }
 
-    /// Stands in for the observation pass that follows a model write —
-    /// ``VMSettingsOverviewTests``'s own `reapply(_:_:)`, not shared because
-    /// each suite's helper closes over its own controller triple shape.
-    private func reapply(_ vc: VMSettingsViewController, _ pair: (VMInstance, VMLibraryViewModel)) {
-        vc.reconfigure(instance: pair.0, viewModel: pair.1, isReadOnly: false)
-    }
-
     // MARK: - Per-row delete confirmation prompt
 
     @Test("Internal disk delete offers Move-to-Trash only (no keep-file)")

@@ -9,9 +9,9 @@ import SwiftSyntaxMacros
 /// The message literal reaches `os.Logger` byte for byte, which is what keeps
 /// the compiler's `os_log` constant-folding — and with it `logd`-side laziness,
 /// per-value privacy and `format:`/`align:` — intact.
-public struct LogMacro: ExpressionMacro {
+struct LogMacro: ExpressionMacro {
     /// Expands one `#log` call.
-    public static func expansion(
+    static func expansion(
         of node: some FreestandingMacroExpansionSyntax,
         in context: some MacroExpansionContext
     ) -> ExprSyntax {

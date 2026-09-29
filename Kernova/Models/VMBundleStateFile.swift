@@ -205,6 +205,7 @@ struct VMBundleFiles: Sendable {
         try access.reading(url) { try VMBundleStateFile.configuration.read(from: $0) }
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Applies `change` to what `file` holds on disk and replaces the file with
     /// the result, answering the value the file now holds — the commit a
     /// ``VMBundle`` makes, which only it can mint `key` for.

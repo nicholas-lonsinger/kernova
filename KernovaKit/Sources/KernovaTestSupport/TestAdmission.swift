@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 import KernovaLogging
 
 // MARK: - TestAdmissionGate
@@ -87,7 +86,7 @@ final class TestAdmissionGate: @unchecked Sendable {
 /// The width is read once, from the first source below that parses to a
 /// non-negative integer. Zero — and no source at all — means pass-through, so
 /// the same binary serves both arms of a measurement.
-public enum TestAdmission {
+enum TestAdmission {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "TestAdmission")
 
@@ -108,19 +107,19 @@ public enum TestAdmission {
     /// before its body starts. Narrowing is the flake reproducer: at 8, one
     /// branch run surfaced with failure text a family the default width had
     /// shown only piecemeal (2026-08-20, `chore/test-admission-gate`).
-    public static let width: Int = resolveWidth()
+    static let width: Int = resolveWidth()
 
     /// The shared gate, sized by ``width``.
     private static let gate = TestAdmissionGate(width: width)
 
     /// Suspends until this test case is admitted; a no-op when gating is off.
-    public static func admit() async {
+    static func admit() async {
         guard width > 0 else { return }
         await gate.acquire()
     }
 
     /// Returns this test case's permit; a no-op when gating is off.
-    public static func relinquish() {
+    static func relinquish() {
         guard width > 0 else { return }
         gate.release()
     }

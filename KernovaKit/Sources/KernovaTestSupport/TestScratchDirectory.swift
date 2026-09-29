@@ -76,7 +76,6 @@ final class TestScratchLedger: @unchecked Sendable {
     /// A removal that fails for any reason but absence is recorded as an issue
     /// against the running test: the directory would otherwise outlive it.
     static func scoping<Value>(
-        isolation: isolated (any Actor)? = #isolation,
         _ body: () async throws -> Value
     ) async rethrows -> Value {
         let ledger = TestScratchLedger()

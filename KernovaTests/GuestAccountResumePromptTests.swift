@@ -15,13 +15,10 @@ struct GuestAccountResumePromptTests {
     private let presenter = MockVMLibraryPresenting()
     private let preferences = makeTestPreferences()
 
-    private func makeViewModel() -> (
-        VMLibraryViewModel, MockVMStorageService, MockVirtualizationService
-    ) {
-        let storage = MockVMStorageService()
+    private func makeViewModel() -> (VMLibraryViewModel, MockVirtualizationService) {
         let virtualization = MockVirtualizationService()
         let viewModel = VMLibraryViewModel(
-            storageService: storage,
+            storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
             virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
@@ -33,7 +30,7 @@ struct GuestAccountResumePromptTests {
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
         )
         viewModel.presenter = presenter
-        return (viewModel, storage, virtualization)
+        return (viewModel, virtualization)
     }
 
     private func makeIntent() -> GuestAccountIntent {
@@ -46,8 +43,7 @@ struct GuestAccountResumePromptTests {
     /// with an install still to run, or `.stopped` with nothing between the
     /// start and the boot.
     private func makeVM(
-        in viewModel: VMLibraryViewModel, storage: MockVMStorageService,
-        intent: GuestAccountIntent?, installPending: Bool = true,
+        in viewModel: VMLibraryViewModel, intent: GuestAccountIntent?, installPending: Bool = true,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = viewModel.library.registerFixture(name: "Sequoia", guestOS: .macOS) {
@@ -75,8 +71,8 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("Starting a VM that owes an account asks for its password")
     func aStartAsksForThePassword() async throws {
-        let (viewModel, storage, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
+        let (viewModel, _) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
 
         await viewModel.start(instance)
 
@@ -94,8 +90,8 @@ struct GuestAccountResumePromptTests {
 
     @Test("A VM whose install creates no account is started without a question")
     func aVMWithNoIntentIsNotAsked() async {
-        let (viewModel, storage, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: nil)
+        let (viewModel, _) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: nil)
 
         await viewModel.start(instance)
 
@@ -106,8 +102,8 @@ struct GuestAccountResumePromptTests {
 
     @Test("A recovery boot asks nothing — it cannot spend the account anyway")
     func aRecoveryBootIsNotAsked() async {
-        let (viewModel, storage, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
+        let (viewModel, _) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
 
         await viewModel.start(instance, bootIntoRecovery: true)
 
@@ -119,9 +115,9 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A supplied password reaches the boot the loop re-issues")
     func aSuppliedPasswordReachesTheBoot() async throws {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
+            in: viewModel, intent: makeIntent(), installPending: false)
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
         await viewModel.start(instance)
@@ -142,9 +138,9 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("Skipping setup re-issues the start, which boots with no account")
     func skippingBootsWithoutTheAccount() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
+            in: viewModel, intent: makeIntent(), installPending: false)
         presenter.guestAccountPasswordAnswer = .skip
 
         await viewModel.start(instance)
@@ -160,9 +156,9 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A skip whose boot failed does not put the question back on the next Start")
     func aSkipWhoseBootFailedDoesNotAskAgain() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
+            in: viewModel, intent: makeIntent(), installPending: false)
         virtualization.startError = VirtualizationError.noVirtualMachine
         presenter.guestAccountPasswordAnswer = .skip
 
@@ -180,8 +176,8 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("Cancelling the sheet starts nothing and says nothing")
     func cancellingStartsNothing() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
         presenter.guestAccountPasswordAnswer = .cancelled
 
         await viewModel.start(instance)
@@ -202,9 +198,9 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A password macOS turns down never reaches a boot")
     func aRefusedPasswordNeverReachesTheBoot() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
+            in: viewModel, intent: makeIntent(), installPending: false)
         presenter.guestAccountPasswordAnswer = .password("a")
 
         await viewModel.start(instance)
@@ -222,9 +218,9 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A failed boot keeps the answer, so the next start asks nothing")
     func aFailedBootKeepsTheAnswer() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false)
+            in: viewModel, intent: makeIntent(), installPending: false)
         virtualization.startError = VirtualizationError.noVirtualMachine
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
@@ -247,12 +243,12 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("The start-failed recovery removes, then runs the ordinary Start that asks")
     func theStartFailedRecoveryAsksThroughTheOrdinaryStart() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let disk = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
         let keeper = StorageDisk(
             path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false
+            in: viewModel, intent: makeIntent(), installPending: false
         ) { $0.storageDisks = [disk, keeper] }
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
@@ -274,10 +270,10 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A start-failed recovery whose removal refuses starts nothing")
     func aRefusedRecoveryRemovalStartsNothing() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
+        let (viewModel, virtualization) = makeViewModel()
         let sole = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
         let instance = makeVM(
-            in: viewModel, storage: storage, intent: makeIntent(), installPending: false
+            in: viewModel, intent: makeIntent(), installPending: false
         ) { $0.storageDisks = [sole] }
         presenter.guestAccountPasswordAnswer = .password("analytical-engine")
 
@@ -300,8 +296,8 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("A start-failed recovery for a VM that left the library starts nothing")
     func aRecoveryForADepartedVMStartsNothing() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
         viewModel.library.evict(instance)
 
         await viewModel.removeStartFailedAttachmentAndStart(
@@ -321,8 +317,8 @@ struct GuestAccountResumePromptTests {
     @available(macOS 27.0, *)
     @Test("With no window to ask in, the refusal takes the ordinary error surface")
     func noPresenterSurfacesTheRefusal() async {
-        let (viewModel, storage, virtualization) = makeViewModel()
-        let instance = makeVM(in: viewModel, storage: storage, intent: makeIntent())
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
         viewModel.presenter = nil
 
         await viewModel.start(instance)

@@ -251,6 +251,7 @@ extension VMBundle {
         private let owner: VMInstance
         private let authority: VMEditPermit.Authority
 
+        // periphery:ignore:parameters key - an access token: its type admits the caller
         /// `key` is what only ``VMEditPermit`` mints, over its own VM.
         init(
             of owner: VMInstance, authority: VMEditPermit.Authority,
@@ -351,6 +352,7 @@ extension VMBundle {
     struct MachineFiles: ~Copyable, Sendable {
         private let owner: VMInstance
 
+        // periphery:ignore:parameters key - an access token: its type admits the caller
         /// `key` is what only ``VMOperationContext`` mints, over its own VM.
         init(of owner: VMInstance, _ key: VMOperationContext.MachineFilesKey) {
             self.owner = owner

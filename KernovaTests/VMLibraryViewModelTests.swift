@@ -1705,8 +1705,8 @@ struct VMLibraryViewModelTests {
     /// A VM in the view model's library, which is what lets the forward's verb
     /// resolve it.
     private func registerConfigurationVM(
-        in viewModel: VMLibraryViewModel, storage: MockVMStorageService,
-        phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
+        in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .stopped,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = viewModel.library.registerFixture(phase: phase, mutate: mutate)
         return instance
@@ -1719,8 +1719,8 @@ struct VMLibraryViewModelTests {
 
     @Test("the configuration forward hands a consent refusal back without presenting it")
     func setConfigurationForwardReturnsConsentWithoutPresenting() throws {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = registerConfigurationVM(in: viewModel, storage: storage) {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = registerConfigurationVM(in: viewModel) {
             $0.clipboardSharingEnabled = true
             $0.clipboardPassthroughEnabled = false
         }
@@ -1745,9 +1745,9 @@ struct VMLibraryViewModelTests {
 
     @Test("the configuration forward presents a refusal, naming the setting it refused")
     func setConfigurationForwardPresentsARefusal() {
-        let (viewModel, storage, _, _, _) = makeViewModel()
+        let (viewModel, _, _, _, _) = makeViewModel()
         let instance = registerConfigurationVM(
-            in: viewModel, storage: storage, phase: .running(sessionID: UUID()))
+            in: viewModel, phase: .running(sessionID: UUID()))
         let before = instance.configuration
 
         let outcome = viewModel.setConfiguration(
@@ -1764,7 +1764,7 @@ struct VMLibraryViewModelTests {
     @Test("the configuration forward leaves a failed save to the library's own alert")
     func setConfigurationForwardLeavesAFailedSaveToTheLibrary() {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = registerConfigurationVM(in: viewModel, storage: storage)
+        let instance = registerConfigurationVM(in: viewModel)
         storage.saveConfigurationError = CocoaError(.fileWriteNoPermission)
         let before = instance.configuration
 
@@ -2832,8 +2832,7 @@ struct VMLibraryViewModelTests {
     /// A VM in the library on `mac` in `mode` — the state a load leaves
     /// behind, without going through a scan.
     private func makeNetworkedInstance(
-        in viewModel: VMLibraryViewModel, using vmnet: MockVmnetNetworkProvider,
-        mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM"
+        in viewModel: VMLibraryViewModel, mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM"
     ) -> VMInstance {
         let instance = viewModel.library.admitFixture(name: name) {
             $0.networkEnabled = true
@@ -2853,9 +2852,9 @@ struct VMLibraryViewModelTests {
     ) -> (VMLibraryViewModel, VMInstance, VMInstance) {
         let (viewModel, _, _, _, _) = makeViewModel(
             storageService: storage, vmnetNetworks: vmnet)
-        let holder = makeNetworkedInstance(in: viewModel, using: vmnet, mac: held, name: "Holder")
+        let holder = makeNetworkedInstance(in: viewModel, mac: held, name: "Holder")
         let editor = makeNetworkedInstance(
-            in: viewModel, using: vmnet, mac: editing, name: "Editing VM")
+            in: viewModel, mac: editing, name: "Editing VM")
         return (viewModel, holder, editor)
     }
 
@@ -3507,7 +3506,6 @@ struct VMLibraryViewModelTests {
     /// `viewModel` with its configuration persisted.
     private func makePendingLinuxVM(
         in viewModel: VMLibraryViewModel,
-        storage: MockVMStorageService,
         destinationPath: String? = nil
     ) -> VMInstance {
         let instance = viewModel.library.registerFixture(name: "Debian") {
@@ -3575,9 +3573,9 @@ struct VMLibraryViewModelTests {
         resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
             pattern: "debian-13.*-arm64-netinst.iso")
         let virtService = MockVirtualizationService()
-        let (viewModel, storage, _, _, _) = makeViewModel(
+        let (viewModel, _, _, _, _) = makeViewModel(
             virtualizationService: virtService, linuxImageResolveService: resolveService)
-        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        let instance = makePendingLinuxVM(in: viewModel)
 
         await viewModel.start(instance)
         await instance.setupOperationTask?.value
@@ -3608,10 +3606,10 @@ struct VMLibraryViewModelTests {
         downloadService.downloadedContents = contents
 
         let virtService = MockVirtualizationService()
-        let (viewModel, storage, _, _, _) = makeViewModel(
+        let (viewModel, _, _, _, _) = makeViewModel(
             virtualizationService: virtService, linuxImageResolveService: resolveService,
             downloadService: downloadService, downloadsDirectory: downloads)
-        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        let instance = makePendingLinuxVM(in: viewModel)
 
         await viewModel.start(instance)
         // The boot is a fresh admission the setup's outcome chains, so it is
@@ -3629,9 +3627,9 @@ struct VMLibraryViewModelTests {
     @Test("A second Start during a running Linux download is refused as busy")
     func startDoesNotRestartAnInFlightLinuxDownload() async throws {
         let resolveService = MockLinuxImageResolveService()
-        let (viewModel, storage, _, _, _) = makeViewModel(
+        let (viewModel, _, _, _, _) = makeViewModel(
             linuxImageResolveService: resolveService)
-        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        let instance = makePendingLinuxVM(in: viewModel)
         try instance.launchParkedSetup()
 
         await viewModel.start(instance)
@@ -3647,7 +3645,7 @@ struct VMLibraryViewModelTests {
     @Test("cancelGuestSetup cancels a Linux download and keeps its context")
     func cancelGuestSetupCancelsLinuxDownload() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        let instance = makePendingLinuxVM(in: viewModel)
 
         let cancelStream = AsyncStream<Void>.makeStream()
         try instance.launchParkedSetup {
@@ -3666,10 +3664,10 @@ struct VMLibraryViewModelTests {
     @Test("Deleting a VM discards its pending Linux download bundle")
     func deleteDiscardsLinuxResumeData() async {
         let downloadService = MockDownloadService()
-        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
+        let (viewModel, _, _, _, _) = makeViewModel(downloadService: downloadService)
         let destination = "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
         let instance = makePendingLinuxVM(
-            in: viewModel, storage: storage, destinationPath: destination)
+            in: viewModel, destinationPath: destination)
 
         await viewModel.delete(instance)
 
@@ -3683,9 +3681,9 @@ struct VMLibraryViewModelTests {
     @Test("A permanent delete disposes of the Linux download bundle the same way")
     func permanentDeleteDiscardsLinuxResumeDataPermanently() async {
         let downloadService = MockDownloadService()
-        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
+        let (viewModel, _, _, _, _) = makeViewModel(downloadService: downloadService)
         let instance = makePendingLinuxVM(
-            in: viewModel, storage: storage,
+            in: viewModel,
             destinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")
 
         await viewModel.delete(instance, permanently: true)
@@ -3696,8 +3694,8 @@ struct VMLibraryViewModelTests {
     @Test("A Linux context with no destination yet has no bundle to discard")
     func deleteWithUnresolvedLinuxDestination() async {
         let downloadService = MockDownloadService()
-        let (viewModel, storage, _, _, _) = makeViewModel(downloadService: downloadService)
-        let instance = makePendingLinuxVM(in: viewModel, storage: storage)
+        let (viewModel, _, _, _, _) = makeViewModel(downloadService: downloadService)
+        let instance = makePendingLinuxVM(in: viewModel)
 
         await viewModel.delete(instance)
 
