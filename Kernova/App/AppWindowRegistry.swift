@@ -48,15 +48,6 @@ final class AppWindowRegistry {
         mainWindowController?.detailContainer
     }
 
-    /// Whether the library window has been dismissed (closed by the user).
-    ///
-    /// Distinguishes closed from hidden (Cmd+H) and minimized (Cmd+M).
-    var isLibraryDismissed: Bool {
-        guard let window = libraryWindow else { return false }
-        if NSApp.isHidden || window.isMiniaturized { return false }
-        return !window.isVisible
-    }
-
     func showLibrary(bringToFront: Bool) {
         residency?.prepareToPresentWindow()
         if let existingWindow = mainWindowController?.window {

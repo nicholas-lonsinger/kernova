@@ -31,7 +31,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         var sizes: [UUID: UInt64] = [:]
         var captureError: (any Error)?
         var stageError: (any Error)?
-        var restoreError: (any Error)?
         var discardError: (any Error)?
     }
 
@@ -84,11 +83,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     var stageError: (any Error)? {
         get { lock.withLock { state.stageError } }
         set { lock.withLock { state.stageError = newValue } }
-    }
-    /// Thrown by the next and every later `installRestore`.
-    var restoreError: (any Error)? {
-        get { lock.withLock { state.restoreError } }
-        set { lock.withLock { state.restoreError = newValue } }
     }
     var discardError: (any Error)? {
         get { lock.withLock { state.discardError } }
@@ -153,10 +147,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
-        try lock.withLock {
-            state.events.append(.installRestore)
-            if let error = state.restoreError { throw error }
-        }
+        lock.withLock { state.events.append(.installRestore) }
     }
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {

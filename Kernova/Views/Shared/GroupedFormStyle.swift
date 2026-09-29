@@ -228,11 +228,6 @@ final class GroupedFormFieldRow: GroupedFormControlRow {
             titleLabel: titleLabel, views: [titleLabel, control], alignment: alignment,
             spacing: Spacing.standard)
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("GroupedFormFieldRow does not support NSCoder")
-    }
 }
 
 /// A card row that can be shown and hidden after its card is built.

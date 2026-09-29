@@ -77,6 +77,7 @@ final class VMAccessoryHolders {
 
     // MARK: - Writes
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Reserves `registryID` for `instance`; refuses, changing nothing, while
     /// any VM holds it.
     func reserve(_ registryID: UInt64, for instance: VMInstance, _ key: AccessoryHoldersKey) throws {
@@ -87,6 +88,7 @@ final class VMAccessoryHolders {
         nextSequence += 1
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Records `attached` as the guest's, answering whether `instance` still
     /// held the reservation for `registryID` — `false` once its session ended
     /// or the operation that reserved it did.
@@ -102,11 +104,13 @@ final class VMAccessoryHolders {
         return true
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Releases every reservation `instance` holds whose attach never landed.
     func releaseReservations(of instance: VMInstance, _ key: AccessoryHoldersKey) {
         holders = holders.filter { $0.value.instance !== instance || $0.value.state != .attaching }
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Releases the attachment `deviceID` names on `instance`, answering it —
     /// `nil` when `instance` holds no such attachment.
     @discardableResult
@@ -122,6 +126,7 @@ final class VMAccessoryHolders {
         return nil
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Records `attached` as owed back to `instance`, when `instance`'s guest
     /// holds it and something durable identifies it.
     func oweReturn(
@@ -133,6 +138,7 @@ final class VMAccessoryHolders {
         owedReturns[identity] = instance
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Spends the return of `identity` owed to `instance`, answering whether
     /// one was.
     @discardableResult
@@ -144,6 +150,7 @@ final class VMAccessoryHolders {
         return true
     }
 
+    // periphery:ignore:parameters key - an access token: its type admits the caller
     /// Releases everything `instance` holds, and every return owed to it.
     func releaseAll(of instance: VMInstance, _ key: AccessoryHoldersKey) {
         holders = holders.filter { $0.value.instance !== instance }

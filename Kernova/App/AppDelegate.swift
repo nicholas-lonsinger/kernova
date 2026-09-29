@@ -251,10 +251,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.refreshFromOtherCopies()
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool)
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool)
         -> Bool
     {
-        lifecycle.handleReopen(hasVisibleWindows: flag)
+        // AppKit's visible-window count answers a different question than
+        // `AppResidencyController.reopenPresentation(hasOnScreenUserWindow:)`:
+        // it counts no untracked panel and reads a miniaturized window as absent.
+        lifecycle.handleReopen()
         return true
     }
 
