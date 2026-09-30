@@ -103,11 +103,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     var headerBodyText: String {
         switch mode {
         case .live:
-            "The VM's current memory and disks are captured as a restore point you can "
-                + "revert to later."
+            "The VM's current memory, disks, and settings are captured as a restore point you "
+                + "can revert to later."
         case .suspended:
-            "The memory the VM is suspended on, and its disks, are captured as a restore point "
-                + "you can revert to later."
+            "The memory the VM is suspended on, its disks, and its settings are captured as a "
+                + "restore point you can revert to later."
         case .stopped:
             "The VM's disks and settings are captured as a restore point you can revert "
                 + "to later. There is no memory image, so reverting returns the VM powered off."
@@ -120,12 +120,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         let lead =
             switch mode {
             case .live:
-                "The VM pauses briefly while its state is written, and its current settings are "
-                    + "captured with it. "
+                "The VM pauses briefly while its state is written. "
             case .suspended:
                 "The suspended session is copied as it stands, so the VM stays suspended and can "
-                    + "still be resumed, and its current settings are captured with it. "
-            case .stopped: "The VM's current settings are captured with its disks. "
+                    + "still be resumed. "
+            case .stopped: ""
             }
         return lead
             + "Disks are copied on the same volume, so the copies share their blocks with the "

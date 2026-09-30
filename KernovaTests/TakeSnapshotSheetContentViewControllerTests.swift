@@ -122,7 +122,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
     @Test("A memory-and-disks capture says so, and warns about the pause")
     func warmCopyNamesMemoryAndThePause() {
         let (sheet, _) = makeSheet(mode: .live)
-        #expect(sheet.headerBodyText.contains("memory and disks"))
+        #expect(sheet.headerBodyText.contains("memory, disks, and settings"))
         #expect(sheet.captionText.contains("pauses briefly"))
     }
 
@@ -141,7 +141,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         let (sheet, _) = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
         #expect(sheet.headerBodyText.contains("powered off"))
-        #expect(!sheet.headerBodyText.contains("memory and disks"))
+        #expect(!sheet.headerBodyText.contains("memory, disks, and settings"))
         #expect(!sheet.captionText.contains("pauses briefly"))
         // The shared-blocks note stands either way.
         #expect(sheet.captionText.contains("share their blocks"))
@@ -150,7 +150,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
     @Test("A guest powering off while the sheet is up moves its copy to disks-only")
     func updatingTheModeRewritesTheRenderedCopy() {
         let (sheet, _) = makeSheet(mode: .live)
-        let body = findLabel(containing: "memory and disks", in: sheet.view)
+        let body = findLabel(containing: "memory, disks, and settings", in: sheet.view)
         #expect(body != nil)
 
         sheet.update(mode: .stopped)
@@ -158,7 +158,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.mode == .stopped)
         // The same labels, rewritten — not a stale copy left on screen.
         #expect(body?.stringValue.contains("powered off") == true)
-        #expect(findLabel(containing: "memory and disks", in: sheet.view) == nil)
+        #expect(findLabel(containing: "memory, disks, and settings", in: sheet.view) == nil)
         #expect(findLabel(containing: "pauses briefly", in: sheet.view) == nil)
     }
 }
