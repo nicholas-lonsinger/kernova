@@ -137,39 +137,42 @@ struct VMConfigurationKeyRegistryTests {
         #expect(VMConfigurationKeyRegistry.key(named: "cpu") == nil)
     }
 
-    @Test("Every key's witness change moves it on every guest it applies to, and is taken")
-    func everyWitnessChangesItsKey() {
-        for guestOS in VMGuestOS.allCases {
-            let witness = VMConfigurationKeyRegistry.witness(for: guestOS)
-            for key in VMConfigurationKeyRegistry.keys where key.applies(to: guestOS) {
-                let value = key.read(witness.to)
-                #expect(value != key.read(witness.from), "\(key.name) on \(guestOS)")
-                #expect(
-                    key.accepts(value, settings: witness.from, context: witness.context),
-                    "\(key.name) on \(guestOS)")
-            }
+    @Test("A descriptor reports the key's own gate")
+    func descriptorsReportTheGate() {
+        for key in VMConfigurationKeyRegistry.keys {
+            #expect(key.descriptor.name == key.name)
+            #expect(key.descriptor.summary == key.summary)
+            #expect(
+                key.descriptor.editableWhileRunning
+                    == VMGuestOS.allCases.allSatisfy { key.gate($0) != .atRest })
+            #expect(!key.summary.isEmpty)
         }
     }
 
-    @Test("The keyspace listing answers, per guest, whether a running VM takes each key")
-    func descriptorsAnswerPerGuest() throws {
-        func listing(_ name: String) throws -> [String: Bool] {
-            let key = try #require(VMConfigurationKeyRegistry.key(named: name))
-            #expect(key.descriptor.name == key.name)
-            #expect(key.descriptor.summary == key.summary)
-            return key.descriptor.editableWhileRunning
-        }
-        #expect(try listing("cpus") == ["macOS": false, "linux": false])
-        #expect(try listing("ephemeral") == ["macOS": true, "linux": true])
+    @Test("Each gate names the capability that decides it")
+    func gatesNameTheirCapability() throws {
+        let cpus = try #require(VMConfigurationKeyRegistry.key(named: "cpus"))
+        #expect(cpus.capability(writing: "4", for: .macOS) == .editConfiguration)
+
+        let ephemeral = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
+        #expect(ephemeral.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
+
+        let bridged = try #require(
+            VMConfigurationKeyRegistry.key(named: "network.bridgedInterface"))
+        #expect(bridged.capability(writing: "en0", for: .macOS) == .switchNetworkMode)
+
+        // A hot swap between attachable modes, but taking the device away is
+        // not one — devices cannot be added or removed at runtime.
+        let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
+        #expect(mode.capability(writing: "bridged", for: .macOS) == .switchNetworkMode)
+        #expect(mode.capability(writing: "none", for: .macOS) == .editConfiguration)
+
         // A Linux guest's clipboard rides a console device the machine is
         // built with; a macOS guest's rides the agent's channel.
-        #expect(try listing("clipboard.sharing") == ["macOS": true, "linux": false])
-        // A hot swap between attachable modes, whose device the VM keeps.
-        #expect(try listing("network.mode") == ["macOS": true, "linux": true])
-        #expect(try listing("network.mac") == ["macOS": false, "linux": false])
-        // A key that applies to one guest answers for that guest alone.
-        #expect(try listing("dropFiles") == ["macOS": true])
-        for key in VMConfigurationKeyRegistry.keys { #expect(!key.summary.isEmpty) }
+        let clipboard = try #require(VMConfigurationKeyRegistry.key(named: "clipboard.sharing"))
+        #expect(clipboard.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
+        #expect(clipboard.capability(writing: "true", for: .linux) == .editConfiguration)
+        #expect(!clipboard.descriptor.editableWhileRunning)
     }
 
     // MARK: - Values
@@ -199,7 +202,7 @@ struct VMConfigurationKeyRegistryTests {
     @Test("System keys takes and reads back every mode, live")
     func systemKeysTakesEveryMode() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "input.systemKeys"))
-        #expect(key.descriptor.editableWhileRunning == ["macOS": true, "linux": true])
+        #expect(VMGuestOS.allCases.allSatisfy { key.gate($0) == .live })
 
         for mode in VMSystemKeyForwarding.allCases {
             var config = makeConfiguration()

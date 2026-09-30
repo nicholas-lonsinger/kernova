@@ -124,17 +124,6 @@ enum VMCapability: CaseIterable, Hashable {
         }
     }
 
-    /// The capabilities that write a VM's settings — every one the
-    /// configuration verb performs.
-    static let settingsWrites = allCases.filter { $0.verb == .setConfiguration }
-
-    /// Every class a settings write is admitted under: the union of
-    /// ``settingsWrites``' classes, so nothing a live guest reports
-    /// (``VMEditClasses/observations``) ever admits a user's write.
-    static let settingsWriterClasses = settingsWrites.reduce(into: VMEditClasses()) {
-        $0.formUnion($1.editClasses ?? [])
-    }
-
     /// The request admission decides for this capability on `instance`, or
     /// `nil` when the VM's state names none — a capture from a phase no mode
     /// is taken from.
@@ -250,56 +239,15 @@ struct VMCapabilityCatalog {
         decision(capability, on: instance, posture: .offer) == .admit
     }
 
-    /// The classes `instance` admits a settings write under right now, in
-    /// `posture` — the union of the ``VMCapability/settingsWrites`` it takes.
-    func admittedSettingsWriters(
-        on instance: VMInstance, posture: VMAdmission.Posture
-    ) -> VMEditClasses {
-        VMCapability.settingsWrites.reduce(into: VMEditClasses()) { classes, capability in
-            let admitted =
-                switch posture {
-                case .offer: isAvailable(capability, on: instance)
-                case .commit: accepts(capability, on: instance)
-                }
-            if admitted, let written = capability.editClasses { classes.formUnion(written) }
-        }
-    }
-
     /// Whether writing `value` to `key` on `instance` can be invoked right now:
-    /// the key's own refusals, and a VM that admits every field the write moves
-    /// (``VMStateFieldClasses``) — what a control writing one value reads for
-    /// its `isEnabled`.
+    /// the capability the configuration verb gates it on, and the key's own
+    /// refusals — what a control writing one key reads for its `isEnabled`.
     func isAvailable(
         _ key: VMConfigurationKey, writing value: String, on instance: VMInstance
     ) -> Bool {
-        let context = VMConfigurationWriteContext(instance)
-        guard let authority = settingsAuthority(on: instance),
-            key.accepts(value, settings: instance.settings, context: context),
-            let writers = key.fieldWriters(
-                writing: value, over: instance.settings, context: context)
-        else { return false }
-        return writers.allSatisfy(authority.mayWrite)
-    }
-
-    /// Whether `instance` takes a change to `key` right now, whatever the
-    /// value — what a control offering every value of one key reads for its
-    /// `isEnabled`.
-    func isAvailable(_ key: VMConfigurationKey, on instance: VMInstance) -> Bool {
-        let guestOS = instance.configuration.guestOS
-        guard key.applies(instance.configuration),
-            let authority = settingsAuthority(on: instance)
-        else { return false }
-        return key.fieldWriters(on: guestOS).allSatisfy(authority.mayWrite)
-    }
-
-    /// The authority a settings write offered on `instance` now acts with, or
-    /// `nil` when the VM admits none.
-    private func settingsAuthority(on instance: VMInstance) -> VMEditPermit.Authority? {
-        let admitted = admittedSettingsWriters(on: instance, posture: .offer)
-        guard instance.activity.decide(.edit(admitted), posture: .offer) == .admit else {
-            return nil
-        }
-        return .edit(admitted)
+        isAvailable(
+            key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
+            && key.accepts(value, for: instance)
     }
 
     /// Whether one snapshot's delete is offered, and what bars it when it is

@@ -9,12 +9,11 @@ public struct ConfigurationKeyDescriptor: Codable, Sendable, Hashable {
     public let name: String
     /// One line naming the unit or the accepted values.
     public let summary: String
-    /// Whether a running VM takes a write of this key, for each guest the key
-    /// applies to, keyed by the guest's wire name (``VMInfo/guestOS``).
-    public let editableWhileRunning: [String: Bool]
+    /// Whether a running VM takes a write of this key.
+    public let editableWhileRunning: Bool
 
     /// Describes one key.
-    public init(name: String, summary: String, editableWhileRunning: [String: Bool]) {
+    public init(name: String, summary: String, editableWhileRunning: Bool) {
         self.name = name
         self.summary = summary
         self.editableWhileRunning = editableWhileRunning
