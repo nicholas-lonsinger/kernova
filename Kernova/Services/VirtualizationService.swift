@@ -425,7 +425,7 @@ final class VirtualizationService {
         }
         #log(
             Self.logger, .notice,
-            "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            "Took a cold snapshot '\(snapshot.name, privacy: .public)' of stopped VM '\(instance.name, privacy: .public)'"
         )
         return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
