@@ -1176,7 +1176,7 @@ struct VMLifecycleCoordinatorTests {
 
         #expect(
             instance.configuration.installedImage
-                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil))
     }
 
     @Test("downloadLinuxImage records nothing for a user-supplied URL")
@@ -1361,7 +1361,7 @@ struct VMLifecycleCoordinatorTests {
             // not the discriminated name the bytes were written to.
             #expect(filename == fixture.resolveService.resolveResult.filename)
             // The digest the manifest stated, against what the bytes hash to.
-            #expect(expected == fixture.resolveService.resolveResult.sha256)
+            #expect(expected == fixture.resolveService.resolveResult.expected?.sha256)
             #expect(actual == fixture.digest)
         }
 
@@ -1744,7 +1744,8 @@ struct VMLifecycleCoordinatorTests {
     func downloadLinuxImageFromURLChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
         let wrong = String(repeating: "0", count: 64)
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(sha256: wrong)
+        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
+            sha256: wrong, digestSource: .enteredByUser)
         let context = LinuxInstallContext(
             source: .customURL(
                 CustomLinuxImage(

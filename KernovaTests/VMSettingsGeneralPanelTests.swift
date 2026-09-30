@@ -162,7 +162,7 @@ struct VMSettingsGeneralPanelTests {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .linux,
             installedImage: .linuxCatalogImage(
-                distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+                distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil))
 
         #expect(visibleLabel("Installer image", in: vc.view))
         #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))

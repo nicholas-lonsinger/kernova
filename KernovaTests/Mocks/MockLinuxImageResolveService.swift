@@ -34,12 +34,15 @@ func makeResolvedLinuxImage(
         "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/debian-13.6.0-arm64-netinst.iso",
     filename: String = "debian-13.6.0-arm64-netinst.iso",
     sha256: String? = "ffa590beb3ba6b1b0cf480a1f6a09ff3a05c4b0e0e0a24b9c2d3e5f708192a3b",
+    digestSource: DigestSource = .checksumList(
+        URL(string: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/SHA256SUMS")
+            ?? URL(fileURLWithPath: "/")),
     sizeBytes: UInt64 = 735_358_976
 ) -> ResolvedLinuxImage {
     ResolvedLinuxImage(
         isoURL: URL(string: isoURLString) ?? URL(fileURLWithPath: "/"),
         filename: filename,
-        sha256: sha256,
+        expected: sha256.map { ExpectedDigest(sha256: $0, source: digestSource) },
         sizeBytes: sizeBytes
     )
 }

@@ -335,7 +335,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
                     VMCreationViewModel.downloadPath(forFilename: image.destinationFilename))
             )
         ]
-        if image.sha256 == nil {
+        if image.expected == nil {
             rows.append(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",

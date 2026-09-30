@@ -15,6 +15,11 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     /// verified.
     var sha256: String?
 
+    /// ``sha256`` as what the download is checked against.
+    var expectedDigest: ExpectedDigest? {
+        sha256.map { ExpectedDigest(sha256: $0, source: .enteredByUser) }
+    }
+
     /// The name ``url`` itself gives the image, or a stand-in when it gives
     /// none.
     ///

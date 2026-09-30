@@ -45,12 +45,13 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         }
     }
 
-    /// Whether the download is checked against a digest once it lands, which is
-    /// the Verify step the progress indicator draws.
-    var hasVerifyStep: Bool {
+    /// What the download is checked against once it lands, or `nil` when
+    /// nothing is — the Verify step the progress indicator draws exists only
+    /// when this does.
+    var digestSource: DigestSource? {
         switch source {
-        case .catalogEntry: true
-        case .customURL(let image): image.sha256 != nil
+        case .catalogEntry(let entry): entry.digestSource
+        case .customURL(let image): image.expectedDigest?.source
         }
     }
 

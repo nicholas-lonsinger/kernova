@@ -51,7 +51,7 @@ struct LinuxInstallContextTests {
         let decoded = try roundTrip(context)
 
         #expect(decoded == context)
-        #expect(decoded.hasVerifyStep == false)
+        #expect(decoded.digestSource == nil)
     }
 
     @Test("The whole catalog entry travels with the context")
@@ -73,9 +73,24 @@ struct LinuxInstallContextTests {
                 == "Fedora-Workstation-44-1.7-aarch64-CHECKSUM")
     }
 
-    @Test("A catalog pick always has something to verify against")
+    @Test("A catalog pick is always verified against its entry's checksum list")
     func catalogAlwaysVerifies() {
-        #expect(LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry())).hasVerifyStep)
+        let entry = makeLinuxCatalogEntry()
+
+        #expect(
+            LinuxInstallContext(source: .catalogEntry(entry)).digestSource
+                == .checksumList(entry.manifestURL))
+    }
+
+    @Test("A URL pick with a checksum is verified against what the user entered")
+    func customURLVerifiesAgainstEnteredChecksum() {
+        let context = LinuxInstallContext(
+            source: .customURL(
+                CustomLinuxImage(
+                    url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                    sha256: String(repeating: "a", count: 64))))
+
+        #expect(context.digestSource == .enteredByUser)
     }
 
     @Test("The display name is the distribution for a catalog pick and the file for a URL")

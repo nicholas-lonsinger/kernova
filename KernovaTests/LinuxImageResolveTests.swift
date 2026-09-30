@@ -470,7 +470,14 @@ struct LinuxImageResolveServiceTests {
         #expect(image.destinationFilename.hasPrefix("ubuntu-24.04.4-desktop-arm64-"))
         #expect(image.destinationFilename.hasSuffix(".iso"))
         #expect(
-            image.sha256 == "0be6df929cb47d4f188ab94d1fdedc75aa947d1fe7d4a17fb70f65c130699a44")
+            image.expected
+                == ExpectedDigest(
+                    sha256: "0be6df929cb47d4f188ab94d1fdedc75aa947d1fe7d4a17fb70f65c130699a44",
+                    source: .checksumList(
+                        URL(
+                            string:
+                                "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/SHA256SUMS"
+                        )!)))
         #expect(
             image.isoURL.absoluteString
                 == "https://cdimage.ubuntu.com/ubuntu/releases/noble/release/ubuntu-24.04.4-desktop-arm64.iso"
@@ -492,7 +499,8 @@ struct LinuxImageResolveServiceTests {
 
         #expect(image.filename == "Fedora-Workstation-Live-44-1.7.aarch64.iso")
         #expect(
-            image.sha256 == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
+            image.expected?.sha256
+                == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
         #expect(image.sizeBytes == 2_689_781_760)
     }
 
@@ -508,6 +516,14 @@ struct LinuxImageResolveServiceTests {
                 == "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-44-1.7-aarch64-CHECKSUM"
         )
         #expect(image.isoURL.host() == "download.fedoraproject.org")
+        // The digest is credited to the list's host, not the image's.
+        #expect(
+            image.expected?.source
+                == .checksumList(
+                    URL(
+                        string:
+                            "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/aarch64/iso/Fedora-Workstation-44-1.7-aarch64-CHECKSUM"
+                    )!))
     }
 
     @Test("A redirect off the manifest's host is refused, and its target never requested")
@@ -706,7 +722,7 @@ struct LinuxImageResolveServiceTests {
         #expect(image.destinationFilename != image.filename)
         #expect(image.destinationFilename.hasPrefix("alpine-3.22-aarch64-"))
         #expect(image.destinationFilename.hasSuffix(".iso"))
-        #expect(image.sha256 == digest)
+        #expect(image.expected == ExpectedDigest(sha256: digest, source: .enteredByUser))
         #expect(image.sizeBytes == 1_073_741_824)
         // No manifest is read: the URL names the file outright.
         #expect(ResolveStubURLProtocol.requestedURLs.allSatisfy { $0 == pasted.url })
@@ -721,7 +737,7 @@ struct LinuxImageResolveServiceTests {
             try CustomLinuxImage.make(
                 urlText: "https://mirror.example/alpine-3.22-aarch64.iso", checksumText: ""))
 
-        #expect(image.sha256 == nil)
+        #expect(image.expected == nil)
     }
 
     @Test("A plain-HTTP URL is refused before anything is requested")

@@ -58,8 +58,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
             throw LinuxImageResolveError.invalidManifestName(manifest: entry.checksumManifest)
         }
 
-        let manifestURL = entry.manifestDirectory.appendingPathComponent(entry.checksumManifest)
-        let text = try await manifestText(at: manifestURL, named: entry.checksumManifest)
+        let text = try await manifestText(at: entry.manifestURL, named: entry.checksumManifest)
         let rows = ChecksumManifest.parse(text)
         guard !rows.isEmpty else {
             throw LinuxImageResolveError.manifestUnparseable(manifest: entry.checksumManifest)
@@ -100,7 +99,9 @@ final class LinuxImageResolveService: LinuxImageResolving {
             "Resolved \(entry.id, privacy: .public) to '\(safeFilename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes)"
         )
         return ResolvedLinuxImage(
-            isoURL: isoURL, filename: safeFilename, sha256: sha256, sizeBytes: sizeBytes)
+            isoURL: isoURL, filename: safeFilename,
+            expected: ExpectedDigest(sha256: sha256, source: entry.digestSource),
+            sizeBytes: sizeBytes)
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
@@ -122,10 +123,11 @@ final class LinuxImageResolveService: LinuxImageResolving {
 
         #log(
             Self.logger, .notice,
-            "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.sha256 == nil ? "unverified" : "verified", privacy: .public))"
+            "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.expectedDigest == nil ? "unverified" : "verified", privacy: .public))"
         )
         return ResolvedLinuxImage(
-            isoURL: image.url, filename: filename, sha256: image.sha256, sizeBytes: sizeBytes)
+            isoURL: image.url, filename: filename, expected: image.expectedDigest,
+            sizeBytes: sizeBytes)
     }
 
     // MARK: - HTTP

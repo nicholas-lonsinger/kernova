@@ -14,10 +14,9 @@ struct ResolvedLinuxImage: Sendable, Equatable {
     /// Shown, logged and named in a checksum failure — never written. What the
     /// bytes land on is ``destinationFilename``.
     var filename: String
-    /// The digest to check the download against, as 64 lowercase hex
-    /// characters, or `nil` when the source published none and there is nothing
-    /// to verify.
-    var sha256: String?
+    /// The digest to check the download against, or `nil` when the source
+    /// published none and there is nothing to verify.
+    var expected: ExpectedDigest?
     /// The ISO's length in bytes, as the mirror reports it.
     var sizeBytes: UInt64
 

@@ -609,7 +609,7 @@ final class VMLifecycleCoordinator {
     private func adoptLocalImage(
         _ image: ResolvedLinuxImage, as destination: URL
     ) async throws -> Bool {
-        guard let downloads = downloadsDirectory, let expected = image.sha256?.lowercased() else {
+        guard let downloads = downloadsDirectory, let expected = image.expected?.sha256 else {
             return false
         }
         // A file already at the destination belongs to the download: it skips
@@ -686,7 +686,7 @@ final class VMLifecycleCoordinator {
         )
 
         do {
-            instance.setupState = .linuxImage(hasVerifyStep: context.hasVerifyStep)
+            instance.setupState = .linuxImage(hasVerifyStep: context.digestSource != nil)
 
             // Resolved on every attempt: a catalog entry because the mirror
             // renames its ISO in place (see `LinuxImageCatalogEntry`), a
@@ -751,7 +751,7 @@ final class VMLifecycleCoordinator {
             if try await adoptLocalImage(image, as: downloadDestination) {
                 // The digest decided the adoption, so Verify has nothing
                 // left to check and the step is drawn finished.
-                if context.hasVerifyStep {
+                if context.digestSource != nil {
                     instance.setupState?.advance(progress: .fraction(1))
                 }
             } else {
@@ -775,7 +775,7 @@ final class VMLifecycleCoordinator {
                 // that could install anything. A pasted URL with no digest
                 // behind it has nothing to check against, and the wizard
                 // said so.
-                if let expected = image.sha256?.lowercased() {
+                if let expected = image.expected?.sha256 {
                     instance.setupState?.advance(progress: .fraction(0))
                     let digest = try await FileDigest.sha256(of: downloadDestination) {
                         fraction in

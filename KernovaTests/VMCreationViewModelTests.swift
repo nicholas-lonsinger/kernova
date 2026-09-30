@@ -644,7 +644,7 @@ struct VMCreationViewModelTests {
             customImage(of: context)?.url
                 == URL(string: "https://mirror.example/alpine-3.22-aarch64.iso"))
         #expect(customImage(of: context)?.sha256 == digest)
-        #expect(context.hasVerifyStep)
+        #expect(context.digestSource == .enteredByUser)
         // A fixed URL names its own destination, so unlike a catalog pick it is
         // known before the VM is created — and it is unique to the link, so it
         // can never land on a file the user already has.
@@ -663,7 +663,7 @@ struct VMCreationViewModelTests {
         let context = try #require(vm.buildLinuxInstallContext())
 
         #expect(customImage(of: context)?.sha256 == nil)
-        #expect(context.hasVerifyStep == false)
+        #expect(context.digestSource == nil)
     }
 
     @Test("An EFI image pick does not follow a switch to Linux-kernel boot")
