@@ -425,11 +425,14 @@ protocol VMCommanding: AnyObject {
     /// Applies every assignment or none, answering the values the assigned keys
     /// ended up holding.
     ///
-    /// What each assignment moves, and each value, is checked before anything
-    /// is written, so a batch naming one key the VM's state will not take, or
-    /// one value it cannot parse, changes nothing. `confirmed` supplies the
-    /// consent the one assignment that asks for it needs — turning automatic
-    /// clipboard passthrough on.
+    /// Each key's gate and value is checked before anything is written, so a
+    /// batch naming one key the VM's state will not take, or one value it
+    /// cannot parse, changes nothing. A configuration key's assignment that
+    /// leaves its value where it is is taken in any state; a host-state key's
+    /// gate is asked whether its value moves or not, so naming one is refused
+    /// wherever that key is pinned, a snapshot capture among them.
+    /// `confirmed` supplies the consent the one assignment that asks for it
+    /// needs — turning automatic clipboard passthrough on.
     @discardableResult
     func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool

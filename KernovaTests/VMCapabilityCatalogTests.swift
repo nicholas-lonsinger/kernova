@@ -696,57 +696,12 @@ struct VMCapabilityCatalogTests {
         #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }
 
-    // MARK: - Settings writes
-
-    @Test("A running networked VM offers each write whose fields it admits")
-    func settingsWritesAreOfferedByWhatTheyMove() throws {
-        let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        let running = VMLifecyclePhase.running(sessionID: UUID())
-        let networked: (inout VMConfiguration) -> Void = {
-            $0.networkEnabled = true
-            $0.networkMode = .shared
-            $0.macAddress = "02:11:22:33:44:55"
-        }
-        let macOS = makeInstance(
-            in: harness, name: "Mac", phase: running, guestOS: .macOS, snapshots: [snapshot],
-            mutate: networked)
-        let linux = makeInstance(
-            in: harness, name: "Linux", phase: running, guestOS: .linux, mutate: networked)
-        typealias Keys = VMConfigurationKeyRegistry
-
-        // A hot swap between attachable modes; taking the device away is not
-        // one.
-        #expect(harness.catalog.isAvailable(Keys.networkMode, writing: "bridged", on: macOS))
-        #expect(
-            !harness.catalog.isAvailable(Keys.networkMode, writing: Keys.noNetworkValue, on: macOS))
-        // A macOS guest's clipboard rides the agent's channel; a Linux guest's
-        // rides a console device the machine is built with.
-        #expect(harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: macOS))
-        #expect(!harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: linux))
-        #expect(harness.catalog.isAvailable(Keys.ephemeral, writing: "true", on: macOS))
-        // A machine key, with a value that moves it whatever this host's cores.
-        #expect(
-            !harness.catalog.isAvailable(
-                Keys.audioInput, writing: String(!macOS.configuration.audioInputEnabled),
-                on: macOS))
-    }
-
     // MARK: - Shared directories
 
-    @Test("The shared-directory verb performs a boot-time write and a live swap")
-    func sharedDirectoryWritesAreOnePerClass() {
-        #expect(VMCapability.sharedDirectoryWrites == [.editSharedDirectories, .editLiveSharedDirectories])
-        #expect(VMCapability.sharedDirectoryWrites.map(\.editClasses) == [.machineKeys, .liveShares])
-        #expect(!VMCapability.settingsWriterClasses.contains(.liveShares))
-    }
-
     @Test(
-        "A share-list move is offered by what it moves and the phase the VM is in",
+        "A share-list edit is offered by the rule's capability and the phase the VM is in",
         arguments: VMGuestOS.allCases)
     func sharedDirectoriesOfferPerPhase(guestOS: VMGuestOS) throws {
-        let one = SharedDirectory(path: "/Users/Shared/one")
-        let two = SharedDirectory(path: "/Users/Shared/two")
         let phases: [(String, VMLifecyclePhase, slot: Bool)] = [
             ("stopped", .stopped, false),
             ("suspended", .suspended, true),
@@ -756,26 +711,34 @@ struct VMCapabilityCatalogTests {
         for (label, phase, slot) in phases {
             let harness = makeHarness()
             let instance = makeInstance(in: harness, phase: phase, guestOS: guestOS) {
-                $0.sharedDirectories = [one]
+                $0.sharedDirectories = [SharedDirectory(path: "/Users/Shared/one")]
             }
             if slot { try VMInstanceFixture.writeSaveFile(for: instance) }
-            let add = harness.catalog.sharedDirectoriesOffer([one, two], on: instance)
-            let removeLast = harness.catalog.sharedDirectoriesOffer(nil, on: instance)
-            let live = label == "running" && guestOS.sharesDirectoriesThroughOneDevice
+            let add = harness.catalog.sharedDirectoriesOffer(.add, on: instance)
+            let change = harness.catalog.sharedDirectoriesOffer(.change, on: instance)
+            let removeLast = harness.catalog.sharedDirectoriesOffer(.remove, on: instance)
+            let oneDevice = guestOS.sharesDirectoriesThroughOneDevice
+            let context = "\(label) \(guestOS)"
             switch label {
             case "stopped":
-                #expect(add == .offered(.machineKeys), "\(label) \(guestOS)")
-                #expect(removeLast == .offered(.machineKeys), "\(label) \(guestOS)")
-            case "running" where live:
-                #expect(add == .offered(.liveShares), "\(label) \(guestOS)")
-                #expect(removeLast == .changesSharingDevice, "\(label) \(guestOS)")
+                #expect(add == .offered(.editSharedDirectories), "\(context)")
+                #expect(removeLast == .offered(.editSharedDirectories), "\(context)")
+            case "running" where oneDevice:
+                #expect(add == .offered(.editLiveSharedDirectories), "\(context)")
+                #expect(change == .offered(.editLiveSharedDirectories), "\(context)")
+                #expect(removeLast == .changesSharingDevice, "\(context)")
+            case "running", "paused":
+                let capability: VMCapability =
+                    oneDevice ? .editLiveSharedDirectories : .editSharedDirectories
+                #expect(add == .unavailable(capability), "\(context)")
+                #expect(!removeLast.isOffered, "\(context)")
             default:
-                #expect(add == .unavailable, "\(label) \(guestOS)")
-                #expect(removeLast == .unavailable, "\(label) \(guestOS)")
+                #expect(add == .unavailable(.editSharedDirectories), "\(context)")
+                #expect(removeLast == .unavailable(.editSharedDirectories), "\(context)")
             }
             #expect(
-                harness.catalog.isAvailable(.editLiveSharedDirectories, on: instance) == live,
-                "\(label) \(guestOS)")
+                harness.catalog.isAvailable(.editLiveSharedDirectories, on: instance)
+                    == (label == "running" && oneDevice), "\(context)")
         }
     }
 
@@ -784,9 +747,6 @@ struct VMCapabilityCatalogTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-        #expect(
-            harness.catalog.sharedDirectoriesOffer(
-                [SharedDirectory(path: "/Users/Shared/one")], on: instance)
-                == .changesSharingDevice)
+        #expect(harness.catalog.sharedDirectoriesOffer(.add, on: instance) == .changesSharingDevice)
     }
 }

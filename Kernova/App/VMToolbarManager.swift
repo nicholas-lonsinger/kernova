@@ -115,7 +115,7 @@ final class VMToolbarManager: NSObject {
         else { return VMInstance.StopAction.stop.toolTip }
         return "Already at \u{201C}\(baseline.name)\u{201D}"
     }
-    private static let showSettingsToolTip = "Show settings (read-only while the VM is running)"
+    private static let showSettingsToolTip = "Show settings for this VM"
     private static let showDisplayToolTip = "Return to the VM display"
 
     private enum LifecycleSegment: Int {

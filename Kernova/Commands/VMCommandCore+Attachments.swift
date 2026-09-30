@@ -478,10 +478,10 @@ extension VMCommandCore {
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
-        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        let capability = try requireSharedDirectories(.add, on: instance)
         // Minted once, so every pass of the change adds the same shares.
         let picks = files.map { (file: $0, id: UUID()) }
-        try writeSharedDirectories(of: instance) { directories in
+        try writeSharedDirectories(of: instance, as: capability) { directories in
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
             var known = Set(directories.map { Self.comparablePath($0.path) })
@@ -500,11 +500,11 @@ extension VMCommandCore {
     /// ``ejectRemovableMedia(_:item:)`` states.
     func removeSharedDirectory(_ selector: VMSelector, directory id: UUID) throws {
         let instance = try resolve(selector)
-        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        let capability = try requireSharedDirectories(.remove, on: instance)
         guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        try writeSharedDirectories(of: instance) { $0.removeAll { $0.id == id } }
+        try writeSharedDirectories(of: instance, as: capability) { $0.removeAll { $0.id == id } }
     }
 
     /// Marks a shared directory read-only, or writable again.
@@ -512,25 +512,25 @@ extension VMCommandCore {
         _ selector: VMSelector, directory id: UUID, readOnly: Bool
     ) throws {
         let instance = try resolve(selector)
-        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        let capability = try requireSharedDirectories(.change, on: instance)
         guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        try writeSharedDirectories(of: instance) { directories in
+        try writeSharedDirectories(of: instance, as: capability) { directories in
             guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
             directories[index].readOnly = readOnly
         }
     }
 
-    /// Refuses unless `instance` takes moving its shared-directory list to
-    /// `directories` now (``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``),
-    /// answering the classes the move is admitted under.
+    /// Refuses unless `instance` takes `edit` of its shared-directory list now
+    /// (``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``),
+    /// answering the capability the edit is admitted as.
     func requireSharedDirectories(
-        _ directories: [SharedDirectory]?, on instance: VMInstance
-    ) throws -> VMEditClasses {
-        switch capabilities.sharedDirectoriesOffer(directories, on: instance, posture: .commit) {
-        case .offered(let classes):
-            return classes
+        _ edit: SharedDirectoryListEdit, on instance: VMInstance
+    ) throws -> VMCapability {
+        switch capabilities.sharedDirectoriesOffer(edit, on: instance, posture: .commit) {
+        case .offered(let capability):
+            return capability
         case .changesSharingDevice:
             let error = CommandError.changeTakesStoppedVM(
                 vm: summary(instance), current: instance.status,
@@ -540,22 +540,21 @@ extension VMCommandCore {
                 "Refused \(VMVerb.editSharedDirectory.rawValue, privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
             )
             throw error
-        case .unavailable:
-            throw refusal(for: VMCapability.sharedDirectoryWrites, on: instance)
+        case .unavailable(let capability):
+            throw refusal(for: [capability], on: instance)
         }
     }
 
-    /// Moves the VM's shared-directory list to what `change` makes of it, an
-    /// emptied list stored as none; a change that leaves the list as it is
-    /// writes nothing.
+    /// Moves the VM's shared-directory list to what `change` makes of it, as
+    /// the write `capability` admits, an emptied list stored as none; a change
+    /// that leaves the list as it is writes nothing.
     ///
     /// `change` runs on the list in memory and again on the list the file
     /// holds, so it is a function of the list alone: the two passes add the
     /// same shares, and what the first opens scopes for is what the second
     /// commits.
     ///
-    /// Admission is ``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``.
-    /// A move admitted as a live swap (``VMEditClasses/liveShares``) carries
+    /// A move admitted as a live swap (``VMCapability/editLiveSharedDirectories``) carries
     /// the running device with it, in three steps that each run only once the
     /// one before succeeded: the scopes of the folders the list adds are
     /// opened and the device's next share is built from the list the commit
@@ -565,7 +564,8 @@ extension VMCommandCore {
     /// shares the device was not given. A folder the swap cannot share is
     /// refused as the argument it is.
     private func writeSharedDirectories(
-        of instance: VMInstance, _ change: @escaping (inout [SharedDirectory]) -> Void
+        of instance: VMInstance, as capability: VMCapability,
+        _ change: @escaping (inout [SharedDirectory]) -> Void
     ) throws {
         let changed: (VMConfiguration) -> [SharedDirectory]? = { config in
             var directories = config.sharedDirectories ?? []
@@ -576,10 +576,8 @@ extension VMCommandCore {
         let directories = changed(instance.configuration)
         guard directories != held else { return }
 
-        let admitted = try requireSharedDirectories(directories, on: instance)
-
-        guard admitted.contains(.liveShares) else {
-            try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
+        guard capability == .editLiveSharedDirectories else {
+            try edit(capability, on: instance, verb: .editSharedDirectory) { permit in
                 try requireSaved(
                     library.updateConfiguration(permit) { $0.sharedDirectories = changed($0) },
                     of: instance, verb: .editSharedDirectory)
@@ -606,7 +604,7 @@ extension VMCommandCore {
         }
         var share = serving
         do {
-            try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
+            try edit(capability, on: instance, verb: .editSharedDirectory) { permit in
                 try requireSaved(
                     library.updateConfiguration(permit) { config in
                         let committed = changed(config)

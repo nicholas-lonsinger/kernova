@@ -147,8 +147,8 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(containing: "3 GB on disk", in: view) != nil)
     }
 
-    @Test("A row holding no memory says what it holds between its date and its size")
-    func coldRowNamesWhatItHolds() {
+    @Test("Every row names its state between its date and its size")
+    func everyRowNamesItsState() {
         let (view, _) = makeSection()
         var cold = makeSnapshot("Before first boot")
         cold.record.kind = .cold
@@ -159,9 +159,12 @@ struct SnapshotSectionViewTests {
             canTakeSnapshot: true, canRevert: true)
         view.applySizes([cold.id: 2_000_000_000, warm.id: 2_000_000_000])
 
-        let coldCopy = SnapshotKindCopy.captured(.cold)
-        #expect(view.subtitleText(for: cold).contains("\(coldCopy) \u{00B7} 2 GB on disk"))
-        #expect(!view.subtitleText(for: warm).contains(coldCopy))
+        for (snapshot, kind) in [(cold, VMSnapshotKind.cold), (warm, .warm)] {
+            #expect(
+                view.subtitleText(for: snapshot)
+                    == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
+                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB on disk")
+        }
     }
 
     @Test("A single snapshot reads in the singular")

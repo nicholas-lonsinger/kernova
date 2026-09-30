@@ -35,30 +35,16 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         fatalError("SnapshotInfoPopoverContentViewController does not support NSCoder")
     }
 
+    /// The facts grid sets the width — the callout's standard width, or wider
+    /// when a value needs it to stay on one line — and the name and notes wrap
+    /// within it, so a long name never widens the popover.
     override func loadView() {
-        let container = NSView()
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = CalloutStyle.verticalSpacing
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        stack.addArrangedSubview(makeCalloutHeadline(snapshot.name))
-        stack.addArrangedSubview(makeFactsGrid())
-        for row in makeNotesRows() { stack.addArrangedSubview(row) }
-
-        container.addSubview(stack)
-        let padding = CalloutStyle.padding
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
-            container.widthAnchor.constraint(equalToConstant: CalloutStyle.width),
-        ])
-
-        view = container
+        let grid = makeFactsGrid()
+        let bodyWidth = max(CalloutStyle.bodyWidth, ceil(grid.fittingSize.width))
+        let headline = makeCalloutHeadline(snapshot.name)
+        headline.preferredMaxLayoutWidth = bodyWidth
+        installCalloutStack(
+            rows: [headline, grid] + makeNotesRows(width: bodyWidth), bodyWidth: bodyWidth)
     }
 
     /// Commits whatever the box holds as the popover goes away — the same
@@ -70,16 +56,12 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        // Re-pin so `NSPopover` resizes its frame to the measured stack height.
-        let fittingSize = view.fittingSize
-        if preferredContentSize != fittingSize {
-            preferredContentSize = fittingSize
-        }
+        syncCalloutContentSize()
     }
 
-    private func makeNotesRows() -> [NSView] {
+    private func makeNotesRows(width: CGFloat) -> [NSView] {
         let section = makeCalloutNotesSection(
-            snapshot.notes, title: keyLabel("Notes"), canEdit: canEditNotes,
+            snapshot.notes, title: keyLabel("Notes"), canEdit: canEditNotes, width: width,
             onCommit: { [weak self] notes in self?.onCommitNotes(notes) },
             onCancel: { [weak self] in self?.onRequestClose?() })
         notesEditor = section.editor
@@ -95,7 +77,7 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
             keyLabel("Taken"), valueLabel(SnapshotDateFormat.string(from: snapshot.createdAt)),
         ])
         grid.addRow(with: [
-            keyLabel("Captured"), valueLabel(SnapshotKindCopy.captured(snapshot.kind)),
+            keyLabel("Captured"), valueLabel(SnapshotKindCopy.capturedContents(snapshot.kind)),
         ])
         grid.addRow(with: [keyLabel("On disk"), valueLabel(onDiskText)])
         grid.column(at: 0).xPlacement = .leading

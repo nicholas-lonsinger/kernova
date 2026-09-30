@@ -99,74 +99,111 @@ struct VMStateFieldClassesTests {
         }
     }
 
-    @Test(
-        "A macOS guest's share list moves as a live swap while one share remains before and after",
-        arguments: [
-            // (guest, shares before, shares after, the classes that may write it)
-            (VMGuestOS.macOS, 1, 2, [VMEditClasses.machineKeys, .liveShares]),
-            (.macOS, 2, 1, [.machineKeys, .liveShares]),
-            (.macOS, 0, 1, [.machineKeys]),
-            (.macOS, 1, 0, [.machineKeys]),
-            (.linux, 1, 2, [.machineKeys]),
-            (.linux, 2, 1, [.machineKeys]),
-        ] as [(VMGuestOS, Int, Int, VMEditClasses)])
-    func sharedDirectoriesAreClassifiedByMove(
-        guestOS: VMGuestOS, before: Int, after: Int, classes: VMEditClasses
-    ) {
-        let shares = (0..<2).map { SharedDirectory(path: "/Users/Shared/share\($0)") }
-        let old = Self.configuration(guestOS, shares: Array(shares.prefix(before)))
-        var new = old
-        new.sharedDirectories = Array(shares.prefix(after))
-        if after == 0 { new.sharedDirectories = nil }
-        #expect(
-            VMConfiguration.fieldClasses.writers(from: old, to: new).map(\.classes) == [classes])
-    }
+    /// Values some key takes, or refuses, covering every key's spelling.
+    private static let candidateValues = [
+        "true", "false", "0", "1", "2", "4", "8", "16", "1280", "800",
+        VMConfigurationKeyRegistry.noNetworkValue, "shared", "bridged", "hostOnly", "inline", "popOut",
+        "fullscreen", "automatic", "mac", "usb", "never", "fullscreenOnly", "always", "en0", "",
+        "02:11:22:33:44:55", "Baseline",
+    ]
 
-    @Test("A share renamed, retargeted or turned read-only is a live swap; an empty list stored either way is not")
-    func sharedDirectoryEditsInPlaceAreClassifiedByMove() {
-        let share = SharedDirectory(path: "/Users/Shared/share")
-        let old = Self.configuration(.macOS, shares: [share])
-        let writers: (VMConfiguration) -> [VMEditClasses] = {
-            VMConfiguration.fieldClasses.writers(from: old, to: $0).map(\.classes)
+    @Test("Every key's permit may write every field its write moves")
+    func everyKeysClassesWriteWhatItMoves() {
+        let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
+        let context = VMConfigurationWriteContext(
+            snapshots: VMSnapshotManifest(snapshots: [snapshot]))
+        var networked = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        networked.applyNetworkMode(.shared)
+        var unaddressed = networked
+        unaddressed.macAddress = nil
+        var offline = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        offline.applyNetworkMode(nil)
+        offline.macAddress = nil
+        let hostStates = [
+            VMHostState(),
+            VMHostState(
+                startsAutomaticallyOnLaunch: true, ephemeralModeEnabled: true,
+                ephemeralBaselineSnapshotID: snapshot.id, displayPreference: .fullscreen,
+                agentInstallNudgeDismissed: true),
+        ]
+
+        for key in VMConfigurationKeyRegistry.keys {
+            for value in Self.candidateValues {
+                switch key.field {
+                case .configuration(let field):
+                    for base in [networked, unaddressed, offline] where key.applies(base) {
+                        let authority = VMEditPermit.Authority.edit(
+                            key.editClasses(writing: value, for: base.guestOS))
+                        var written = base
+                        guard (try? field.write(value, &written, context)) != nil else { continue }
+                        #expect(
+                            VMConfiguration.fieldClasses.refused(
+                                from: base, to: written, by: authority) == [],
+                            "\(key.name)=\(value)")
+                    }
+                case .hostState(let field):
+                    guard let change = try? field.change(value, context) else { continue }
+                    let authority = VMEditPermit.Authority.edit(
+                        key.editClasses(writing: value, for: .macOS))
+                    for base in hostStates {
+                        var written = base
+                        change(&written)
+                        #expect(
+                            VMHostState.fieldClasses.refused(from: base, to: written, by: authority)
+                                == [],
+                            "\(key.name)=\(value)")
+                    }
+                }
+            }
         }
-        var retargeted = old
-        retargeted.sharedDirectories?[0].path = "/Users/Shared/elsewhere"
-        #expect(writers(retargeted) == [[.machineKeys, .liveShares]])
-        var readOnly = old
-        readOnly.sharedDirectories?[0].readOnly = true
-        #expect(writers(readOnly) == [[.machineKeys, .liveShares]])
-
-        // No share on either side: no device to swap on.
-        let none = Self.configuration(.macOS, shares: nil)
-        var empty = none
-        empty.sharedDirectories = []
-        #expect(
-            VMConfiguration.fieldClasses.writers(from: none, to: empty).map(\.classes)
-                == [.machineKeys])
-        #expect(
-            VMConfiguration.fieldClasses.writers(from: empty, to: none).map(\.classes)
-                == [.machineKeys])
     }
 
-    private static func configuration(
-        _ guestOS: VMGuestOS, shares: [SharedDirectory]?
-    ) -> VMConfiguration {
-        var config = VMConfiguration(
-            name: "VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
-        config.sharedDirectories = shares.flatMap { $0.isEmpty ? nil : $0 }
-        return config
-    }
+    /// The share verbs take their capability from a rule compiled into
+    /// ``SharedDirectoryListEdit``; this pins it to the field classes, both
+    /// ways, over every edit of a list of up to three shares.
+    @Test("Every share-list edit's capability may write what it moves, and is live exactly when the move is a swap")
+    func sharedDirectoryListEditsAgreeWithTheFieldClasses() throws {
+        for guestOS in VMGuestOS.allCases {
+            for live in [false, true] {
+                for edit in SharedDirectoryListEdit.allCases {
+                    for count in 0...3 {
+                        let shares = (0..<count).map {
+                            SharedDirectory(path: "/Users/Shared/share\($0)")
+                        }
+                        var old = VMConfiguration(
+                            name: "VM", guestOS: guestOS,
+                            bootMode: guestOS == .macOS ? .macOS : .efi)
+                        old.sharedDirectories = shares.isEmpty ? nil : shares
+                        var edited = shares
+                        switch edit {
+                        case .add:
+                            edited.append(SharedDirectory(path: "/Users/Shared/added"))
+                        case .remove:
+                            guard !edited.isEmpty else { continue }
+                            edited.removeLast()
+                        case .change:
+                            guard !edited.isEmpty else { continue }
+                            edited[0].readOnly.toggle()
+                        }
+                        var new = old
+                        new.sharedDirectories = edited.isEmpty ? nil : edited
+                        let label = "\(guestOS) live=\(live) \(edit) of \(count)"
 
-    @Test("A change's writers name each field it moved, with that field's classes, and nothing else")
-    func writersNameEachMovedField() {
-        let old = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
-        var new = old
-        new.name = "Renamed"
-        new.memorySizeInGB += 2
-        new.displayAutoResizes.toggle()
-        let writers = VMConfiguration.fieldClasses.writers(from: old, to: new)
-        #expect(writers.map(\.name) == ["name", "memorySizeInGB", "displayAutoResizes"])
-        #expect(writers.map(\.classes) == [.rename, .machineKeys, .liveKeys])
-        #expect(VMConfiguration.fieldClasses.writers(from: old, to: old).isEmpty)
+                        let capability = edit.capability(
+                            onListOf: count, guestOS: guestOS, live: live)
+                        let classes = try #require(capability.editClasses, "\(label)")
+                        #expect(
+                            VMConfiguration.fieldClasses.refused(
+                                from: old, to: new, by: .edit(classes)) == [],
+                            "\(label)")
+                        guard live else { continue }
+                        let swaps =
+                            VMConfiguration.fieldClasses.refused(
+                                from: old, to: new, by: .edit(.liveShares)) == []
+                        #expect((capability == .editLiveSharedDirectories) == swaps, "\(label)")
+                    }
+                }
+            }
+        }
     }
 }

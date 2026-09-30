@@ -55,18 +55,6 @@ struct VMSettingsSharingPanelTests {
         #expect(containsLabel("Clipboard", in: linuxVC.view))
     }
 
-    @Test("A Linux guest's Clipboard header carries the lock hint a running VM shows")
-    func linuxClipboardHeaderLocks() throws {
-        let (vc, _, _) = makeSettingsController(
-            guestOS: .linux, isReadOnly: true, category: .sharing,
-            phase: .running(sessionID: UUID()), preferences: preferences)
-        let title = try #require(findLabel(withText: "Clipboard", in: vc.view))
-        let header = try #require(title.superview)
-        let hints = settingsLockHints(in: header)
-        #expect(hints.count == 1)
-        #expect(hints.allSatisfy { !$0.isHidden })
-    }
-
     @Test("Agent-dependency caption appears for macOS but not Linux")
     func agentDependencyCaptionMacOSOnly() {
         let caption = VMSettingsSharingPanelViewController.agentDependencyCaption

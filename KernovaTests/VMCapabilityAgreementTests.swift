@@ -57,9 +57,20 @@ struct VMCapabilityAgreementTests {
         switch capability {
         case .stop, .discardSavedState: return [.stop, .discardSavedState]
         case .forceStop: return [.forceStop, .discardSavedState]
-        case .editSharedDirectories, .editLiveSharedDirectories: return VMCapability.sharedDirectoryWrites
+        // One verb, whose edit the list's size and the VM's session route to
+        // either capability.
+        case .editSharedDirectories, .editLiveSharedDirectories:
+            return [.editSharedDirectories, .editLiveSharedDirectories]
         default: return [capability]
         }
+    }
+
+    /// Two shares, so a share removal the sweep calls keeps one and is a live
+    /// swap wherever the VM takes one.
+    private static func twoShares(_ config: inout VMConfiguration) {
+        config.sharedDirectories = [
+            SharedDirectory(path: "/Users/Shared/one"), SharedDirectory(path: "/Users/Shared/two"),
+        ]
     }
 
     /// Calls `capability`'s verb the way a surface does, stopping short of any
@@ -166,7 +177,7 @@ struct VMCapabilityAgreementTests {
                 let snapshot = VMSnapshot(name: "Kept", macAddress: nil)
                 let instance = RegisteredVMInstanceFixture.register(
                     name: "Agreeing", phase: .stopped, guestOS: guestOS, snapshots: [snapshot],
-                    library: harness.library, preferences: preferences)
+                    library: harness.library, preferences: preferences, mutate: Self.twoShares)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 // The slot the operation started from is a file, as every
                 // predicate reads it.
@@ -206,7 +217,7 @@ struct VMCapabilityAgreementTests {
                 let snapshot = VMSnapshot(name: "Kept", macAddress: nil)
                 let instance = RegisteredVMInstanceFixture.register(
                     name: "Agreeing", phase: phase, guestOS: guestOS, snapshots: [snapshot],
-                    library: harness.library, preferences: preferences)
+                    library: harness.library, preferences: preferences, mutate: Self.twoShares)
                 harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
                 if phase == .suspended {
                     try VMInstanceFixture.writeSaveFile(for: instance)

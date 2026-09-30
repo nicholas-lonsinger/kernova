@@ -340,13 +340,14 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         applyGroupedFormRowEnabled(
             isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch)
         applyGroupedFormRowEnabled(
-            isAvailable(VMConfigurationKeyRegistry.ephemeralBaseline), control: ephemeralBaselinePopUp)
+            isAvailable(
+                VMConfigurationKeyRegistry.ephemeralBaseline,
+                writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
+            control: ephemeralBaselinePopUp)
         ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
         ephemeralGroup?.isSubOptionHidden = !enabled
 
-        let listed = manifest.ordered.map {
-            BaselineMenuItem(id: $0.id, title: EphemeralModeCopy.baselineMenuTitle(for: $0))
-        }
+        let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
         if listed != renderedEphemeralBaselines {
             renderedEphemeralBaselines = listed
             // Items are built and added directly: `addItem(withTitle:)` removes

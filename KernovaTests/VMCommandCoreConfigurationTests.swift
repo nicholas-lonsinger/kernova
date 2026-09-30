@@ -80,8 +80,13 @@ struct VMCommandCoreConfigurationTests {
 
         #expect(descriptors.map(\.name) == VMConfigurationKeyRegistry.keys.map(\.name))
         #expect(
-            descriptors.map(\.editableWhileRunning)
-                == VMConfigurationKeyRegistry.keys.map(\.descriptor.editableWhileRunning))
+            descriptors.contains {
+                $0.name == "cpus" && $0.editableWhileRunning == ["macOS": false, "linux": false]
+            })
+        #expect(
+            descriptors.contains {
+                $0.name == "ephemeral" && $0.editableWhileRunning == ["macOS": true, "linux": true]
+            })
         // The listing is the whole documentation of what a key takes, so a key
         // reaching it without a summary is a key nobody can set.
         for descriptor in descriptors {
@@ -358,37 +363,6 @@ struct VMCommandCoreConfigurationTests {
         }
 
         #expect(instance.configuration == before)
-    }
-
-    @Test("A value its key refuses reports the state that pins the key first, and itself otherwise")
-    func aRefusedValueReportsThePinningStateFirst() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
-        makeInstance(in: harness, name: "Stopped")
-        let assignment = ConfigurationEntry(key: "cpus", value: "four")
-
-        do {
-            try harness.core.setConfiguration(
-                .name("Running"), assignments: [assignment], confirmed: false)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidState(_, _, _, let settings) = error else {
-                Issue.record("expected invalidState, got \(error)")
-                return
-            }
-            #expect(settings == [assignment])
-        }
-
-        do {
-            try harness.core.setConfiguration(
-                .name("Stopped"), assignments: [assignment], confirmed: false)
-            Issue.record("expected a refusal")
-        } catch let error as CommandError {
-            guard case .invalidArgument = error else {
-                Issue.record("expected invalidArgument, got \(error)")
-                return
-            }
-        }
     }
 
     @Test("A running VM still takes the settings read at other moments than boot")

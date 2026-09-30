@@ -100,20 +100,19 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             apply: { [weak self] in self?.refreshSharedList() })
     }
 
-    /// Whether this VM's shared-directory list takes any edit right now.
+    /// Whether this VM takes a write of its shared-directory list right now,
+    /// at rest or as a live swap.
     private var canEditSharedDirectories: Bool {
-        VMCapability.sharedDirectoryWrites.contains {
+        [VMCapability.editSharedDirectories, .editLiveSharedDirectories].contains {
             viewModel.capabilities.isAvailable($0, on: instance)
         }
     }
 
-    /// What moving this VM's shared-directory list to `directories` is offered
-    /// as, an emptied list moving to none.
+    /// What `edit` of this VM's shared-directory list is offered as.
     private func sharesOffer(
-        _ directories: [SharedDirectory]
+        _ edit: SharedDirectoryListEdit
     ) -> VMCapabilityCatalog.SharedDirectoriesOffer {
-        viewModel.capabilities.sharedDirectoriesOffer(
-            directories.isEmpty ? nil : directories, on: instance)
+        viewModel.capabilities.sharedDirectoriesOffer(edit, on: instance)
     }
 
     /// The rule a running VM holds its first share's add and its last share's
@@ -334,11 +333,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         let body: InfoPopoverParagraph = .body(
             "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
         )
+        // Sharing adds the SPICE console device, so the header carries the
+        // lock hint; passthrough is host-side and stays live.
         return makeGroupedFormSection([
-            lockRegistry.makeHeader(
-                "Clipboard",
-                lockable: !VMConfigurationKeyRegistry.clipboardSharing.isEditableWhileRunning(on: .linux),
-                paragraphs: [body]),
+            lockRegistry.makeHeader("Clipboard", lockable: true, paragraphs: [body]),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
@@ -389,19 +387,12 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshSharedList() {
         let directories = currentSharedDirectories
-        // What the folder is does not change what adding one moves.
-        let addOffer = sharesOffer(directories + [SharedDirectory(path: "/")])
+        let addOffer = sharesOffer(.add)
+        let readOnlyOffer = sharesOffer(.change)
+        let removeOffer = sharesOffer(.remove)
         applyGroupedFormRowEnabled(addOffer.isOffered, control: addSharedButton)
-        var offers = [addOffer]
         let models = directories.map { directory -> VMSettingsRenderedRow in
             let isMissing = !context.fileMonitor.exists(directory.path)
-            var toggled = directories
-            if let index = toggled.firstIndex(where: { $0.id == directory.id }) {
-                toggled[index].readOnly.toggle()
-            }
-            let readOnlyOffer = sharesOffer(toggled)
-            let removeOffer = sharesOffer(directories.filter { $0.id != directory.id })
-            offers += [readOnlyOffer, removeOffer]
             return VMSettingsRenderedRow(
                 id: directory.id,
                 iconSystemName: "folder",
@@ -414,7 +405,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 controlsEnabled: readOnlyOffer.isOffered,
                 ejectEnabled: removeOffer.isOffered)
         }
-        sharingDeviceCaptionView.isHidden = !offers.contains(.changesSharingDevice)
+        // Each control the rule disables is on screen: Add always, and a
+        // Remove or read-only switch only beside a share.
+        let shownOffers = directories.isEmpty ? [addOffer] : [addOffer, readOnlyOffer, removeOffer]
+        sharingDeviceCaptionView.isHidden = !shownOffers.contains(.changesSharingDevice)
         sharedList?.update(
             models,
             makeRow: { model in makeSharedRow(model) },
