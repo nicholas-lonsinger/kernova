@@ -41,12 +41,10 @@ extension VMCommandCore {
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
     ///
-    /// An assignment that leaves the VM's settings where they are is no edit:
-    /// no gate applies to it and nothing is written for it, so `get` output is
-    /// `set` input in any state. A gate that refuses names every assignment it
-    /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:for:)``);
-    /// the write holds a permit for the classes of the named keys the VM takes,
-    /// and an assignment that moves a field those classes may not write
+    /// A gate that refuses names every assignment it refused. Each gate names
+    /// an edit class (``VMConfigurationKey/editClasses(writing:for:)``); the
+    /// write holds a permit for the classes of the named keys the VM takes, and
+    /// an assignment that moves a field those classes may not write
     /// (``VMStateFieldClasses``) is refused.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
