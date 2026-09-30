@@ -1090,13 +1090,25 @@ struct VMCommandCoreTests {
         // Only the install throws work away: its progress restarts from zero.
         #expect(install.confirmIsDestructive)
 
-        instance.setupState = .linuxImage(hasVerifyStep: true)
+        instance.setupState = .linuxImage(digestSource: .enteredByUser)
         instance.setupState?.advance(progress: .fraction(0))
         let verify = VMCommandCore.cancelGuestSetupPrompt(instance)
         #expect(verify.title == "Cancel Verification?")
         #expect(verify.confirmTitle == "Cancel Verification")
         #expect(verify.dismissTitle == "Keep Verifying")
         #expect(!verify.confirmIsDestructive)
+
+        instance.setupState = .linuxImage(digestSource: nil)
+        instance.setupState?.advance(progress: .fraction(0))
+        let checksum = VMCommandCore.cancelGuestSetupPrompt(instance)
+        #expect(checksum.title == "Cancel Checksum?")
+        #expect(
+            checksum.message
+                == "The downloaded image is kept, and its checksum will be computed the next time you start the virtual machine."
+        )
+        #expect(checksum.confirmTitle == "Cancel Checksum")
+        #expect(checksum.dismissTitle == "Keep Computing")
+        #expect(!checksum.confirmIsDestructive)
 
         instance.setupState = .macOSInstall(hasDownloadStep: true)
         let download = VMCommandCore.cancelGuestSetupPrompt(instance)

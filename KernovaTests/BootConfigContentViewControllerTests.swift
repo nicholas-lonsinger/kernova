@@ -22,7 +22,7 @@ struct BootConfigContentViewControllerTests {
         #expect(findLabel(withText: "Kernel", in: vc.view) == nil)
     }
 
-    @Test("A verified URL pick lights its radio and names the file, size and verification")
+    @Test("A checked URL pick lights its radio, names the file and size, and says what it is checked against")
     func verifiedURLPickRendersBadge() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
@@ -32,10 +32,16 @@ struct BootConfigContentViewControllerTests {
 
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
         #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
+        // Two fields: the check runs after download, so the primary line
+        // claims no result.
         #expect(
             findLabel(
-                containing:
-                    "alpine-3.22-aarch64.iso  ·  \(DataFormatters.formatBytes(1_073_741_824))  ·  Verified with your checksum",
+                withText:
+                    "alpine-3.22-aarch64.iso  ·  \(DataFormatters.formatBytes(1_073_741_824))",
+                in: vc.view) != nil)
+        #expect(
+            findLabel(
+                withText: "Checked after download against the checksum you entered",
                 in: vc.view) != nil)
         #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
@@ -49,7 +55,8 @@ struct BootConfigContentViewControllerTests {
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
-        #expect(findLabel(containing: "Not verified", in: vc.view) != nil)
+        #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
+        #expect(findLabel(containing: "Checked after download", in: vc.view) == nil)
         #expect(
             findLabel(
                 containing: "This download won't be verified. Choose a host you trust.",
@@ -72,6 +79,11 @@ struct BootConfigContentViewControllerTests {
         #expect(
             findLabel(
                 containing: "Ubuntu Desktop  ·  26.04 LTS  ·  \(wizardApproximateSize(4_161_089_536))",
+                in: vc.view) != nil)
+        // Named by the checksum list's host, the trust anchor.
+        #expect(
+            findLabel(
+                withText: "Checked after download against the checksum list on cdimage.debian.org",
                 in: vc.view) != nil)
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
     }

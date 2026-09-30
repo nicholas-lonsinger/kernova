@@ -197,7 +197,11 @@ final class ReviewContentViewController: NSViewController {
                     rows.append(valueRow("Version", entry.version))
                     rows.append(
                         valueRow(
-                            "Download Size", wizardApproximateSize(entry.approxSizeBytes)))
+                            "Download size", wizardApproximateSize(entry.approxSizeBytes)))
+                    rows.append(
+                        valueRow(
+                            "Verification",
+                            entry.digestSource.title))
                     // The folder, not a file: which point release the mirror is
                     // serving — and so what the ISO is called — is only known
                     // once the download resolves it.
@@ -213,7 +217,8 @@ final class ReviewContentViewController: NSViewController {
                         valueRow("Download size", DataFormatters.formatBytes(sizeBytes)))
                     rows.append(
                         valueRow(
-                            "Verification", wizardVerificationSummary(sha256: image.sha256)))
+                            "Verification",
+                            image.digestSource.pendingCheckTitle))
                     // The destination carries a suffix unique to this link, so
                     // it names a file only this pick can ever write.
                     rows.append(

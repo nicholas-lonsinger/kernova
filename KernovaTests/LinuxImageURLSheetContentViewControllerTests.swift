@@ -53,7 +53,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
     func successfulCheckEnablesUse() async {
         let resolve = MockLinuxImageResolveService()
         resolve.resolveResult = makeResolvedLinuxImage(
-            isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso", sha256: Self.digest)
+            isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso")
         let vc = makeSheet(
             resolve: resolve, initialURL: Self.isoURL, initialChecksum: Self.digest)
 
@@ -73,7 +73,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
     func unverifiedCheckSaysSo() async {
         let resolve = MockLinuxImageResolveService()
         resolve.resolveResult = makeResolvedLinuxImage(
-            isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso", sha256: nil)
+            isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso")
         let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL)
 
         await check(vc)
@@ -252,8 +252,8 @@ private final class SuspendingResolveService: LinuxImageResolving, @unchecked Se
     private var isReleased = false
 
     /// Not exercised here: this sheet only ever checks a pasted URL.
-    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedLinuxImage {
-        result
+    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedCatalogImage {
+        ResolvedCatalogImage(image: result, sha256: String(repeating: "a", count: 64))
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {

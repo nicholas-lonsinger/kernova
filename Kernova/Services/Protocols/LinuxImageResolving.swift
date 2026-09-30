@@ -111,13 +111,12 @@ extension LinuxImageURLError {
 /// Abstraction for turning a Linux installer image source into the image to
 /// download.
 protocol LinuxImageResolving: Sendable {
-    /// The ISO `entry` names right now, with the digest to verify it against.
+    /// The ISO `entry` names right now, with the SHA-256 its manifest lists.
     ///
     /// Nothing about the answer is cached — see ``LinuxImageCatalogEntry``.
-    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedLinuxImage
+    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedCatalogImage
 
-    /// The ISO at `image`'s URL, with the digest the user supplied for it —
-    /// which is `nil` when they supplied none and nothing will be verified.
+    /// The ISO at `image`'s URL.
     ///
     /// A fixed URL names one file, so this resolves nothing about *which* image
     /// to fetch. What it establishes is that the URL is admissible and live, and

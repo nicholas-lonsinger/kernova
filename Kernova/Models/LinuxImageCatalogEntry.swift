@@ -43,6 +43,12 @@ struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatable {
     /// Directory ``checksumManifest`` is read from.
     var manifestDirectory: URL { manifestDirectoryURL ?? directoryURL }
 
+    /// Where ``checksumManifest`` is read from.
+    var manifestURL: URL { manifestDirectory.appendingPathComponent(checksumManifest) }
+
+    /// What the resolved image's digest comes from.
+    var digestSource: DigestSource { .checksumList(manifestURL) }
+
     /// The order distributions are offered in, which is neither alphabetical
     /// nor derivable from the entries.
     static let distributionOrder = [

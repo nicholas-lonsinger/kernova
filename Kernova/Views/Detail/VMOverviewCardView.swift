@@ -182,18 +182,7 @@ final class VMOverviewCardView: NSView {
         guard let copy = row.copy else {
             return yieldFirst(makeGroupedFormCardRow(row.label, control: value))
         }
-        let button = CopyValueButton(value: copy.value)
-        button.image = .systemSymbol("doc.on.doc", accessibilityDescription: copy.name)
-        button.symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
-        button.imagePosition = .imageOnly
-        button.isBordered = false
-        button.contentTintColor = .secondaryLabelColor
-        button.toolTip = copy.name
-        button.setAccessibilityLabel(copy.name)
-        button.target = self
-        button.action = #selector(copyTapped(_:))
-        button.setContentHuggingPriority(.required, for: .horizontal)
-        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let button = CopyValueButton(name: copy.name, value: copy.value)
         let control = NSStackView(views: [value, button])
         control.orientation = .horizontal
         control.alignment = .centerY
@@ -253,31 +242,5 @@ final class VMOverviewCardView: NSView {
             return
         }
         onAction?(action)
-    }
-
-    @objc private func copyTapped(_ sender: NSButton) {
-        guard let button = sender as? CopyValueButton else {
-            #log(Self.logger, .fault, "Overview copy button carries no value")
-            assertionFailure("Overview copy button carries no value")
-            return
-        }
-        copyToPasteboard(button.value)
-    }
-}
-
-/// A copy button carrying the text it writes, so the row's value travels with
-/// the control rather than being looked up again at click time.
-@MainActor
-final class CopyValueButton: NSButton {
-    let value: String
-
-    init(value: String) {
-        self.value = value
-        super.init(frame: .zero)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("CopyValueButton does not support NSCoder")
     }
 }

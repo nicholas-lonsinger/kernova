@@ -957,8 +957,8 @@ enum DownloadError: LocalizedError {
     case freshDownloadCleanupFailed(path: String, underlying: any Error)
     /// The requested destination does not name a file of the expected type.
     case invalidDownloadDestination(path: String)
-    /// The downloaded file's SHA-256 differs from the digest served beside it.
-    case checksumMismatch(filename: String, expected: String, actual: String)
+    /// The downloaded file's SHA-256 differs from the digest its source states.
+    case checksumMismatch(filename: String, expected: ExpectedDigest, actual: String)
     /// The transfer ran past the size the source stated for it.
     case oversizedTransfer(expectedBytes: UInt64)
 
@@ -970,8 +970,13 @@ enum DownloadError: LocalizedError {
             "Could not remove the existing file at \(path) before downloading the replacement: \(underlying.localizedDescription)"
         case .invalidDownloadDestination(let path):
             "Cannot download to '\(path)' — the destination is not a supported file type."
-        case .checksumMismatch(let filename, _, _):
-            "\(filename) doesn't match the checksum listed alongside it. Try downloading it again."
+        case .checksumMismatch(let filename, let expected, _):
+            switch expected.source {
+            case .checksumList:
+                "\(filename) doesn't match \(expected.source.phrase). Try downloading it again."
+            case .enteredByUser:
+                "\(filename) doesn't match \(expected.source.phrase)."
+            }
         case .oversizedTransfer(let expectedBytes):
             "The download exceeded its expected size of \(DataFormatters.formatBytes(expectedBytes)) and was stopped."
         }

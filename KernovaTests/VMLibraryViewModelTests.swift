@@ -3588,6 +3588,29 @@ struct VMLibraryViewModelTests {
         #expect(instance.configuration.linuxInstallContext != nil)
     }
 
+    @Test("A Linux download that misses its checksum is titled for the mismatch")
+    func linuxChecksumMismatchIsTitled() async {
+        let expected = ExpectedDigest(
+            sha256: String(repeating: "a", count: 64),
+            source: .checksumList(URL(string: "https://checksums.example/SHA256SUMS")!))
+        let resolveService = MockLinuxImageResolveService()
+        let downloadService = MockDownloadService()
+        downloadService.downloadError = DownloadError.checksumMismatch(
+            filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64))
+        let (viewModel, _, _, _, _) = makeViewModel(
+            linuxImageResolveService: resolveService, downloadService: downloadService,
+            downloadsDirectory: scratch.url)
+        let instance = makePendingLinuxVM(in: viewModel)
+
+        await viewModel.start(instance)
+        await instance.setupOperationTask?.value
+
+        #expect(presenter.errorTitle == "Download Doesn't Match Its Checksum")
+        #expect(
+            presenter.errorMessage
+                == "debian.iso doesn't match the checksum list on checksums.example. Try downloading it again.")
+    }
+
     @Test("A finished Linux download hands straight off to the boot it was waiting on")
     func startChainsTheBootAfterTheLinuxPipeline() async throws {
         // The pipeline runs the VM through `.installing`, and the Start chained
@@ -3600,8 +3623,8 @@ struct VMLibraryViewModelTests {
         let contents = Data("kernova linux image fixture".utf8)
         let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
         let resolveService = MockLinuxImageResolveService()
-        resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: digest, sizeBytes: UInt64(contents.count))
+        resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
+        resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
         downloadService.downloadedContents = contents
 

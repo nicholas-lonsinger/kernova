@@ -51,7 +51,7 @@ struct LinuxInstallContextTests {
         let decoded = try roundTrip(context)
 
         #expect(decoded == context)
-        #expect(decoded.hasVerifyStep == false)
+        #expect(decoded.source.digestSource == nil)
     }
 
     @Test("The whole catalog entry travels with the context")
@@ -73,9 +73,50 @@ struct LinuxInstallContextTests {
                 == "Fedora-Workstation-44-1.7-aarch64-CHECKSUM")
     }
 
-    @Test("A catalog pick always has something to verify against")
-    func catalogAlwaysVerifies() {
-        #expect(LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry())).hasVerifyStep)
+    @Test("A catalog pick is checked against the manifest row, credited to the list's own host")
+    func catalogChecksAgainstTheManifestRow() async throws {
+        // The list sits on a different host from the ISO, and the digest is
+        // credited to the list.
+        let entry = makeLinuxCatalogEntry(manifestDirectoryURLString: "https://checksums.example/")
+        let source = LinuxInstallContext.Source.catalogEntry(entry)
+        let resolver = MockLinuxImageResolveService()
+        resolver.manifestSHA256 = String(repeating: "c", count: 64)
+
+        let (image, expected) = try await source.resolve(using: resolver)
+
+        #expect(image == resolver.resolveResult)
+        #expect(
+            expected
+                == ExpectedDigest(
+                    sha256: String(repeating: "c", count: 64),
+                    source: .checksumList(entry.manifestURL)))
+        #expect(source.digestSource == expected?.source)
+    }
+
+    @Test("A URL pick with a checksum is checked against what the user entered")
+    func customURLChecksAgainstEnteredChecksum() async throws {
+        let source = LinuxInstallContext.Source.customURL(
+            CustomLinuxImage(
+                url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!,
+                sha256: String(repeating: "a", count: 64)))
+
+        let (_, expected) = try await source.resolve(using: MockLinuxImageResolveService())
+
+        #expect(
+            expected == ExpectedDigest(sha256: String(repeating: "a", count: 64), source: .enteredByUser))
+        #expect(source.digestSource == .enteredByUser)
+    }
+
+    @Test("A URL pick with no checksum is checked against nothing")
+    func customURLWithoutChecksumChecksNothing() async throws {
+        let source = LinuxInstallContext.Source.customURL(
+            CustomLinuxImage(
+                url: URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!, sha256: nil))
+
+        let (_, expected) = try await source.resolve(using: MockLinuxImageResolveService())
+
+        #expect(expected == nil)
+        #expect(source.digestSource == nil)
     }
 
     @Test("The display name is the distribution for a catalog pick and the file for a URL")

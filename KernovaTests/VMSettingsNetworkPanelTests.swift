@@ -98,12 +98,17 @@ struct VMSettingsNetworkPanelTests {
             isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
 
         #expect(visibleLabel("Not seen on the network", in: vc.view))
+        let copy = try #require(firstSubview(CopyValueButton.self, in: vc.view))
+        #expect(copy.isHidden)
+        #expect(copy.value == nil)
 
         arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
         await readGuestAddresses(viewModel)
 
         #expect(visibleLabel("192.168.64.10", in: vc.view))
         #expect(visibleLabel("IP address", in: vc.view))
+        #expect(copy.value == "192.168.64.10")
+        #expect(!copy.isHidden)
         // The Network card states the same address: nothing else re-renders it,
         // so the fill-in has to reach both.
         vc.showOverview()

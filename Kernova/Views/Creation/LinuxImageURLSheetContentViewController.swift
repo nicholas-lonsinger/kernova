@@ -322,7 +322,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         ])
     }
 
-    private func showSuccess(_ image: ResolvedLinuxImage) {
+    private func showSuccess(_ image: ResolvedLinuxImage, checkedAgainst digestSource: DigestSource?) {
         var rows: [NSView] = [
             makeWizardBadge(
                 symbolName: "checkmark.seal.fill",
@@ -335,7 +335,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
                     VMCreationViewModel.downloadPath(forFilename: image.destinationFilename))
             )
         ]
-        if image.sha256 == nil {
+        if digestSource == nil {
             rows.append(
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
@@ -392,7 +392,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
                 self.checkTask = nil
                 self.checkedImage = image
                 self.checkedSizeBytes = resolved.sizeBytes
-                self.showSuccess(resolved)
+                self.showSuccess(resolved, checkedAgainst: image.digestSource)
                 self.updateControls()
             } catch {
                 guard let self, !Task.isCancelled else { return }

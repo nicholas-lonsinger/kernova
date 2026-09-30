@@ -162,6 +162,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                         entry.distribution, entry.version,
                         wizardApproximateSize(entry.approxSizeBytes),
                     ].joined(separator: "  ·  "),
+                    secondaryText: entry.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeDistribution))
                 ))
@@ -169,10 +170,9 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             conditionalContainer.addArrangedSubview(
                 makeWizardBadge(
                     symbolName: "link",
-                    text: [
-                        image.displayName, DataFormatters.formatBytes(sizeBytes),
-                        wizardVerificationSummary(sha256: image.sha256),
-                    ].joined(separator: "  ·  "),
+                    text: [image.displayName, DataFormatters.formatBytes(sizeBytes)]
+                        .joined(separator: "  ·  "),
+                    secondaryText: image.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))
                 ))

@@ -1182,7 +1182,7 @@ struct VMConfigurationTests {
             name: "Persisted VM",
             guestOS: .linux,
             bootMode: .efi,
-            installedImage: .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS")
+            installedImage: .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil)
         )
 
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
@@ -1190,7 +1190,7 @@ struct VMConfigurationTests {
 
         #expect(
             decoded.installedImage
-                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS"))
+                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil))
     }
 
     @Test("A config omitting installedImage decodes it as nil")

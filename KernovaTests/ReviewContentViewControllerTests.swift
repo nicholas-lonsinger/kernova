@@ -161,7 +161,7 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "ubuntu.iso", in: vc.view) != nil)
     }
 
-    @Test("A Linux catalog pick names the distribution, its size, and where it lands")
+    @Test("A Linux catalog pick names the distribution, its size, how it is checked, and where it lands")
     func linuxShowsCatalogPick() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
@@ -176,6 +176,10 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "26.04 LTS", in: vc.view) != nil)
         #expect(
             findLabel(withText: wizardApproximateSize(4_161_089_536), in: vc.view) != nil)
+        #expect(findLabel(withText: "Download size", in: vc.view) != nil)
+        #expect(findLabel(withText: "Verification", in: vc.view) != nil)
+        #expect(
+            findLabel(withText: "Checksum list on cdimage.debian.org", in: vc.view) != nil)
         // The folder only: the mirror names the file, at download time.
         #expect(
             findLabel(
@@ -198,7 +202,8 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "alpine-3.22-aarch64.iso", in: vc.view) != nil)
         #expect(
             findLabel(withText: DataFormatters.formatBytes(1_073_741_824), in: vc.view) != nil)
-        #expect(findLabel(withText: "Verified with your checksum", in: vc.view) != nil)
+        #expect(findLabel(withText: "Download size", in: vc.view) != nil)
+        #expect(findLabel(withText: "Checksum you entered", in: vc.view) != nil)
         // The URL names its own destination, so unlike a catalog pick the whole
         // path is known here — carrying a suffix unique to this link.
         let destination = LinuxImageFilename.destination(for: image.url)
