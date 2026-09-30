@@ -36,13 +36,16 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
         }
 
         /// A field whose writers depend on the rest of the root it moves
-        /// within, read off the root it moves from.
+        /// within, read off the root it moves from, as well as on what it
+        /// moves from and to.
         static func field<Value: Equatable & SendableMetatype>(
             _ name: String, _ keyPath: KeyPath<Root, Value> & Sendable,
-            byRoot classes: @escaping @Sendable (Root) -> VMEditClasses
+            byRoot classes:
+                @escaping @Sendable (_ root: Root, _ old: Value, _ new: Value) -> VMEditClasses
         ) -> Field {
             Field(name: name, keyPath: keyPath) { old, new in
-                old[keyPath: keyPath] == new[keyPath: keyPath] ? nil : classes(old)
+                let (from, to) = (old[keyPath: keyPath], new[keyPath: keyPath])
+                return from == to ? nil : classes(old, from, to)
             }
         }
     }
@@ -102,7 +105,16 @@ extension VMConfiguration {
         .field("kernelBookmark", \.kernelBookmark, .machineKeys),
         .field("initrdBookmark", \.initrdBookmark, .machineKeys),
         .field("storageDisks", \.storageDisks, .machineKeys),
-        .field("sharedDirectories", \.sharedDirectories, .machineKeys),
+        // Every share rides one device on some guests, so a move that keeps
+        // at least one share is a swap of that device's share; adding the
+        // first or removing the last adds or removes the device.
+        .field(
+            "sharedDirectories", \.sharedDirectories,
+            byRoot: { root, old, new in
+                root.guestOS.sharesDirectoriesThroughOneDevice && !(old ?? []).isEmpty
+                    && !(new ?? []).isEmpty
+                    ? [.machineKeys, .liveShares] : .machineKeys
+            }),
         .field("removableMedia", \.removableMedia, .hotPlugMedia),
         // The network device: adding or removing it is hardware, and a mode
         // or interface change on the device it has is the live swap. A device
@@ -121,7 +133,9 @@ extension VMConfiguration {
         .field("displayAutoResizes", \.displayAutoResizes, .liveKeys),
         .field(
             "clipboardSharingEnabled", \.clipboardSharingEnabled,
-            byRoot: { $0.guestOS.sharesClipboardThroughDevice ? .machineKeys : .liveKeys }),
+            byRoot: { root, _, _ in
+                root.guestOS.sharesClipboardThroughDevice ? .machineKeys : .liveKeys
+            }),
         .field("clipboardPassthroughEnabled", \.clipboardPassthroughEnabled, .liveKeys),
         .field("dropFilesEnabled", \.dropFilesEnabled, .liveKeys),
         .field("serialSocketRelayEnabled", \.serialSocketRelayEnabled, .liveKeys),

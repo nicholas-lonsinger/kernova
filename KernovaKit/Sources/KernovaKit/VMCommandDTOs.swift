@@ -373,6 +373,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// every other verb.
     case invalidState(
         vm: VMSummary, current: String, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
+    /// The VM's current state takes the verb, but not this change of it: only
+    /// a stopped VM takes `change`.
+    case changeTakesStoppedVM(vm: VMSummary, current: String, change: StoppedVMChange)
     /// The VM has work in flight that the verb would race.
     case busy(vm: VMSummary, operation: String)
     /// Another running copy of Kernova holds the VM.
@@ -411,6 +414,22 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
         verb: VMVerb, title: String?, message: String, recovery: CommandRecoveryDTO?)
 }
 
+/// A change a verb makes that only a stopped VM takes, though the verb itself
+/// is taken in more states.
+public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
+    /// Adding a guest's first shared directory or removing its last, which
+    /// adds or removes the device every share rides.
+    case firstOrLastSharedDirectory
+
+    /// The rule, as every surface states it.
+    public var sentence: String {
+        switch self {
+        case .firstOrLastSharedDirectory:
+            "Adding the first shared directory or removing the last takes a stopped VM."
+        }
+    }
+}
+
 /// A recovery a failed command offers, named for a caller that cannot hold the
 /// app-side object the in-process recovery carries.
 public enum CommandRecoveryDTO: Codable, Sendable, Hashable {
@@ -430,8 +449,8 @@ extension CommandErrorDTO {
     public var title: String {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
-            .unsupported, .unsupportedByBuild, .invalidState, .timedOut, .invalidArgument,
-            .terminating:
+            .unsupported, .unsupportedByBuild, .invalidState, .changeTakesStoppedVM, .timedOut,
+            .invalidArgument, .terminating:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -486,6 +505,10 @@ extension CommandErrorDTO {
                         ? "Nothing can be done with it in that state."
                         : "What it accepts now: \(offered.joined(separator: ", ")).")
             }()
+        case .changeTakesStoppedVM(let vm, let current, let change):
+            "\u{201C}\(vm.name)\u{201D} is "
+                + "\(VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)). "
+                + change.sentence
         case .busy(let vm, let operation):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
         case .heldByAnotherCopy(let vm):

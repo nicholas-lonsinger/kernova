@@ -292,14 +292,24 @@ enum VMAdmission {
     }
 
     /// The edit classes a settled phase admits.
+    ///
+    /// A share swap is admitted only by a running guest whose shares ride one
+    /// device: it is the only phase with a device to swap on that was measured
+    /// taking one (docs/research/2026-09-30-live-share-edits-reach-a-running-macos-guest.md).
     static func editClasses(settledAt phase: VMLifecyclePhase, facts: Facts) -> VMEditClasses {
         switch phase {
         case .stopped, .initialBoot, .failed, .suspended:
-            guard facts.hasSaveFile else { return .all }
-            return VMEditClasses.all.subtracting([.machineKeys, .hotPlugMedia, .networkAttachment])
+            let atRest = VMEditClasses.all.subtracting(.liveShares)
+            guard facts.hasSaveFile else { return atRest }
+            return atRest.subtracting([.machineKeys, .hotPlugMedia, .networkAttachment])
         case .running, .livePaused:
-            var classes = VMEditClasses.all.subtracting([.machineKeys, .networkAttachment])
+            var classes = VMEditClasses.all.subtracting([
+                .machineKeys, .networkAttachment, .liveShares,
+            ])
             if facts.networkEnabled { classes.insert(.networkAttachment) }
+            if case .running = phase, facts.guestOS.sharesDirectoriesThroughOneDevice {
+                classes.insert(.liveShares)
+            }
             return classes
         case .operating, .removed:
             return []

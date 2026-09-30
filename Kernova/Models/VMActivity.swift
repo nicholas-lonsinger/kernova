@@ -1132,8 +1132,8 @@ final class VMActivity {
     #endif
 
     // periphery:ignore:parameters bringUp - an access token: its type admits the caller
-    /// Takes the pipes and cold-attached removable media a configuration build
-    /// produced into the bring-up's open session context.
+    /// Takes the pipes, cold-attached removable media and directory share a
+    /// configuration build produced into the bring-up's open session context.
     func adoptBuildResult(
         _ bringUp: borrowing VMBringUpContext, _ result: ConfigurationBuilder.BuildResult
     ) {
@@ -1149,6 +1149,7 @@ final class VMActivity {
         sessionContext.clipboardInputPipe = result.clipboardInputPipe
         sessionContext.clipboardOutputPipe = result.clipboardOutputPipe
         sessionContext.liveRemovableMedia = result.coldRemovableMedia
+        sessionContext.directoryShare = result.directoryShare
     }
 
     /// Creates the VM on its own queue, stores the session, and binds it to the

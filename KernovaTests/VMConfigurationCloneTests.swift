@@ -196,6 +196,13 @@ struct VMConfigurationCloneTests {
         #expect(clone.sharedDirectories?[1].readOnly == true)
     }
 
+    @Test("Clone keeps each share's mount name")
+    func clonePreservesSharedDirectoryMountNames() {
+        let dirs = [SharedDirectory(path: "/Users/test/src", mountName: "1234abcd-src")]
+        let clone = makeConfig(sharedDirectories: dirs).clonedForNewInstance(existingNames: [])
+        #expect(clone.sharedDirectories?.map(\.mountName) == ["1234abcd-src"])
+    }
+
     @Test("Clone with nil shared directories remains nil")
     func cloneNilSharedDirectories() {
         let clone = makeConfig(sharedDirectories: nil).clonedForNewInstance(existingNames: [])

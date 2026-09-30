@@ -15,6 +15,8 @@ final class VMLifecycleCoordinator {
     let installService: any MacOSInstallProviding
     let ipswService: any IPSWProviding
     let removableMediaDeviceService: any RemovableMediaAttaching
+    /// Swaps a running macOS guest's shares on its directory-sharing device.
+    let liveDirectorySharing: any LiveDirectorySharing
     let linuxImageResolveService: any LinuxImageResolving
     let downloadService: any Downloading
 
@@ -36,6 +38,7 @@ final class VMLifecycleCoordinator {
         installService: any MacOSInstallProviding,
         ipswService: any IPSWProviding,
         removableMediaDeviceService: any RemovableMediaAttaching = RemovableMediaDeviceService(),
+        liveDirectorySharing: any LiveDirectorySharing = LiveDirectoryShareService(),
         // No default that builds one: ``USBAccessorySupport/makeService(entitlements:)``
         // is called in exactly one place, the composition root, and a
         // collaborator that mints its own would register a second
@@ -53,6 +56,7 @@ final class VMLifecycleCoordinator {
         self.installService = installService
         self.ipswService = ipswService
         self.removableMediaDeviceService = removableMediaDeviceService
+        self.liveDirectorySharing = liveDirectorySharing
         self.usbAccessoryService = usbAccessoryService
         self.linuxImageResolveService = linuxImageResolveService
         self.downloadService = downloadService

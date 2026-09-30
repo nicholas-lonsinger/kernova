@@ -396,7 +396,7 @@ final class VMInstance {
         guard let context = sessionWriteTarget(for: sessionID, deviceID: deviceID, "detached-media record")
         else { return }
         context.liveRemovableMedia.removeAll { $0.id == deviceID }
-        context.fileAccess.releaseHotAttach(id: deviceID)
+        context.fileAccess.releaseAttachmentScope(id: deviceID)
     }
 
     /// Registers the security-scoped access grant backing a hot-attached
@@ -412,7 +412,7 @@ final class VMInstance {
             scope.release()
             return
         }
-        context.fileAccess.addHotAttach(id: deviceID, scope)
+        context.fileAccess.holdAttachmentScope(id: deviceID, scope)
     }
 
     // MARK: - Runtime USB Accessories

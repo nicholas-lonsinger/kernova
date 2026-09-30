@@ -5,16 +5,17 @@ import KernovaLogging
 ///
 /// VZ opens its file descriptors at configuration-build time and gives no
 /// signal when it is done with them, so config-derived scopes (kernel/initrd,
-/// external disks, shared directories) are held for the entire runtime and
-/// released exactly once from `VMSessionContext.tearDown()`. Removable-media
-/// scopes are keyed by item id instead, so a live eject releases exactly its
-/// own grant and a re-attach replaces it cleanly.
+/// external disks) are held for the entire runtime and released exactly once
+/// from `VMSessionContext.tearDown()`. The scopes of what a running VM can
+/// take back — removable media, shared directories — are keyed by item id
+/// instead, so taking one back releases exactly its own grant and a re-attach
+/// replaces it cleanly.
 @MainActor
 final class RuntimeFileAccess {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RuntimeFileAccess")
 
     private var configScopes: [ScopedAccess] = []
-    private var hotAttachScopes: [UUID: ScopedAccess] = [:]
+    private var attachmentScopes: [UUID: ScopedAccess] = [:]
 
     /// Replaces the config-derived scope set (releasing any prior set — a
     /// boot attempt after a retried teardown must not double-hold).
@@ -24,31 +25,31 @@ final class RuntimeFileAccess {
         #log(Self.logger, .debug, "Adopted \(scopes.count, privacy: .public) config scope(s)")
     }
 
-    /// Registers the scope backing an attached USB device — cold-boot or
-    /// hot-attach — keyed by the removable-media item's id, releasing any
-    /// stale entry for that id.
-    func addHotAttach(id: UUID, _ scope: ScopedAccess) {
-        hotAttachScopes.removeValue(forKey: id)?.release()
-        hotAttachScopes[id] = scope
+    /// Registers the scope backing an attachment the running VM can take back
+    /// — a removable-media item or a shared directory, at boot or added live —
+    /// keyed by the item's id, releasing any stale entry for that id.
+    func holdAttachmentScope(id: UUID, _ scope: ScopedAccess) {
+        attachmentScopes.removeValue(forKey: id)?.release()
+        attachmentScopes[id] = scope
     }
 
-    /// Releases the scope for a detached USB device.
-    func releaseHotAttach(id: UUID) {
-        hotAttachScopes.removeValue(forKey: id)?.release()
+    /// Releases the scope of an attachment the running VM no longer holds.
+    func releaseAttachmentScope(id: UUID) {
+        attachmentScopes.removeValue(forKey: id)?.release()
     }
 
     /// Releases every scope this session holds.
     ///
     /// Safe to call repeatedly.
     func releaseAll() {
-        let count = configScopes.count + hotAttachScopes.count
+        let count = configScopes.count + attachmentScopes.count
         if count > 0 {
             #log(Self.logger, .debug, "Releasing all \(count, privacy: .public) scope(s)")
         }
         configScopes.forEach { $0.release() }
         configScopes.removeAll()
-        hotAttachScopes.values.forEach { $0.release() }
-        hotAttachScopes.removeAll()
+        attachmentScopes.values.forEach { $0.release() }
+        attachmentScopes.removeAll()
     }
 }
 
@@ -88,9 +89,9 @@ extension VMInstance {
                         reference: reference, path: healed.path, bookmark: healed.bookmark))
             }
             switch reference.kind {
-            case .removableMedia:
-                context.fileAccess.addHotAttach(id: reference.id, opened.scope)
-            case .kernel, .initrd, .storageDisk, .sharedDirectory, .localIPSW:
+            case .removableMedia, .sharedDirectory:
+                context.fileAccess.holdAttachmentScope(id: reference.id, opened.scope)
+            case .kernel, .initrd, .storageDisk, .localIPSW:
                 scopes.append(opened.scope)
             }
         }

@@ -157,4 +157,53 @@ struct VMStateFieldClassesTests {
             }
         }
     }
+
+    /// The share verbs take their capability from a rule compiled into
+    /// ``SharedDirectoryListEdit``; this pins it to the field classes, both
+    /// ways, over every edit of a list of up to three shares.
+    @Test("Every share-list edit's capability may write what it moves, and is live exactly when the move is a swap")
+    func sharedDirectoryListEditsAgreeWithTheFieldClasses() throws {
+        for guestOS in VMGuestOS.allCases {
+            for live in [false, true] {
+                for edit in SharedDirectoryListEdit.allCases {
+                    for count in 0...3 {
+                        let shares = (0..<count).map {
+                            SharedDirectory(path: "/Users/Shared/share\($0)")
+                        }
+                        var old = VMConfiguration(
+                            name: "VM", guestOS: guestOS,
+                            bootMode: guestOS == .macOS ? .macOS : .efi)
+                        old.sharedDirectories = shares.isEmpty ? nil : shares
+                        var edited = shares
+                        switch edit {
+                        case .add:
+                            edited.append(SharedDirectory(path: "/Users/Shared/added"))
+                        case .remove:
+                            guard !edited.isEmpty else { continue }
+                            edited.removeLast()
+                        case .change:
+                            guard !edited.isEmpty else { continue }
+                            edited[0].readOnly.toggle()
+                        }
+                        var new = old
+                        new.sharedDirectories = edited.isEmpty ? nil : edited
+                        let label = "\(guestOS) live=\(live) \(edit) of \(count)"
+
+                        let capability = edit.capability(
+                            onListOf: count, guestOS: guestOS, live: live)
+                        let classes = try #require(capability.editClasses, "\(label)")
+                        #expect(
+                            VMConfiguration.fieldClasses.refused(
+                                from: old, to: new, by: .edit(classes)) == [],
+                            "\(label)")
+                        guard live else { continue }
+                        let swaps =
+                            VMConfiguration.fieldClasses.refused(
+                                from: old, to: new, by: .edit(.liveShares)) == []
+                        #expect((capability == .editLiveSharedDirectories) == swaps, "\(label)")
+                    }
+                }
+            }
+        }
+    }
 }

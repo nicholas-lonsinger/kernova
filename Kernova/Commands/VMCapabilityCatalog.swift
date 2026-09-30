@@ -42,7 +42,10 @@ enum VMCapability: CaseIterable, Hashable {
     /// Write a new disk image where the user chose and attach it as
     /// removable media.
     case createRemovableMedia
+    /// Change the shares a VM's guest boots with.
     case editSharedDirectories
+    /// Swap the share a running guest's one directory-sharing device carries.
+    case editLiveSharedDirectories
     case editUSBAccessories
     case forgetUSBPairing
     case editConfiguration
@@ -85,7 +88,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .setSnapshotNotes: .setSnapshotNotes
         case .editStorageDisks, .createStorageDisk, .trashStorageDisk: .editStorageDisk
         case .editRemovableMedia, .createRemovableMedia: .editRemovableMedia
-        case .editSharedDirectories: .editSharedDirectory
+        case .editSharedDirectories, .editLiveSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
@@ -114,6 +117,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .forgetUSBPairing: .pairingRules
         case .editLiveConfiguration: .liveKeys
         case .switchNetworkMode: .networkAttachment
+        case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
@@ -166,8 +170,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .deleteSnapshot:
             return .operation(.deletingSnapshot)
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
-            .editConfiguration, .editRemovableMedia, .forgetUSBPairing, .editLiveConfiguration,
-            .switchNetworkMode, .rename:
+            .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia, .forgetUSBPairing,
+            .editLiveConfiguration, .switchNetworkMode, .rename:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)
@@ -189,6 +193,36 @@ enum VMCapability: CaseIterable, Hashable {
         case .toggleGuestAgentDisk:
             return .affordance(.guestAgentDisk)
         }
+    }
+}
+
+/// One edit of a VM's shared-directory list, by what it does to the list —
+/// and the compiled-in rule for which capability it has to pass.
+enum SharedDirectoryListEdit: Hashable, Sendable, CaseIterable {
+    /// Shares a folder beside the ones the list holds.
+    case add
+    /// Drops one share.
+    case remove
+    /// Changes one share in place — its read-only access.
+    case change
+
+    /// The capability this edit of a list holding `count` shares has to pass
+    /// on a `guestOS` guest, `live` when the VM has a live session.
+    ///
+    /// A live session whose shares ride one device
+    /// (``VMGuestOS/sharesDirectoriesThroughOneDevice``) swaps that device's
+    /// share for any edit that leaves it with at least one; every other edit,
+    /// adding the first share or removing the last among them, changes what
+    /// the machine is built from. `VMStateFieldClassesTests` pins this rule to
+    /// ``VMConfiguration/fieldClasses``.
+    func capability(onListOf count: Int, guestOS: VMGuestOS, live: Bool) -> VMCapability {
+        guard live, guestOS.sharesDirectoriesThroughOneDevice else { return .editSharedDirectories }
+        let keepsAShare =
+            switch self {
+            case .add, .change: count >= 1
+            case .remove: count >= 2
+            }
+        return keepsAShare ? .editLiveSharedDirectories : .editSharedDirectories
     }
 }
 
@@ -248,6 +282,44 @@ struct VMCapabilityCatalog {
         isAvailable(
             key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
             && key.accepts(value, for: instance)
+    }
+
+    /// What one edit of a VM's shared-directory list is offered as.
+    enum SharedDirectoriesOffer: Equatable {
+        /// The edit is taken now, as a write this capability admits.
+        case offered(VMCapability)
+        /// The VM takes a live share swap, and this edit is none: it adds the
+        /// first share or removes the last, which only a stopped VM takes.
+        case changesSharingDevice
+        /// The VM's state refuses the write this capability admits.
+        case unavailable(VMCapability)
+
+        /// Whether the edit is taken now.
+        var isOffered: Bool {
+            if case .offered = self { return true }
+            return false
+        }
+    }
+
+    /// What `edit` of `instance`'s shared-directory list is offered as right
+    /// now, in `posture`: the capability ``SharedDirectoryListEdit`` names
+    /// for it, as admission decides that capability — what the share verbs
+    /// commit by and every control offering one of their edits renders from.
+    func sharedDirectoriesOffer(
+        _ edit: SharedDirectoryListEdit, on instance: VMInstance,
+        posture: VMAdmission.Posture = .offer
+    ) -> SharedDirectoriesOffer {
+        let capability = edit.capability(
+            onListOf: instance.configuration.sharedDirectories?.count ?? 0,
+            guestOS: instance.configuration.guestOS, live: instance.liveSessionID != nil)
+        let takes: (VMCapability) -> Bool =
+            switch posture {
+            case .offer: { isAvailable($0, on: instance) }
+            case .commit: { accepts($0, on: instance) }
+            }
+        if takes(capability) { return .offered(capability) }
+        return capability == .editSharedDirectories && takes(.editLiveSharedDirectories)
+            ? .changesSharingDevice : .unavailable(capability)
     }
 
     /// Whether one snapshot's delete is offered, and what bars it when it is

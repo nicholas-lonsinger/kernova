@@ -627,12 +627,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// changes nothing; a MAC-address refusal is presented. A save that fails
     /// is presented, and memory stays equal to the file.
     ///
-    /// `mutate` runs inside the coordinated write, so it must be pure.
+    /// `mutate` runs inside the coordinated write, so it must be pure. It may
+    /// refuse by throwing, judged on what `config.json` holds; the error is
+    /// thrown on and nothing changed.
     @discardableResult
-    func updateConfiguration(
-        _ permit: borrowing VMEditPermit, mutate: (inout VMConfiguration) -> Void
-    ) -> SettingsWrite {
-        switch commitConfiguration(permit, mutate: mutate) {
+    func updateConfiguration<Failure: Error>(
+        _ permit: borrowing VMEditPermit, mutate: (inout VMConfiguration) throws(Failure) -> Void
+    ) throws(Failure) -> SettingsWrite {
+        switch try commitConfiguration(permit, mutate: mutate) {
         case .committed: .saved
         case .stopped(let write): write
         }

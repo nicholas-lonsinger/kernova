@@ -48,7 +48,7 @@ struct AttachmentRowViewTests {
 
         row.update(
             title: "Renamed Disk", notes: "after", iconSystemName: "externaldrive",
-            missingPath: nil, readOnly: false, controlsEnabled: true)
+            missingPath: nil, readOnly: false, controlsEnabled: true, ejectEnabled: true)
 
         #expect(findLabel(withText: "Renamed Disk", in: row) != nil)
         #expect(findLabel(withText: "after", in: row) != nil)
@@ -116,7 +116,7 @@ struct AttachmentRowViewTests {
         row.beginRename()
         row.update(
             title: "Projects", notes: "", iconSystemName: "folder", missingPath: nil,
-            readOnly: true, controlsEnabled: true)
+            readOnly: true, controlsEnabled: true, ejectEnabled: true)
         row.beginRename()
 
         #expect(!editBegan)

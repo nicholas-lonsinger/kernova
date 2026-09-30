@@ -172,6 +172,32 @@ struct VMConfigurationTests {
 
     // MARK: - SharedDirectory Tests
 
+    @Test("A share written before its mount name was stored decodes mounted by its folder's name")
+    func missingMountNameDecodesAsTheFolderName() throws {
+        let id = UUID()
+        let json = #"{"id":"\#(id.uuidString)","path":"/Users/test/src","readOnly":false}"#
+        let decoded = try JSONDecoder().decode(SharedDirectory.self, from: Data(json.utf8))
+
+        #expect(decoded.mountName == "src")
+        #expect(decoded.mountName == SharedDirectory(path: "/Users/test/src").mountName)
+        let renamed = SharedDirectory(path: "/Users/test/src", mountName: "abcd-src")
+        let roundTripped = try JSONDecoder().decode(
+            SharedDirectory.self, from: JSONEncoder().encode(renamed))
+        #expect(roundTripped.mountName == "abcd-src")
+    }
+
+    @Test("A share added beside one of the same folder name is mounted under its id prefix")
+    func addedShareTakesAFreeMountName() {
+        let existing = [SharedDirectory(path: "/Users/a/src")]
+        let fresh = SharedDirectory(
+            adding: "/Users/c/docs", id: UUID(), readOnly: false, bookmark: nil, to: existing)
+        #expect(fresh.mountName == "docs")
+        let colliding = SharedDirectory(
+            adding: "/Users/b/src", id: UUID(), readOnly: true, bookmark: nil, to: existing)
+        #expect(colliding.mountName == "\(colliding.id.uuidString.prefix(8))-src")
+        #expect(colliding.readOnly)
+    }
+
     @Test("SharedDirectory encodes and decodes via JSON")
     func sharedDirectoryRoundTrip() throws {
         let original = SharedDirectory(path: "/Users/test/Documents", readOnly: true)

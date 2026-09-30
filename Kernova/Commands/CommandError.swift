@@ -43,6 +43,9 @@ enum CommandError: Error, Sendable, Equatable {
     /// `setConfiguration` would have made.
     case invalidState(
         vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
+    /// The VM's current state takes this verb, but not this change of it: only
+    /// a stopped VM takes `change`.
+    case changeTakesStoppedVM(vm: VMSummary, current: VMStatus, change: StoppedVMChange)
     /// The VM has work in flight that this verb would race.
     case busy(vm: VMSummary, operation: String)
     /// Another running copy of Kernova holds the VM.
@@ -123,6 +126,8 @@ extension CommandError {
             .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed, let settings):
             .invalidState(vm: vm, current: current.rawValue, allowed: allowed, settings: settings)
+        case .changeTakesStoppedVM(let vm, let current, let change):
+            .changeTakesStoppedVM(vm: vm, current: current.rawValue, change: change)
         case .busy(let vm, let operation):
             .busy(vm: vm, operation: operation)
         case .heldByAnotherCopy(let vm):
