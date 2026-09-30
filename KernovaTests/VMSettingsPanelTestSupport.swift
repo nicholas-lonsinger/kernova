@@ -146,6 +146,29 @@ func rowTitle(of row: NSView) -> NSTextField? {
     (row as? GroupedFormControlRow)?.titleLabel
 }
 
+/// The grouped-form card `view` sits in: the nearest ancestor drawing the
+/// card fill.
+@MainActor
+func enclosingGroupedFormCard(of view: NSView) -> NSView? {
+    var candidate = view.superview
+    while let current = candidate {
+        let drawsCard = current.subviews.contains {
+            ($0 as? NSBox)?.fillColor == GroupedFormStyle.cardFill
+        }
+        if drawsCard { return current }
+        candidate = current.superview
+    }
+    return nil
+}
+
+/// `view`'s alignment rect in `ancestor`'s coordinates — the rect a stack
+/// spaces, which for a text field is inset from its frame.
+@MainActor
+func alignmentRect(of view: NSView, in ancestor: NSView) -> NSRect {
+    guard let superview = view.superview else { return .zero }
+    return superview.convert(view.alignmentRect(forFrame: view.frame), to: ancestor)
+}
+
 @MainActor
 func containsLabel(_ text: String, in view: NSView) -> Bool {
     findLabel(withText: text, in: view) != nil

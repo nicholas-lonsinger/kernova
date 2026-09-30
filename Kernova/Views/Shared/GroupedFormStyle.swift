@@ -153,6 +153,34 @@ func makeGroupedFormHairline() -> NSView {
     return line
 }
 
+/// A hairline padded so that, set between two rows in a stack spaced
+/// ``Spacing/small``, it puts ``Spacing/relaxed`` on each side of the line.
+///
+/// The padding lives on the separator rather than in the stack's spacing so
+/// that a card's notes sit ``Spacing/small`` under whichever row is the last
+/// one showing.
+@MainActor
+final class GroupedFormCardSeparator: NSView {
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        let line = makeGroupedFormHairline()
+        addSubview(line)
+        let pad = Spacing.relaxed - Spacing.small
+        NSLayoutConstraint.activate([
+            line.topAnchor.constraint(equalTo: topAnchor, constant: pad),
+            line.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            line.leadingAnchor.constraint(equalTo: leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormCardSeparator does not support NSCoder")
+    }
+}
+
 /// The leading title of a card row, which keeps its full width however narrow
 /// the row gets.
 @MainActor
@@ -242,9 +270,9 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
-        spacing = Spacing.relaxed
+        spacing = Spacing.small
         translatesAutoresizingMaskIntoConstraints = false
-        let hairline = makeGroupedFormHairline()
+        let hairline = GroupedFormCardSeparator()
         for view in [hairline, row] {
             addArrangedSubview(view)
             view.widthAnchor.constraint(
@@ -276,7 +304,7 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     let content = NSStackView()
     content.orientation = .vertical
     content.alignment = .leading
-    content.spacing = Spacing.relaxed
+    content.spacing = Spacing.small
     content.translatesAutoresizingMaskIntoConstraints = false
 
     var arranged: [(view: NSView, bleeds: Bool)] = []
@@ -284,15 +312,12 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
         // A collapsible row carries its own hairline, so that hiding it takes
         // the separator with it.
         if index > 0, !(row is GroupedFormCollapsibleRow) {
-            arranged.append((makeGroupedFormHairline(), true))
+            arranged.append((GroupedFormCardSeparator(), true))
         }
         arranged.append((row, row is GroupedFormFullBleedRow))
     }
     arranged += notes.map { ($0, false) }
     arranged.forEach { content.addArrangedSubview($0.view) }
-    for view in rows.suffix(1) + notes.dropLast() {
-        content.setCustomSpacing(Spacing.small, after: view)
-    }
 
     let box = NSBox()
     box.boxType = .custom

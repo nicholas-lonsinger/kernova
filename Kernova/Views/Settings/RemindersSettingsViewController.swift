@@ -109,7 +109,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         // Indented beneath the switch that governs them, the alignment Apple's
         // guidance uses to show a control's subordinates.
-        let vmSubordinates = NSStackView(views: [vmSection, vmCaption, vmOverrideCaption])
+        let vmSubordinates = NSStackView(views: [vmSection, vmCaption])
         vmSubordinates.orientation = .vertical
         vmSubordinates.alignment = .leading
         vmSubordinates.spacing = Spacing.small
@@ -127,7 +127,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                 equalTo: vmGroup.leadingAnchor, constant: groupedFormSubOptionIndent),
             vmSubordinates.trailingAnchor.constraint(equalTo: vmGroup.trailingAnchor),
         ])
-        for member in [vmSection, vmCaption, vmOverrideCaption] {
+        for member in [vmSection, vmCaption] {
             member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
         }
 
@@ -316,7 +316,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             rows.append(row)
         }
 
-        let card = makeGroupedFormCard(rows: rows)
+        let card = makeGroupedFormCard(rows: rows, notes: [vmOverrideCaption])
         vmSection.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
     }

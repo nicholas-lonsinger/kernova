@@ -188,7 +188,7 @@ struct VMSettingsGeneralPanelTests {
     /// Scoped to the General panel: the overview's General card states some of
     /// the same rows and would match first.
     private func generalCardLayout(in vc: VMSettingsViewController) -> [Bool] {
-        // The card's content stack is the one holding hairlines directly, which
+        // The card's content stack is the one holding separators directly, which
         // no section or form stack does.
         guard let panel = vc.panelForTesting(.general) else {
             Issue.record("Expected a General panel")
@@ -198,7 +198,7 @@ struct VMSettingsGeneralPanelTests {
             let content = firstSubview(
                 NSStackView.self, in: panel,
                 where: { stack in
-                    stack.arrangedSubviews.contains { $0 is NSBox }
+                    stack.arrangedSubviews.contains { $0 is GroupedFormCardSeparator }
                         && findLabel(withText: "Boot mode", in: stack) != nil
                 })
         else {
@@ -206,8 +206,10 @@ struct VMSettingsGeneralPanelTests {
             return []
         }
         return content.arrangedSubviews.filter { !$0.isHidden }.flatMap { view -> [Bool] in
-            guard let collapsible = view as? GroupedFormCollapsibleRow else { return [view is NSBox] }
-            return collapsible.arrangedSubviews.filter { !$0.isHidden }.map { $0 is NSBox }
+            guard let collapsible = view as? GroupedFormCollapsibleRow else {
+                return [view is GroupedFormCardSeparator]
+            }
+            return collapsible.arrangedSubviews.filter { !$0.isHidden }.map { $0 is GroupedFormCardSeparator }
         }
     }
 

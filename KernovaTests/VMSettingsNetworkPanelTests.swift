@@ -298,6 +298,24 @@ struct VMSettingsNetworkPanelTests {
         #expect(settingsNetworkModePopUp(in: vc.view)?.titleOfSelectedItem == "None")
     }
 
+    @Test("With no network device the caption sits in the Network card, a note's gap under Mode")
+    func noneModeCaptionSitsInTheCard() throws {
+        let (vc, _) = makeNetworkController(networkEnabled: false)
+        vc.view.layoutSubtreeIfNeeded()
+
+        let caption = try #require(
+            findLabel(withText: "This virtual machine has no network device.", in: vc.view))
+        let card = try #require(enclosingGroupedFormCard(of: caption))
+        let modeRow = try #require(findLabel(withText: "Mode", in: card)?.superview)
+
+        // The card's own view is not flipped: "below" is a smaller y. Mode is the
+        // only row showing, so the note's gap is measured from it.
+        let captionInCard = alignmentRect(of: caption, in: card)
+        let modeRowInCard = modeRow.convert(modeRow.bounds, to: card)
+        #expect(captionInCard.height > 0)
+        #expect(modeRowInCard.minY - captionInCard.maxY == Spacing.small)
+    }
+
     @Test("Choosing an interface sets the bridged mode and the interface in one gesture")
     func selectingInterfaceWritesModeAndIdentifier() throws {
         let (vc, instance) = makeNetworkController(

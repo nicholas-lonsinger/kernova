@@ -109,9 +109,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
             trailing: [hint])
         return makeGroupedFormSection([
-            makeGroupedFormCard(rows: rows),
+            makeGroupedFormCard(rows: rows, notes: [networkNoDeviceCaption]),
             networkWarningContainer,
-            networkNoDeviceCaption,
         ])
     }
 

@@ -883,19 +883,6 @@ struct VMSettingsSystemPanelTests {
         hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
     }
 
-    /// The card `view` sits in: the nearest ancestor drawing the card fill.
-    private func enclosingCard(of view: NSView) -> NSView? {
-        var candidate = view.superview
-        while let current = candidate {
-            let drawsCard = current.subviews.contains {
-                ($0 as? NSBox)?.fillColor == GroupedFormStyle.cardFill
-            }
-            if drawsCard { return current }
-            candidate = current.superview
-        }
-        return nil
-    }
-
     @Test(
         "The resolution caption sits inside the Display card, under its last row",
         arguments: [(VMGuestOS.macOS, "HiDPI (Retina)"), (.linux, "Height")])
@@ -905,7 +892,7 @@ struct VMSettingsSystemPanelTests {
 
         let caption = try #require(
             firstSubview(NSTextField.self, in: vc.view) { $0.stringValue.hasPrefix("Boots at") })
-        let card = try #require(enclosingCard(of: caption))
+        let card = try #require(enclosingGroupedFormCard(of: caption))
         let lastRowTitleLabel = try #require(findLabel(withText: lastRowTitle, in: card))
 
         // The card's own view is not flipped: "below" is a smaller y.
