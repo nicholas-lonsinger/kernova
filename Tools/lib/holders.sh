@@ -37,20 +37,24 @@ refresh_holders() {
         /^f/ { f = substr($0, 2) }
         /^n/ { n = substr($0, 2); if (held(n)) print p "\t" c "\t" f "\t" n }
     ' <<<"$files")
-    # This shell and its subshells are left out: a caller's own arguments name
-    # the path it asks about. A command line names a path when the path is
-    # followed by `/` or ends an argument (`code <dir>`, `git -C <dir> …`).
+    # The caller, its descendants, and its ancestors are left out: a caller's
+    # own arguments name the path it asks about, and so do those of whatever
+    # invoked it about that path (`make clean`, the recipe's shell). A command
+    # line names a path when the path is followed by `/` or ends an argument
+    # (`code <dir>`, `git -C <dir> …`).
     holder_procs=$(PREFIXES=$prefixes SELF=$$ awk '
-        function mine(p,   n) {
-            for (n = 0; p != "" && p > 1 && n < 64; n++) { if (p == ENVIRON["SELF"]) return 1; p = parent[p] }
+        # chain(p, q) — whether q lies on the parent chain from p up.
+        function chain(p, q,   n) {
+            for (n = 0; p != "" && p > 1 && n < 64; n++) { if (p == q) return 1; p = parent[p] }
             return 0
         }
+        function related(p) { return chain(p, ENVIRON["SELF"]) || chain(ENVIRON["SELF"], p) }
         function names(s, d) { return index(s, d "/") || index(s " ", d " ") }
         BEGIN { np = split(ENVIRON["PREFIXES"], all, "\n"); for (i = 1; i <= np; i++) if (all[i] != "") pre[++k] = all[i]; np = k }
         { line[NR] = $0; pid[NR] = $1; parent[$1] = $2 }
         END {
             for (r = 1; r <= NR; r++) {
-                if (mine(pid[r])) continue
+                if (related(pid[r])) continue
                 for (i = 1; i <= np; i++) if (names(line[r], pre[i])) {
                     rest = line[r]; sub(/^ *[0-9]+ +[0-9]+ /, "", rest)
                     comm = substr(rest, 1, 16); sub(/ +$/, "", comm)
