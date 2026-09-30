@@ -418,20 +418,19 @@ struct ClipboardDirectoryTransferTests {
         defer { harness.tearDown() }
         let source = try makeSourceTree()
 
-        // The peer takes the reply and vanishes, so the send fails under it.
+        // The peer is gone before the reply, so the send fails at its first
+        // write. A send fails only on a write the peer's close precedes, and
+        // this tree's whole stream fits in the socket's buffer, so a peer that
+        // closes after reading the reply can close after the last write too.
+        let (near, far) = try makeRawSocketPair()
+        ClipboardDataConnection.end(fd: far)
         let collector = harness.collector
         let transferID: UInt64 = 0x47
         harness.outbox.serve(
             transferID: transferID, generation: 1,
             representation: folderRepresentation(source, named: "Project"),
             maxAcceptByteCount: ClipboardStreamTuning.unlimitedAcceptByteCount, isInline: false,
-            isCurrent: { _ in true },
-            link: .dial {
-                try dialToPeer { far in
-                    _ = readTransferReply(fd: far)
-                    ClipboardDataConnection.end(fd: far)
-                }
-            },
+            isCurrent: { _ in true }, link: .accepted(near),
             onComplete: { collector.sendFinished(transferID, success: $0) })
         try await collector.gate.wait { collector.sendCount == 1 }
         #expect(collector.sendOutcome(transferID) == false)
