@@ -14,11 +14,11 @@ struct SnapshotInfoPopoverContentViewControllerTests {
     }
 
     private func makeController(
-        kind: VMSnapshotKind, notes: String = "", canEditNotes: Bool = true,
-        recorder: NoteRecorder = NoteRecorder()
+        kind: VMSnapshotKind, name: String = "Before the update", notes: String = "",
+        canEditNotes: Bool = true, recorder: NoteRecorder = NoteRecorder()
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
-            name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
             snapshot: snapshot, onDiskText: "2 GB", canEditNotes: canEditNotes,
@@ -42,19 +42,56 @@ struct SnapshotInfoPopoverContentViewControllerTests {
                 == nil)
     }
 
-    @Test("The facts grid says what a snapshot holding memory captured")
+    @Test("The facts grid says what a running-state snapshot captured")
     func warmNamesWhatItCaptured() {
         let controller = makeController(kind: .warm)
         #expect(findLabel(withText: "Captured", in: controller.view) != nil)
         #expect(
-            findLabel(withText: SnapshotKindCopy.captured(.warm), in: controller.view) != nil)
+            findLabel(withText: SnapshotKindCopy.capturedContents(.warm), in: controller.view) != nil)
     }
 
-    @Test("The facts grid says what a snapshot holding no memory captured")
+    @Test("The facts grid says what a powered-off snapshot captured")
     func coldNamesWhatItCaptured() {
         let controller = makeController(kind: .cold)
         #expect(
-            findLabel(withText: SnapshotKindCopy.captured(.cold), in: controller.view) != nil)
+            findLabel(withText: SnapshotKindCopy.capturedContents(.cold), in: controller.view) != nil)
+    }
+
+    /// Lays the popover out at the size it asks its host for.
+    private func layOut(_ controller: NSViewController) {
+        controller.view.setFrameSize(controller.view.fittingSize)
+        controller.view.layoutSubtreeIfNeeded()
+    }
+
+    @Test("A running-state snapshot's Captured value sits on one line, untruncated")
+    func warmCapturedValueFitsOnOneLine() throws {
+        let controller = makeController(kind: .warm)
+        layOut(controller)
+
+        let value = try #require(
+            findLabel(withText: SnapshotKindCopy.capturedContents(.warm), in: controller.view))
+        let needed = value.fittingSize
+        #expect(value.frame.width >= needed.width)
+        #expect(value.frame.height == needed.height)
+    }
+
+    @Test("A long snapshot name wraps within the width the facts set")
+    func longNameDoesNotWidenThePopover() throws {
+        let short = makeController(kind: .warm)
+        let long = makeController(
+            kind: .warm, name: String(repeating: "A very long snapshot name ", count: 12))
+        layOut(short)
+        layOut(long)
+
+        #expect(long.view.frame.width == short.view.frame.width)
+        #expect(long.view.frame.width >= CalloutStyle.width)
+        let headline = try #require(
+            allSubviews(NSTextField.self, in: long.view) {
+                $0.stringValue.hasPrefix("A very long")
+            }.first)
+        // Wrapped rather than clipped: the name takes more than one line.
+        let lineHeight = try #require(headline.font).boundingRectForFont.height
+        #expect(headline.frame.height > lineHeight)
     }
 
     @Test("An editable popover always offers the Notes box, empty or not")

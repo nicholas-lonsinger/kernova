@@ -172,10 +172,16 @@ struct VMSnapshotTests {
 
     /// A revert commits the snapshot's configuration for either kind
     /// (`VMLibrary.commitRevertedConfiguration`), so both read the settings in
-    /// and only memory sets them apart.
-    @Test("Each kind names the settings it puts back, and memory tells them apart")
-    func capturedCopyNamesSettingsForBothKinds() {
-        #expect(SnapshotKindCopy.captured(.warm) == "Memory, disks, and settings")
-        #expect(SnapshotKindCopy.captured(.cold) == "Disks and settings")
+    /// and only the running state sets them apart.
+    @Test("Each kind names the settings it puts back, and the running state tells them apart")
+    func capturedContentsNamesSettingsForBothKinds() {
+        #expect(SnapshotKindCopy.capturedContents(.warm) == "Running state, disks, and settings")
+        #expect(SnapshotKindCopy.capturedContents(.cold) == "Disks and settings")
+    }
+
+    @Test("Each kind's short label names the state the snapshot captured")
+    func stateLabelNamesEachKind() {
+        #expect(SnapshotKindCopy.stateLabel(.warm) == "Running state")
+        #expect(SnapshotKindCopy.stateLabel(.cold) == "Powered off")
     }
 }
