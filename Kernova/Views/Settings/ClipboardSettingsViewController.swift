@@ -68,15 +68,14 @@ final class ClipboardSettingsViewController: NSViewController {
         sizePopUp.target = self
         sizePopUp.action = #selector(maxPasteSizeChanged)
 
-        let card = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Maximum paste size", control: sizePopUp)
-        ])
+        let card = makeGroupedFormCard(
+            rows: [makeGroupedFormCardRow("Maximum paste size", control: sizePopUp)],
+            notes: [estimateCaption])
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("Clipboard Transfers"),
             card,
             makeGroupedFormCaption(Self.deadlineCaption),
-            estimateCaption,
         ])
         section.orientation = .vertical
         section.alignment = .leading
@@ -96,7 +95,6 @@ final class ClipboardSettingsViewController: NSViewController {
             section.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -pad),
             root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             card.widthAnchor.constraint(equalTo: section.widthAnchor),
-            estimateCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
         ])
         view = root
     }

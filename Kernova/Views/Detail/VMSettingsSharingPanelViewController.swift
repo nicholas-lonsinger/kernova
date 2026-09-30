@@ -255,46 +255,46 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
         dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
-        let card = makeGroupedFormCard(rows: [
-            makeGroupedFormRowWithInfo(
-                "Forward guest logs", control: logForwardingSwitch,
-                paragraphs: [
-                    .body(
-                        "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
-                    )
-                ]),
-            // Passthrough rides on sharing — it goes inert when sharing is off —
-            // so it nests as a sub-option rather than an equal sibling toggle.
-            makeGroupedFormSubOptionGroup(
-                primary: makeGroupedFormRowWithInfo(
-                    "Clipboard sharing", control: clipboardSwitch,
-                    paragraphs: [
-                        .body("Exchanges clipboard text between host and guest.")
-                    ]),
-                subOption: makeGroupedFormRowWithInfo(
-                    "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                    paragraphs: Self.passthroughInfoParagraphs)),
-            makeGroupedFormRowWithInfo(
-                "Drag and drop files", control: dropFilesSwitch,
-                paragraphs: [
-                    .body(
-                        "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
-                    )
-                ]),
-            makeGroupedFormRowWithInfo(
-                "Show install reminder", control: installReminderSwitch,
-                paragraphs: [
-                    .body(
-                        "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
-                    )
-                ]),
-        ])
         let overrideCaption = makeGroupedFormCaption(Self.installPromptDisabledCaption)
         overrideCaption.isHidden = true
         installReminderOverrideCaption = overrideCaption
+        let card = makeGroupedFormCard(
+            rows: [
+                makeGroupedFormRowWithInfo(
+                    "Forward guest logs", control: logForwardingSwitch,
+                    paragraphs: [
+                        .body(
+                            "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
+                        )
+                    ]),
+                // Passthrough rides on sharing — it goes inert when sharing is off —
+                // so it nests as a sub-option rather than an equal sibling toggle.
+                makeGroupedFormSubOptionGroup(
+                    primary: makeGroupedFormRowWithInfo(
+                        "Clipboard sharing", control: clipboardSwitch,
+                        paragraphs: [
+                            .body("Exchanges clipboard text between host and guest.")
+                        ]),
+                    subOption: makeGroupedFormRowWithInfo(
+                        "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
+                        paragraphs: Self.passthroughInfoParagraphs)),
+                makeGroupedFormRowWithInfo(
+                    "Drag and drop files", control: dropFilesSwitch,
+                    paragraphs: [
+                        .body(
+                            "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
+                        )
+                    ]),
+                makeGroupedFormRowWithInfo(
+                    "Show install reminder", control: installReminderSwitch,
+                    paragraphs: [
+                        .body(
+                            "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                        )
+                    ]),
+            ], notes: [overrideCaption])
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
-            overrideCaption,
         ])
     }
 

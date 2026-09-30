@@ -109,7 +109,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         // Indented beneath the switch that governs them, the alignment Apple's
         // guidance uses to show a control's subordinates.
-        let vmSubordinates = NSStackView(views: [vmSection, vmCaption, vmOverrideCaption])
+        let vmSubordinates = NSStackView(views: [vmSection, vmCaption])
         vmSubordinates.orientation = .vertical
         vmSubordinates.alignment = .leading
         vmSubordinates.spacing = Spacing.small
@@ -127,7 +127,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                 equalTo: vmGroup.leadingAnchor, constant: groupedFormSubOptionIndent),
             vmSubordinates.trailingAnchor.constraint(equalTo: vmGroup.trailingAnchor),
         ])
-        for member in [vmSection, vmCaption, vmOverrideCaption] {
+        for member in [vmSection, vmCaption] {
             member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
         }
 
@@ -316,7 +316,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             rows.append(row)
         }
 
-        let card = makeGroupedFormCard(rows: rows)
+        let card = makeGroupedFormCard(rows: rows, notes: [vmOverrideCaption])
         vmSection.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
     }
@@ -331,21 +331,22 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
-        // Both captions talk about the per-VM switches. With no VMs the section
-        // is a lone "No virtual machines yet." row, so they would be describing
+        // The caption talks about the per-VM switches. With no VMs the section
+        // is a lone "No virtual machines yet." row, so it would be describing
         // controls that aren't on screen.
         let hasVMs = !vmSwitches.isEmpty
         vmCaption.isHidden = !hasVMs
-        let showOverrideCaption = overridden && hasVMs
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
-        vmOverrideCaption.isHidden = !showOverrideCaption
+        vmOverrideCaption.isHidden = !overridden
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
             applyGroupedFormRowEnabled(!overridden, control: toggle)
         }
 
-        if wasShowingOverrideCaption != showOverrideCaption { rearmScrollFlash() }
+        // The override caption is a note of the per-VM card, so it changes the
+        // pane's height only while that card exists.
+        if hasVMs, wasShowingOverrideCaption != overridden { rearmScrollFlash() }
     }
 
     @objc private func menuBarQuitToggled() {

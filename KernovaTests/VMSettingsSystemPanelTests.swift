@@ -883,6 +883,25 @@ struct VMSettingsSystemPanelTests {
         hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
     }
 
+    @Test(
+        "The resolution caption sits inside the Display card, under its last row",
+        arguments: [(VMGuestOS.macOS, "HiDPI (Retina)"), (.linux, "Height")])
+    func resolutionCaptionSitsInTheDisplayCard(guestOS: VMGuestOS, lastRowTitle: String) throws {
+        let (vc, _) = makeDisplayController(guestOS: guestOS)
+        vc.view.layoutSubtreeIfNeeded()
+
+        let caption = try #require(
+            firstSubview(NSTextField.self, in: vc.view) { $0.stringValue.hasPrefix("Boots at") })
+        let card = try #require(enclosingGroupedFormCard(of: caption))
+        let lastRowTitleLabel = try #require(findLabel(withText: lastRowTitle, in: card))
+
+        // The card's own view is not flipped: "below" is a smaller y.
+        let captionInCard = caption.convert(caption.bounds, to: card)
+        let titleInCard = lastRowTitleLabel.convert(lastRowTitleLabel.bounds, to: card)
+        #expect(captionInCard.height > 0)
+        #expect(captionInCard.maxY <= titleInCard.minY)
+    }
+
     @Test("The resolution caption follows HiDPI off, then on")
     func resolutionCaptionFollowsHiDPI() throws {
         let (vc, _) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
