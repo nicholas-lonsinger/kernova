@@ -1387,13 +1387,64 @@ struct VMCommandCoreAttachmentTests {
                 label: "Scratch",
                 message: "could not open"))
 
-        // A save file restores only into the device set it was saved with, so it
-        // cannot outlive the removal — and the VM rests where a VM with nothing
-        // to restore belongs, ready for the start the door runs next.
+        // The save file goes with the removal, and the VM rests where a VM
+        // with nothing to restore belongs, ready for the start the door runs
+        // next.
         #expect(!instance.hasSaveFile)
         #expect(instance.phase == .stopped)
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.virtualization.startCallCount == 0)
+    }
+
+    /// The removal lands before the discard, so a discard the file system
+    /// turns down leaves the entry gone and the save file on disk — which
+    /// still restores when what went was removable media.
+    @Test(
+        "A discard that fails after the removal names a way out only for a removed storage disk",
+        arguments: [StartFailedAttachment.Kind.storageDisk, .removableMedia])
+    func aFailedDiscardAfterTheRemovalStatesOnlyWhatIsKnown(
+        kind: StartFailedAttachment.Kind
+    ) async throws {
+        let harness = makeHarness()
+        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        let media = RemovableMediaItem(
+            path: externalPath("media.iso"), readOnly: true, label: "Installer")
+        let instance = makeInstance(in: harness, phase: .suspended) {
+            $0.storageDisks = [disk, keeper]
+            $0.removableMedia = [media]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        // A bundle directory the save file cannot be removed from.
+        let bundlePath = instance.bundleURL.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: bundlePath)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: bundlePath)
+        }
+        let (id, label) = kind == .storageDisk ? (disk.id, "Scratch") : (media.id, "Installer")
+
+        let error = await commandError {
+            try await harness.core.removeStartFailedAttachment(
+                .id(instance.id),
+                attachment: StartFailedAttachment(
+                    verb: .resume, kind: kind, reason: .attachRefused, id: id, label: label,
+                    message: "could not open"))
+        }
+
+        let message = try #require(error?.message)
+        #expect(instance.hasSaveFile)
+        #expect(message.contains("but its saved state could not be deleted."))
+        switch kind {
+        case .storageDisk:
+            #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
+            #expect(
+                message.hasSuffix(
+                    "That state can no longer be restored — discard it to start the virtual machine."))
+        case .removableMedia:
+            #expect((instance.configuration.removableMedia ?? []).isEmpty)
+            #expect(message.hasSuffix("but its saved state could not be deleted."))
+        }
     }
 
     @Test("A start-failed removal that refuses leaves the saved state alone")

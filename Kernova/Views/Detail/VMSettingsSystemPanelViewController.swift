@@ -199,7 +199,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                             "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
                         ),
                         .body(
-                            "A VM resumed from saved state keeps the resolution it was saved with — VZ restores only into the configuration it was suspended from."
+                            "A VM resumed from saved state keeps the resolution it was saved with."
                         ),
                     ]), displayMatchWindowSwitch),
             lockRegistry.lockable(

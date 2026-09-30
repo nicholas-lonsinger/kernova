@@ -629,8 +629,7 @@ struct VMSettingsSystemPanelTests {
         arguments: MachineEdit.allCases)
     func machineEditCommittedAfterASuspendIsRefused(_ edit: MachineEdit) throws {
         try expectRefusedAfterPinning(edit) { instance in
-            // The saved state is what pins the machine: resume restores only
-            // into the configuration it was suspended from.
+            // The saved state is what pins the machine.
             try VMInstanceFixture.writeSaveFile(for: instance)
         }
     }

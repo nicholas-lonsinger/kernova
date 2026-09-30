@@ -219,7 +219,7 @@ struct VMCommandCoreOperationTests {
         let instance = makeInstance(
             in: harness, name: "Reverting", phase: .running(sessionID: UUID()),
             snapshots: [snapshot])
-        let sharing = instance.configuration.clipboardSharingEnabled
+        let relays = instance.configuration.serialSocketRelayEnabled
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
@@ -236,12 +236,12 @@ struct VMCommandCoreOperationTests {
             commandError {
                 try harness.core.setConfiguration(
                     .id(instance.id),
-                    assignments: [ConfigurationEntry(key: "clipboard.sharing", value: String(!sharing))],
+                    assignments: [ConfigurationEntry(key: "serial.socket", value: String(!relays))],
                     confirmed: true)
             })
         #expect(edit.isBusy)
         #expect(instance.name == "Reverting")
-        #expect(instance.configuration.clipboardSharingEnabled == sharing)
+        #expect(instance.configuration.serialSocketRelayEnabled == relays)
 
         virtualization.resumeSuspended()
         try await revert.value

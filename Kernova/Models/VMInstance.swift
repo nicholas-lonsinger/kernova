@@ -1139,9 +1139,9 @@ final class VMInstance {
     /// the guest agent.
     ///
     /// Only `agentLogForwardingEnabled`, `clipboardSharingEnabled` and
-    /// `dropFilesEnabled` are honored at runtime, and the clipboard branch is
-    /// skipped for Linux guests: the SPICE port must be declared at config-build
-    /// time, so sharing is restart-only there.
+    /// `dropFilesEnabled` are honored at runtime. A Linux guest's clipboard
+    /// sharing never changes here: its SPICE port is a device
+    /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         guard hasLiveSession else { return }
 

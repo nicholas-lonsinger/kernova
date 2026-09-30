@@ -14,9 +14,8 @@ struct VMSnapshotCapturePlan: Sendable {
 struct VMSnapshotRestorePlan: Sendable {
     /// The configuration the saved state was written under.
     ///
-    /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
-    /// configuration the state was saved from, so a revert commits this over
-    /// the VM's current one, keeping the VM's identity.
+    /// A revert commits this over the VM's current one, keeping the VM's
+    /// identity (``VMConfiguration/adoptingSnapshotState(_:)``).
     let configuration: VMConfiguration
 
     /// The files to write back, derived from ``configuration`` rather than the

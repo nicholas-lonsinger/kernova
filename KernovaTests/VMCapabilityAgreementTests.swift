@@ -113,7 +113,8 @@ struct VMCapabilityAgreementTests {
                 vm,
                 assignments: [
                     ConfigurationEntry(
-                        key: "clipboard.sharing", value: String(!instance.configuration.clipboardSharingEnabled))
+                        key: "serial.socket",
+                        value: String(!instance.configuration.serialSocketRelayEnabled))
                 ],
                 confirmed: true)
         case .switchNetworkMode:

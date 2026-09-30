@@ -59,8 +59,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// When `true`, a cold boot rewrites `displayWidth`/`displayHeight`/`displayPPI`
     /// to fit the window or screen the display is about to appear in.
     ///
-    /// Ignored when a save file exists — VZ restore requires the saved
-    /// configuration.
+    /// Ignored when a save file exists.
     var displaySizesToWindow: Bool
 
     /// The user's intent for guest display density: `true` boots Retina-sharp
@@ -511,9 +510,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// The configuration a revert to `captured` installs: everything the
     /// snapshot recorded, carrying this VM's identity across.
     ///
-    /// `VZVirtualMachine.restoreMachineStateFrom` restores only into the
-    /// configuration the state was saved from, so a settings edit made after the
-    /// capture has to give way for the saved state to load at all. Subtracting
+    /// Apple promises `VZVirtualMachine.restoreMachineStateFrom` only "a
+    /// configuration compatible with the file" and defines that no further,
+    /// so a settings edit made after the capture gives way for the saved state
+    /// to load. Subtracting
     /// identity rather than listing the hardware to take back is what keeps a
     /// device added here from being silently dropped from a revert.
     func adoptingSnapshotState(_ captured: VMConfiguration) -> VMConfiguration {
@@ -541,9 +541,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
 
-        // A save file restores only under the USB mass storage `uuid`s it was
-        // saved with; virtio block identifiers are free to change
-        // (docs/research/2026-09-28-vz-restore-matches-usb-mass-storage-uuids.md).
+        // A save file restores only under the removable-media `uuid`s it was
+        // saved with; a `.usbMassStorage` disk's `uuid` and virtio block
+        // identifiers are free to change
+        // (docs/research/2026-09-28-vz-restore-matches-usb-mass-storage-uuids.md,
+        // docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md).
         // The clone carries no save file, so these new ids cost no restore.
         // Everything else, including the note, carries through — the clone
         // references the same external files.

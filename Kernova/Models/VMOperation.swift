@@ -537,7 +537,9 @@ struct VMEditClasses: OptionSet, Sendable, Hashable {
     let rawValue: Int
 
     /// Hardware the `VZVirtualMachine` is built from, pinned by a live session
-    /// and by a saved state.
+    /// and by a saved state — whole, including fields a restore was observed to
+    /// tolerate: Apple promises a restore only into "a configuration compatible
+    /// with the file" and names none of them.
     static let machineKeys = VMEditClasses(rawValue: 1 << 0)
     /// Settings read at moments other than boot.
     static let liveKeys = VMEditClasses(rawValue: 1 << 1)

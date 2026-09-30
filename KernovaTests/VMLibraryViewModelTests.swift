@@ -2238,7 +2238,7 @@ struct VMLibraryViewModelTests {
         #expect(fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("removeStartFailedAttachmentAndStart discards a saved state it can no longer restore")
+    @Test("removeStartFailedAttachmentAndStart discards the saved state along with the attachment")
     func removeStartFailedAttachmentDiscardsSaveFile() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -2257,8 +2257,8 @@ struct VMLibraryViewModelTests {
             label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
-        // The save restores only into the saved device set, so the confirmed
-        // repair discards it and the retried start cold-boots.
+        // The confirmed repair discards the save, and the retried start
+        // cold-boots.
         #expect(!instance.hasSaveFile)
         #expect(virtService.startCallCount == 1)
         #expect(instance.status == .running)

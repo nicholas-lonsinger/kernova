@@ -332,8 +332,8 @@ extension VMCommandCore {
     /// on, persisting the result as a write of the start `permit` belongs to,
     /// before the VZ configuration is built.
     ///
-    /// Left alone when a save file exists: VZ restores only into a configuration
-    /// identical to the saved one, and a mismatch fails the restore.
+    /// Left alone when a save file exists, which a changed display width or
+    /// height fails to restore.
     private func applyMatchWindowBootResolution(_ permit: borrowing VMEditPermit) {
         let instance = permit.instance
         guard instance.configuration.displaySizesToWindow, !instance.hasSaveFile else { return }
