@@ -552,7 +552,7 @@ struct DetailAlertsPresenterTests {
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
     }
 
-    @Test("Reverting a live VM to a disks-only snapshot says the session ends, powered off")
+    @Test("Reverting a live VM to a snapshot taken while stopped says the session ends, powered off")
     func revertAlertOnAColdTargetNamesThePowerOff() {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)
@@ -565,7 +565,7 @@ struct DetailAlertsPresenterTests {
         #expect(alert.message.contains("session it is running now ends"))
     }
 
-    @Test("Reverting a suspended VM to a disks-only snapshot says its saved session is discarded")
+    @Test("Reverting a suspended VM to a snapshot taken while stopped says its saved session is discarded")
     func revertAlertOnAColdTargetFromSuspended() throws {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(in: viewModel)

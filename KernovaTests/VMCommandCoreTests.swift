@@ -2163,7 +2163,7 @@ struct VMCommandCoreTests {
 
         // The bundle — and the slot inside it — is still on disk, so a VM that
         // survived the delete has to keep offering Resume rather than reading
-        // as a stopped VM whose next capture would be stamped disks-only.
+        // as a stopped VM whose next capture would be stamped cold.
         #expect(harness.library.instances.contains { $0 === instance })
         #expect(instance.phase == .suspended)
         #expect(instance.activity.admits(.resume))
@@ -3518,7 +3518,7 @@ struct VMCommandCoreTests {
     func invalidStateMessageReadsAsCopy() throws {
         let harness = makeHarness()
         // Stopped: there is no display to open, and the state admits both a
-        // start and a disks-only capture, so the sentence has something to list.
+        // start and a cold capture, so the sentence has something to list.
         let instance = makeInstance(in: harness, name: "Resting", phase: .stopped)
 
         let error = try #require(commandError { try harness.core.open(.id(instance.id)) })

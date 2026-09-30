@@ -136,7 +136,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.captionText.contains("share their blocks"))
     }
 
-    @Test("A disks-only capture says the VM comes back powered off, with no pause")
+    @Test("A capture of a stopped VM says the VM comes back powered off, with no pause")
     func coldCopyNamesTheOutcome() {
         let (sheet, _) = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
@@ -147,7 +147,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.captionText.contains("share their blocks"))
     }
 
-    @Test("A guest powering off while the sheet is up moves its copy to disks-only")
+    @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
     func updatingTheModeRewritesTheRenderedCopy() {
         let (sheet, _) = makeSheet(mode: .live)
         let body = findLabel(containing: "memory, disks, and settings", in: sheet.view)

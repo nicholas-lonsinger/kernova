@@ -160,7 +160,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.takeSnapshotSheetInstances.isEmpty)
     }
 
-    @Test("A capture of a stopped VM is stamped as disks-only")
+    @Test("A capture of a stopped VM is stamped cold")
     func stoppedCaptureIsCold() async {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .stopped)
@@ -447,7 +447,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.snapshotManifest.snapshots.count == 2)
     }
 
-    @Test("Snapshot-then-revert check-points a stopped VM disks-only before reverting")
+    @Test("Snapshot-then-revert check-points a stopped VM cold before reverting")
     func snapshotThenRevertCheckPointsAStoppedVM() async {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .stopped)
@@ -541,7 +541,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.snapshotManifest.isEmpty)
     }
 
-    @Test("A VM that stopped while the sheet was up is captured disks-only, not refused")
+    @Test("A VM that stopped while the sheet was up is captured cold, not refused")
     func kindIsStampedAtConfirmTime() async {
         let harness = makeHarness()
         let instance = makeInstance(

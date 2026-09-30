@@ -156,7 +156,7 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.instance.status == .suspended)
     }
 
-    @Test("A VM with a disks-only baseline rests stopped after a power-off")
+    @Test("A VM with a baseline taken while stopped rests stopped after a power-off")
     func coldBaselineRestsStopped() async throws {
         let harness = try await makeHarness(baselineKind: .cold)
 
@@ -382,7 +382,7 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.virtualization.forceStopCallCount == 0)
     }
 
-    @Test("Discarding a suspended session still routes through a disks-only baseline")
+    @Test("Discarding a suspended session still routes through a baseline taken while stopped")
     func discardSavedStateRevertsToAColdBaseline() async throws {
         let harness = try await makeHarness(phase: .suspended, baselineKind: .cold)
 

@@ -393,7 +393,7 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
         #expect(menuItem("Clone", in: menu)?.isEnabled == true)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
-        // A disks-only capture is offered while stopped; Suspend is not.
+        // A cold capture is offered while stopped; Suspend is not.
         #expect(menuItem("Take Snapshot…", in: menu)?.isEnabled == true)
         #expect(!menuTitles.contains("Suspend"))
     }
@@ -657,7 +657,7 @@ struct SidebarViewControllerTests {
         #expect(actual == expected, "\(phase)")
     }
 
-    @Test("A disks-only capture offers no Force Stop — there is no VM to terminate")
+    @Test("A capture of a stopped VM offers no Force Stop — there is no VM to terminate")
     func contextMenuNoForceStopDuringAColdCapture() {
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(
