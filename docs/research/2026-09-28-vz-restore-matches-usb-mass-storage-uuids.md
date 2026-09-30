@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28 · **Host:** macOS 27.0 (26A428), Kernova Debug build 940
 (`d011386b`) · **Guest:** macOS 13 (installed from 13.6 `22G120`; the library
-names it "macOS 13.7.8"), `shared` network · **Tracking issue:** none
+names it "macOS 13.7.8"), `shared` network · **Tracking issue:** #1318
 
 ## Summary
 
