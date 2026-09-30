@@ -42,16 +42,17 @@ extension VMCommandCore {
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
     ///
-    /// An assignment that leaves the VM's settings where they are is no edit:
-    /// nothing is written for it, so `get` output is `set` input in any state.
-    /// One that moves a field the VM admits no settings write of
-    /// (``VMStateFieldClasses``) is refused, and the refusal names every
+    /// A configuration assignment that leaves its value where it is is no
+    /// edit: nothing is written for it, and only a VM that takes no edit at
+    /// all refuses it. One that moves a field the VM admits no settings write
+    /// of (``VMStateFieldClasses``) is refused, and the refusal names every
     /// assignment refused so. A value its key refuses is judged as any change
     /// to that key (``VMConfigurationKey/fieldWriters(on:)``), so a VM whose
-    /// state pins the key says so rather than naming the value; a host-state
-    /// key is judged that way whatever its value, before either file is
-    /// touched, since host state commits after the configuration, where
-    /// nothing may refuse.
+    /// state pins the key says so rather than naming the value. A host-state
+    /// assignment is judged that way whatever its value, moved or not, before
+    /// either file is touched, since host state commits after the
+    /// configuration, where nothing may refuse — so one is refused wherever
+    /// its key is pinned, a bring-up, save or capture among them.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read

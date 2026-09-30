@@ -197,19 +197,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         macAddressField.show(instance.configuration.macAddress ?? "")
     }
 
-    /// While the pane is read-only, whether the Mode picker stays live as the
-    /// hot-swap surface.
-    ///
-    /// Both terms come from the catalog, so the picker and the verb behind it
-    /// agree: the mode takes an edit, and not because the VM is at rest — that
-    /// case is the one the pane's own lock already covers.
-    private var networkModeIsLiveSwitchable: Bool {
-        guard isReadOnly else { return false }
-        let capabilities = viewModel.capabilities
-        return capabilities.isAvailable(.switchNetworkMode, on: instance)
-            && !capabilities.isAvailable(.editConfiguration, on: instance)
-    }
-
     /// Whether the Mode menu's None entry takes the change it writes.
     private var networkNoneIsAvailable: Bool {
         isAvailable(
@@ -322,8 +309,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshNetwork() {
-        let liveSwitchable = networkModeIsLiveSwitchable
-        let modeEditable = !isReadOnly || liveSwitchable
+        let modeEditable = isAvailable(VMConfigurationKeyRegistry.networkMode)
         applyGroupedFormRowEnabled(modeEditable, control: networkModePopUp)
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
