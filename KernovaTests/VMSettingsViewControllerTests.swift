@@ -47,10 +47,8 @@ struct VMSettingsViewControllerTests {
 
     @Test("Read-only disables lockable controls but not hot-toggleable ones")
     func readOnlyDisablesLockableControls() {
-        // A saved state pins the network device the Mode picker changes.
-        let (network, _, _) = makeSettingsController(
-            guestOS: .macOS, isReadOnly: true, category: .network, phase: .suspended,
-            holdsSavedState: true, preferences: preferences)
+        let (network, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .network)
+        // The network Mode picker is lockable → disabled while read-only.
         #expect(settingsNetworkModePopUp(in: network.view)?.isEnabled == false)
 
         let (sharing, _, _) = makeController(guestOS: .macOS, isReadOnly: true, category: .sharing)

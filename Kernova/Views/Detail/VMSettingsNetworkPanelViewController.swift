@@ -44,9 +44,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The Mode menu's rendered selection, so a `refresh()` pass that changed
     /// nothing about networking skips a rebuild.
     private var renderedNetworkChoice: NetworkModeChoice?
-    /// Whether the Mode menu was last built with None enabled; a change
-    /// rebuilds so the entry tracks it.
-    private var renderedNetworkNoneAvailable = false
+    /// The live-switch state the Mode menu was last built for; a change rebuilds
+    /// so the None entry's enablement tracks it.
+    private var renderedNetworkLiveSwitchable = false
     /// The host's bridgeable interfaces as the last picker open found them,
     /// `nil` until one has. Held so a rebuild triggered by the mode the user
     /// just picked from that list still knows the list — rebuilding blind would
@@ -197,10 +197,17 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         macAddressField.show(instance.configuration.macAddress ?? "")
     }
 
-    /// Whether the Mode menu's None entry takes the change it writes.
-    private var networkNoneIsAvailable: Bool {
-        isAvailable(
-            VMConfigurationKeyRegistry.networkMode, writing: VMConfigurationKeyRegistry.noNetworkValue)
+    /// While the pane is read-only, whether the Mode picker stays live as the
+    /// hot-swap surface.
+    ///
+    /// Both terms come from the catalog, so the picker and the verb behind it
+    /// agree: the mode takes an edit, and not because the VM is at rest — that
+    /// case is the one the pane's own lock already covers.
+    private var networkModeIsLiveSwitchable: Bool {
+        guard isReadOnly else { return false }
+        let capabilities = viewModel.capabilities
+        return capabilities.isAvailable(.switchNetworkMode, on: instance)
+            && !capabilities.isAvailable(.editConfiguration, on: instance)
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -227,7 +234,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let interfaces = enumeratedInterfaces
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
-        let noneAvailable = networkNoneIsAvailable
+        let liveSwitchable = networkModeIsLiveSwitchable
         let current = NetworkModeChoice(instance.configuration)
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
         if entitlements.hasVMNetworking {
@@ -239,10 +246,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             // selects.
             addNetworkModeItem("Host Only (unavailable)", choice: .hostOnly, to: menu, enabled: false)
         }
-        addNetworkModeItem("None", choice: .none, to: menu, enabled: noneAvailable)
+        // While the session runs, every attachable mode can hot-swap; None
+        // cannot — network devices cannot be added or removed at runtime.
+        addNetworkModeItem("None", choice: .none, to: menu, enabled: !liveSwitchable)
 
         renderedNetworkChoice = current
-        renderedNetworkNoneAvailable = noneAvailable
+        renderedNetworkLiveSwitchable = liveSwitchable
         if entitlements.hasVMNetworking {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
@@ -309,13 +318,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshNetwork() {
-        let modeEditable = isAvailable(VMConfigurationKeyRegistry.networkMode)
+        let liveSwitchable = networkModeIsLiveSwitchable
+        let modeEditable = !isReadOnly || liveSwitchable
         applyGroupedFormRowEnabled(modeEditable, control: networkModePopUp)
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
         networkLockHint?.isHidden = modeEditable
         if NetworkModeChoice(instance.configuration) != renderedNetworkChoice
-            || networkNoneIsAvailable != renderedNetworkNoneAvailable
+            || liveSwitchable != renderedNetworkLiveSwitchable
         {
             rebuildNetworkModeMenu()
         }
