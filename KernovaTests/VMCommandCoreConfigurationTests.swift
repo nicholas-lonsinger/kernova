@@ -362,7 +362,8 @@ struct VMCommandCoreConfigurationTests {
     @Test("A running VM still takes the settings read at other moments than boot")
     func liveKeysAreWritableWhileRunning() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
 
         try harness.core.setConfiguration(
             .name("Alpha"),
@@ -376,6 +377,40 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.displayAutoResizes)
         #expect(instance.configuration.systemKeyForwarding == .fullscreenOnly)
+    }
+
+    @Test(
+        "A Linux guest's clipboard sharing is refused while a session or a save pins its devices",
+        arguments: [VMLifecyclePhase.suspended, .running(sessionID: UUID())])
+    func linuxClipboardSharingIsPinnedWithTheMachine(phase: VMLifecyclePhase) throws {
+        let harness = makeHarness()
+        let linux = makeInstance(in: harness, name: "Linux", phase: phase, guestOS: .linux)
+        let macOS = makeInstance(in: harness, name: "Mac", phase: phase, guestOS: .macOS)
+        if phase == .suspended {
+            for instance in [linux, macOS] { try VMInstanceFixture.writeSaveFile(for: instance) }
+        }
+        let assignment = ConfigurationEntry(key: "clipboard.sharing", value: "true")
+        #expect(!linux.configuration.clipboardSharingEnabled)
+        #expect(!macOS.configuration.clipboardSharingEnabled)
+
+        do {
+            try harness.core.setConfiguration(
+                .name("Linux"), assignments: [assignment], confirmed: false)
+            Issue.record("expected a refusal")
+        } catch let error as CommandError {
+            guard case .invalidState(_, _, _, let settings) = error else {
+                Issue.record("expected invalidState, got \(error)")
+                return
+            }
+            #expect(settings == [assignment])
+        }
+        #expect(!linux.configuration.clipboardSharingEnabled)
+        #expect(
+            !harness.core.capabilities.isAvailable(
+                VMConfigurationKeyRegistry.clipboardSharing, writing: "true", on: linux))
+
+        try harness.core.setConfiguration(.name("Mac"), assignments: [assignment], confirmed: false)
+        #expect(macOS.configuration.clipboardSharingEnabled)
     }
 
     @Test("A running VM refuses the new machine keys, naming each one it refused")

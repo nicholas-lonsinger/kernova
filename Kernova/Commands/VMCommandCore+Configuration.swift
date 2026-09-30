@@ -44,7 +44,7 @@ extension VMCommandCore {
     /// An assignment that leaves the VM's settings where they are is no edit:
     /// no gate applies to it and nothing is written for it, so `get` output is
     /// `set` input in any state. A gate that refuses names every assignment it
-    /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:)``);
+    /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:for:)``);
     /// the write holds a permit for the classes of the named keys the VM takes,
     /// and an assignment that moves a field those classes may not write
     /// (``VMStateFieldClasses``) is refused.
@@ -63,6 +63,7 @@ extension VMCommandCore {
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
         let context = VMConfigurationWriteContext(instance)
+        let guestOS = instance.configuration.guestOS
 
         var answered: [VMConfigurationKey] = []
         var configurationWrites: [ConfigurationWrite] = []
@@ -90,9 +91,11 @@ extension VMCommandCore {
         // inside the write: the permit covers every key the VM takes now, and
         // one that moves a field outside it is refused there.
         let admittedConfigurationEdits = configurationWrites.map { (key: $0.key, value: $0.value) }
-            .filter { capabilities.accepts($0.key.capability(writing: $0.value), on: instance) }
+            .filter {
+                capabilities.accepts($0.key.capability(writing: $0.value, for: guestOS), on: instance)
+            }
         let classes = (hostStateEdits + admittedConfigurationEdits).reduce(into: VMEditClasses()) {
-            $0.formUnion($1.key.editClasses(writing: $1.value))
+            $0.formUnion($1.key.editClasses(writing: $1.value, for: guestOS))
         }
         let admittedKeys = Set(admittedConfigurationEdits.map(\.key.name))
 
@@ -231,9 +234,10 @@ extension VMCommandCore {
     private func requireGates(
         for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
     ) throws {
+        let guestOS = instance.configuration.guestOS
         try requireGates(
             refusing: edits.filter {
-                !capabilities.accepts($0.key.capability(writing: $0.value), on: instance)
+                !capabilities.accepts($0.key.capability(writing: $0.value, for: guestOS), on: instance)
             },
             on: instance)
     }
@@ -244,7 +248,9 @@ extension VMCommandCore {
         refusing refused: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
     ) throws {
         guard !refused.isEmpty else { return }
-        let error = refusal(for: refused.map { $0.key.capability(writing: $0.value) }, on: instance)
+        let guestOS = instance.configuration.guestOS
+        let error = refusal(
+            for: refused.map { $0.key.capability(writing: $0.value, for: guestOS) }, on: instance)
         guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
         var settings: [ConfigurationEntry] = []
         for edit in refused {

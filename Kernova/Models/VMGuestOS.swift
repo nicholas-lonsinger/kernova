@@ -90,4 +90,15 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         case .linux: false
         }
     }
+
+    /// Whether clipboard sharing reaches the guest through a device the
+    /// machine is built with — a Linux guest's SPICE console port — rather
+    /// than over the guest agent's channel, so turning it on or off changes
+    /// the machine.
+    var sharesClipboardThroughDevice: Bool {
+        switch self {
+        case .macOS: false
+        case .linux: true
+        }
+    }
 }

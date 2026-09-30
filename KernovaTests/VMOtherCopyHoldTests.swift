@@ -73,7 +73,7 @@ struct VMOtherCopyHoldTests {
             try instance.activity.edit(.liveKeys) { permit in
                 // Past admission: only the check inside the write can see it.
                 access.store.holdElsewhere(url)
-                try permit.bundle.commitConfiguration { $0.clipboardSharingEnabled.toggle() }
+                try permit.bundle.commitConfiguration { $0.serialSocketRelayEnabled.toggle() }
             }
         }
 
@@ -87,14 +87,14 @@ struct VMOtherCopyHoldTests {
     func editLandsWhenNoOtherCopyHolds() throws {
         let access = WriteObservingBundleFiles()
         let instance = makeInstance(over: access)
-        let enabled = instance.configuration.clipboardSharingEnabled
+        let enabled = instance.configuration.serialSocketRelayEnabled
 
         try instance.activity.edit(.liveKeys) { permit in
-            try permit.bundle.commitConfiguration { $0.clipboardSharingEnabled = !enabled }
+            try permit.bundle.commitConfiguration { $0.serialSocketRelayEnabled = !enabled }
         }
 
         #expect(access.probesInsideWrite == 1)
-        #expect(access.store.configuration(at: instance.bundleURL)?.clipboardSharingEnabled == !enabled)
+        #expect(access.store.configuration(at: instance.bundleURL)?.serialSocketRelayEnabled == !enabled)
         #expect(!instance.activity.heldByAnotherCopy)
     }
 
@@ -102,15 +102,15 @@ struct VMOtherCopyHoldTests {
     func writeUnderTheRunLockIsNotProbed() async throws {
         let access = WriteObservingBundleFiles()
         let instance = makeInstance(over: access)
-        let enabled = instance.configuration.clipboardSharingEnabled
+        let enabled = instance.configuration.serialSocketRelayEnabled
 
         try await instance.activity.perform(.deletingSnapshot) { context in
-            try context.permit.bundle.commitConfiguration { $0.clipboardSharingEnabled = !enabled }
+            try context.permit.bundle.commitConfiguration { $0.serialSocketRelayEnabled = !enabled }
             return .rest(.asStarted, ())
         }
 
         #expect(access.probesInsideWrite == 0)
-        #expect(access.store.configuration(at: instance.bundleURL)?.clipboardSharingEnabled == !enabled)
+        #expect(access.store.configuration(at: instance.bundleURL)?.serialSocketRelayEnabled == !enabled)
     }
 
     @Test("A library write refused for another copy's hold answers the refusal and presents nothing")
@@ -124,7 +124,7 @@ struct VMOtherCopyHoldTests {
 
         let write = try instance.activity.edit(.liveKeys) { permit in
             storage.files.holdElsewhere(url)
-            return library.updateConfiguration(permit) { $0.clipboardSharingEnabled.toggle() }
+            return library.updateConfiguration(permit) { $0.serialSocketRelayEnabled.toggle() }
         }
 
         guard case .refused(.heldByAnotherCopy) = write else {
@@ -147,7 +147,7 @@ struct VMOtherCopyHoldTests {
                 .id(instance.id),
                 assignments: [
                     ConfigurationEntry(
-                        key: "clipboard.sharing", value: String(!before.clipboardSharingEnabled))
+                        key: "serial.socket", value: String(!before.serialSocketRelayEnabled))
                 ],
                 confirmed: true)
             Issue.record("The set was not refused")

@@ -749,7 +749,7 @@ struct ConfigurationBuilder: Sendable {
         config: VMConfiguration
     ) -> (input: Pipe, output: Pipe)? {
         guard config.clipboardSharingEnabled else { return nil }
-        guard config.guestOS == .linux else { return nil }
+        guard config.guestOS.sharesClipboardThroughDevice else { return nil }
 
         let inputPipe = Pipe()  // host writes → guest reads
         let outputPipe = Pipe()  // guest writes → host reads

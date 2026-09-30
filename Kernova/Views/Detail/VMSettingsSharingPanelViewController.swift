@@ -131,7 +131,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // Clipboard
     private var clipboardSwitch = NSSwitch()
     private var clipboardPassthroughSwitch = NSSwitch()
-    private var clipboardCaption = NSView()
 
     // MARK: Shared Directories
 
@@ -306,19 +305,14 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     private func buildClipboardSection() -> NSView {
         clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
-        let caption = makeGroupedFormCaption(
-            "Takes effect on next start — Linux guests configure SPICE at VM start time.")
-        caption.textColor = .systemOrange
-        caption.isHidden = true
-        clipboardCaption = caption
 
         let body: InfoPopoverParagraph = .body(
             "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
         )
-        // Passthrough is host-side (it polls/writes the host pasteboard), so unlike
-        // sharing it takes effect live for Linux guests too.
+        // Sharing adds the SPICE console device, so the header carries the
+        // lock hint; passthrough is host-side and stays live.
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Clipboard", paragraphs: [body]),
+            lockRegistry.makeHeader("Clipboard", lockable: true, paragraphs: [body]),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
@@ -326,7 +320,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         paragraphs: Self.passthroughInfoParagraphs))
             ]),
-            clipboardCaption,
         ])
     }
 
@@ -366,10 +359,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         applyGroupedFormRowEnabled(
             isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
             control: clipboardPassthroughSwitch)
-        // The "takes effect on next start" caption is built only by the Linux
-        // standalone section, so gate it here.
-        guard instance.configuration.guestOS == .linux else { return }
-        clipboardCaption.isHidden = !guestHoldsSession
     }
 
     private func refreshSharedList() {

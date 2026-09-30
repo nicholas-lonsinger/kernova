@@ -34,6 +34,17 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
                 return from == to ? nil : classes(from, to)
             }
         }
+
+        /// A field whose writers depend on the rest of the root it moves
+        /// within, read off the root it moves from.
+        static func field<Value: Equatable>(
+            _ name: String, _ keyPath: KeyPath<Root, Value> & Sendable,
+            byRoot classes: @escaping @Sendable (Root) -> VMEditClasses
+        ) -> Field {
+            Field(name: name, keyPath: keyPath) { old, new in
+                old[keyPath: keyPath] == new[keyPath: keyPath] ? nil : classes(old)
+            }
+        }
     }
 
     let fields: [Field]
@@ -108,7 +119,9 @@ extension VMConfiguration {
         },
         // Settings read at moments other than boot.
         .field("displayAutoResizes", \.displayAutoResizes, .liveKeys),
-        .field("clipboardSharingEnabled", \.clipboardSharingEnabled, .liveKeys),
+        .field(
+            "clipboardSharingEnabled", \.clipboardSharingEnabled,
+            byRoot: { $0.guestOS.sharesClipboardThroughDevice ? .machineKeys : .liveKeys }),
         .field("clipboardPassthroughEnabled", \.clipboardPassthroughEnabled, .liveKeys),
         .field("dropFilesEnabled", \.dropFilesEnabled, .liveKeys),
         .field("serialSocketRelayEnabled", \.serialSocketRelayEnabled, .liveKeys),

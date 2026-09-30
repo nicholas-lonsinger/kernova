@@ -245,7 +245,8 @@ struct VMCapabilityCatalog {
     func isAvailable(
         _ key: VMConfigurationKey, writing value: String, on instance: VMInstance
     ) -> Bool {
-        isAvailable(key.capability(writing: value), on: instance)
+        isAvailable(
+            key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
             && key.accepts(value, for: instance)
     }
 

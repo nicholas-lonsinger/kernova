@@ -779,7 +779,7 @@ final class DetailAlertsPresenter: NSObject {
             + "re-attach it later in Settings."
         if holdsSavedState {
             message +=
-                " Removing it also discards this virtual machine's saved state, which can only be restored with the same devices attached."
+                " Removing it also discards this virtual machine's saved state."
         }
         return message
     }

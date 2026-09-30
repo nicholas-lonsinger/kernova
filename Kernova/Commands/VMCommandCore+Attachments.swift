@@ -706,16 +706,20 @@ extension VMCommandCore {
             }
         } catch {
             guard removed else { throw self.failure(error, verb: failure.verb, on: instance) }
-            // The device set no longer matches the one the state was written
-            // under, so that state cannot be restored — and the discard that
-            // would have cleared it is what just failed. Both facts are known,
-            // so both are stated, and the discard the VM still offers is the
-            // way out.
-            throw CommandError.operationFailed(
-                verb: failure.verb,
-                message:
-                    "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted. That state can no longer be restored — discard it to start the virtual machine."
-            )
+            // A save file does not restore with a storage disk removed, so the
+            // discard the VM still offers is that case's way out; one does
+            // restore with removable media removed
+            // (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md).
+            let removal =
+                "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted."
+            let message =
+                switch failure.kind {
+                case .storageDisk:
+                    removal
+                        + " That state can no longer be restored — discard it to start the virtual machine."
+                case .removableMedia: removal
+                }
+            throw CommandError.operationFailed(verb: failure.verb, message: message)
         }
         logStartFailedRemoval(failure, from: instance)
         #log(

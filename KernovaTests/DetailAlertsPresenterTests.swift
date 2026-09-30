@@ -477,8 +477,8 @@ struct DetailAlertsPresenterTests {
                 "If the file or the disk it’s on is locked or read-only, make it writable and "
                     + "try again."))
         #expect(
-            message.contains(
-                "Removing it also discards this virtual machine's saved state"))
+            message.hasSuffix(
+                "Removing it also discards this virtual machine's saved state."))
     }
 
     /// Read Only does not make a folder a disk image, and nothing here knows

@@ -142,7 +142,9 @@ struct VMConfigurationKeyRegistryTests {
         for key in VMConfigurationKeyRegistry.keys {
             #expect(key.descriptor.name == key.name)
             #expect(key.descriptor.summary == key.summary)
-            #expect(key.descriptor.editableWhileRunning == (key.gate != .atRest))
+            #expect(
+                key.descriptor.editableWhileRunning
+                    == VMGuestOS.allCases.allSatisfy { key.gate($0) != .atRest })
             #expect(!key.summary.isEmpty)
         }
     }
@@ -150,20 +152,27 @@ struct VMConfigurationKeyRegistryTests {
     @Test("Each gate names the capability that decides it")
     func gatesNameTheirCapability() throws {
         let cpus = try #require(VMConfigurationKeyRegistry.key(named: "cpus"))
-        #expect(cpus.capability(writing: "4") == .editConfiguration)
+        #expect(cpus.capability(writing: "4", for: .macOS) == .editConfiguration)
 
         let ephemeral = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
-        #expect(ephemeral.capability(writing: "true") == .editLiveConfiguration)
+        #expect(ephemeral.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
 
         let bridged = try #require(
             VMConfigurationKeyRegistry.key(named: "network.bridgedInterface"))
-        #expect(bridged.capability(writing: "en0") == .switchNetworkMode)
+        #expect(bridged.capability(writing: "en0", for: .macOS) == .switchNetworkMode)
 
         // A hot swap between attachable modes, but taking the device away is
         // not one — devices cannot be added or removed at runtime.
         let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
-        #expect(mode.capability(writing: "bridged") == .switchNetworkMode)
-        #expect(mode.capability(writing: "none") == .editConfiguration)
+        #expect(mode.capability(writing: "bridged", for: .macOS) == .switchNetworkMode)
+        #expect(mode.capability(writing: "none", for: .macOS) == .editConfiguration)
+
+        // A Linux guest's clipboard rides a console device the machine is
+        // built with; a macOS guest's rides the agent's channel.
+        let clipboard = try #require(VMConfigurationKeyRegistry.key(named: "clipboard.sharing"))
+        #expect(clipboard.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
+        #expect(clipboard.capability(writing: "true", for: .linux) == .editConfiguration)
+        #expect(!clipboard.descriptor.editableWhileRunning)
     }
 
     // MARK: - Values
@@ -193,7 +202,7 @@ struct VMConfigurationKeyRegistryTests {
     @Test("System keys takes and reads back every mode, live")
     func systemKeysTakesEveryMode() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "input.systemKeys"))
-        #expect(key.gate == .live)
+        #expect(VMGuestOS.allCases.allSatisfy { key.gate($0) == .live })
 
         for mode in VMSystemKeyForwarding.allCases {
             var config = makeConfiguration()

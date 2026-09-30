@@ -580,7 +580,8 @@ struct VMCapabilityCatalogTests {
     @Test("The clipboard window follows the VM's own sharing toggle")
     func clipboardFollowsTheSharingToggle() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
 
         #expect(!harness.catalog.isApplicable(.showClipboard, to: instance))
 
