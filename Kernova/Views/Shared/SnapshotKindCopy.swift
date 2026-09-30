@@ -1,8 +1,8 @@
-/// The one rendering of a snapshot's kind — the snapshot row's subtitle, a
-/// Shortcuts snapshot's subtitle, and Get Info's "Captured" row all read it.
+/// The short forms that name a snapshot's kind — the snapshot row's subtitle,
+/// a Shortcuts snapshot's subtitle, and Get Info's "Captured" row read them.
 enum SnapshotKindCopy {
-    /// The state a revert to a snapshot of `kind` leaves the VM in, short
-    /// enough to sit between a row's date and its size.
+    /// The state a snapshot of `kind` captured, short enough to sit between a
+    /// row's date and its size.
     static func stateLabel(_ kind: VMSnapshotKind) -> String {
         switch kind {
         case .warm: "Running state"

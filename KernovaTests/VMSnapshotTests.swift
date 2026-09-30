@@ -179,7 +179,7 @@ struct VMSnapshotTests {
         #expect(SnapshotKindCopy.capturedContents(.cold) == "Disks and settings")
     }
 
-    @Test("Each kind's short label names the state a revert leaves the VM in")
+    @Test("Each kind's short label names the state the snapshot captured")
     func stateLabelNamesEachKind() {
         #expect(SnapshotKindCopy.stateLabel(.warm) == "Running state")
         #expect(SnapshotKindCopy.stateLabel(.cold) == "Powered off")
