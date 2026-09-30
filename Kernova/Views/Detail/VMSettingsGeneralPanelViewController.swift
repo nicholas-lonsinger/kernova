@@ -79,10 +79,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// width cap that hugs the box to the name, so one built per `rebuild()`
     /// would leave the caps of every earlier build stacked on it.
     private let nameLabel: InlineEditableLabel
-    /// The "Installed From" row and its value label, hidden while the VM
+    /// The install-record row and its value label, hidden while the VM
     /// carries no record of the image it was set up from.
     private var installedImageRow: GroupedFormCollapsibleRow?
     private var installedImageValueLabel: NSTextField?
+    /// The SHA-256 and Verification rows under it, hidden while that record
+    /// carries no digest.
+    private var digestRow: GroupedFormCollapsibleRow?
+    private var digestValueLabel: NSTextField?
+    private var digestCopyButton: CopyValueButton?
+    private var verificationRow: GroupedFormCollapsibleRow?
+    private var verificationValueLabel: NSTextField?
     /// The OS version row and its value label, hidden until an agent reports
     /// one; both `nil` for Linux guests, which have no agent to report one.
     private var guestOSVersionRow: GroupedFormCollapsibleRow?
@@ -168,19 +175,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
         ]
-        // Both OS rows are built whatever the VM knows today, then hidden until
-        // it knows: an install completing or a first agent Hello fills one in
+        // The install-record and OS rows are built whatever the VM knows today,
+        // then hidden until it knows: an install completing or a first agent Hello fills one in
         // while this pane is on screen, and only `apply()` runs then.
-        let installedImage = instance.configuration.installedImage?.displayName
-        let installedLabel = makeGroupedFormValueLabel(installedImage ?? "")
-        installedImageValueLabel = installedLabel
-        let installedRow = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow(
-                Self.installedImageRowLabel(guestOS: instance.configuration.guestOS),
-                control: installedLabel))
-        installedRow.isHidden = installedImage == nil
-        installedImageRow = installedRow
-        rows.append(installedRow)
+        rows += makeInstallRecordRows()
 
         if instance.configuration.guestOS == .macOS {
             let reported = instance.guestOSVersionDisplay
@@ -205,6 +203,49 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ]
         return makeGroupedFormSection([lockRegistry.makeHeader("General"), makeGroupedFormCard(rows: rows)])
     }
+
+    /// The install-record row and the digest rows under it, empty until
+    /// `refreshInstallRecord()` fills them.
+    private func makeInstallRecordRows() -> [NSView] {
+        let installedLabel = makeGroupedFormValueLabel("")
+        installedImageValueLabel = installedLabel
+        let installedRow = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow(
+                Self.installedImageRowLabel(guestOS: instance.configuration.guestOS),
+                control: installedLabel))
+        installedImageRow = installedRow
+
+        let digestLabel = makeGroupedFormValueLabel("")
+        digestLabel.font = .monospacedSystemFont(ofSize: Typography.body.pointSize, weight: .regular)
+        digestValueLabel = digestLabel
+        let copy = CopyValueButton(name: "Copy SHA-256")
+        digestCopyButton = copy
+        let digestControl = NSStackView(views: [digestLabel, copy])
+        digestControl.orientation = .horizontal
+        digestControl.spacing = Spacing.tight
+        let digestRow = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow("SHA-256", control: digestControl))
+        self.digestRow = digestRow
+
+        let verificationLabel = makeGroupedFormValueLabel("")
+        verificationValueLabel = verificationLabel
+        let verificationRow = GroupedFormCollapsibleRow(
+            row: makeGroupedFormCardRow("Verification", control: verificationLabel))
+        self.verificationRow = verificationRow
+
+        refreshInstallRecord()
+        return [installedRow, digestRow, verificationRow]
+    }
+
+    /// A SHA-256 shortened to its first and last eight hex digits, which is as
+    /// much as anyone compares by eye.
+    static func abbreviatedDigest(_ sha256: String) -> String {
+        "\(sha256.prefix(8))\u{2026}\(sha256.suffix(8))"
+    }
+
+    /// Tooltip on the Verification row of a digest compared with nothing.
+    static let uncheckedDigestToolTip =
+        "Computed from the downloaded file. It wasn't compared with any checksum."
 
     // MARK: Startup
 
@@ -292,9 +333,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         if !nameLabel.isEditing {
             nameLabel.textColor = canRename ? .labelColor : .disabledControlTextColor
         }
-        let installedImage = instance.configuration.installedImage?.displayName
-        installedImageValueLabel?.stringValue = installedImage ?? ""
-        installedImageRow?.isHidden = installedImage == nil
+        refreshInstallRecord()
         let reportedOSVersion = instance.guestOSVersionDisplay
         guestOSVersionValueLabel?.stringValue = reportedOSVersion ?? ""
         guestOSVersionRow?.isHidden = reportedOSVersion == nil
@@ -306,6 +345,36 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         } else {
             nameLabel.endEditing()
         }
+    }
+
+    /// Renders the install record — built or revised while the pane is open,
+    /// since setup completing writes it.
+    private func refreshInstallRecord() {
+        let record = instance.configuration.installedImage
+        installedImageValueLabel?.stringValue = record?.displayName ?? ""
+        installedImageValueLabel?.toolTip =
+            switch record {
+            case .linuxCatalogImage(_, _, let digest): digest?.filename
+            case .linuxURLImage(let url, _): url.absoluteString
+            case .macOSRestoreImage, nil: nil
+            }
+        installedImageRow?.isHidden = record == nil
+
+        let digest = record?.digest
+        digestRow?.isHidden = digest == nil
+        verificationRow?.isHidden = digest == nil
+        digestCopyButton?.value = digest?.sha256
+        guard let digest else { return }
+        digestValueLabel?.stringValue = Self.abbreviatedDigest(digest.sha256)
+        digestValueLabel?.toolTip = digest.sha256
+        verificationValueLabel?.stringValue =
+            digest.matched.map { "Matched \($0.phrase)" } ?? "Not verified"
+        verificationValueLabel?.toolTip =
+            switch digest.matched {
+            case .checksumList(let url): url.absoluteString
+            case .enteredByUser: nil
+            case nil: Self.uncheckedDigestToolTip
+            }
     }
 
     private func refreshStartup() {

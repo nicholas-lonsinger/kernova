@@ -174,12 +174,133 @@ struct VMSettingsGeneralPanelTests {
         #expect(!containsLabel("OS version", in: vc.view))
     }
 
-    @Test("A Linux VM set up from a URL shows no OS rows at all")
+    @Test("A Linux VM with no install record shows no OS rows at all")
     func osRowsLinuxWithoutRecord() {
         let (vc, _, _) = makeOSRowsController(guestOS: .linux)
 
         #expect(!visibleLabel("Installer image", in: vc.view))
         #expect(!containsLabel("OS version", in: vc.view))
+    }
+
+    // MARK: - Installer image digest
+
+    private static let sha256 =
+        "0123456789abcdef" + String(repeating: "5", count: 32) + "fedcba9876543210"
+    private static let checksumListURL = URL(
+        string: "https://cdimage.ubuntu.com/releases/26.04/SHA256SUMS")!
+    private static let isoURL = URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!
+
+    private static func matched(_ source: DigestSource, filename: String) -> InstallerImageDigest? {
+        ExpectedDigest(sha256: sha256, source: source).match(sha256, filename: filename)
+    }
+
+    /// The General panel's label reading exactly `text`, visible or not.
+    private func panelLabel(_ text: String, in vc: VMSettingsViewController) -> NSTextField? {
+        vc.panelForTesting(.general).flatMap { findLabel(withText: text, in: $0) }
+    }
+
+    @Test("A catalog image checked against its checksum list shows the digest and where it matched")
+    func digestRowsForChecksumList() throws {
+        let digest = try #require(
+            Self.matched(.checksumList(Self.checksumListURL), filename: "ubuntu-26.04-desktop-arm64.iso"))
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .linux,
+            installedImage: .linuxCatalogImage(
+                distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: digest))
+
+        #expect(panelLabel("Ubuntu Desktop 26.04 LTS", in: vc)?.toolTip == "ubuntu-26.04-desktop-arm64.iso")
+        #expect(visibleLabel("SHA-256", in: vc.view))
+        let value = try #require(panelLabel("01234567\u{2026}76543210", in: vc))
+        #expect(isVisible(value, within: vc.view))
+        #expect(value.toolTip == Self.sha256)
+        #expect(value.font?.isFixedPitch == true)
+        let copy = try #require(
+            vc.panelForTesting(.general).flatMap { firstSubview(CopyValueButton.self, in: $0) })
+        #expect(copy.value == Self.sha256)
+        #expect(!copy.isHidden)
+        #expect(visibleLabel("Verification", in: vc.view))
+        let verification = try #require(
+            panelLabel("Matched the checksum list on cdimage.ubuntu.com", in: vc))
+        #expect(isVisible(verification, within: vc.view))
+        #expect(verification.toolTip == Self.checksumListURL.absoluteString)
+    }
+
+    @Test("A URL image checked against an entered checksum says so, and names its URL")
+    func digestRowsForEnteredChecksum() throws {
+        let digest = try #require(
+            Self.matched(.enteredByUser, filename: "alpine-3.22-aarch64.iso"))
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .linux, installedImage: .linuxURLImage(url: Self.isoURL, digest: digest))
+
+        #expect(visibleLabel("Installer image", in: vc.view))
+        let image = try #require(panelLabel("alpine-3.22-aarch64.iso", in: vc))
+        #expect(isVisible(image, within: vc.view))
+        #expect(image.toolTip == Self.isoURL.absoluteString)
+        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
+        let verification = try #require(panelLabel("Matched the checksum you entered", in: vc))
+        #expect(isVisible(verification, within: vc.view))
+        #expect(verification.toolTip == nil)
+    }
+
+    @Test("A URL image compared with nothing states it was not verified")
+    func digestRowsForUncheckedImage() throws {
+        let (vc, _, _) = makeOSRowsController(
+            guestOS: .linux,
+            installedImage: .linuxURLImage(
+                url: Self.isoURL,
+                digest: .unchecked(filename: "alpine-3.22-aarch64.iso", sha256: Self.sha256)))
+
+        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
+        let verification = try #require(panelLabel("Not verified", in: vc))
+        #expect(isVisible(verification, within: vc.view))
+        #expect(
+            verification.toolTip
+                == "Computed from the downloaded file. It wasn't compared with any checksum.")
+    }
+
+    @Test("A record with no digest shows neither digest row")
+    func noDigestRowsWithoutADigest() {
+        let preDigest = makeOSRowsController(
+            guestOS: .linux,
+            installedImage: .linuxCatalogImage(
+                distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil)
+        ).0
+        #expect(visibleLabel("Installer image", in: preDigest.view))
+        #expect(!visibleLabel("SHA-256", in: preDigest.view))
+        #expect(!visibleLabel("Verification", in: preDigest.view))
+        #expect(separatesEveryRow(generalCardLayout(in: preDigest)))
+
+        let macOS = makeOSRowsController(
+            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
+        ).0
+        #expect(visibleLabel("Installed version", in: macOS.view))
+        #expect(!visibleLabel("SHA-256", in: macOS.view))
+        #expect(!visibleLabel("Verification", in: macOS.view))
+    }
+
+    @Test("Setup completing while the panel is open reveals the digest rows")
+    func digestRowsAppearOnRefresh() throws {
+        let (vc, instance, viewModel) = makeOSRowsController(guestOS: .linux)
+        #expect(!visibleLabel("SHA-256", in: vc.view))
+
+        let digest = try #require(
+            Self.matched(.checksumList(Self.checksumListURL), filename: "ubuntu-26.04-desktop-arm64.iso"))
+        // Only an operation holding the VM may write the record, as setup does.
+        try withOperationNow(on: instance) { context in
+            try viewModel.library.updateConfiguration(context.permit) {
+                $0.installedImage = .linuxCatalogImage(
+                    distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: digest)
+            }.get()
+        }
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+
+        #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))
+        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
+        #expect(visibleLabel("Matched the checksum list on cdimage.ubuntu.com", in: vc.view))
+        let copy = try #require(
+            vc.panelForTesting(.general).flatMap { firstSubview(CopyValueButton.self, in: $0) })
+        #expect(copy.value == Self.sha256)
+        #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
     /// The General card's visible run of rows and hairlines, `true` for a

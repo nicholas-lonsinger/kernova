@@ -37,6 +37,16 @@ enum InstalledImage: Sendable, Equatable {
         }
     }
 
+    /// The digest the attached ISO hashed to — `nil` for a macOS restore image,
+    /// and for a catalog record that predates digests being kept.
+    var digest: InstallerImageDigest? {
+        switch self {
+        case .macOSRestoreImage: nil
+        case .linuxCatalogImage(_, _, let digest): digest
+        case .linuxURLImage(_, let digest): digest
+        }
+    }
+
     /// What the settings card shows for the record.
     var displayName: String {
         switch self {

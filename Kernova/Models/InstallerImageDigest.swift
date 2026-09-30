@@ -10,16 +10,25 @@ enum DigestSource: Sendable, Equatable {
     case enteredByUser
 
     /// The source as a noun phrase, for composing into UI copy.
-    ///
-    /// Names the checksum list by its host: that host is the trust anchor, and
-    /// it can differ from the host the image itself is served from.
     var phrase: String {
         switch self {
-        case .checksumList(let url):
-            "the checksum list on \(url.host() ?? url.absoluteString)"
-        case .enteredByUser:
-            "the checksum you entered"
+        case .checksumList(let url): "the checksum list on \(Self.host(of: url))"
+        case .enteredByUser: "the checksum you entered"
         }
+    }
+
+    /// The source as a standalone value, for a row or a summary line.
+    var title: String {
+        switch self {
+        case .checksumList(let url): "Checksum list on \(Self.host(of: url))"
+        case .enteredByUser: "Checksum you entered"
+        }
+    }
+
+    /// The host copy names a checksum list by: that host is the trust anchor,
+    /// and it can differ from the host the image itself is served from.
+    private static func host(of checksumList: URL) -> String {
+        checksumList.host() ?? checksumList.absoluteString
     }
 }
 

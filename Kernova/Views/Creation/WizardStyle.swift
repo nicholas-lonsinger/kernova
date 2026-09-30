@@ -189,12 +189,23 @@ func wizardApproximateSize(_ bytes: UInt64) -> String {
     "About \(DataFormatters.formatBytes(bytes))"
 }
 
-/// States what a user-supplied image URL's download will be checked against.
+/// What a download pick will be checked against, and what both wizard
+/// surfaces say about it.
 ///
-/// The one phrase the boot step's badge and the Review step's row both use, so
-/// a pick reads the same at both.
-func wizardVerificationSummary(sha256: String?) -> String {
-    sha256 == nil ? "Not verified" : "Verified with your checksum"
+/// `nil` is a pick with nothing to check against. The check runs only once the
+/// image is downloaded, so neither form claims a result.
+struct WizardVerification {
+    let source: DigestSource?
+
+    /// The boot step badge's secondary line.
+    var badgeLine: String {
+        source.map { "Checked after download against \($0.phrase)" } ?? Self.unverified
+    }
+
+    /// The Review step's Verification row value.
+    var reviewValue: String { source?.title ?? Self.unverified }
+
+    private static let unverified = "Not verified"
 }
 
 /// Abbreviates a path with a leading `~` when it lives under a home
