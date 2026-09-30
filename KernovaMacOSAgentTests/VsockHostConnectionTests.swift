@@ -85,6 +85,7 @@ struct VsockHostConnectionTests {
         /// Host ends, in attempt order — raw, so a test can starve one by never
         /// reading it or wrap it in a `VsockChannel` to receive.
         let hostFds: [Int32]
+        let agentFds: [Int32]
         /// Connect attempts the client has made.
         let dialled: AtomicInt
     }
@@ -97,7 +98,7 @@ struct VsockHostConnectionTests {
     /// handful of frames fill the socket and park the drain worker in
     /// `write(2)`.
     private func makeDialledConnection(
-        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil
+        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil, tag: Int? = nil
     ) throws -> DialledConnection {
         var pairs: [(agent: Int32, host: Int32)] = []
         for _ in 0..<attempts {
@@ -106,6 +107,13 @@ struct VsockHostConnectionTests {
                 let optionSize = socklen_t(MemoryLayout<Int32>.size)
                 setsockopt(agentFd, SOL_SOCKET, SO_SNDBUF, &size, optionSize)
                 setsockopt(hostFd, SOL_SOCKET, SO_RCVBUF, &size, optionSize)
+            }
+            if let tag {
+                let timevalSize = socklen_t(MemoryLayout<timeval>.size)
+                var agentTag = timeval(tv_sec: 100_000 + tag, tv_usec: 0)
+                var hostTag = timeval(tv_sec: 200_000 + tag, tv_usec: 0)
+                setsockopt(agentFd, SOL_SOCKET, SO_RCVTIMEO, &agentTag, timevalSize)
+                setsockopt(hostFd, SOL_SOCKET, SO_SNDTIMEO, &hostTag, timevalSize)
             }
             pairs.append((agent: agentFd, host: hostFd))
         }
@@ -124,7 +132,7 @@ struct VsockHostConnectionTests {
         }
         return DialledConnection(
             conn: VsockHostConnection(client: client), client: client,
-            hostFds: pairs.map(\.host), dialled: dialled)
+            hostFds: pairs.map(\.host), agentFds: agentFds, dialled: dialled)
     }
 
     /// Runs `body` against a connection dialling `attempts` socketpairs, and
@@ -133,11 +141,11 @@ struct VsockHostConnectionTests {
     /// landing after the return reaches the next test's sink instead: counted
     /// there, or forwarded into that test's ring as one more frame.
     private func withDialledConnection(
-        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil,
+        label: String, attempts: Int = 1, socketBufferBytes: Int32? = nil, tag: Int? = nil,
         _ body: (DialledConnection) async throws -> Void
     ) async throws {
         let dialled = try makeDialledConnection(
-            label: label, attempts: attempts, socketBufferBytes: socketBufferBytes)
+            label: label, attempts: attempts, socketBufferBytes: socketBufferBytes, tag: tag)
         var failure: (any Error)?
         do {
             try await body(dialled)
@@ -389,6 +397,104 @@ struct VsockHostConnectionTests {
             #expect(pendingMessages(conn).filter { $0.contains(sendFailedMarker) }.count == 1)
             #expect(pendingLogCount(conn) <= VsockHostConnection.logBufferLimit)
         }
+    }
+
+    // MARK: - DIAGNOSTIC (#1278) — removed before merge
+
+    /// One look at the re-entrancy case's sockets and ring.
+    private struct ReplaySnapshot: CustomStringConvertible {
+        let ring: Int
+        let hostBuffered: Int
+        let hostOpen: Bool
+        let agentOpen: Bool
+        let hostTag: Int
+        let agentTag: Int
+        let sinkLines: [String]
+
+        var description: String {
+            "ring=\(ring) hostBuffered=\(hostBuffered) hostOpen=\(hostOpen) agentOpen=\(agentOpen)"
+                + " hostTag=\(hostTag) agentTag=\(agentTag) sink=\(sinkLines)"
+        }
+    }
+
+    private static func timeoutTag(_ fd: Int32, _ name: Int32) -> Int {
+        var value = timeval()
+        var length = socklen_t(MemoryLayout<timeval>.size)
+        guard getsockopt(fd, SOL_SOCKET, name, &value, &length) == 0 else { return -Int(errno) }
+        return value.tv_sec
+    }
+
+    private func replaySnapshot(
+        _ conn: VsockHostConnection, hostFd: Int32, agentFd: Int32, sink: AgentLogSink?
+    ) -> ReplaySnapshot {
+        var peek = [UInt8](repeating: 0, count: 1 << 20)
+        let buffered = peek.withUnsafeMutableBytes {
+            recv(hostFd, $0.baseAddress, $0.count, MSG_PEEK | MSG_DONTWAIT)
+        }
+        return ReplaySnapshot(
+            ring: pendingLogCount(conn), hostBuffered: buffered,
+            hostOpen: fcntl(hostFd, F_GETFD) >= 0, agentOpen: fcntl(agentFd, F_GETFD) >= 0,
+            hostTag: Self.timeoutTag(hostFd, SO_SNDTIMEO), agentTag: Self.timeoutTag(agentFd, SO_RCVTIMEO),
+            sinkLines: (sink?.messages ?? []).map { String($0.prefix(60)) })
+    }
+
+    private func instrumentedReentrancy(round: Int) async throws -> String? {
+        var anomaly: String?
+        try await withDialledConnection(
+            label: "log-reentrancy-replay", socketBufferBytes: 8192, tag: round
+        ) { dialled in
+            let conn = dialled.conn
+            let hostFd = dialled.hostFds[0]
+            let agentFd = dialled.agentFds[0]
+            let s0 = replaySnapshot(conn, hostFd: hostFd, agentFd: agentFd, sink: nil)
+
+            conn.start()
+            conn.setEnabled(true)
+            let sink = AgentLogSink(forwardingTo: conn)
+            sink.install()
+            defer { sink.uninstall() }
+
+            let payload = String(repeating: "x", count: 4096)
+            for i in 0..<40 {
+                conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "re\(i)-\(payload)")
+            }
+            let first = await firstByteWritten(to: hostFd)
+            let s1 = replaySnapshot(conn, hostFd: hostFd, agentFd: agentFd, sink: sink)
+            try await Task.sleep(nanoseconds: 20_000_000)
+            let s2 = replaySnapshot(conn, hostFd: hostFd, agentFd: agentFd, sink: sink)
+            Darwin.close(hostFd)
+
+            var warned = true
+            do {
+                try await sink.changed.wait(timeout: 2) {
+                    pendingMessages(conn).contains { $0.contains(sendFailedMarker) }
+                }
+            } catch {
+                warned = false
+            }
+            if !warned || s2.ring == 0 {
+                anomaly =
+                    "round \(round) fds agent=\(agentFd) host=\(hostFd) first=\(first) warned=\(warned)"
+                    + " ringAfter=\(pendingLogCount(conn))\n  s0 \(s0)\n  s1 \(s1)\n  s2 \(s2)"
+            }
+        }
+        return anomaly
+    }
+
+    @Test("DIAGNOSTIC #1278: the suite's preceding cases replayed into an instrumented re-entrancy case")
+    func diagnosticReentrancyReplay() async throws {
+        var anomalies: [String] = []
+        for round in 0..<100 {
+            try await liveChannelDeliversInOrder()
+            try await forwardLogReturnsWhileHostStalls()
+            try await overflowAnnouncesOnceAndReportsCount()
+            if let anomaly = try await instrumentedReentrancy(round: round) {
+                print("[reentrancy-replay] \(anomaly)")
+                anomalies.append(anomaly)
+            }
+        }
+        print("[reentrancy-replay] \(anomalies.count) anomalies in 100 rounds")
+        #expect(anomalies.isEmpty, "\(anomalies.joined(separator: "\n"))")
     }
 
     // MARK: - Chronological order across a failed send
