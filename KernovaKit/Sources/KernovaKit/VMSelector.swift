@@ -169,7 +169,8 @@ public enum CloneMachineIdentity: String, Codable, Sendable, Hashable, CaseItera
     /// Mint a fresh identity, so both VMs can run at once.
     case new
     /// Keep the source's identity and MAC address, so the clone is the same
-    /// machine to its guest and its network — and cannot run beside the source.
+    /// machine to its guest and its network — and never runs beside the source
+    /// on one network.
     case keep
 }
 
