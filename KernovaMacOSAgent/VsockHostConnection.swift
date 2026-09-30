@@ -375,7 +375,7 @@ final class VsockHostConnection: @unchecked Sendable {
         if let failure {
             #log(
                 Self.logger, .warning,
-                "Vsock channel ended with error: \(failure.localizedDescription, privacy: .public), holding \(held, privacy: .public) record(s) for the next connection"
+                "Vsock channel ended with error, holding \(held, privacy: .public) record(s) for the next connection: \(failure.localizedDescription, privacy: .public)"
             )
         } else {
             #log(
