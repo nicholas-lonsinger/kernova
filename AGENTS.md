@@ -163,7 +163,7 @@ A PR's head branch is `<type>/<short-description>` — `<type>` one of `feat`, `
 
 An AI agent ends its commit message with a `Co-authored-by` trailer naming the model that wrote the change — name and version, nothing else — at the vendor's no-reply address: `Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>`, added explicitly, once; a subagent's commit names the subagent's model.
 
-Merge with `gh pr merge <N> --squash --body …`. The repo's squash default leaves the body empty, so `--body` carries one short paragraph describing the merged state, not the route to it, and then one `Co-authored-by` trailer per model that contributed to the branch.
+Merge with `gh pr merge <N> --auto --squash --body …`: GitHub merges once the required checks pass, so nothing waits on CI to merge. The repo's squash default leaves the body empty, so `--body` carries one short paragraph describing the merged state, not the route to it, and then one `Co-authored-by` trailer per model that contributed to the branch.
 
 A fix's PR body states the invariant it restores and what now holds it: the structure that makes the bad state impossible, or — a *for now* call only the maintainer makes — the guard that stops it.
 
