@@ -724,6 +724,10 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: macOS))
         #expect(!harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: linux))
         #expect(harness.catalog.isAvailable(Keys.ephemeral, writing: "true", on: macOS))
-        #expect(!harness.catalog.isAvailable(Keys.cpus, writing: "3", on: macOS))
+        // A machine key, with a value that moves it whatever this host's cores.
+        #expect(
+            !harness.catalog.isAvailable(
+                Keys.audioInput, writing: String(!macOS.configuration.audioInputEnabled),
+                on: macOS))
     }
 }
