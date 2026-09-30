@@ -145,8 +145,8 @@ enum TableRenderer {
 
     /// The settings keyspace itself, one key per line.
     ///
-    /// The gate is a column rather than a footnote: which settings a running
-    /// guest still takes is the thing a person consults this listing for.
+    /// Which settings a running guest still takes is a column rather than a
+    /// footnote: it is the thing a person consults this listing for.
     /// `quiet` prints the names alone, which `get` and `set` both accept back.
     static func render(_ keys: [ConfigurationKeyDescriptor], quiet: Bool) -> String {
         guard !quiet else { return keys.map(\.name).joined(separator: "\n") }
@@ -154,8 +154,17 @@ enum TableRenderer {
         return columns(
             headings: ["KEY", "WHILE RUNNING", "SUMMARY"],
             rows: keys.map {
-                [$0.name, $0.editableWhileRunning ? "Yes" : "No", $0.summary]
+                [$0.name, whileRunning($0.editableWhileRunning), $0.summary]
             })
+    }
+
+    /// Which guests a running VM takes a key on: "Yes" when every guest the
+    /// key applies to does, "No" when none does, otherwise the ones that do.
+    private static func whileRunning(_ byGuest: [String: Bool]) -> String {
+        let taking = byGuest.filter(\.value).keys.sorted()
+        if taking.count == byGuest.count { return "Yes" }
+        if taking.isEmpty { return "No" }
+        return taking.joined(separator: ", ") + " guests"
     }
 
     /// A guest address in the words this surface states it in.

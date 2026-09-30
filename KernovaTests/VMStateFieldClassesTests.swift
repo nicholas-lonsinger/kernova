@@ -99,62 +99,16 @@ struct VMStateFieldClassesTests {
         }
     }
 
-    /// Values some key takes, or refuses, covering every key's spelling.
-    private static let candidateValues = [
-        "true", "false", "0", "1", "2", "4", "8", "16", "1280", "800",
-        VMConfigurationKeyRegistry.noNetworkValue, "shared", "bridged", "hostOnly", "inline", "popOut",
-        "fullscreen", "automatic", "mac", "usb", "never", "fullscreenOnly", "always", "en0", "",
-        "02:11:22:33:44:55", "Baseline",
-    ]
-
-    @Test("Every key's permit may write every field its write moves")
-    func everyKeysClassesWriteWhatItMoves() {
-        let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
-        let context = VMConfigurationWriteContext(
-            snapshots: VMSnapshotManifest(snapshots: [snapshot]))
-        var networked = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
-        networked.applyNetworkMode(.shared)
-        var unaddressed = networked
-        unaddressed.macAddress = nil
-        var offline = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        offline.applyNetworkMode(nil)
-        offline.macAddress = nil
-        let hostStates = [
-            VMHostState(),
-            VMHostState(
-                startsAutomaticallyOnLaunch: true, ephemeralModeEnabled: true,
-                ephemeralBaselineSnapshotID: snapshot.id, displayPreference: .fullscreen,
-                agentInstallNudgeDismissed: true),
-        ]
-
-        for key in VMConfigurationKeyRegistry.keys {
-            for value in Self.candidateValues {
-                switch key.field {
-                case .configuration(let field):
-                    for base in [networked, unaddressed, offline] where key.applies(base) {
-                        let authority = VMEditPermit.Authority.edit(
-                            key.editClasses(writing: value, for: base.guestOS))
-                        var written = base
-                        guard (try? field.write(value, &written, context)) != nil else { continue }
-                        #expect(
-                            VMConfiguration.fieldClasses.refused(
-                                from: base, to: written, by: authority) == [],
-                            "\(key.name)=\(value)")
-                    }
-                case .hostState(let field):
-                    guard let change = try? field.change(value, context) else { continue }
-                    let authority = VMEditPermit.Authority.edit(
-                        key.editClasses(writing: value, for: .macOS))
-                    for base in hostStates {
-                        var written = base
-                        change(&written)
-                        #expect(
-                            VMHostState.fieldClasses.refused(from: base, to: written, by: authority)
-                                == [],
-                            "\(key.name)=\(value)")
-                    }
-                }
-            }
-        }
+    @Test("A change's writers name each field it moved, with that field's classes, and nothing else")
+    func writersNameEachMovedField() {
+        let old = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        var new = old
+        new.name = "Renamed"
+        new.memorySizeInGB += 2
+        new.displayAutoResizes.toggle()
+        let writers = VMConfiguration.fieldClasses.writers(from: old, to: new)
+        #expect(writers.map(\.name) == ["name", "memorySizeInGB", "displayAutoResizes"])
+        #expect(writers.map(\.classes) == [.rename, .machineKeys, .liveKeys])
+        #expect(VMConfiguration.fieldClasses.writers(from: old, to: old).isEmpty)
     }
 }

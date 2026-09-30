@@ -37,7 +37,8 @@ struct CLIConfigurationWireTests {
     func getKeysAsksForTheKeyspace() throws {
         let keyspace = [
             ConfigurationKeyDescriptor(
-                name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
+                name: "cpus", summary: "Virtual CPU cores.",
+                editableWhileRunning: ["macOS": false, "linux": false])
         ]
         let exchanged = try CLIWire.exchange(
             ["get", "--keys"], answering: VMCommandResponse(result: .configurationKeys(keyspace)))

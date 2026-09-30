@@ -44,9 +44,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The Mode menu's rendered selection, so a `refresh()` pass that changed
     /// nothing about networking skips a rebuild.
     private var renderedNetworkChoice: NetworkModeChoice?
-    /// The live-switch state the Mode menu was last built for; a change rebuilds
-    /// so the None entry's enablement tracks it.
-    private var renderedNetworkLiveSwitchable = false
+    /// Whether the Mode menu was last built with None enabled; a change
+    /// rebuilds so the entry tracks it.
+    private var renderedNetworkNoneAvailable = false
     /// The host's bridgeable interfaces as the last picker open found them,
     /// `nil` until one has. Held so a rebuild triggered by the mode the user
     /// just picked from that list still knows the list — rebuilding blind would
@@ -210,6 +210,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             && !capabilities.isAvailable(.editConfiguration, on: instance)
     }
 
+    /// Whether the Mode menu's None entry takes the change it writes.
+    private var networkNoneIsAvailable: Bool {
+        isAvailable(
+            VMConfigurationKeyRegistry.networkMode, writing: VMConfigurationKeyRegistry.noNetworkValue)
+    }
+
     private func makeNetworkModePopUp() -> NSPopUpButton {
         let popUp = NSPopUpButton()
         popUp.controlSize = .small
@@ -234,7 +240,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let interfaces = enumeratedInterfaces
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
-        let liveSwitchable = networkModeIsLiveSwitchable
+        let noneAvailable = networkNoneIsAvailable
         let current = NetworkModeChoice(instance.configuration)
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
         if entitlements.hasVMNetworking {
@@ -246,12 +252,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             // selects.
             addNetworkModeItem("Host Only (unavailable)", choice: .hostOnly, to: menu, enabled: false)
         }
-        // While the session runs, every attachable mode can hot-swap; None
-        // cannot — network devices cannot be added or removed at runtime.
-        addNetworkModeItem("None", choice: .none, to: menu, enabled: !liveSwitchable)
+        addNetworkModeItem("None", choice: .none, to: menu, enabled: noneAvailable)
 
         renderedNetworkChoice = current
-        renderedNetworkLiveSwitchable = liveSwitchable
+        renderedNetworkNoneAvailable = noneAvailable
         if entitlements.hasVMNetworking {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
@@ -325,7 +329,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // picker makes this section's hint a false claim, so re-hide it.
         networkLockHint?.isHidden = modeEditable
         if NetworkModeChoice(instance.configuration) != renderedNetworkChoice
-            || liveSwitchable != renderedNetworkLiveSwitchable
+            || networkNoneIsAvailable != renderedNetworkNoneAvailable
         {
             rebuildNetworkModeMenu()
         }

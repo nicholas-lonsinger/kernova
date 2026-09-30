@@ -962,7 +962,8 @@ struct VMCommandEnvelopeRouterTests {
         let double = MockVMCommanding()
         double.configurationKeyDescriptors = [
             ConfigurationKeyDescriptor(
-                name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
+                name: "cpus", summary: "Virtual CPU cores.",
+                editableWhileRunning: ["macOS": false, "linux": false])
         ]
         double.configurationEntries = [ConfigurationEntry(key: "cpus", value: "4")]
         let transport = makeTransport(over: double)
