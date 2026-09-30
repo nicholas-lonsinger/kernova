@@ -130,7 +130,7 @@ struct VMConfigurationCloneTests {
 
         #expect(clone.networkEnabled == true)
         #expect(clone.networkMode == .shared)
-        // macAddress is copied as-is; caller regenerates it
+        // Copied as-is: the clone's caller decides it with the machine identity.
         #expect(clone.macAddress == "aa:bb:cc:dd:ee:ff")
     }
 

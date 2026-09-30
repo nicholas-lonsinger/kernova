@@ -11,8 +11,8 @@ extension KernovaCommand {
     enum CloneIdentity: String, EnumerableFlag {
         /// Mint a fresh identity, so both virtual machines can run at once.
         case newIdentity
-        /// Keep the source's identity, so the clone is the same machine to its
-        /// guest.
+        /// Keep the source's identity and MAC address, so the clone is the same
+        /// machine to its guest and its network.
         case keepIdentity
 
         /// The wire choice this flag names.
@@ -27,7 +27,8 @@ extension KernovaCommand {
         static func help(for value: CloneIdentity) -> ArgumentHelp? {
             switch value {
             case .newIdentity: "Give the clone a fresh machine identity, so both can run at once."
-            case .keepIdentity: "Keep the source's machine identity, which the two cannot share."
+            case .keepIdentity:
+                "Keep the source's machine identity and MAC address; the two never run at once on one network."
             }
         }
     }
