@@ -331,21 +331,22 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
-        // Both captions talk about the per-VM switches. With no VMs the section
-        // is a lone "No virtual machines yet." row, so they would be describing
+        // The caption talks about the per-VM switches. With no VMs the section
+        // is a lone "No virtual machines yet." row, so it would be describing
         // controls that aren't on screen.
         let hasVMs = !vmSwitches.isEmpty
         vmCaption.isHidden = !hasVMs
-        let showOverrideCaption = overridden && hasVMs
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
-        vmOverrideCaption.isHidden = !showOverrideCaption
+        vmOverrideCaption.isHidden = !overridden
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
             applyGroupedFormRowEnabled(!overridden, control: toggle)
         }
 
-        if wasShowingOverrideCaption != showOverrideCaption { rearmScrollFlash() }
+        // The override caption is a note of the per-VM card, so it changes the
+        // pane's height only while that card exists.
+        if hasVMs, wasShowingOverrideCaption != overridden { rearmScrollFlash() }
     }
 
     @objc private func menuBarQuitToggled() {

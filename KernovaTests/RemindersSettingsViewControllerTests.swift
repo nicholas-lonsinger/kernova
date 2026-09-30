@@ -96,23 +96,6 @@ struct RemindersSettingsViewControllerTests {
         switches(action: "vmReminderToggled:", in: controller)
     }
 
-    /// The grouped-form card `control` sits in — the nearest ancestor carrying
-    /// the card's rounded `NSBox` background.
-    ///
-    /// Keyed on the corner radius, not on `NSBox` alone: a multi-row card's
-    /// inter-row hairlines are `NSBox`es too, so the looser test stops at the
-    /// card's inner stack and reports an edge inset by the card's padding.
-    private func card(containing control: NSView) -> NSView? {
-        var candidate = control.superview
-        while let view = candidate {
-            if view.subviews.contains(where: { ($0 as? NSBox)?.cornerRadius ?? 0 > 0 }) {
-                return view
-            }
-            candidate = view.superview
-        }
-        return nil
-    }
-
     /// Flips the app-wide install-reminder switch the way a click does, so the
     /// pane's own action wiring is what drives the change.
     private func setAppWideInstallReminder(
@@ -180,8 +163,8 @@ struct RemindersSettingsViewControllerTests {
             switches(action: "menuBarQuitToggled", in: controller).first)
         let agentToggle = try #require(
             switches(action: "agentInstallToggled", in: controller).first)
-        let menuBarCard = try #require(card(containing: menuBarToggle))
-        let agentCard = try #require(card(containing: agentToggle))
+        let menuBarCard = try #require(enclosingGroupedFormCard(of: menuBarToggle))
+        let agentCard = try #require(enclosingGroupedFormCard(of: agentToggle))
         #expect(menuBarCard !== agentCard)
         #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
@@ -199,9 +182,9 @@ struct RemindersSettingsViewControllerTests {
 
         let agentToggle = try #require(
             switches(action: "agentInstallToggled", in: controller).first)
-        let governingCard = try #require(card(containing: agentToggle))
+        let governingCard = try #require(enclosingGroupedFormCard(of: agentToggle))
         let vmToggle = try #require(vmSwitches(in: controller).first)
-        let vmCard = try #require(card(containing: vmToggle))
+        let vmCard = try #require(enclosingGroupedFormCard(of: vmToggle))
 
         let root = controller.view
         let governingLeading = governingCard.convert(governingCard.bounds, to: root).minX
@@ -317,7 +300,9 @@ struct RemindersSettingsViewControllerTests {
         let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
             .map(\.stringValue)
         #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
-        #expect(!visible.contains { $0.contains("have no effect") })
+        // The override caption is a note of the per-VM card, which the empty
+        // state does not build.
+        #expect(findLabel(containing: "have no effect", in: controller.view) == nil)
         #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
     }
 

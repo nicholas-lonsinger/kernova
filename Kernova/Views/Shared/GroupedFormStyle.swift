@@ -19,6 +19,10 @@ enum GroupedFormStyle {
     /// Inset from a card's edges to its rows.
     static let cardPadding: CGFloat = 12
 
+    /// Spacing between the views a card stacks: a note under the row above it.
+    /// A ``GroupedFormCardSeparator`` pads out the rest of a row-to-row gap.
+    static let cardStackSpacing = Spacing.small
+
     /// Fill for a grouped card: a translucent overlay — darkening in light,
     /// lightening in dark — so a card stands off whatever background it sits on.
     static let cardFill = NSColor(name: "groupedFormCardFill") { appearance in
@@ -154,11 +158,12 @@ func makeGroupedFormHairline() -> NSView {
 }
 
 /// A hairline padded so that, set between two rows in a stack spaced
-/// ``Spacing/small``, it puts ``Spacing/relaxed`` on each side of the line.
+/// ``GroupedFormStyle/cardStackSpacing``, it puts ``Spacing/relaxed`` on each
+/// side of the line.
 ///
 /// The padding lives on the separator rather than in the stack's spacing so
-/// that a card's notes sit ``Spacing/small`` under whichever row is the last
-/// one showing.
+/// that a card's notes sit ``GroupedFormStyle/cardStackSpacing`` under
+/// whichever row is the last one showing.
 @MainActor
 final class GroupedFormCardSeparator: NSView {
     init() {
@@ -166,7 +171,7 @@ final class GroupedFormCardSeparator: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         let line = makeGroupedFormHairline()
         addSubview(line)
-        let pad = Spacing.relaxed - Spacing.small
+        let pad = Spacing.relaxed - GroupedFormStyle.cardStackSpacing
         NSLayoutConstraint.activate([
             line.topAnchor.constraint(equalTo: topAnchor, constant: pad),
             line.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
@@ -270,7 +275,7 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
-        spacing = Spacing.small
+        spacing = GroupedFormStyle.cardStackSpacing
         translatesAutoresizingMaskIntoConstraints = false
         let hairline = GroupedFormCardSeparator()
         for view in [hairline, row] {
@@ -304,7 +309,7 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     let content = NSStackView()
     content.orientation = .vertical
     content.alignment = .leading
-    content.spacing = Spacing.small
+    content.spacing = GroupedFormStyle.cardStackSpacing
     content.translatesAutoresizingMaskIntoConstraints = false
 
     var arranged: [(view: NSView, bleeds: Bool)] = []

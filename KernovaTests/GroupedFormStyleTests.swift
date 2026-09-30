@@ -98,12 +98,12 @@ struct GroupedFormStyleTests {
     }
 
     @Test("A card's note sits inside it under the last row, inset like a row")
-    func noteSitsInsideTheCardUnderTheLastRow() {
+    func noteSitsInsideTheCardUnderTheLastRow() throws {
         let note = makeGroupedFormCaption("Boots at 800 × 900 pixels.")
         let (card, lastRow) = laidOutCard(notes: [note])
 
         // The card's own view is not flipped: "below" is a smaller y.
-        let noteInCard = alignmentRect(of: note, in: card)
+        let noteInCard = try alignmentRect(of: note, in: card)
         let rowInCard = lastRow.convert(lastRow.bounds, to: card)
         #expect(note.isDescendant(of: card))
         #expect(noteInCard.height > 0)
@@ -127,7 +127,7 @@ struct GroupedFormStyleTests {
     }
 
     @Test("A note sits a small gap under the last row showing, past a hidden collapsible row")
-    func noteGapSkipsAHiddenLastRow() {
+    func noteGapSkipsAHiddenLastRow() throws {
         let first = makeGroupedFormCardRow("Mode", control: NSTextField(labelWithString: "None"))
         let collapsed = GroupedFormCollapsibleRow(
             row: makeGroupedFormCardRow("MAC address", control: NSTextField(labelWithString: "-")))
@@ -138,7 +138,7 @@ struct GroupedFormStyleTests {
         card.layoutSubtreeIfNeeded()
 
         let rowInCard = first.convert(first.bounds, to: card)
-        #expect(rowInCard.minY - alignmentRect(of: note, in: card).maxY == Spacing.small)
+        #expect(try rowInCard.minY - alignmentRect(of: note, in: card).maxY == Spacing.small)
     }
 
     @Test(

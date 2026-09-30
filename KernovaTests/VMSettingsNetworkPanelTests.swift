@@ -310,7 +310,7 @@ struct VMSettingsNetworkPanelTests {
 
         // The card's own view is not flipped: "below" is a smaller y. Mode is the
         // only row showing, so the note's gap is measured from it.
-        let captionInCard = alignmentRect(of: caption, in: card)
+        let captionInCard = try alignmentRect(of: caption, in: card)
         let modeRowInCard = modeRow.convert(modeRow.bounds, to: card)
         #expect(captionInCard.height > 0)
         #expect(modeRowInCard.minY - captionInCard.maxY == Spacing.small)

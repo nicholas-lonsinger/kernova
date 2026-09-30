@@ -164,8 +164,8 @@ func enclosingGroupedFormCard(of view: NSView) -> NSView? {
 /// `view`'s alignment rect in `ancestor`'s coordinates — the rect a stack
 /// spaces, which for a text field is inset from its frame.
 @MainActor
-func alignmentRect(of view: NSView, in ancestor: NSView) -> NSRect {
-    guard let superview = view.superview else { return .zero }
+func alignmentRect(of view: NSView, in ancestor: NSView) throws -> NSRect {
+    let superview = try #require(view.superview)
     return superview.convert(view.alignmentRect(forFrame: view.frame), to: ancestor)
 }
 
