@@ -167,4 +167,15 @@ struct VMSnapshotTests {
             VMSnapshotManifestRecord.self, from: Data(json.utf8))
         #expect(decoded.snapshots.first { $0.id == id }?.kind == .warm)
     }
+
+    // MARK: - Copy
+
+    /// A revert commits the snapshot's configuration for either kind
+    /// (`VMLibrary.commitRevertedConfiguration`), so both read the settings in
+    /// and only memory sets them apart.
+    @Test("Each kind names the settings it puts back, and memory tells them apart")
+    func capturedCopyNamesSettingsForBothKinds() {
+        #expect(SnapshotKindCopy.captured(.warm) == "Memory, disks, and settings")
+        #expect(SnapshotKindCopy.captured(.cold) == "Disks and settings")
+    }
 }

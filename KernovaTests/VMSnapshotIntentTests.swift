@@ -80,12 +80,14 @@ struct VMSnapshotIntentTests {
     }
 
     @Test("A capture holding no memory image says so beside its date")
-    func coldCapturesReadBackAsDisksOnly() {
+    func coldCapturesReadBackWhatTheyHold() {
         let taken = Date(timeIntervalSince1970: 1_700_000_000)
         let date = SnapshotDateFormat.string(from: taken)
 
         #expect(SnapshotEntity.captureDescription("warm", taken) == date)
-        #expect(SnapshotEntity.captureDescription("cold", taken) == "\(date) \u{00B7} Disks only")
+        #expect(
+            SnapshotEntity.captureDescription("cold", taken)
+                == "\(date) \u{00B7} \(SnapshotKindCopy.captured(.cold))")
     }
 
     // MARK: - Reads

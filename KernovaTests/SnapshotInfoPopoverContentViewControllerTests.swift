@@ -42,17 +42,19 @@ struct SnapshotInfoPopoverContentViewControllerTests {
                 == nil)
     }
 
-    @Test("The facts grid says what a memory-and-disks snapshot holds")
-    func warmNamesMemoryAndDisks() {
+    @Test("The facts grid says what a snapshot holding memory captured")
+    func warmNamesWhatItCaptured() {
         let controller = makeController(kind: .warm)
         #expect(findLabel(withText: "Captured", in: controller.view) != nil)
-        #expect(findLabel(withText: "Memory and disks", in: controller.view) != nil)
+        #expect(
+            findLabel(withText: SnapshotKindCopy.captured(.warm), in: controller.view) != nil)
     }
 
-    @Test("The facts grid says what a disks-only snapshot holds")
-    func coldNamesDisksOnly() {
+    @Test("The facts grid says what a snapshot holding no memory captured")
+    func coldNamesWhatItCaptured() {
         let controller = makeController(kind: .cold)
-        #expect(findLabel(withText: "Disks only", in: controller.view) != nil)
+        #expect(
+            findLabel(withText: SnapshotKindCopy.captured(.cold), in: controller.view) != nil)
     }
 
     @Test("An editable popover always offers the Notes box, empty or not")

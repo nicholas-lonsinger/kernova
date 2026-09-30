@@ -3,10 +3,11 @@ import Foundation
 /// What a snapshot captured, which decides what reverting to it produces.
 enum VMSnapshotKind: String, Codable, Sendable {
     /// The guest's memory as a VZ saved state, plus a copy of the bundle's
-    /// disks. Reverting lands the VM paused on that memory image.
+    /// disks and the VM's configuration. Reverting lands the VM suspended on
+    /// that memory image, or running when it was live.
     case warm
-    /// The bundle's disks alone, taken while the VM was stopped. Reverting
-    /// lands the VM stopped.
+    /// The bundle's disks and the VM's configuration, taken while the VM was
+    /// stopped. Reverting lands the VM stopped.
     case cold
 }
 
@@ -17,7 +18,7 @@ enum VMSnapshotCaptureMode: Sendable, Equatable {
     case live
     /// The bundle's suspend slot is cloned — no VZ work, and the slot stays in place.
     case suspended
-    /// The disks alone, from a stopped VM.
+    /// The disks and configuration, from a stopped VM.
     case stopped
 
     var kind: VMSnapshotKind { self == .stopped ? .cold : .warm }
