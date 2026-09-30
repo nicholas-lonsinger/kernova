@@ -494,7 +494,8 @@ struct VsockHostConnectionTests {
             conn.setEnabled(true)
             conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "after")
 
-            #expect(try await message(from: host) == "after")
+            let first = try await message(from: host)
+            #expect(first == "after")
             #expect(dialled.dialled.value == 2)
         }
     }
