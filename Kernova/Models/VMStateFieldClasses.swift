@@ -18,14 +18,14 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
         let classes: @Sendable (Root, Root) -> VMEditClasses?
 
         /// A field these classes write, whatever the values.
-        static func field<Value: Equatable>(
+        static func field<Value: Equatable & SendableMetatype>(
             _ name: String, _ keyPath: KeyPath<Root, Value> & Sendable, _ classes: VMEditClasses
         ) -> Field {
             field(name, keyPath) { _, _ in classes }
         }
 
         /// A field whose writers depend on what it moves from and to.
-        static func field<Value: Equatable>(
+        static func field<Value: Equatable & SendableMetatype>(
             _ name: String, _ keyPath: KeyPath<Root, Value> & Sendable,
             byValue classes: @escaping @Sendable (_ old: Value, _ new: Value) -> VMEditClasses
         ) -> Field {
@@ -37,7 +37,7 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
 
         /// A field whose writers depend on the rest of the root it moves
         /// within, read off the root it moves from.
-        static func field<Value: Equatable>(
+        static func field<Value: Equatable & SendableMetatype>(
             _ name: String, _ keyPath: KeyPath<Root, Value> & Sendable,
             byRoot classes: @escaping @Sendable (Root) -> VMEditClasses
         ) -> Field {
