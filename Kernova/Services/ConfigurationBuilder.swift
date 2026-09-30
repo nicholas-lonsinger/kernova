@@ -374,11 +374,11 @@ struct ConfigurationBuilder: Sendable {
             switch disk.kind {
             case .virtio:
                 let blockDevice = VZVirtioBlockDeviceConfiguration(attachment: attachment)
-                // The main bundle disk's `blockDeviceIdentifier` stays unset: it
-                // would come from the synthesized default's fresh UUID, making the
-                // guest's `/dev/disk/by-id/virtio-*` name vary across launches and
-                // breaking any `/etc/fstab` entry relying on it. User-added disks
-                // persist their UUID, so they do get an identifier.
+                // The main bundle disk's `blockDeviceIdentifier` stays unset: the
+                // synthesized default's id is seeded from the bundle path, so it
+                // would change the guest's `/dev/disk/by-id/virtio-*` name whenever
+                // the bundle moves or is cloned, breaking any `/etc/fstab` entry
+                // relying on it.
                 if !Self.isMainBundleDisk(disk, layout: layout) {
                     blockDevice.blockDeviceIdentifier = disk.blockDeviceIdentifier
                 }

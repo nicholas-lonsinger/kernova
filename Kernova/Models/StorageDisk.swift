@@ -100,10 +100,8 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// list is empty or absent.
     ///
     /// The id is derived from the bundle path rather than minted per read: a
-    /// rename, note or read-only edit reaches this disk by id, and the same id
-    /// is the device UUID `restoreMachineStateFrom(url:)` matches a saved state
-    /// against. A fresh one each read would miss the row the user clicked, and
-    /// break restore.
+    /// rename, note or read-only edit reaches this disk by id, and a fresh one
+    /// each read would miss the row the user clicked.
     static func mainDisk(layout: VMBundleLayout) -> StorageDisk {
         let stableMainDiskID = StableID.uuid(seed: layout.bundleURL.path)
         return StorageDisk(
