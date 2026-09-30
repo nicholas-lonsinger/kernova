@@ -87,6 +87,56 @@ struct GroupedFormStyleTests {
         #expect(longInCard.maxX == shortInCard.maxX)
     }
 
+    /// A two-row card laid out at a fixed width, with `notes` under its rows.
+    private func laidOutCard(notes: [NSView]) -> (card: NSView, lastRow: NSView) {
+        let first = makeGroupedFormCardRow("Width", control: NSTextField(labelWithString: "1"))
+        let last = makeGroupedFormCardRow("Height", control: NSTextField(labelWithString: "2"))
+        let card = makeGroupedFormCard(rows: [first, last], notes: notes)
+        card.frame = NSRect(x: 0, y: 0, width: 400, height: card.fittingSize.height)
+        card.layoutSubtreeIfNeeded()
+        return (card, last)
+    }
+
+    @Test("A card's note sits inside it under the last row, inset like a row")
+    func noteSitsInsideTheCardUnderTheLastRow() throws {
+        let note = makeGroupedFormCaption("Boots at 800 × 900 pixels.")
+        let (card, lastRow) = laidOutCard(notes: [note])
+
+        // The card's own view is not flipped: "below" is a smaller y.
+        let noteSuperview = try #require(note.superview)
+        let noteInCard = noteSuperview.convert(note.alignmentRect(forFrame: note.frame), to: card)
+        let rowInCard = lastRow.convert(lastRow.bounds, to: card)
+        #expect(note.isDescendant(of: card))
+        #expect(noteInCard.height > 0)
+        #expect(noteInCard.maxY <= rowInCard.minY)
+        #expect(noteInCard.minY >= card.bounds.minY + GroupedFormStyle.cardPadding)
+        #expect(noteInCard.minX == GroupedFormStyle.cardPadding)
+        #expect(noteInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
+    }
+
+    @Test("No hairline separates a card's last row from its notes")
+    func noHairlineBeforeTheNotes() {
+        let note = makeGroupedFormCaption("Boots at 800 × 900 pixels.")
+        let (card, lastRow) = laidOutCard(notes: [note])
+
+        let rowMinY = lastRow.convert(lastRow.bounds, to: card).minY
+        let hairlines = allSubviews(NSBox.self, in: card) { $0.frame.height == 1 }
+        #expect(!hairlines.isEmpty)
+        for hairline in hairlines {
+            #expect(hairline.convert(hairline.bounds, to: card).minY >= rowMinY)
+        }
+    }
+
+    @Test("A card whose only note is hidden is as tall as a card with none")
+    func hiddenNoteLeavesNoGap() {
+        let note = makeGroupedFormCaption("Takes effect on next start.")
+        note.isHidden = true
+        let (withHiddenNote, _) = laidOutCard(notes: [note])
+        let (withoutNotes, _) = laidOutCard(notes: [])
+
+        #expect(withHiddenNote.fittingSize.height == withoutNotes.fittingSize.height)
+    }
+
     @Test(
         "A card's fill is a translucent overlay, darkening in light and lightening in dark",
         arguments: [NSAppearance.Name.aqua, .darkAqua])

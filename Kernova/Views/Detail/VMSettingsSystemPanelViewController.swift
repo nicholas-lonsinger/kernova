@@ -230,9 +230,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Display", lockable: true),
-            makeGroupedFormCard(rows: rows),
-            displayResolutionCaption,
-            displayRestartCaption,
+            makeGroupedFormCard(rows: rows, notes: [displayResolutionCaption, restart]),
         ])
     }
 

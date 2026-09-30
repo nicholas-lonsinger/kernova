@@ -232,26 +232,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 "Baseline snapshot", control: ephemeralBaselinePopUp))
         self.ephemeralGroup = ephemeralGroup
 
-        let card = makeGroupedFormCard(rows: [
-            makeGroupedFormRowWithInfo(
-                "Start when Kernova opens", control: autoStartSwitch,
-                paragraphs: [
-                    .body(
-                        "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
-                    ),
-                    .body(
-                        "Turn on Open at Login in Settings → General to have it running after you log in."
-                    ),
-                ]),
-            ephemeralGroup,
-        ])
-
-        autoStartWarningContainer = NSStackView()
-        autoStartWarningContainer.orientation = .vertical
-        autoStartWarningContainer.alignment = .leading
-        autoStartWarningContainer.spacing = Spacing.small
-        autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
-
         let noSnapshots = makeGroupedFormCaption(EphemeralModeCopy.noSnapshotsCaption)
         noSnapshots.isHidden = true
         ephemeralNoSnapshotsCaption = noSnapshots
@@ -262,12 +242,31 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         baselineCaption.isHidden = true
         ephemeralBaselineCaption = baselineCaption
 
+        let card = makeGroupedFormCard(
+            rows: [
+                makeGroupedFormRowWithInfo(
+                    "Start when Kernova opens", control: autoStartSwitch,
+                    paragraphs: [
+                        .body(
+                            "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
+                        ),
+                        .body(
+                            "Turn on Open at Login in Settings → General to have it running after you log in."
+                        ),
+                    ]),
+                ephemeralGroup,
+            ], notes: [baselineCaption, noSnapshots])
+
+        autoStartWarningContainer = NSStackView()
+        autoStartWarningContainer.orientation = .vertical
+        autoStartWarningContainer.alignment = .leading
+        autoStartWarningContainer.spacing = Spacing.small
+        autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
+
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Startup"), card,
             makeGroupedFormCaption(Self.autoStartOrderCaption),
             makeGroupedFormCaption(EphemeralModeCopy.settingsCaption),
-            baselineCaption,
-            noSnapshots,
             autoStartWarningContainer,
         ])
     }

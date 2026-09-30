@@ -214,7 +214,7 @@ func makeGroupedFormCardRow(
 }
 
 /// A card row whose control fills the space after its label — a text field or
-/// an editor — starting at the label column ``makeGroupedFormCard(rows:)``
+/// an editor — starting at the label column ``makeGroupedFormCard(rows:notes:)``
 /// gives its field rows.
 @MainActor
 final class GroupedFormFieldRow: GroupedFormControlRow {
@@ -232,7 +232,7 @@ final class GroupedFormFieldRow: GroupedFormControlRow {
 
 /// A card row that can be shown and hidden after its card is built.
 ///
-/// ``makeGroupedFormCard(rows:)`` draws a hairline before every row but the
+/// ``makeGroupedFormCard(rows:notes:)`` draws a hairline before every row but the
 /// first, which a row hidden on its own would leave stranded against the next
 /// separator. This carries that hairline instead, so `isHidden` takes both.
 /// Never a card's first row — the hairline would have nothing above it.
@@ -267,8 +267,12 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
 /// and every non-hairline row is inset back by ``GroupedFormStyle/cardPadding``.
 /// The ``GroupedFormFieldRow``s among `rows` share one label column, the width
 /// of their widest label, so their controls start at one edge.
+///
+/// `notes` describe the card's current values and sit inside it under the
+/// rows, with no hairline, collapsing when hidden; text explaining the section
+/// as a whole stays a caption below the card.
 @MainActor
-func makeGroupedFormCard(rows: [NSView]) -> NSView {
+func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     let content = NSStackView()
     content.orientation = .vertical
     content.alignment = .leading
@@ -284,7 +288,11 @@ func makeGroupedFormCard(rows: [NSView]) -> NSView {
         }
         arranged.append((row, row is GroupedFormFullBleedRow))
     }
+    arranged += notes.map { ($0, false) }
     arranged.forEach { content.addArrangedSubview($0.view) }
+    for view in rows.suffix(1) + notes.dropLast() {
+        content.setCustomSpacing(Spacing.small, after: view)
+    }
 
     let box = NSBox()
     box.boxType = .custom
@@ -323,7 +331,7 @@ let groupedFormSubOptionIndent: CGFloat = 20
 /// sub-option (and the hairline separating it) are indented beneath the primary
 /// so the pair reads as a parent → child unit.
 ///
-/// Pass one to ``makeGroupedFormCard(rows:)`` in place of two sibling rows, so
+/// Pass one to ``makeGroupedFormCard(rows:notes:)`` in place of two sibling rows, so
 /// the card's full-width separators land only *around* the pair.
 /// ``isSubOptionHidden`` collapses the sub-option and its hairline together,
 /// for a child that is meaningless until the parent is on.
