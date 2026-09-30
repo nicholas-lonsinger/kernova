@@ -101,4 +101,15 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         case .linux: true
         }
     }
+
+    /// Whether every shared directory rides one directory-sharing device — a
+    /// macOS guest's automount device — rather than a device each, so the
+    /// shares can change while at least one remains without changing the
+    /// machine's devices.
+    var sharesDirectoriesThroughOneDevice: Bool {
+        switch self {
+        case .macOS: true
+        case .linux: false
+        }
+    }
 }

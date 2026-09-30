@@ -277,7 +277,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? disk.path : nil,
                 readOnly: disk.readOnly,
-                controlsEnabled: canEditStorageDisks)
+                controlsEnabled: canEditStorageDisks,
+                ejectEnabled: canEditStorageDisks)
         }
         storageList?.update(
             models,
@@ -310,7 +311,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
-                controlsEnabled: canEditRemovableMedia)
+                controlsEnabled: canEditRemovableMedia,
+                ejectEnabled: canEditRemovableMedia)
         }
         removableList?.update(
             models,
@@ -345,7 +347,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         row.update(
             title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
             missingPath: model.missingPath, readOnly: model.readOnly,
-            controlsEnabled: model.controlsEnabled)
+            controlsEnabled: model.controlsEnabled, ejectEnabled: model.ejectEnabled)
     }
 
     private func refresh(_ kind: AttachmentKind) {
@@ -376,7 +378,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let ejectButton: NSButton? =
             kind == .removable
             ? makeGroupedFormEjectButton(
-                id: model.id, enabled: model.controlsEnabled, target: self,
+                id: model.id, enabled: model.ejectEnabled, target: self,
                 action: #selector(removableEjectTapped))
             : nil
         let row = AttachmentRowView(

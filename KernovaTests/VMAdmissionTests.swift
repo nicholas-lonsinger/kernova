@@ -127,6 +127,8 @@ struct VMAdmissionTests {
         (.edit(.pairingRules), "AAAAAAR"),
         (.edit(.rename), "AAAAAAR"),
         (.edit(.observations), "AAAAAAR"),
+        // Only a running guest has a device measured taking a share swap.
+        (.edit(.liveShares), "IIIIAIR"),
         (.sessionAction(.requestStop), "IIIIAAR"),
         (.sessionAction(.forceStop), "IIIIAAR"),
         (.cancel(.guestSetup), "IIIIIIR"),
@@ -171,6 +173,9 @@ struct VMAdmissionTests {
         (.noUSB, .operation(.detachingUSB(deviceID: session)), "UUUUUUR"),
         (.noUSB, .edit(.hotPlugMedia), "AAAIAAR"),
         (.noNetwork, .edit(.networkAttachment), "AAAIIIR"),
+        // A Linux guest's shares ride a device each, so no swap keeps its
+        // devices.
+        (.linux, .edit(.liveShares), "IIIIIIR"),
     ]
 
     @Test(
@@ -404,6 +409,26 @@ struct VMAdmissionTests {
         guard case .join = start else {
             Issue.record("A Start during a start should join it, got \(start)")
             return
+        }
+    }
+
+    @Test("A share swap is tolerated by an operation that rests on the running guest, and by no other")
+    func shareSwapDuringOperations() {
+        let facts = Self.facts(slot: false, .plain)
+        func decide(_ kind: VMOperationKind) -> VMAdmission.Decision {
+            VMAdmission.decide(
+                .edit(.liveShares), posture: .commit,
+                phase: .operating(kind, from: Self.live, boundSession: nil), facts: facts)
+        }
+        for kind: VMOperationKind in [
+            .attachingUSB(registryID: 7), .reconcilingMedia, .deletingSnapshot,
+            .creatingRemovableMedia,
+        ] {
+            #expect(decide(kind) == .admit, "\(kind)")
+        }
+        // A pause ends live-paused, and a save or a capture pins the device.
+        for kind: VMOperationKind in [.pausing, .saving, .capturingSnapshot(.live)] {
+            #expect(decide(kind) == .refuse(.busy(kind)), "\(kind)")
         }
     }
 

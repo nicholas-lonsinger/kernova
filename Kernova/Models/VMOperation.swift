@@ -554,10 +554,13 @@ struct VMEditClasses: OptionSet, Sendable, Hashable {
     static let rename = VMEditClasses(rawValue: 1 << 7)
     /// What the host records from a live guest.
     static let observations = VMEditClasses(rawValue: 1 << 8)
+    /// The live swap of the share a running guest's one directory-sharing
+    /// device carries (``VMGuestOS/sharesDirectoriesThroughOneDevice``).
+    static let liveShares = VMEditClasses(rawValue: 1 << 9)
 
     static let all: VMEditClasses = [
         .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
-        .snapshotMetadata, .pairingRules, .rename, .observations,
+        .snapshotMetadata, .pairingRules, .rename, .observations, .liveShares,
     ]
 
     /// The classes a bring-up, save, capture or Force Stop leaves open.
@@ -654,7 +657,12 @@ extension VMOperationKind {
                 status: .shows(.restoring), holdsIdentity: .always, quit: .waitOut,
                 display: .shown, toleratedSessionActions: [],
                 edits: .only(.presentationAndMetadata.subtracting(.rename)), joinedBy: [])
-        case .pausing, .resuming, .attachingUSB, .detachingUSB:
+        case .pausing:
+            // A pause ends live-paused, which admits no share swap.
+            return .init(
+                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
+                toleratedSessionActions: stoppable, edits: .baseExcept(.liveShares), joinedBy: [])
+        case .resuming, .attachingUSB, .detachingUSB:
             return .init(
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
                 toleratedSessionActions: stoppable, edits: .baseExcept([]), joinedBy: [])

@@ -467,6 +467,35 @@ actor VMSession {
             }
         }
     }
+
+    // MARK: - Directory Sharing Device
+
+    /// Sets the share the VM's macOS automount device carries to `share`, then
+    /// runs `installed` on the queue, once the device no longer carries what
+    /// it did before.
+    ///
+    /// The ordered fire-and-forget contract of
+    /// ``applyNetworkAttachment(_:onBuildFailure:)``: the set is a property
+    /// write that reports nothing.
+    nonisolated func applyDirectoryShare(
+        _ share: MacOSDirectoryShare, installed: @escaping @Sendable () -> Void
+    ) {
+        queue.async {
+            self.assumeIsolated { session in
+                let tag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
+                guard
+                    let device = session.vm.directorySharingDevices
+                        .compactMap({ $0 as? VZVirtioFileSystemDevice }).first(where: { $0.tag == tag })
+                else {
+                    #log(Self.logger, .fault, "Directory share install on a session with no automount device")
+                    assertionFailure("A live share swap reaches only a VM booted with a share")
+                    return
+                }
+                device.share = share.makeShare()
+                installed()
+            }
+        }
+    }
 }
 
 // MARK: - Delegate Adapter

@@ -42,7 +42,10 @@ enum VMCapability: CaseIterable, Hashable {
     /// Write a new disk image where the user chose and attach it as
     /// removable media.
     case createRemovableMedia
+    /// Change the shares a VM's guest boots with.
     case editSharedDirectories
+    /// Swap the share a running guest's one directory-sharing device carries.
+    case editLiveSharedDirectories
     case editUSBAccessories
     case forgetUSBPairing
     case editConfiguration
@@ -85,7 +88,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .setSnapshotNotes: .setSnapshotNotes
         case .editStorageDisks, .createStorageDisk, .trashStorageDisk: .editStorageDisk
         case .editRemovableMedia, .createRemovableMedia: .editRemovableMedia
-        case .editSharedDirectories: .editSharedDirectory
+        case .editSharedDirectories, .editLiveSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
@@ -114,6 +117,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .forgetUSBPairing: .pairingRules
         case .editLiveConfiguration: .liveKeys
         case .switchNetworkMode: .networkAttachment
+        case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
@@ -124,9 +128,19 @@ enum VMCapability: CaseIterable, Hashable {
         }
     }
 
+    /// The capabilities that write through `verb` — every edit it performs,
+    /// one per class its writes can be admitted under.
+    static func writes(performing verb: VMVerb) -> [VMCapability] {
+        allCases.filter { $0.verb == verb && $0.editClasses != nil }
+    }
+
     /// The capabilities that write a VM's settings — every one the
     /// configuration verb performs.
-    static let settingsWrites = allCases.filter { $0.verb == .setConfiguration }
+    static let settingsWrites = writes(performing: .setConfiguration)
+
+    /// The capabilities that write a VM's shared-directory list — every one
+    /// the shared-directory verb performs.
+    static let sharedDirectoryWrites = writes(performing: .editSharedDirectory)
 
     /// Every class a settings write is admitted under: the union of
     /// ``settingsWrites``' classes, so nothing a live guest reports
@@ -177,8 +191,8 @@ enum VMCapability: CaseIterable, Hashable {
         case .deleteSnapshot:
             return .operation(.deletingSnapshot)
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
-            .editConfiguration, .editRemovableMedia, .forgetUSBPairing, .editLiveConfiguration,
-            .switchNetworkMode, .rename:
+            .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia, .forgetUSBPairing,
+            .editLiveConfiguration, .switchNetworkMode, .rename:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)
@@ -250,12 +264,13 @@ struct VMCapabilityCatalog {
         decision(capability, on: instance, posture: .offer) == .admit
     }
 
-    /// The classes `instance` admits a settings write under right now, in
-    /// `posture` — the union of the ``VMCapability/settingsWrites`` it takes.
-    func admittedSettingsWriters(
-        on instance: VMInstance, posture: VMAdmission.Posture
+    /// The classes `instance` admits a write of `writes` under right now, in
+    /// `posture` — the union of those it takes
+    /// (``VMCapability/writes(performing:)``).
+    func admittedWriters(
+        among writes: [VMCapability], on instance: VMInstance, posture: VMAdmission.Posture
     ) -> VMEditClasses {
-        VMCapability.settingsWrites.reduce(into: VMEditClasses()) { classes, capability in
+        writes.reduce(into: VMEditClasses()) { classes, capability in
             let admitted =
                 switch posture {
                 case .offer: isAvailable(capability, on: instance)
@@ -295,11 +310,59 @@ struct VMCapabilityCatalog {
     /// The authority a settings write offered on `instance` now acts with, or
     /// `nil` when the VM admits none.
     private func settingsAuthority(on instance: VMInstance) -> VMEditPermit.Authority? {
-        let admitted = admittedSettingsWriters(on: instance, posture: .offer)
-        guard instance.activity.decide(.edit(admitted), posture: .offer) == .admit else {
-            return nil
+        authority(among: VMCapability.settingsWrites, on: instance, posture: .offer)
+    }
+
+    /// The authority a write of `writes` on `instance` acts with in
+    /// `posture`, or `nil` when the VM admits none.
+    private func authority(
+        among writes: [VMCapability], on instance: VMInstance, posture: VMAdmission.Posture
+    ) -> VMEditPermit.Authority? {
+        let admitted = admittedWriters(among: writes, on: instance, posture: posture)
+        let admits =
+            switch instance.activity.decide(.edit(admitted), posture: posture) {
+            case .admit: true
+            case .join, .refuse: false
+            }
+        return admits ? .edit(admitted) : nil
+    }
+
+    /// What moving a VM's shared-directory list to a given list is offered as.
+    enum SharedDirectoriesOffer: Equatable {
+        /// The move is taken now, under these classes.
+        case offered(VMEditClasses)
+        /// The VM takes a live share swap, and this move is none: it adds the
+        /// first share or removes the last, which adds or removes the device
+        /// every share rides — a change only a stopped VM takes.
+        case changesSharingDevice
+        /// The VM's state takes no move of the list.
+        case unavailable
+
+        /// Whether the move is taken now.
+        var isOffered: Bool {
+            if case .offered = self { return true }
+            return false
         }
-        return .edit(admitted)
+    }
+
+    /// What moving `instance`'s shared-directory list to `directories` is
+    /// offered as right now, in `posture` — the one derivation the shared-
+    /// directory verb commits by and every control offering one of its moves
+    /// renders from.
+    func sharedDirectoriesOffer(
+        _ directories: [SharedDirectory]?, on instance: VMInstance,
+        posture: VMAdmission.Posture = .offer
+    ) -> SharedDirectoriesOffer {
+        guard
+            let authority = authority(
+                among: VMCapability.sharedDirectoryWrites, on: instance, posture: posture),
+            case .edit(let admitted) = authority
+        else { return .unavailable }
+        var moved = instance.configuration
+        moved.sharedDirectories = directories
+        let writers = VMConfiguration.fieldClasses.writers(from: instance.configuration, to: moved)
+        if writers.allSatisfy({ authority.mayWrite($0.classes) }) { return .offered(admitted) }
+        return admitted.contains(.liveShares) ? .changesSharingDevice : .unavailable
     }
 
     /// Whether one snapshot's delete is offered, and what bars it when it is

@@ -347,7 +347,10 @@ struct VMSettingsRenderedRow: Identifiable, Equatable {
     let isMissing: Bool
     let missingPath: String?
     let readOnly: Bool
+    /// Whether the title, notes and read-only switch take an edit.
     let controlsEnabled: Bool
+    /// Whether the eject button takes a click.
+    let ejectEnabled: Bool
 }
 
 /// The item id a row control carries in its `identifier`.

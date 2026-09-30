@@ -788,18 +788,42 @@ struct ConfigurationBuilder: Sendable {
     private func configureDirectorySharing(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) throws {
         guard let directories = config.sharedDirectories, !directories.isEmpty else { return }
 
-        let resolvedURLs = try validateSharedDirectories(directories)
-
-        switch config.guestOS {
-        case .macOS:
-            configureMacOSDirectorySharing(vzConfig, directories: directories, resolvedURLs: resolvedURLs)
-        case .linux:
-            configureLinuxDirectorySharing(vzConfig, directories: directories, resolvedURLs: resolvedURLs)
+        guard config.guestOS.sharesDirectoriesThroughOneDevice else {
+            configureLinuxDirectorySharing(
+                vzConfig, directories: directories,
+                resolvedURLs: try Self.validateSharedDirectories(directories))
+            return
         }
+        let device = VZVirtioFileSystemDeviceConfiguration(
+            tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
+        device.share = try Self.macOSDirectoryShare(for: directories).makeShare()
+        vzConfig.directorySharingDevices = [device]
+    }
+
+    /// The share a macOS guest's one directory-sharing device carries for
+    /// `directories`, each folder resolved and validated — what a boot builds
+    /// the device with and what a live share swap installs.
+    static func macOSDirectoryShare(for directories: [SharedDirectory]) throws -> MacOSDirectoryShare {
+        let resolvedURLs = try validateSharedDirectories(directories)
+        var entries: [MacOSDirectoryShare.Entry] = []
+        var names: Set<String> = []
+        for (index, directory) in directories.enumerated() {
+            var name = directory.displayName
+            // Resolve name collisions with a UUID fragment prefix.
+            if names.contains(name) {
+                name = "\(directory.id.uuidString.prefix(8))-\(name)"
+            }
+            names.insert(name)
+            entries.append(
+                MacOSDirectoryShare.Entry(
+                    id: directory.id, name: name, url: resolvedURLs[index],
+                    readOnly: directory.readOnly))
+        }
+        return MacOSDirectoryShare(entries: entries)
     }
 
     /// Validates shared directories and returns resolved URLs (symlinks followed).
-    private func validateSharedDirectories(_ directories: [SharedDirectory]) throws -> [URL] {
+    private static func validateSharedDirectories(_ directories: [SharedDirectory]) throws -> [URL] {
         var resolvedURLs: [URL] = []
         for directory in directories {
             let resolved = try Self.resolveDirectory(
@@ -812,29 +836,6 @@ struct ConfigurationBuilder: Sendable {
             resolvedURLs.append(resolved.url)
         }
         return resolvedURLs
-    }
-
-    private func configureMacOSDirectorySharing(
-        _ vzConfig: VZVirtualMachineConfiguration,
-        directories: [SharedDirectory],
-        resolvedURLs: [URL]
-    ) {
-        var shareMap: [String: VZSharedDirectory] = [:]
-        for (index, directory) in directories.enumerated() {
-            var name = directory.displayName
-            // Resolve name collisions with a UUID fragment prefix.
-            if shareMap[name] != nil {
-                name = "\(directory.id.uuidString.prefix(8))-\(name)"
-            }
-            shareMap[name] = VZSharedDirectory(url: resolvedURLs[index], readOnly: directory.readOnly)
-        }
-
-        let multiShare = VZMultipleDirectoryShare(directories: shareMap)
-        let device = VZVirtioFileSystemDeviceConfiguration(
-            tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
-        device.share = multiShare
-
-        vzConfig.directorySharingDevices = [device]
     }
 
     private func configureLinuxDirectorySharing(

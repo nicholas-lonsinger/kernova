@@ -8,7 +8,7 @@ import KernovaLogging
 ///
 /// Every write lands as one ``VMLibrary/updateSettings(_:configuration:hostState:)``,
 /// under a permit for every settings-writer class the VM admits
-/// (``VMCapabilityCatalog/admittedSettingsWriters(on:posture:)``): what each
+/// (``VMCapabilityCatalog/admittedWriters(among:on:posture:)``): what each
 /// assignment moves and every value are checked before either file is
 /// written, so a batch that names one bad key writes nothing at all.
 extension VMCommandCore {
@@ -84,7 +84,8 @@ extension VMCommandCore {
                 hostStateWrites.append(HostStateWrite(key: key, field: field, value: assignment.value))
             }
         }
-        let admitted = capabilities.admittedSettingsWriters(on: instance, posture: .commit)
+        let admitted = capabilities.admittedWriters(
+            among: VMCapability.settingsWrites, on: instance, posture: .commit)
         try requireAdmitted(
             refusing: hostStateWrites.compactMap {
                 RefusedAssignment(
@@ -304,35 +305,29 @@ extension VMCommandCore {
     /// already shares as it is.
     ///
     /// Resolve, gate, then grant: the VM and its state decide the answer before
-    /// the authority is consulted, so a selector no VM answers to and a VM whose
-    /// device set is already pinned are both refused without a panel ever going
-    /// up. The grant is asked for last because only the app can obtain one for a
-    /// path a sandboxed client named, and the bookmark is minted from whatever
-    /// URL it answers with — a share is reopened at every boot.
+    /// the authority is consulted, so a selector no VM answers to and a VM that
+    /// takes no added share are both refused without a panel ever going up. The
+    /// grant is asked for last because only the app can obtain one for a path a
+    /// sandboxed client named, and the bookmark is minted from whatever URL it
+    /// answers with — a share is reopened at every boot.
     ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
     /// the meantime.
     func addSharedDirectory(_ selector: VMSelector, path: String, readOnly: Bool) async throws {
         let instance = try resolve(selector)
-        try require(.editSharedDirectories, on: instance)
-        guard !shares(instance, path) else { return }
+        guard !shares(instance, path) else {
+            try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+            return
+        }
+        _ = try requireSharedDirectories(
+            (instance.configuration.sharedDirectories ?? []) + [SharedDirectory(path: path)],
+            on: instance)
 
         let folder = try await requireSourceAuthority(.editSharedDirectory)
             .readableURL(for: URL(fileURLWithPath: path), as: .sharedDirectory)
-        try require(.editSharedDirectories, on: instance)
         try Self.requireDirectory(folder)
-        let file = PickedFile(picking: folder)
-        // The authority answers whatever the user picked, which can be a folder
-        // this VM already shares even when the named one was not.
-        guard !shares(instance, file.path) else { return }
-
-        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
-            var directories = config.sharedDirectories ?? []
-            directories.append(
-                SharedDirectory(path: file.path, readOnly: readOnly, bookmark: file.bookmark))
-            config.sharedDirectories = directories
-        }
+        try addSharedDirectories([PickedFile(picking: folder)], readOnly: readOnly, to: instance)
     }
 
     /// Whether the VM already shares the folder at `path`.
@@ -363,7 +358,7 @@ extension VMCommandCore {
     /// Drops the share the folder at `path` fills, leaving the folder alone.
     func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
         let instance = try resolve(selector)
-        try require(.editSharedDirectories, on: instance)
+        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
         let wanted = Self.comparablePath(path)
         guard
             let directory = (instance.configuration.sharedDirectories ?? []).first(where: {

@@ -83,6 +83,7 @@ struct VMCapabilityCatalogTests {
         .editRemovableMedia: .edit(.hotPlugMedia),
         .createRemovableMedia: .operation(.creatingRemovableMedia),
         .editSharedDirectories: .edit(.machineKeys),
+        .editLiveSharedDirectories: .edit(.liveShares),
         .forgetUSBPairing: .edit(.pairingRules),
         .editConfiguration: .edit(.machineKeys),
         .editLiveConfiguration: .edit(.liveKeys),
@@ -729,5 +730,63 @@ struct VMCapabilityCatalogTests {
             !harness.catalog.isAvailable(
                 Keys.audioInput, writing: String(!macOS.configuration.audioInputEnabled),
                 on: macOS))
+    }
+
+    // MARK: - Shared directories
+
+    @Test("The shared-directory verb performs a boot-time write and a live swap")
+    func sharedDirectoryWritesAreOnePerClass() {
+        #expect(VMCapability.sharedDirectoryWrites == [.editSharedDirectories, .editLiveSharedDirectories])
+        #expect(VMCapability.sharedDirectoryWrites.map(\.editClasses) == [.machineKeys, .liveShares])
+        #expect(!VMCapability.settingsWriterClasses.contains(.liveShares))
+    }
+
+    @Test(
+        "A share-list move is offered by what it moves and the phase the VM is in",
+        arguments: VMGuestOS.allCases)
+    func sharedDirectoriesOfferPerPhase(guestOS: VMGuestOS) throws {
+        let one = SharedDirectory(path: "/Users/Shared/one")
+        let two = SharedDirectory(path: "/Users/Shared/two")
+        let phases: [(String, VMLifecyclePhase, slot: Bool)] = [
+            ("stopped", .stopped, false),
+            ("suspended", .suspended, true),
+            ("running", .running(sessionID: UUID()), false),
+            ("paused", .livePaused(sessionID: UUID()), false),
+        ]
+        for (label, phase, slot) in phases {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase, guestOS: guestOS) {
+                $0.sharedDirectories = [one]
+            }
+            if slot { try VMInstanceFixture.writeSaveFile(for: instance) }
+            let add = harness.catalog.sharedDirectoriesOffer([one, two], on: instance)
+            let removeLast = harness.catalog.sharedDirectoriesOffer(nil, on: instance)
+            let live = label == "running" && guestOS.sharesDirectoriesThroughOneDevice
+            switch label {
+            case "stopped":
+                #expect(add == .offered(.machineKeys), "\(label) \(guestOS)")
+                #expect(removeLast == .offered(.machineKeys), "\(label) \(guestOS)")
+            case "running" where live:
+                #expect(add == .offered(.liveShares), "\(label) \(guestOS)")
+                #expect(removeLast == .changesSharingDevice, "\(label) \(guestOS)")
+            default:
+                #expect(add == .unavailable, "\(label) \(guestOS)")
+                #expect(removeLast == .unavailable, "\(label) \(guestOS)")
+            }
+            #expect(
+                harness.catalog.isAvailable(.editLiveSharedDirectories, on: instance) == live,
+                "\(label) \(guestOS)")
+        }
+    }
+
+    @Test("A running macOS guest with no share is offered no first share")
+    func runningMacOSGuestIsOfferedNoFirstShare() {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        #expect(
+            harness.catalog.sharedDirectoriesOffer(
+                [SharedDirectory(path: "/Users/Shared/one")], on: instance)
+                == .changesSharingDevice)
     }
 }

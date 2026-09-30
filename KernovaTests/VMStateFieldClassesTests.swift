@@ -99,6 +99,64 @@ struct VMStateFieldClassesTests {
         }
     }
 
+    @Test(
+        "A macOS guest's share list moves as a live swap while one share remains before and after",
+        arguments: [
+            // (guest, shares before, shares after, the classes that may write it)
+            (VMGuestOS.macOS, 1, 2, [VMEditClasses.machineKeys, .liveShares]),
+            (.macOS, 2, 1, [.machineKeys, .liveShares]),
+            (.macOS, 0, 1, [.machineKeys]),
+            (.macOS, 1, 0, [.machineKeys]),
+            (.linux, 1, 2, [.machineKeys]),
+            (.linux, 2, 1, [.machineKeys]),
+        ] as [(VMGuestOS, Int, Int, VMEditClasses)])
+    func sharedDirectoriesAreClassifiedByMove(
+        guestOS: VMGuestOS, before: Int, after: Int, classes: VMEditClasses
+    ) {
+        let shares = (0..<2).map { SharedDirectory(path: "/Users/Shared/share\($0)") }
+        let old = Self.configuration(guestOS, shares: Array(shares.prefix(before)))
+        var new = old
+        new.sharedDirectories = Array(shares.prefix(after))
+        if after == 0 { new.sharedDirectories = nil }
+        #expect(
+            VMConfiguration.fieldClasses.writers(from: old, to: new).map(\.classes) == [classes])
+    }
+
+    @Test("A share renamed, retargeted or turned read-only is a live swap; an empty list stored either way is not")
+    func sharedDirectoryEditsInPlaceAreClassifiedByMove() {
+        let share = SharedDirectory(path: "/Users/Shared/share")
+        let old = Self.configuration(.macOS, shares: [share])
+        let writers: (VMConfiguration) -> [VMEditClasses] = {
+            VMConfiguration.fieldClasses.writers(from: old, to: $0).map(\.classes)
+        }
+        var retargeted = old
+        retargeted.sharedDirectories?[0].path = "/Users/Shared/elsewhere"
+        #expect(writers(retargeted) == [[.machineKeys, .liveShares]])
+        var readOnly = old
+        readOnly.sharedDirectories?[0].readOnly = true
+        #expect(writers(readOnly) == [[.machineKeys, .liveShares]])
+
+        // No share on either side: no device to swap on.
+        let none = Self.configuration(.macOS, shares: nil)
+        var empty = none
+        empty.sharedDirectories = []
+        #expect(
+            VMConfiguration.fieldClasses.writers(from: none, to: empty).map(\.classes)
+                == [.machineKeys])
+        #expect(
+            VMConfiguration.fieldClasses.writers(from: empty, to: none).map(\.classes)
+                == [.machineKeys])
+    }
+
+    private static func configuration(
+        _ guestOS: VMGuestOS, shares: [SharedDirectory]?
+    ) -> VMConfiguration {
+        var config = VMConfiguration(
+            name: "VM", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi)
+        config.sharedDirectories = shares.flatMap { $0.isEmpty ? nil : $0 }
+        return config
+    }
+
     @Test("A change's writers name each field it moved, with that field's classes, and nothing else")
     func writersNameEachMovedField() {
         let old = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)

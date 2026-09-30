@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// The Sharing category: shared directories, the guest-agent group (macOS) or
 /// the standalone clipboard section (Linux) beside them, and the USB
@@ -99,13 +100,32 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             apply: { [weak self] in self?.refreshSharedList() })
     }
 
-    /// Whether this VM's shared-directory list takes an edit right now.
+    /// Whether this VM's shared-directory list takes any edit right now.
     private var canEditSharedDirectories: Bool {
-        viewModel.capabilities.isAvailable(.editSharedDirectories, on: instance)
+        VMCapability.sharedDirectoryWrites.contains {
+            viewModel.capabilities.isAvailable($0, on: instance)
+        }
     }
+
+    /// What moving this VM's shared-directory list to `directories` is offered
+    /// as, an emptied list moving to none.
+    private func sharesOffer(
+        _ directories: [SharedDirectory]
+    ) -> VMCapabilityCatalog.SharedDirectoriesOffer {
+        viewModel.capabilities.sharedDirectoriesOffer(
+            directories.isEmpty ? nil : directories, on: instance)
+    }
+
+    /// The rule a running VM holds its first share's add and its last share's
+    /// removal to.
+    static let sharingDeviceCaption = StoppedVMChange.firstOrLastSharedDirectory.sentence
 
     // Shared Directories
     private var sharedListStack = NSStackView()
+    private var addSharedButton = NSButton()
+    /// States ``sharingDeviceCaption`` while a control it disables is shown;
+    /// hidden otherwise.
+    private var sharingDeviceCaptionView = NSView()
     /// The shared-directory rows and the diff behind them, rebuilt with the
     /// section's list stack.
     private var sharedList: VMSettingsKeyedListController<VMSettingsRenderedRow, AttachmentRowView>?
@@ -138,10 +158,14 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         sharedListStack = makeGroupedFormListStack()
         sharedList = VMSettingsKeyedListController(
             listStack: sharedListStack, emptyMessage: "No shared directories")
-        let add = makeGroupedFormPushButton("Add Shared Directory…", target: self, action: #selector(addSharedTapped))
+        addSharedButton = makeGroupedFormPushButton(
+            "Add Shared Directory…", target: self, action: #selector(addSharedTapped))
         let card = makeGroupedFormCard(rows: [
-            sharedListStack, lockRegistry.lockable(makeGroupedFormButtonRow([add]), add),
+            sharedListStack, makeGroupedFormButtonRow([addSharedButton]),
         ])
+        let caption = makeGroupedFormCaption(Self.sharingDeviceCaption)
+        caption.isHidden = true
+        sharingDeviceCaptionView = caption
 
         let paragraphs: [InfoPopoverParagraph] =
             instance.configuration.guestOS == .linux
@@ -162,6 +186,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             ]
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card,
+            caption,
         ])
     }
 
@@ -363,9 +388,20 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshSharedList() {
-        let controlsEnabled = canEditSharedDirectories
-        let models = currentSharedDirectories.map { directory -> VMSettingsRenderedRow in
+        let directories = currentSharedDirectories
+        // What the folder is does not change what adding one moves.
+        let addOffer = sharesOffer(directories + [SharedDirectory(path: "/")])
+        applyGroupedFormRowEnabled(addOffer.isOffered, control: addSharedButton)
+        var offers = [addOffer]
+        let models = directories.map { directory -> VMSettingsRenderedRow in
             let isMissing = !context.fileMonitor.exists(directory.path)
+            var toggled = directories
+            if let index = toggled.firstIndex(where: { $0.id == directory.id }) {
+                toggled[index].readOnly.toggle()
+            }
+            let readOnlyOffer = sharesOffer(toggled)
+            let removeOffer = sharesOffer(directories.filter { $0.id != directory.id })
+            offers += [readOnlyOffer, removeOffer]
             return VMSettingsRenderedRow(
                 id: directory.id,
                 iconSystemName: "folder",
@@ -375,8 +411,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? directory.path : nil,
                 readOnly: directory.readOnly,
-                controlsEnabled: controlsEnabled)
+                controlsEnabled: readOnlyOffer.isOffered,
+                ejectEnabled: removeOffer.isOffered)
         }
+        sharingDeviceCaptionView.isHidden = !offers.contains(.changesSharingDevice)
         sharedList?.update(
             models,
             makeRow: { model in makeSharedRow(model) },
@@ -384,7 +422,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 row.update(
                     title: model.title, notes: model.notes, iconSystemName: model.iconSystemName,
                     missingPath: model.missingPath, readOnly: model.readOnly,
-                    controlsEnabled: model.controlsEnabled)
+                    controlsEnabled: model.controlsEnabled, ejectEnabled: model.ejectEnabled)
                 // The attachment lists repaint their subtitle from an off-main
                 // size read, so the row leaves that field alone; a share's
                 // subtitle is its path and is written here.
@@ -413,7 +451,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 action: #selector(sharedReadOnlyToggled)),
             readOnlyCaption: makeGroupedFormReadOnlyCaption(),
             ejectButton: makeGroupedFormEjectButton(
-                id: model.id, enabled: model.controlsEnabled, target: self,
+                id: model.id, enabled: model.ejectEnabled, target: self,
                 action: #selector(sharedDeleteTapped)),
             isTitleEditable: false)
         row.contextMenu = { [weak self] in self?.buildSharedContextMenu(model.id) }

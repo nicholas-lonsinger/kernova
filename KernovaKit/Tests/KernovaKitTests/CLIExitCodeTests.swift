@@ -25,6 +25,11 @@ struct CLIExitCodeTests {
             (.itemNotFoundOnHost(item: "USB accessory with the identifier 7"), .notFound),
             (.ambiguous(selector: .idOrName("Alpha"), candidates: [vm]), .ambiguous),
             (.invalidState(vm: vm, current: "running", allowed: [.stop]), .refusedByState),
+            (
+                .changeTakesStoppedVM(
+                    vm: vm, current: "running", change: .firstOrLastSharedDirectory),
+                .refusedByState
+            ),
             (.unsupported(capability: "snapshots"), .refusedByState),
             (.unsupportedByBuild(capability: "USB accessory passthrough"), .refusedByState),
             (.conflict(vm: vm, with: vm, reason: .macAddress), .refusedByState),

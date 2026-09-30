@@ -467,21 +467,26 @@ extension VMCommandCore {
 
     // MARK: - Shared Directories
 
-    /// Appends `files` to the VM's shared-directory list, skipping paths it
-    /// already carries.
+    /// Appends `files` to the VM's shared-directory list, skipping folders it
+    /// already shares.
     func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws {
-        let instance = try resolve(selector)
-        try require(.editSharedDirectories, on: instance)
-        guard !files.isEmpty else { return }
-        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
-            var directories = config.sharedDirectories ?? []
+        try addSharedDirectories(files, readOnly: false, to: resolve(selector))
+    }
+
+    /// The add every front door ends in: appends `files`, each shared with
+    /// `readOnly` access, skipping folders the VM already shares.
+    func addSharedDirectories(
+        _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
+    ) throws {
+        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        try writeSharedDirectories(of: instance) { directories in
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
             var known = Set(directories.map { Self.comparablePath($0.path) })
             for file in files where known.insert(Self.comparablePath(file.path)).inserted {
-                directories.append(SharedDirectory(path: file.path, bookmark: file.bookmark))
+                directories.append(
+                    SharedDirectory(path: file.path, readOnly: readOnly, bookmark: file.bookmark))
             }
-            config.sharedDirectories = directories.isEmpty ? nil : directories
         }
     }
 
@@ -491,15 +496,11 @@ extension VMCommandCore {
     /// ``ejectRemovableMedia(_:item:)`` states.
     func removeSharedDirectory(_ selector: VMSelector, directory id: UUID) throws {
         let instance = try resolve(selector)
-        try require(.editSharedDirectories, on: instance)
+        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
         guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
-            var directories = config.sharedDirectories ?? []
-            directories.removeAll { $0.id == id }
-            config.sharedDirectories = directories.isEmpty ? nil : directories
-        }
+        try writeSharedDirectories(of: instance) { $0.removeAll { $0.id == id } }
     }
 
     /// Marks a shared directory read-only, or writable again.
@@ -507,17 +508,101 @@ extension VMCommandCore {
         _ selector: VMSelector, directory id: UUID, readOnly: Bool
     ) throws {
         let instance = try resolve(selector)
-        try require(.editSharedDirectories, on: instance)
-        guard let current = sharedDirectory(id: id, on: instance) else {
+        try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        guard sharedDirectory(id: id, on: instance) != nil else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
-        guard current.readOnly != readOnly else { return }
-        try writeConfiguration(of: instance, as: .editSharedDirectories, verb: .editSharedDirectory) { config in
-            var directories = config.sharedDirectories ?? []
+        try writeSharedDirectories(of: instance) { directories in
             guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
             directories[index].readOnly = readOnly
-            config.sharedDirectories = directories
         }
+    }
+
+    /// Refuses unless `instance` takes moving its shared-directory list to
+    /// `directories` now (``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``),
+    /// answering the classes the move is admitted under.
+    func requireSharedDirectories(
+        _ directories: [SharedDirectory]?, on instance: VMInstance
+    ) throws -> VMEditClasses {
+        switch capabilities.sharedDirectoriesOffer(directories, on: instance, posture: .commit) {
+        case .offered(let classes):
+            return classes
+        case .changesSharingDevice:
+            let error = CommandError.changeTakesStoppedVM(
+                vm: summary(instance), current: instance.status,
+                change: .firstOrLastSharedDirectory)
+            #log(
+                Self.logger, .notice,
+                "Refused \(VMVerb.editSharedDirectory.rawValue, privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+            )
+            throw error
+        case .unavailable:
+            throw refusal(for: VMCapability.sharedDirectoryWrites, on: instance)
+        }
+    }
+
+    /// Moves the VM's shared-directory list to what `change` makes of it, an
+    /// emptied list stored as none; a change that leaves the list as it is
+    /// writes nothing.
+    ///
+    /// Admission is ``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``.
+    /// On a live session the device's share follows, in three steps that each
+    /// run only once the one before succeeded: the scopes of the folders the
+    /// list adds are opened and the share is built from the list the commit
+    /// writes, validated as a boot validates it; the list is committed; the
+    /// share is installed. So `config.json` never names shares the device was
+    /// not given.
+    private func writeSharedDirectories(
+        of instance: VMInstance, _ change: @escaping (inout [SharedDirectory]) -> Void
+    ) throws {
+        let changed: (VMConfiguration) -> [SharedDirectory]? = { config in
+            var directories = config.sharedDirectories ?? []
+            change(&directories)
+            return directories.isEmpty ? nil : directories
+        }
+        let held = instance.configuration.sharedDirectories
+        let directories = changed(instance.configuration)
+        guard directories != held else { return }
+
+        let admitted = try requireSharedDirectories(directories, on: instance)
+
+        guard let sessionID = instance.liveSessionID else {
+            try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
+                try requireSaved(
+                    library.updateConfiguration(permit) { $0.sharedDirectories = changed($0) },
+                    of: instance, verb: .editSharedDirectory)
+            }
+            return
+        }
+
+        let heldIDs = Set((held ?? []).map(\.id))
+        var staged = instance.configuration
+        staged.sharedDirectories = directories
+        var opened: [UUID: ScopedAccess] = [:]
+        for reference in staged.externalFileReferences
+        where reference.kind == .sharedDirectory && !heldIDs.contains(reference.id) {
+            opened[reference.id] = ScopedAccess.open(reference)?.scope
+        }
+        var share = MacOSDirectoryShare(entries: [])
+        do {
+            try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
+                try requireSaved(
+                    library.updateConfiguration(permit) { config in
+                        let committed = changed(config)
+                        share = try ConfigurationBuilder.macOSDirectoryShare(for: committed ?? [])
+                        config.sharedDirectories = committed
+                    },
+                    of: instance, verb: .editSharedDirectory)
+            }
+        } catch {
+            opened.values.forEach { $0.release() }
+            throw error
+        }
+        let sharedIDs = Set(share.entries.map(\.id))
+        for (id, scope) in opened where !sharedIDs.contains(id) { scope.release() }
+        lifecycle.liveDirectorySharing.install(
+            share, holding: opened.filter { sharedIDs.contains($0.key) },
+            releasing: heldIDs.subtracting(sharedIDs), on: instance, for: sessionID)
     }
 
     // MARK: - Guest Agent Disk

@@ -57,6 +57,7 @@ struct VMCapabilityAgreementTests {
         switch capability {
         case .stop, .discardSavedState: return [.stop, .discardSavedState]
         case .forceStop: return [.forceStop, .discardSavedState]
+        case .editSharedDirectories, .editLiveSharedDirectories: return VMCapability.sharedDirectoryWrites
         default: return [capability]
         }
     }
@@ -101,7 +102,8 @@ struct VMCapabilityAgreementTests {
             try await core.createRemovableMedia(
                 vm, sizeInGB: 1,
                 destinationURL: scratch.url.appendingPathComponent("\(UUID().uuidString).asif"))
-        case .editSharedDirectories: try core.removeSharedDirectory(vm, directory: UUID())
+        case .editSharedDirectories, .editLiveSharedDirectories:
+            try core.removeSharedDirectory(vm, directory: UUID())
         case .editUSBAccessories: try await core.attachUSBAccessory(vm, accessory: 42)
         case .forgetUSBPairing: try core.forgetUSBPairing(vm, key: "unknown")
         case .editConfiguration:
@@ -135,8 +137,8 @@ struct VMCapabilityAgreementTests {
     /// vocabulary ``VMCommandCore/admissionRefusal(_:on:verb:)`` maps it into.
     private func isAdmissionRefusal(_ error: CommandError) -> Bool {
         switch error {
-        case .busy, .invalidState, .notFound, .conflict, .unsupportedByBuild, .terminating,
-            .heldByAnotherCopy:
+        case .busy, .invalidState, .changeTakesStoppedVM, .notFound, .conflict,
+            .unsupportedByBuild, .terminating, .heldByAnotherCopy:
             true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .unsupported, .timedOut,

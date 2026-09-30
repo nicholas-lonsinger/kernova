@@ -100,13 +100,13 @@ final class AttachmentRowView: NSView {
     /// somehow live.
     func update(
         title: String, notes: String, iconSystemName: String, missingPath: String?,
-        readOnly: Bool, controlsEnabled: Bool
+        readOnly: Bool, controlsEnabled: Bool, ejectEnabled: Bool
     ) {
         titleView.update(
             name: title, notes: notes, controlsEnabled: controlsEnabled && isTitleEditable)
         readOnlyToggle.state = readOnly ? .on : .off
         readOnlyToggle.isEnabled = controlsEnabled
-        ejectButton?.isEnabled = controlsEnabled
+        ejectButton?.isEnabled = ejectEnabled
         iconButton.configure(systemName: iconSystemName, missingPath: missingPath)
     }
 
