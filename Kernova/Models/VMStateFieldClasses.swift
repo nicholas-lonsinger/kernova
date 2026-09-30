@@ -49,17 +49,18 @@ struct VMStateFieldClasses<Root: Sendable>: Sendable {
 
     let fields: [Field]
 
+    /// Each field that moved from `old` to `new`, with the classes that may
+    /// write its move.
+    func writers(from old: Root, to new: Root) -> [(name: String, classes: VMEditClasses)] {
+        fields.compactMap { field in field.classes(old, new).map { (field.name, $0) } }
+    }
+
     /// The fields that moved from `old` to `new` which `authority` may not
     /// write, by name.
     func refused(
         from old: Root, to new: Root, by authority: VMEditPermit.Authority
     ) -> [String] {
-        fields.compactMap { field in
-            guard let classes = field.classes(old, new), !authority.mayWrite(classes) else {
-                return nil
-            }
-            return field.name
-        }
+        writers(from: old, to: new).filter { !authority.mayWrite($0.classes) }.map(\.name)
     }
 }
 

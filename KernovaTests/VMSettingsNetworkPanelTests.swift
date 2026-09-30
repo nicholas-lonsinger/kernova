@@ -884,9 +884,10 @@ struct VMSettingsNetworkPanelTests {
         #expect(panelHeaderLockHints(in: vc).allSatisfy { $0.isHidden })
     }
 
-    @Test("A stopped VM's Network Mode row dims with the rest of its section")
-    func stoppedNetworkModeRowFollowsTheLock() throws {
-        let (vc, _) = makeNetworkController(isReadOnly: true, phase: .stopped)
+    @Test("A saved state's Network Mode row dims with the rest of its section")
+    func pinnedNetworkModeRowFollowsTheLock() throws {
+        let (vc, _) = makeNetworkController(
+            isReadOnly: true, phase: .suspended, holdsSavedState: true)
         let panel = try #require(vc.panelForTesting(.network))
         let modeRow = try #require(settingsRow(labeled: "Mode", in: panel))
         #expect(rowTitle(of: modeRow)?.textColor == .disabledControlTextColor)

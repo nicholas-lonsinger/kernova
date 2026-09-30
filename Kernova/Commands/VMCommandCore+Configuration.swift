@@ -7,9 +7,10 @@ import KernovaLogging
 /// answer those two lists.
 ///
 /// Every write lands as one ``VMLibrary/updateSettings(_:configuration:hostState:)``,
-/// under a permit for the edit classes its keys' gates name: the gates and the
-/// values are all checked before either file is written, so a batch that names
-/// one bad key writes nothing at all.
+/// under a permit for every settings-writer class the VM admits
+/// (``VMCapabilityCatalog/admittedSettingsWriters(on:posture:)``): what each
+/// assignment moves and every value are checked before either file is
+/// written, so a batch that names one bad key writes nothing at all.
 extension VMCommandCore {
     // MARK: - Keys
 
@@ -41,13 +42,17 @@ extension VMCommandCore {
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
     ///
-    /// An assignment that leaves the VM's settings where they are is no edit:
-    /// no gate applies to it and nothing is written for it, so `get` output is
-    /// `set` input in any state. A gate that refuses names every assignment it
-    /// refused. Each gate names an edit class (``VMConfigurationKey/editClasses(writing:for:)``);
-    /// the write holds a permit for the classes of the named keys the VM takes,
-    /// and an assignment that moves a field those classes may not write
-    /// (``VMStateFieldClasses``) is refused.
+    /// A configuration assignment that leaves its value where it is is no
+    /// edit: nothing is written for it, and only a VM that takes no edit at
+    /// all refuses it. One that moves a field the VM admits no settings write
+    /// of (``VMStateFieldClasses``) is refused, and the refusal names every
+    /// assignment refused so. A value its key refuses is judged as any change
+    /// to that key (``VMConfigurationKey/fieldWriters(on:)``), so a VM whose
+    /// state pins the key says so rather than naming the value. A host-state
+    /// assignment is judged that way whatever its value, moved or not, before
+    /// either file is touched, since host state commits after the
+    /// configuration, where nothing may refuse — so one is refused wherever
+    /// its key is pinned, a bring-up, save or capture among them.
     ///
     /// Each file's assignments apply once, to what that file holds rather than
     /// to memory, so a field another process changed since this one last read
@@ -79,35 +84,28 @@ extension VMCommandCore {
                 hostStateWrites.append(HostStateWrite(key: key, field: field, value: assignment.value))
             }
         }
-        // Before either file is touched: host state commits after the
-        // configuration, where nothing may refuse.
-        let hostStateEdits = hostStateWrites.map { (key: $0.key, value: $0.value) }
-        try requireGates(for: hostStateEdits, on: instance)
+        let admitted = capabilities.admittedSettingsWriters(on: instance, posture: .commit)
+        try requireAdmitted(
+            refusing: hostStateWrites.compactMap {
+                RefusedAssignment(
+                    key: $0.key, value: $0.value, writers: $0.key.fieldWriters(on: guestOS),
+                    within: .edit(admitted))
+            },
+            on: instance)
         let hostStateChanges = try hostStateWrites.map { write in
             HostStateChange(
                 key: write.key, field: write.field, change: try write.field.change(write.value, context))
         }
-        // The configuration's gates are judged on what `config.json` holds,
-        // inside the write: the permit covers every key the VM takes now, and
-        // one that moves a field outside it is refused there.
-        let admittedConfigurationEdits = configurationWrites.map { (key: $0.key, value: $0.value) }
-            .filter {
-                capabilities.accepts($0.key.capability(writing: $0.value, for: guestOS), on: instance)
-            }
-        let classes = (hostStateEdits + admittedConfigurationEdits).reduce(into: VMEditClasses()) {
-            $0.formUnion($1.key.editClasses(writing: $1.value, for: guestOS))
-        }
-        let admittedKeys = Set(admittedConfigurationEdits.map(\.key.name))
 
         var moved: [VMConfigurationKey] = []
-        try edit(classes, on: instance, verb: .setConfiguration) { permit in
+        try edit(admitted, on: instance, verb: .setConfiguration) { permit in
             try requireSaved(
                 library.updateSettings(
                     permit,
                     configuration: { config in
                         moved = try apply(
                             configurationWrites, to: &config, on: instance, within: permit.authority,
-                            admittedKeys: admittedKeys, context: context, confirmed: confirmed)
+                            context: context, confirmed: confirmed)
                     },
                     hostState: { hostState in
                         for change in hostStateChanges {
@@ -149,67 +147,71 @@ extension VMCommandCore {
         let change: (inout VMHostState) -> Void
     }
 
-    /// One assignment that moved the configuration, or whose value its key
-    /// refused.
-    private struct MovedAssignment {
+    /// One assignment the VM's state refuses: it moves fields its write's
+    /// authority may not write.
+    private struct RefusedAssignment {
         let key: VMConfigurationKey
         let value: String
-        /// The fields it moved that `authority` may not write, when it moved
-        /// any; `nil` for a value its key refused, which moved nothing.
-        let refusedFields: [String]?
+        /// The classes that may write each such field.
+        let unwritable: [VMEditClasses]
+
+        /// The assignment of `value` to `key`, whose write moves fields
+        /// `writers` may write, refused unless `authority` may write each —
+        /// `nil` when it may.
+        init?(
+            key: VMConfigurationKey, value: String, writers: [VMEditClasses],
+            within authority: VMEditPermit.Authority
+        ) {
+            let unwritable = writers.filter { !authority.mayWrite($0) }
+            guard !unwritable.isEmpty else { return nil }
+            self.key = key
+            self.value = value
+            self.unwritable = unwritable
+        }
     }
 
-    /// Lands `writes` on `config`, answering the assignments that moved it —
-    /// one whose value its key refuses counts as moving it, so its gate is
-    /// asked before its value is — and the first value refusal.
+    /// Lands `writes` on `config`, answering the keys that moved it, the
+    /// assignments `authority` may not write — one whose value its key refuses
+    /// judged as any change to that key — and the first value refusal.
     private static func moved(
         _ writes: [ConfigurationWrite], applyingTo config: inout VMConfiguration,
         within authority: VMEditPermit.Authority, context: VMConfigurationWriteContext
-    ) -> (assignments: [MovedAssignment], valueRefusal: (any Error)?) {
-        var moved: [MovedAssignment] = []
+    ) -> (keys: [VMConfigurationKey], refused: [RefusedAssignment], valueRefusal: (any Error)?) {
+        var moved: [VMConfigurationKey] = []
+        var refused: [RefusedAssignment] = []
         var valueRefusal: (any Error)?
         for write in writes {
             let before = config
+            let writers: [VMEditClasses]
             do {
                 try write.field.write(write.value, &config, context)
+                writers = VMConfiguration.fieldClasses.writers(from: before, to: config).map(\.classes)
+                if !writers.isEmpty { moved.append(write.key) }
             } catch {
                 valueRefusal = valueRefusal ?? error
-                moved.append(MovedAssignment(key: write.key, value: write.value, refusedFields: nil))
-                continue
+                writers = write.key.fieldWriters(on: config.guestOS)
             }
-            guard config != before else { continue }
-            moved.append(
-                MovedAssignment(
-                    key: write.key, value: write.value,
-                    refusedFields: VMConfiguration.fieldClasses.refused(
-                        from: before, to: config, by: authority)))
+            if let assignment = RefusedAssignment(
+                key: write.key, value: write.value, writers: writers, within: authority)
+            {
+                refused.append(assignment)
+            }
         }
-        return (moved, valueRefusal)
+        return (moved, refused, valueRefusal)
     }
 
     /// Lands `writes` on `config` — what `config.json` holds — refusing unless
     /// `authority` may write every field they move, answering the keys that
     /// moved.
-    ///
-    /// The gate answers an assignment whose value this key refuses too — one
-    /// admission did not take (`admittedKeys`) — so a VM whose state pins the
-    /// key says so rather than naming the value.
     private func apply(
         _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
-        within authority: VMEditPermit.Authority, admittedKeys: Set<String>,
-        context: VMConfigurationWriteContext, confirmed: Bool
+        within authority: VMEditPermit.Authority, context: VMConfigurationWriteContext,
+        confirmed: Bool
     ) throws -> [VMConfigurationKey] {
         let held = config
-        let (moved, valueRefusal) = Self.moved(
+        let (moved, refused, valueRefusal) = Self.moved(
             writes, applyingTo: &config, within: authority, context: context)
-        try requireGates(
-            refusing: moved.filter { assignment in
-                guard let refusedFields = assignment.refusedFields else {
-                    return !admittedKeys.contains(assignment.key.name)
-                }
-                return !refusedFields.isEmpty
-            }.map { (key: $0.key, value: $0.value) },
-            on: instance)
+        try requireAdmitted(refusing: refused, on: instance)
         if let valueRefusal { throw valueRefusal }
         for write in writes where write.field.read(config) != write.field.read(held) {
             // Only a key this call actually moved is judged: writing back what
@@ -226,35 +228,27 @@ extension VMCommandCore {
             throw CommandError.conflict(
                 vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
         }
-        return moved.map(\.key)
-    }
-
-    /// Refuses unless `instance` takes every one of `edits`, naming each
-    /// assignment its state refused.
-    private func requireGates(
-        for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
-    ) throws {
-        let guestOS = instance.configuration.guestOS
-        try requireGates(
-            refusing: edits.filter {
-                !capabilities.accepts($0.key.capability(writing: $0.value, for: guestOS), on: instance)
-            },
-            on: instance)
+        return moved
     }
 
     /// Refuses `refused` unless it is empty, naming each assignment and why
-    /// the VM's state turned its gate away.
-    private func requireGates(
-        refusing refused: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
+    /// the VM's state turned it away: the refusal of the settings writes
+    /// (``VMCapability/settingsWrites``) whose classes could have written it.
+    private func requireAdmitted(
+        refusing refused: [RefusedAssignment], on instance: VMInstance
     ) throws {
         guard !refused.isEmpty else { return }
-        let guestOS = instance.configuration.guestOS
+        let unwritable = refused.flatMap(\.unwritable)
         let error = refusal(
-            for: refused.map { $0.key.capability(writing: $0.value, for: guestOS) }, on: instance)
+            for: VMCapability.settingsWrites.filter { capability in
+                let classes = capability.editClasses ?? []
+                return unwritable.contains { !$0.isDisjoint(with: classes) }
+            },
+            on: instance)
         guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
         var settings: [ConfigurationEntry] = []
-        for edit in refused {
-            let entry = ConfigurationEntry(key: edit.key.name, value: edit.value)
+        for assignment in refused {
+            let entry = assignment.key.assigning(assignment.value)
             if !settings.contains(entry) { settings.append(entry) }
         }
         throw CommandError.invalidState(

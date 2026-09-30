@@ -309,10 +309,11 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         let body: InfoPopoverParagraph = .body(
             "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
         )
-        // Sharing adds the SPICE console device, so the header carries the
-        // lock hint; passthrough is host-side and stays live.
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Clipboard", lockable: true, paragraphs: [body]),
+            lockRegistry.makeHeader(
+                "Clipboard",
+                lockable: !VMConfigurationKeyRegistry.clipboardSharing.isEditableWhileRunning(on: .linux),
+                paragraphs: [body]),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),

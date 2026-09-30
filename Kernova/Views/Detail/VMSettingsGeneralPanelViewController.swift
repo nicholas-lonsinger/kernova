@@ -340,10 +340,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         applyGroupedFormRowEnabled(
             isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch)
         applyGroupedFormRowEnabled(
-            isAvailable(
-                VMConfigurationKeyRegistry.ephemeralBaseline,
-                writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
-            control: ephemeralBaselinePopUp)
+            isAvailable(VMConfigurationKeyRegistry.ephemeralBaseline), control: ephemeralBaselinePopUp)
         ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
         ephemeralGroup?.isSubOptionHidden = !enabled
 

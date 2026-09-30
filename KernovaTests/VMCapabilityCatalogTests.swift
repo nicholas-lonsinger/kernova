@@ -694,4 +694,40 @@ struct VMCapabilityCatalogTests {
 
         #expect(harness.storage.saveConfigurationCallCount == writesBefore)
     }
+
+    // MARK: - Settings writes
+
+    @Test("A running networked VM offers each write whose fields it admits")
+    func settingsWritesAreOfferedByWhatTheyMove() throws {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
+        let running = VMLifecyclePhase.running(sessionID: UUID())
+        let networked: (inout VMConfiguration) -> Void = {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = "02:11:22:33:44:55"
+        }
+        let macOS = makeInstance(
+            in: harness, name: "Mac", phase: running, guestOS: .macOS, snapshots: [snapshot],
+            mutate: networked)
+        let linux = makeInstance(
+            in: harness, name: "Linux", phase: running, guestOS: .linux, mutate: networked)
+        typealias Keys = VMConfigurationKeyRegistry
+
+        // A hot swap between attachable modes; taking the device away is not
+        // one.
+        #expect(harness.catalog.isAvailable(Keys.networkMode, writing: "bridged", on: macOS))
+        #expect(
+            !harness.catalog.isAvailable(Keys.networkMode, writing: Keys.noNetworkValue, on: macOS))
+        // A macOS guest's clipboard rides the agent's channel; a Linux guest's
+        // rides a console device the machine is built with.
+        #expect(harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: macOS))
+        #expect(!harness.catalog.isAvailable(Keys.clipboardSharing, writing: "true", on: linux))
+        #expect(harness.catalog.isAvailable(Keys.ephemeral, writing: "true", on: macOS))
+        // A machine key, with a value that moves it whatever this host's cores.
+        #expect(
+            !harness.catalog.isAvailable(
+                Keys.audioInput, writing: String(!macOS.configuration.audioInputEnabled),
+                on: macOS))
+    }
 }

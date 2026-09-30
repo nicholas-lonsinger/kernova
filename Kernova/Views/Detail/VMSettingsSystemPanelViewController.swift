@@ -547,7 +547,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         let forwarding = instance.configuration.systemKeyForwarding
         select(forwarding, in: systemKeysPopUp, named: "system keys")
         applyGroupedFormRowEnabled(
-            isAvailable(Keys.inputSystemKeys, writing: forwarding.rawValue), control: systemKeysPopUp)
+            isAvailable(Keys.inputSystemKeys), control: systemKeysPopUp)
         guard instance.configuration.guestOS == .macOS else { return }
         select(instance.configuration.inputDeviceMode, in: inputDevicesPopUp, named: "input device")
     }

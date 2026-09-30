@@ -243,7 +243,8 @@ struct VMCommandEnvelopeTests {
             .event(.failure(id: vmID, name: "Alpha", message: "the disk went away")),
             .configurationKeys([
                 ConfigurationKeyDescriptor(
-                    name: "cpus", summary: "Virtual CPU cores.", editableWhileRunning: false)
+                    name: "cpus", summary: "Virtual CPU cores.",
+                    editableWhileRunning: ["macOS": false, "linux": false])
             ]),
             .configurationKeys([]),
             .configuration([ConfigurationEntry(key: "cpus", value: "4")]),

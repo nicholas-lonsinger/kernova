@@ -157,6 +157,12 @@ extension VMSettingsPanel {
         viewModel.capabilities.isAvailable(key, writing: value, on: instance)
     }
 
+    /// Whether a control offering every value of `key` takes a change right
+    /// now (``VMCapabilityCatalog/isAvailable(_:on:)``).
+    func isAvailable(_ key: VMConfigurationKey) -> Bool {
+        viewModel.capabilities.isAvailable(key, on: instance)
+    }
+
     /// Writes `assignments` through the configuration verb, the one path a
     /// panel's edit takes.
     ///
