@@ -500,6 +500,15 @@ check "argv holders: invoking ancestor" "$(ROOT=$ROOT bash -c 'bash -c "$2" aske
     '. "$ROOT/Tools/lib/holders.sh"; refresh_holders "$1"; path_holders "$1"')" \
     "$(printf '%s\ttail\topen\n' "$inside_pid" "$whole_pid" | sort -n)"
 
+# An ancestor outside the asker's job — an editor or interactive shell that
+# started it as a job of its own — still holds the target its arguments name.
+# `set -m` gives the background asker its own process group; `set +m` before
+# the wait keeps its job notice off stderr.
+jobs_out=$(ROOT=$ROOT bash -c 'echo $$ >"$3"; set -m; bash -c "$2" asker "$1" & set +m; wait $!; :' outer "$argv_target" \
+    '. "$ROOT/Tools/lib/holders.sh"; refresh_holders "$1"; path_holders "$1"' "$tmp/outer-pid")
+check "argv holders: ancestor in another job" "$jobs_out" \
+    "$({ printf '%s\ttail\topen\n' "$inside_pid" "$whole_pid"; printf '%s\tbash\topen\n' "$(cat "$tmp/outer-pid")"; } | sort -n)"
+
 # Each removal deleted only its own record: the vanished worktree, a candidate
 # for any repository-wide prune, is still registered.
 if git -C "$ab" worktree list --porcelain | grep -qxF "worktree $tmp/vanished"; then

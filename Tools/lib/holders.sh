@@ -23,7 +23,7 @@ refresh_holders() {
     done
     files=$(lsof +c 0 -b -w -n -Fpcfn 2>/dev/null)
     # comm is a fixed 16-column field (MAXCOMLEN) when it is not the last one.
-    procs=$(ps -axo pid=,ppid=,comm=,args= 2>/dev/null)
+    procs=$(ps -axo pid=,ppid=,pgid=,comm=,args= 2>/dev/null)
     holders_read=0
     [ -n "$files" ] && [ -n "$procs" ] && holders_read=1
     holder_files=$(PREFIXES=$prefixes awk '
@@ -37,9 +37,11 @@ refresh_holders() {
         /^f/ { f = substr($0, 2) }
         /^n/ { n = substr($0, 2); if (held(n)) print p "\t" c "\t" f "\t" n }
     ' <<<"$files")
-    # The caller, its descendants, and its ancestors are left out: a caller's
-    # own arguments name the path it asks about, and so do those of whatever
-    # invoked it about that path (`make clean`, the recipe's shell). A command
+    # The caller, its descendants, and the ancestors in its process group are
+    # left out: a caller's own arguments name the path it asks about, and so do
+    # those of the job that invoked it about that path (`make clean`, the
+    # recipe's shell, a `zsh -c` wrapper). An ancestor outside that group — an
+    # editor or interactive shell that started the job — still holds. A command
     # line names a path when the path is followed by `/` or ends an argument
     # (`code <dir>`, `git -C <dir> …`).
     holder_procs=$(PREFIXES=$prefixes SELF=$$ awk '
@@ -48,15 +50,18 @@ refresh_holders() {
             for (n = 0; p != "" && p > 1 && n < 64; n++) { if (p == q) return 1; p = parent[p] }
             return 0
         }
-        function related(p) { return chain(p, ENVIRON["SELF"]) || chain(ENVIRON["SELF"], p) }
+        function related(p,   s) {
+            s = ENVIRON["SELF"]
+            return chain(p, s) || (chain(s, p) && group[p] == group[s])
+        }
         function names(s, d) { return index(s, d "/") || index(s " ", d " ") }
         BEGIN { np = split(ENVIRON["PREFIXES"], all, "\n"); for (i = 1; i <= np; i++) if (all[i] != "") pre[++k] = all[i]; np = k }
-        { line[NR] = $0; pid[NR] = $1; parent[$1] = $2 }
+        { line[NR] = $0; pid[NR] = $1; parent[$1] = $2; group[$1] = $3 }
         END {
             for (r = 1; r <= NR; r++) {
                 if (related(pid[r])) continue
                 for (i = 1; i <= np; i++) if (names(line[r], pre[i])) {
-                    rest = line[r]; sub(/^ *[0-9]+ +[0-9]+ /, "", rest)
+                    rest = line[r]; sub(/^ *[0-9]+ +[0-9]+ +[0-9]+ /, "", rest)
                     comm = substr(rest, 1, 16); sub(/ +$/, "", comm)
                     print pid[r] "\t" comm "\t" substr(rest, 18)
                     break
