@@ -16,7 +16,7 @@ struct VMIdentityHeaderViewTests {
     @Test("Every known fact reads in order, separated by interpuncts")
     func factsLineListsEverythingKnown() {
         let line = VMIdentityHeaderView.factsLine(
-            status: "Running", osVersion: "26.6", cores: 4, memoryGB: 8,
+            status: "Running", osVersion: "26.6", cores: 4, memory: .gibibytes(8),
             diskBytes: 100_000_000_000)
 
         #expect(
@@ -27,7 +27,7 @@ struct VMIdentityHeaderViewTests {
     @Test("An unreported OS version leaves out the segment rather than a placeholder")
     func factsLineOmitsUnknownOSVersion() {
         let line = VMIdentityHeaderView.factsLine(
-            status: "Stopped", osVersion: nil, cores: 2, memoryGB: 4, diskBytes: 64_000_000_000)
+            status: "Stopped", osVersion: nil, cores: 2, memory: .gibibytes(4), diskBytes: 64_000_000_000)
 
         #expect(line == "Stopped · 2 cores · 4 GB memory · \(DataFormatters.formatBytes(64_000_000_000)) disk")
     }
@@ -35,7 +35,7 @@ struct VMIdentityHeaderViewTests {
     @Test("An unread disk leaves out the segment")
     func factsLineOmitsUnknownDisk() {
         let line = VMIdentityHeaderView.factsLine(
-            status: "Stopped", osVersion: nil, cores: 1, memoryGB: 4, diskBytes: nil)
+            status: "Stopped", osVersion: nil, cores: 1, memory: .gibibytes(4), diskBytes: nil)
 
         #expect(line == "Stopped · 1 core · 4 GB memory")
     }

@@ -14,7 +14,7 @@ struct VMOverviewSummaryTests {
     ) -> VMInstance {
         VMInstanceFixture.make(guestOS: guestOS, hostState: hostState) {
             $0.cpuCount = 4
-            $0.memorySizeInGB = 8
+            $0.memorySizeInGB = .gibibytes(8)
             mutate(&$0)
         }
     }

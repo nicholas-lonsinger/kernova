@@ -48,9 +48,9 @@ final class VMScriptObject: NSObject {
 
     @objc var processorCount: Int { info.cpuCount }
 
-    /// Guest memory in whole gigabytes — the unit the `memory` configuration
-    /// key reads and writes, so one number means one thing on every surface.
-    @objc var memory: Int { Int(info.memoryBytes / (1 << 30)) }
+    /// Guest memory in gigabytes — the unit the `memory` configuration key
+    /// reads and writes, so one number means one thing on every surface.
+    @objc var memory: Double { Double(info.memoryBytes) / Double(1 << 30) }
 
     @objc var diskSize: Int { info.diskSizeInGB }
 

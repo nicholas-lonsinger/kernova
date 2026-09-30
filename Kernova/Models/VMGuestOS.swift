@@ -25,58 +25,26 @@ enum VMGuestOS: String, Codable, CaseIterable, Sendable {
         case .macOS: preferred = 4
         case .linux: preferred = 2
         }
-        return min(preferred, maxCPUCount)
+        return VMResourceLimits.cpuCount.clamp(preferred)
     }
 
-    var defaultMemoryInGB: Int {
-        let preferred: Int
+    var defaultMemorySize: VMMemorySize {
+        let preferred: VMMemorySize
         switch self {
-        case .macOS: preferred = 8
-        case .linux: preferred = 4
+        case .macOS: preferred = .gibibytes(8)
+        case .linux: preferred = .gibibytes(4)
         }
-        return min(preferred, maxMemoryInGB)
+        return VMResourceLimits.memorySize.clamp(preferred)
     }
 
-    /// Default size used when creating a new disk image.
-    ///
-    /// Must stay above both guest OSes' `minDiskSizeInGB` and present in
-    /// `allDiskSizes`.
+    /// Default size used when creating a new disk image; one of `allDiskSizes`.
     static let defaultDiskSizeInGB = 100
 
-    /// All offered disk sizes in GB, matching bundled ASIF templates.
+    /// Every disk size offered, in GB, matching the bundled ASIF templates.
     static let allDiskSizes = [
         10, 15, 20, 25, 50, 75, 100, 150, 200, 250,
         500, 750, 1000, 1500, 2000, 2500, 5000, 7500, 10000,
     ]
-
-    var availableDiskSizes: [Int] {
-        Self.allDiskSizes.filter { $0 >= minDiskSizeInGB }
-    }
-
-    var minCPUCount: Int { 2 }
-
-    var maxCPUCount: Int {
-        ProcessInfo.processInfo.processorCount
-    }
-
-    var minMemoryInGB: Int {
-        switch self {
-        case .macOS: 4
-        case .linux: 2
-        }
-    }
-
-    var maxMemoryInGB: Int {
-        let totalMemoryBytes = ProcessInfo.processInfo.physicalMemory
-        return Int(totalMemoryBytes / (1024 * 1024 * 1024))
-    }
-
-    var minDiskSizeInGB: Int {
-        switch self {
-        case .macOS: 64
-        case .linux: 10
-        }
-    }
 
     /// Whether the guest's display scanout carries a pixel density, so a HiDPI
     /// resolution reads as Retina rather than as twice as many pixels.

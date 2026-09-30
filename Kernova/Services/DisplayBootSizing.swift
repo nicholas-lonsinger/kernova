@@ -14,16 +14,12 @@ struct DisplayBootSizing: Sendable {
         var ppi: Int
     }
 
-    /// Smallest boot resolution offered, in pixels — guest desktops lay out
-    /// badly below it.
-    static let minimumWidth = 800
-    static let minimumHeight = 600
-    /// Largest pixel count in either axis.
+    /// Smallest size in either axis — 1×1 validates for both VZ display types
+    /// (`docs/research/2026-08-01-vz-display-dimension-limits.md`).
     ///
-    /// Kernova's own cap: VZ validates both display types at 16384/axis —
-    /// measured 2026-08-01, see
-    /// `docs/research/2026-08-01-vz-display-dimension-limits.md`.
-    static let maximumDimension = 8192
+    /// There is no largest: `validate()` refuses an oversized display when the
+    /// VM starts.
+    static let minimumDimension = 1
 
     /// Density reported for a HiDPI ("Retina") guest display.
     static let hiDPIPixelsPerInch = 220
@@ -35,17 +31,10 @@ struct DisplayBootSizing: Sendable {
     static func isHiDPI(ppi: Int) -> Bool { ppi >= hiDPIThreshold }
 
     /// The "looks like" sizes a display at the density `hiDPI` names takes in
-    /// each axis: the pixel range, halved for a HiDPI base, which is doubled
-    /// before it reaches VZ.
-    ///
-    /// Every size a trio can store reads back inside these, whether a chosen
-    /// base or a surface fit produced it.
-    static func baseRange(hiDPI: Bool) -> (width: ClosedRange<Int>, height: ClosedRange<Int>) {
-        let scale = hiDPI ? 2 : 1
-        return (
-            (minimumWidth / scale)...(maximumDimension / scale),
-            (minimumHeight / scale)...(maximumDimension / scale)
-        )
+    /// either axis: from ``minimumDimension`` up to the largest whose pixel
+    /// count an `Int` holds.
+    static func baseBounds(hiDPI: Bool) -> InclusiveBounds<Int> {
+        InclusiveBounds(lower: minimumDimension, upper: Int.max / scale(hiDPI: hiDPI))
     }
 
     /// The boot resolution filling `points` on a screen of `scale`.
@@ -55,35 +44,33 @@ struct DisplayBootSizing: Sendable {
     static func resolution(
         fittingPoints points: CGSize, backingScaleFactor scale: CGFloat
     ) -> Resolution {
-        clamped(
-            width: pixelCount(points.width, scale: scale),
-            height: pixelCount(points.height, scale: scale),
-            ppi: scale >= 2 ? hiDPIPixelsPerInch : standardPixelsPerInch)
+        let hiDPI = scale >= 2
+        let factor = self.scale(hiDPI: hiDPI)
+        return resolution(
+            base: pixelCount(points.width, scale: scale) / factor,
+            height: pixelCount(points.height, scale: scale) / factor,
+            hiDPI: hiDPI)
     }
 
     /// The boot resolution a "looks like" size of `width` × `height` produces
     /// at the density `hiDPI` names.
     ///
-    /// The one place a chosen size becomes a stored trio: it fits the pair to
-    /// ``baseRange(hiDPI:)`` and doubles a HiDPI base from there. Twice any
-    /// base is already even, so a HiDPI base keeps its own parity and halving
-    /// the stored pixels gives it back exactly.
+    /// The one place a chosen size becomes a stored trio: it holds each axis
+    /// within ``baseBounds(hiDPI:)`` and doubles a HiDPI base from there, so a
+    /// HiDPI trio's pixels are always even and halving them gives the base back
+    /// exactly.
     static func resolution(base width: Int, height: Int, hiDPI: Bool) -> Resolution {
-        guard hiDPI else {
-            return clamped(width: width, height: height, ppi: standardPixelsPerInch)
-        }
-        let base = bounded(width: width, height: height, within: baseRange(hiDPI: true))
+        let bounds = baseBounds(hiDPI: hiDPI)
+        let factor = scale(hiDPI: hiDPI)
         return Resolution(
-            width: base.width * 2, height: base.height * 2, ppi: hiDPIPixelsPerInch)
+            width: bounds.clamp(width) * factor, height: bounds.clamp(height) * factor,
+            ppi: hiDPI ? hiDPIPixelsPerInch : standardPixelsPerInch)
     }
 
     /// `resolution` at twice the pixel count and HiDPI density — the rewrite
     /// that turns a "looks like" size into a Retina one.
     static func doubled(_ resolution: Resolution) -> Resolution {
-        // Fitted before the doubling, so a corrupt stored size can't overflow it.
-        let base = scaledToFit(
-            width: resolution.width, height: resolution.height, maximum: maximumDimension / 2)
-        return clamped(width: base.width * 2, height: base.height * 2, ppi: hiDPIPixelsPerInch)
+        self.resolution(base: resolution.width, height: resolution.height, hiDPI: true)
     }
 
     /// `resolution` rewritten at the density `hiDPI` asks for, keeping the size
@@ -94,56 +81,17 @@ struct DisplayBootSizing: Sendable {
 
     /// `resolution` at half the pixel count and standard density.
     static func halved(_ resolution: Resolution) -> Resolution {
-        clamped(
-            width: resolution.width / 2, height: resolution.height / 2,
-            ppi: standardPixelsPerInch)
-    }
-
-    /// `width`/`height` brought into the supported range: an oversized pair is
-    /// scaled down whole so its aspect ratio survives the ceiling, then each axis
-    /// is raised to the minimum and rounded down to an even pixel count.
-    static func clamped(width: Int, height: Int, ppi: Int) -> Resolution {
-        let fitted = bounded(width: width, height: height, within: baseRange(hiDPI: false))
-        return Resolution(width: even(fitted.width), height: even(fitted.height), ppi: ppi)
+        self.resolution(base: resolution.width / 2, height: resolution.height / 2, hiDPI: false)
     }
 
     // MARK: - Private
 
-    /// `width`/`height` scaled by the longer axis' overshoot ratio when either
-    /// exceeds `maximum`, leaving the pair's proportions intact.
-    private static func scaledToFit(width: Int, height: Int, maximum: Int)
-        -> (width: Int, height: Int)
-    {
-        let longest = max(width, height)
-        guard longest > maximum else { return (width, height) }
-        return (width * maximum / longest, height * maximum / longest)
-    }
+    private static func scale(hiDPI: Bool) -> Int { hiDPI ? 2 : 1 }
 
     private static func pixelCount(_ points: CGFloat, scale: CGFloat) -> Int {
         let pixels = (points * scale).rounded(.down)
         guard pixels.isFinite, pixels > 0 else { return 0 }
-        // Bounded only where the conversion would trap: the pixel ceiling is
-        // applied by `clamped`, which needs both axes' true proportions.
+        // Bounded only where the conversion would trap.
         return Int(min(pixels, CGFloat(Int32.max)))
-    }
-
-    /// `width`/`height` scaled down whole to fit `range`'s ceiling, then each
-    /// axis held within its range.
-    private static func bounded(
-        width: Int, height: Int, within range: (width: ClosedRange<Int>, height: ClosedRange<Int>)
-    ) -> (width: Int, height: Int) {
-        let fitted = scaledToFit(
-            width: width, height: height,
-            maximum: min(range.width.upperBound, range.height.upperBound))
-        return (
-            min(max(fitted.width, range.width.lowerBound), range.width.upperBound),
-            min(max(fitted.height, range.height.lowerBound), range.height.upperBound)
-        )
-    }
-
-    /// `value` rounded down to an even count; the bounds are even, so a value
-    /// already within them stays within them.
-    private static func even(_ value: Int) -> Int {
-        value - abs(value % 2)
     }
 }

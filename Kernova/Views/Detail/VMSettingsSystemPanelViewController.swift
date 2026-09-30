@@ -122,17 +122,16 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     // MARK: Resources
 
     private func buildResourcesSection() -> NSView {
-        let os = instance.configuration.guestOS
         cpuField = ModelValueField()
         cpuStepper = NSStepper()
         memoryField = ModelValueField()
         memoryStepper = NSStepper()
-        configureGroupedFormNumeric(
-            field: cpuField, stepper: cpuStepper, min: os.minCPUCount, max: os.maxCPUCount,
+        configureGroupedFormCount(
+            field: cpuField, stepper: cpuStepper, bounds: VMResourceLimits.cpuCount,
             value: instance.configuration.cpuCount, delegate: self, target: self,
             stepperAction: #selector(cpuStepperChanged))
-        configureGroupedFormNumeric(
-            field: memoryField, stepper: memoryStepper, min: os.minMemoryInGB, max: os.maxMemoryInGB,
+        configureGroupedFormMemory(
+            field: memoryField, stepper: memoryStepper, bounds: VMResourceLimits.memorySize,
             value: instance.configuration.memorySizeInGB, delegate: self, target: self,
             stepperAction: #selector(memoryStepperChanged))
         let card = makeGroupedFormCard(rows: [
@@ -422,15 +421,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         return makeGroupedFormSection([lockRegistry.makeHeader("Serial Console"), card])
     }
     private func refreshResources() {
-        let os = instance.configuration.guestOS
-        cpuStepper.minValue = Double(os.minCPUCount)
-        cpuStepper.maxValue = Double(os.maxCPUCount)
         cpuStepper.integerValue = instance.configuration.cpuCount
         cpuField.show(String(instance.configuration.cpuCount))
-        memoryStepper.minValue = Double(os.minMemoryInGB)
-        memoryStepper.maxValue = Double(os.maxMemoryInGB)
-        memoryStepper.integerValue = instance.configuration.memorySizeInGB
-        memoryField.show(String(instance.configuration.memorySizeInGB))
+        memoryStepper.doubleValue = instance.configuration.memorySizeInGB.gibibytes
+        memoryField.show(instance.configuration.memorySizeInGB.gibibytesText)
     }
 
     /// The density the user asked for, which a match-window boot applies to the
@@ -608,8 +602,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     @objc private func memoryStepperChanged() {
-        write(Keys.memory.assigning(String(memoryStepper.integerValue)))
-        memoryField.showDiscardingEdit(String(instance.configuration.memorySizeInGB))
+        if let stepped = groupedFormMemoryStep(
+            memoryStepper, from: instance.configuration.memorySizeInGB,
+            within: VMResourceLimits.memorySize)
+        {
+            write(Keys.memory.assigning(stepped.gibibytesText))
+        }
+        showStoredMemorySize()
     }
 
     // MARK: Display
@@ -730,27 +729,31 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         systemSettings.openMicrophonePrivacy()
     }
 
-    /// Clamps a typed count to the guest's range and writes it, then shows
-    /// what the VM holds.
+    /// Clamps a typed count to the framework's bounds and writes it, then
+    /// shows what the VM holds.
     private func applyCPUFieldEdit() {
         if cpuField.holdsUserEdit {
-            let os = instance.configuration.guestOS
-            let clamped = Swift.min(Swift.max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
+            let clamped = VMResourceLimits.cpuCount.clamp(cpuField.integerValue)
             write(Keys.cpus.assigning(String(clamped)))
         }
         cpuField.showDiscardingEdit(String(instance.configuration.cpuCount))
         cpuStepper.integerValue = instance.configuration.cpuCount
     }
 
-    /// ``applyCPUFieldEdit()`` for the memory field.
+    /// ``applyCPUFieldEdit()`` for the memory field, which takes decimal
+    /// gigabytes; text that names no size is dropped.
     private func applyMemoryFieldEdit() {
-        if memoryField.holdsUserEdit {
-            let os = instance.configuration.guestOS
-            let clamped = Swift.min(Swift.max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
-            write(Keys.memory.assigning(String(clamped)))
+        if memoryField.holdsUserEdit, let typed = VMMemorySize(gibibytesText: memoryField.stringValue) {
+            let clamped = VMResourceLimits.memorySize.clamp(typed)
+            write(Keys.memory.assigning(clamped.gibibytesText))
         }
-        memoryField.showDiscardingEdit(String(instance.configuration.memorySizeInGB))
-        memoryStepper.integerValue = instance.configuration.memorySizeInGB
+        showStoredMemorySize()
+    }
+
+    /// Ends any edit in the memory field and shows the size the VM holds.
+    private func showStoredMemorySize() {
+        memoryField.showDiscardingEdit(instance.configuration.memorySizeInGB.gibibytesText)
+        memoryStepper.doubleValue = instance.configuration.memorySizeInGB.gibibytes
     }
 }
 

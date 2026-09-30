@@ -4,9 +4,8 @@ import AppKit
 ///
 /// All controls write the shared ``VMCreationViewModel`` directly. The name field
 /// writes on every keystroke so the shell's `canAdvance`/`validationMessage`
-/// observation re-evaluates the Next button live. Stepper/field bounds come from
-/// the *current* `selectedOS`, and the standing values are clamped into range
-/// when the step is built.
+/// observation re-evaluates the Next button live. Stepper/field bounds are the
+/// Virtualization framework's, the same for every guest.
 @MainActor
 final class ResourceConfigContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
@@ -21,8 +20,6 @@ final class ResourceConfigContentViewController: NSViewController {
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.
     private var scrollMoreIndicator: ScrollMoreIndicator?
-
-    private var os: VMGuestOS { creationVM.selectedOS }
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -77,8 +74,10 @@ final class ResourceConfigContentViewController: NSViewController {
         addSectionHeader("Compute", to: form)
         addCard(
             [
-                makeGroupedFormCardRow("CPU cores", control: steppedControl(cpuField, cpuStepper, unit: "")),
-                makeGroupedFormCardRow("Memory", control: steppedControl(memoryField, memoryStepper, unit: "GB")),
+                makeGroupedFormCardRow(
+                    "CPU cores", control: makeGroupedFormSteppedControl(cpuField, cpuStepper, unit: "")),
+                makeGroupedFormCardRow(
+                    "Memory", control: makeGroupedFormSteppedControl(memoryField, memoryStepper, unit: "GB")),
             ], to: form)
 
         addSectionHeader("Storage", to: form)
@@ -112,27 +111,6 @@ final class ResourceConfigContentViewController: NSViewController {
         form.setCustomSpacing(6, after: header)
     }
 
-    /// Pairs an editable numeric field with its stepper and a trailing unit.
-    ///
-    /// The unit always occupies a fixed-width slot (empty for unitless values)
-    /// so the field and stepper line up in columns across rows regardless of
-    /// whether a unit is present.
-    private func steppedControl(_ field: NSTextField, _ stepper: NSStepper, unit: String)
-        -> NSStackView
-    {
-        let unitLabel = NSTextField(labelWithString: unit)
-        unitLabel.font = Typography.body
-        unitLabel.textColor = .secondaryLabelColor
-        unitLabel.isSelectable = false
-        unitLabel.widthAnchor.constraint(equalToConstant: 22).isActive = true
-
-        let control = NSStackView(views: [field, stepper, unitLabel])
-        control.orientation = .horizontal
-        control.alignment = .centerY
-        control.spacing = Spacing.tight
-        return control
-    }
-
     private func configureNameField() {
         nameField.stringValue = creationVM.vmName
         nameField.placeholderString = "Name"
@@ -140,53 +118,25 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     private func configureCPU() {
-        let clamped = min(max(creationVM.cpuCount, os.minCPUCount), os.maxCPUCount)
-        creationVM.cpuCount = clamped
-
-        cpuField.alignment = .right
-        cpuField.delegate = self
-        cpuField.integerValue = clamped
-        cpuField.widthAnchor.constraint(equalToConstant: 44).isActive = true
-
-        cpuStepper.controlSize = .small
-        cpuStepper.minValue = Double(os.minCPUCount)
-        cpuStepper.maxValue = Double(os.maxCPUCount)
-        cpuStepper.increment = 1
-        cpuStepper.valueWraps = false
-        cpuStepper.integerValue = clamped
-        cpuStepper.target = self
-        cpuStepper.action = #selector(cpuStepperChanged)
+        configureGroupedFormCount(
+            field: cpuField, stepper: cpuStepper, bounds: VMResourceLimits.cpuCount,
+            value: creationVM.cpuCount, delegate: self, target: self,
+            stepperAction: #selector(cpuStepperChanged))
     }
 
     private func configureMemory() {
-        let clamped = min(max(creationVM.memoryInGB, os.minMemoryInGB), os.maxMemoryInGB)
-        creationVM.memoryInGB = clamped
-
-        memoryField.alignment = .right
-        memoryField.delegate = self
-        memoryField.integerValue = clamped
-        memoryField.widthAnchor.constraint(equalToConstant: 44).isActive = true
-
-        memoryStepper.controlSize = .small
-        memoryStepper.minValue = Double(os.minMemoryInGB)
-        memoryStepper.maxValue = Double(os.maxMemoryInGB)
-        memoryStepper.increment = 1
-        memoryStepper.valueWraps = false
-        memoryStepper.integerValue = clamped
-        memoryStepper.target = self
-        memoryStepper.action = #selector(memoryStepperChanged)
+        configureGroupedFormMemory(
+            field: memoryField, stepper: memoryStepper, bounds: VMResourceLimits.memorySize,
+            value: creationVM.memorySize, delegate: self, target: self,
+            stepperAction: #selector(memoryStepperChanged))
     }
 
     private func configureDiskPopUp() {
         diskPopUp.controlSize = .small
-        let sizes = os.availableDiskSizes
-        for size in sizes {
+        for size in VMGuestOS.allDiskSizes {
             diskPopUp.addItem(withTitle: DataFormatters.formatDiskSize(size))
             diskPopUp.lastItem?.attributedTitle = diskSizeMenuItemTitle(size)
             diskPopUp.lastItem?.tag = size
-        }
-        if !sizes.contains(creationVM.diskSizeInGB), let first = sizes.first {
-            creationVM.diskSizeInGB = first
         }
         diskPopUp.selectItem(withTag: creationVM.diskSizeInGB)
         diskPopUp.target = self
@@ -208,8 +158,12 @@ final class ResourceConfigContentViewController: NSViewController {
     }
 
     @objc private func memoryStepperChanged() {
-        creationVM.memoryInGB = memoryStepper.integerValue
-        memoryField.integerValue = memoryStepper.integerValue
+        if let stepped = groupedFormMemoryStep(
+            memoryStepper, from: creationVM.memorySize, within: VMResourceLimits.memorySize)
+        {
+            creationVM.memorySize = stepped
+        }
+        showMemorySize()
     }
 
     @objc private func diskChanged() {
@@ -220,24 +174,35 @@ final class ResourceConfigContentViewController: NSViewController {
         creationVM.networkEnabled = networkSwitch.state == .on
     }
 
-    /// Clamps a typed CPU/Memory value into the OS-allowed range and syncs the
+    /// Clamps a typed CPU/Memory value into the framework's bounds and syncs the
     /// model, the paired stepper, and the field text together.
     ///
     /// Called on end-of-edit, not per keystroke: clamping mid-type would snap the
     /// stepper to the minimum while the field still showed a partial value (e.g.
     /// typing "16" momentarily reads as 1), desyncing the two.
     private func applyCPUFieldEdit() {
-        let clamped = min(max(cpuField.integerValue, os.minCPUCount), os.maxCPUCount)
-        creationVM.cpuCount = clamped
+        let clamped = VMResourceLimits.cpuCount.clamp(cpuField.integerValue)
+        // Only a change is a choice; the standing value may still be following
+        // the guest's default.
+        if clamped != creationVM.cpuCount { creationVM.cpuCount = clamped }
         cpuStepper.integerValue = clamped
         cpuField.integerValue = clamped
     }
 
+    /// The memory field takes decimal gigabytes; text that names no size is
+    /// dropped.
     private func applyMemoryFieldEdit() {
-        let clamped = min(max(memoryField.integerValue, os.minMemoryInGB), os.maxMemoryInGB)
-        creationVM.memoryInGB = clamped
-        memoryStepper.integerValue = clamped
-        memoryField.integerValue = clamped
+        if let typed = VMMemorySize(gibibytesText: memoryField.stringValue),
+            case let clamped = VMResourceLimits.memorySize.clamp(typed), clamped != creationVM.memorySize
+        {
+            creationVM.memorySize = clamped
+        }
+        showMemorySize()
+    }
+
+    private func showMemorySize() {
+        memoryField.stringValue = creationVM.memorySize.gibibytesText
+        memoryStepper.doubleValue = creationVM.memorySize.gibibytes
     }
 }
 

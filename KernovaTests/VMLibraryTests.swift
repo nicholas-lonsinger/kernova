@@ -416,7 +416,7 @@ struct VMLibraryTests {
         }
         var written = instance.configuration
         written.macAddress = "aa:bb:cc:dd:ee:01"
-        written.memorySizeInGB += 2
+        written.memorySizeInGB = written.memorySizeInGB.adding(gibibytes: 2)
         let saves = storage.saveConfigurationCallCount
 
         try await instance.activity.launchBringUp(
@@ -445,7 +445,7 @@ struct VMLibraryTests {
         onDisk.genericMachineIdentifierData = Data([0x01, 0x02, 0x03])
         storage.files.setConfiguration(onDisk, at: instance.bundleURL)
         var captured = VMConfiguration(name: "Captured", guestOS: .linux, bootMode: .efi)
-        captured.memorySizeInGB = onDisk.memorySizeInGB + 2
+        captured.memorySizeInGB = onDisk.memorySizeInGB.adding(gibibytes: 2)
         captured.genericMachineIdentifierData = Data([0x0A])
 
         try withOperationNow(on: instance) { context in
@@ -473,7 +473,7 @@ struct VMLibraryTests {
 
         let outcome = try library.updateSettings(
             of: instance, as: [.machineKeys, .liveKeys],
-            configuration: { $0.memorySizeInGB = memory + 2 },
+            configuration: { $0.memorySizeInGB = memory.adding(gibibytes: 2) },
             hostState: { $0.startsAutomaticallyOnLaunch = true })
 
         guard case .notSaved(let failure) = outcome else {
@@ -482,7 +482,7 @@ struct VMLibraryTests {
         }
         #expect(failure.failed == .hostState)
         #expect(failure.landed == [.configuration])
-        #expect(instance.configuration.memorySizeInGB == memory + 2)
+        #expect(instance.configuration.memorySizeInGB == memory.adding(gibibytes: 2))
         #expect(!instance.hostState.startsAutomaticallyOnLaunch)
         #expect(instance.configuration == storage.bundles[instance.bundleURL])
         #expect(instance.hostState == storage.hostStates[instance.bundleURL])

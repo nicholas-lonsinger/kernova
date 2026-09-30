@@ -30,17 +30,16 @@ struct OSSelectionContentViewControllerTests {
         #expect(findButton(titled: "macOS", in: vc.view)?.state == .off)
     }
 
-    @Test("Selecting an OS leaves the resource values the user is standing on")
-    func selectingLeavesResourceValues() {
+    @Test("Selecting an OS moves the resource defaults and leaves the values the user chose")
+    func selectingMovesDefaultsAndLeavesChoices() {
         let vm = VMCreationViewModel()
-        let originalCPU = vm.cpuCount
-        let originalMemory = vm.memoryInGB
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
+        vm.memorySize = VMMemorySize(mebibytes: 1536)
 
         findButton(titled: "Linux", in: vc.view)?.performClick(nil)
 
-        #expect(vm.cpuCount == originalCPU)
-        #expect(vm.memoryInGB == originalMemory)
+        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
+        #expect(vm.memorySize.mebibytes == 1536)
     }
 }

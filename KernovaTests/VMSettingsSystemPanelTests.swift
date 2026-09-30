@@ -125,7 +125,7 @@ struct VMSettingsSystemPanelTests {
         #expect(editableField("Height", in: vc.view)?.integerValue == 900)
     }
 
-    @Test("A typed size below the floor clamps and flips the popup to Custom")
+    @Test("A typed small size is taken as typed, a 0 clamps to 1, and the popup flips to Custom")
     func typedSizeClampsAndSelectsCustom() {
         let (vc, instance) = makeDisplayController()
         guard let width = editableField("Width", in: vc.view),
@@ -139,9 +139,15 @@ struct VMSettingsSystemPanelTests {
         typeText("401", into: height)
         commitEdit(width)
 
-        #expect(instance.configuration.displayWidth == 800)
-        #expect(instance.configuration.displayHeight == 600)
+        #expect(instance.configuration.displayWidth == 640)
+        #expect(instance.configuration.displayHeight == 401)
         #expect(popUp.titleOfSelectedItem == "Custom")
+
+        typeText("0", into: width)
+        commitEdit(width)
+
+        #expect(instance.configuration.displayWidth == DisplayBootSizing.minimumDimension)
+        #expect(width.integerValue == DisplayBootSizing.minimumDimension)
     }
 
     @Test("In manual mode HiDPI rewrites the stored trio in both directions")
@@ -517,13 +523,13 @@ struct VMSettingsSystemPanelTests {
         switch edit {
         case .cpuField:
             let field = try #require(editableField("CPU cores", in: vc.view))
-            typeText(String(TypedField.cpus.changedValue(from: config)), into: field)
+            typeText(TypedField.cpus.changedValue(from: config), into: field)
         case .memoryField:
             let field = try #require(editableField("Memory", in: vc.view))
-            typeText(String(TypedField.memory.changedValue(from: config)), into: field)
+            typeText(TypedField.memory.changedValue(from: config), into: field)
         case .widthField:
             let field = try #require(editableField("Width", in: vc.view))
-            typeText(String(TypedField.width.changedValue(from: config)), into: field)
+            typeText(TypedField.width.changedValue(from: config), into: field)
         case .matchWindowSwitch, .hiDPISwitch, .audioInput, .audioOutput:
             let toggle = try #require(firstSwitch(action: switchAction(edit), in: vc.view))
             toggle.state = toggle.state == .on ? .off : .on
@@ -572,8 +578,8 @@ struct VMSettingsSystemPanelTests {
             return try #require(editableField("CPU cores", in: vc.view)).integerValue
                 == config.cpuCount
         case .memoryField:
-            return try #require(editableField("Memory", in: vc.view)).integerValue
-                == config.memorySizeInGB
+            return try #require(editableField("Memory", in: vc.view)).stringValue
+                == config.memorySizeInGB.gibibytesText
         case .widthField:
             return try #require(editableField("Width", in: vc.view)).integerValue
                 == config.displayBaseSize.width
@@ -681,25 +687,27 @@ struct VMSettingsSystemPanelTests {
             }
         }
 
-        /// A value the VM does not hold, within the field's range.
-        func changedValue(from config: VMConfiguration) -> Int {
+        /// The text of a value the VM does not hold, within the field's range.
+        func changedValue(from config: VMConfiguration) -> String {
             switch self {
-            case .cpus: config.cpuCount == config.guestOS.minCPUCount ? config.cpuCount + 1 : config.cpuCount - 1
+            case .cpus:
+                String(config.cpuCount == VMResourceLimits.cpuCount.lower ? config.cpuCount + 1 : config.cpuCount - 1)
             case .memory:
-                config.memorySizeInGB == config.guestOS.minMemoryInGB
-                    ? config.memorySizeInGB + 1 : config.memorySizeInGB - 1
-            case .width: config.displayBaseSize.width == 1440 ? 1680 : 1440
-            case .height: config.displayBaseSize.height == 900 ? 1050 : 900
+                VMResourceLimits.memorySize.contains(config.memorySizeInGB.adding(gibibytes: 1))
+                    ? config.memorySizeInGB.adding(gibibytes: 1).gibibytesText
+                    : config.memorySizeInGB.nextWholeGibibyte(upward: false).gibibytesText
+            case .width: String(config.displayBaseSize.width == 1440 ? 1680 : 1440)
+            case .height: String(config.displayBaseSize.height == 900 ? 1050 : 900)
             }
         }
 
-        /// What the VM holds for the field.
-        func modelValue(of config: VMConfiguration) -> Int {
+        /// The text the field shows for what the VM holds.
+        func modelValue(of config: VMConfiguration) -> String {
             switch self {
-            case .cpus: config.cpuCount
-            case .memory: config.memorySizeInGB
-            case .width: config.displayBaseSize.width
-            case .height: config.displayBaseSize.height
+            case .cpus: String(config.cpuCount)
+            case .memory: config.memorySizeInGB.gibibytesText
+            case .width: String(config.displayBaseSize.width)
+            case .height: String(config.displayBaseSize.height)
             }
         }
     }
@@ -716,7 +724,7 @@ struct VMSettingsSystemPanelTests {
         let field = try #require(editableField(typed.rawValue, in: vc.view))
         #expect(window.makeFirstResponder(field))
         #expect(field.currentEditor() != nil)
-        let text = String(typed.changedValue(from: before))
+        let text = typed.changedValue(from: before)
         typeText(text, into: field)
 
         instance.activity.placeForTesting(.running(sessionID: UUID()))
@@ -729,7 +737,7 @@ struct VMSettingsSystemPanelTests {
         #expect(presenter.errors.first?.contains(typed.key) == true)
         #expect(instance.configuration == before)
         #expect(storage.bundles[instance.bundleURL] == onDisk)
-        #expect(field.integerValue == typed.modelValue(of: instance.configuration))
+        #expect(field.stringValue == typed.modelValue(of: instance.configuration))
     }
 
     @Test(
@@ -743,7 +751,7 @@ struct VMSettingsSystemPanelTests {
         let field = try #require(editableField(focused.rawValue, in: vc.view))
         #expect(window.makeFirstResponder(field))
         #expect(field.currentEditor() != nil)
-        let changed = String(focused.changedValue(from: instance.configuration))
+        let changed = focused.changedValue(from: instance.configuration)
 
         // Not the pane's own write: the field hears of it only through the
         // model, as it does a CLI `set`.
@@ -771,12 +779,12 @@ struct VMSettingsSystemPanelTests {
         let original = instance.configuration.cpuCount
         let typed = TypedField.cpus.changedValue(from: instance.configuration)
         #expect(window.makeFirstResponder(field))
-        typeText(String(typed), into: field)
+        typeText(typed, into: field)
 
         // Return commits the edit and leaves the field focused, its text
         // reselected in a field editor.
         try #require(field.currentEditor() as? NSTextView).insertNewline(nil)
-        #expect(instance.configuration.cpuCount == typed)
+        #expect(String(instance.configuration.cpuCount) == typed)
         if field.currentEditor() == nil { #expect(window.makeFirstResponder(field)) }
 
         let outcome = viewModel.setConfiguration(
@@ -811,11 +819,11 @@ struct VMSettingsSystemPanelTests {
 
         #expect(editor.selectedRange() == NSRange(location: 0, length: shown.utf16.count))
         let typed = TypedField.cpus.changedValue(from: instance.configuration)
-        editor.insertText(String(typed), replacementRange: NSRange(location: NSNotFound, length: 0))
-        #expect(field.stringValue == String(typed))
+        editor.insertText(typed, replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(field.stringValue == typed)
         #expect(window.makeFirstResponder(nil))
 
-        #expect(instance.configuration.cpuCount == typed)
+        #expect(String(instance.configuration.cpuCount) == typed)
         #expect(presenter.errors.isEmpty)
     }
 
@@ -832,17 +840,41 @@ struct VMSettingsSystemPanelTests {
         let original = instance.configuration.cpuCount
         let typed = TypedField.cpus.changedValue(from: instance.configuration)
         #expect(window.makeFirstResponder(field))
-        typeText(String(typed), into: field)
+        typeText(typed, into: field)
 
-        // A click that lands on the value the VM already holds: the guest's
-        // count range can be as narrow as two values, and a typed edit that
-        // survived the click would still show here and be written below.
+        // A click that lands on the value the VM already holds, so a typed
+        // edit that survived the click would still show here and be written
+        // below.
         stepper.integerValue = original
         stepper.sendAction(stepper.action, to: stepper.target)
 
         #expect(field.stringValue == String(original))
         #expect(window.makeFirstResponder(nil))
         #expect(instance.configuration.cpuCount == original)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("Memory takes a typed decimal to the nearest megabyte, and its arrows move between whole gigabytes")
+    func memoryTakesDecimalsAndStepsWhole() throws {
+        let (vc, instance, presenter, _) = makeMachineEditController()
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        let field = try #require(editableField("Memory", in: vc.view))
+        let stepper = try #require(
+            allSubviews(NSStepper.self, in: vc.view) {
+                $0.action.map(NSStringFromSelector) == "memoryStepperChanged"
+            }.first)
+        #expect(window.makeFirstResponder(field))
+        typeText("1.5", into: field)
+        commitEdit(field)
+        #expect(instance.configuration.memorySizeInGB.mebibytes == 1536)
+        #expect(field.stringValue == "1.5")
+
+        stepper.doubleValue = 2.5  // an up-arrow click from 1.5
+        stepper.sendAction(stepper.action, to: stepper.target)
+        #expect(instance.configuration.memorySizeInGB == .gibibytes(2))
+        #expect(field.stringValue == "2")
+        #expect(stepper.doubleValue == 2)
         #expect(presenter.errors.isEmpty)
     }
 
@@ -854,7 +886,7 @@ struct VMSettingsSystemPanelTests {
         window.contentView = vc.view
         let field = try #require(editableField("CPU cores", in: vc.view))
         let original = instance.configuration.cpuCount
-        let changed = String(TypedField.cpus.changedValue(from: instance.configuration))
+        let changed = TypedField.cpus.changedValue(from: instance.configuration)
         #expect(window.makeFirstResponder(field))
 
         let outcome = viewModel.setConfiguration(

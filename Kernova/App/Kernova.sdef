@@ -57,7 +57,7 @@
 			<property name="processor count" code="KvCP" type="integer" access="r" description="Virtual CPU cores the guest is configured with.">
 				<cocoa key="processorCount"/>
 			</property>
-			<property name="memory" code="KvMm" type="integer" access="r" description="Guest memory in whole gigabytes.">
+			<property name="memory" code="KvMm" type="real" access="r" description="Guest memory in gigabytes.">
 				<cocoa key="memory"/>
 			</property>
 			<property name="disk size" code="KvDs" type="integer" access="r" description="The main disk's configured size in gigabytes.">

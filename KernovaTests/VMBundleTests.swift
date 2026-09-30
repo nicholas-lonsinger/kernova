@@ -128,7 +128,7 @@ struct VMBundleTests {
     private func changeOnDisk(_ file: StateFile, at url: URL) throws {
         let other = writer(url)
         switch file {
-        case .configuration: try other.update(.configuration) { $0.memorySizeInGB = 12 }
+        case .configuration: try other.update(.configuration) { $0.memorySizeInGB = .gibibytes(12) }
         case .hostState: try other.update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
         case .snapshotManifest: try other.update(.snapshotManifest) { $0.insert(snapshot("Theirs")) }
         case .usbPairings: try other.update(.usbPairings) { $0.upsert(pairing("theirs")) }
@@ -137,7 +137,7 @@ struct VMBundleTests {
 
     private func holdsOtherChange(_ file: StateFile, _ read: VMBundleRead) -> Bool {
         switch file {
-        case .configuration: read.configuration.memorySizeInGB == 12
+        case .configuration: read.configuration.memorySizeInGB == .gibibytes(12)
         case .hostState: read.hostState.startsAutomaticallyOnLaunch
         case .snapshotManifest: read.snapshotManifest.snapshots.contains { $0.name == "Theirs" }
         case .usbPairings: read.usbPairings.pairing(forKey: "theirs") != nil

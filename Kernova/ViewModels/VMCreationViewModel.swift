@@ -250,9 +250,24 @@ final class VMCreationViewModel {
     // MARK: - Step 3: Resources
 
     var vmName: String = "My Virtual Machine"
-    var cpuCount: Int = 4
-    var memoryInGB: Int = 8
-    var diskSizeInGB: Int = 100
+
+    /// The selected guest's default until the user picks a count, which then
+    /// stands whatever guest is selected.
+    var cpuCount: Int {
+        get { chosenCPUCount ?? selectedOS.defaultCPUCount }
+        set { chosenCPUCount = newValue }
+    }
+
+    /// ``cpuCount`` for memory.
+    var memorySize: VMMemorySize {
+        get { chosenMemorySize ?? selectedOS.defaultMemorySize }
+        set { chosenMemorySize = newValue }
+    }
+
+    private var chosenCPUCount: Int?
+    private var chosenMemorySize: VMMemorySize?
+
+    var diskSizeInGB: Int = VMGuestOS.defaultDiskSizeInGB
     var networkEnabled: Bool = true
 
     // MARK: - Step 4: Guest Account
@@ -941,7 +956,7 @@ final class VMCreationViewModel {
             guestOS: selectedOS,
             bootMode: bootMode,
             cpuCount: cpuCount,
-            memorySizeInGB: memoryInGB,
+            memorySizeInGB: memorySize,
             diskSizeInGB: diskSizeInGB,
             networkEnabled: networkEnabled,
             macAddress: macAddress,

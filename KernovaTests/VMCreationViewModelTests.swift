@@ -213,6 +213,22 @@ struct VMCreationViewModelTests {
         #expect(vm.effectiveBootMode == .linuxKernel)
     }
 
+    // MARK: - Resource defaults
+
+    @Test("Resource defaults follow the selected guest until the user chooses", arguments: VMGuestOS.allCases)
+    func resourceDefaultsFollowTheGuest(os: VMGuestOS) {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = os
+
+        #expect(vm.cpuCount == os.defaultCPUCount)
+        #expect(vm.memorySize == os.defaultMemorySize)
+        #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
+
+        vm.cpuCount = 3
+        vm.selectedOS = os == .macOS ? .linux : .macOS
+        #expect(vm.cpuCount == 3)
+    }
+
     // MARK: - buildConfiguration
 
     @Test("buildConfiguration produces configuration with correct fields for Linux EFI")
@@ -222,7 +238,7 @@ struct VMCreationViewModelTests {
         vm.selectedBootMode = .efi
         vm.vmName = "  Test Linux  "
         vm.cpuCount = 4
-        vm.memoryInGB = 8
+        vm.memorySize = .gibibytes(8)
         vm.diskSizeInGB = 64
         vm.networkEnabled = true
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
@@ -233,7 +249,7 @@ struct VMCreationViewModelTests {
         #expect(config.guestOS == .linux)
         #expect(config.bootMode == .efi)
         #expect(config.cpuCount == 4)
-        #expect(config.memorySizeInGB == 8)
+        #expect(config.memorySizeInGB == .gibibytes(8))
         #expect(config.diskSizeInGB == 64)
         #expect(config.networkEnabled == true)
         #expect(config.macAddress != nil)  // generated for networking
@@ -259,7 +275,7 @@ struct VMCreationViewModelTests {
         vm.selectedBootMode = .linuxKernel
         vm.vmName = "Kernel VM"
         vm.cpuCount = 2
-        vm.memoryInGB = 4
+        vm.memorySize = .gibibytes(4)
         vm.diskSizeInGB = 32
         vm.networkEnabled = false
         vm.kernelPath = "/path/to/vmlinuz"

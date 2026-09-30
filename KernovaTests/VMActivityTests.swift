@@ -338,7 +338,7 @@ struct VMActivityTests {
         let renamed = try instance.activity.edit(.rename) { permit in
             permit.updateConfiguration {
                 $0.name = "Renamed"
-                $0.memorySizeInGB = memory + 4
+                $0.memorySizeInGB = memory.adding(gibibytes: 4)
             }
         }
         #expect(renamed.fieldsOutsidePermit == ["memorySizeInGB"])
@@ -434,13 +434,13 @@ struct VMActivityTests {
             }
             // A machine key no settled live VM takes, written as the
             // operation's own.
-            #expect(context.permit.updateConfiguration { $0.memorySizeInGB = 6 }.landed)
+            #expect(context.permit.updateConfiguration { $0.memorySizeInGB = .gibibytes(6) }.landed)
             return .rest(.asStarted, (context.permit.authority, refusal))
         }
 
         #expect(authority == .operation(.deletingSnapshot))
         #expect(besideRefusal == VMAdmissionRefusal(refusal: .busy(.deletingSnapshot)))
-        #expect(instance.configuration.memorySizeInGB == 6)
+        #expect(instance.configuration.memorySizeInGB == .gibibytes(6))
     }
 
     // MARK: - launch

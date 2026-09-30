@@ -738,3 +738,10 @@ final class ChannelLostRecorder {
         changed.notify()
     }
 }
+
+extension VMMemorySize {
+    /// This size grown by `gibibytes`.
+    func adding(gibibytes: UInt32) -> VMMemorySize {
+        VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
+    }
+}

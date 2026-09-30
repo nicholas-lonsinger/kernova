@@ -289,24 +289,22 @@ enum VMConfigurationKeyRegistry {
 
     static let cpus = VMConfigurationKey(
         name: "cpus",
-        summary: "Virtual CPU cores, within what the guest and this Mac allow.",
+        summary: "Virtual CPU cores, within what Virtualization allows on this Mac.",
         gate: .atRest,
         read: { String($0.cpuCount) },
         write: { value, config, _ in
             config.cpuCount = try ConfigurationValue.integer(
-                value, key: "cpus",
-                in: config.guestOS.minCPUCount...config.guestOS.maxCPUCount)
+                value, key: "cpus", in: VMResourceLimits.cpuCount)
         })
 
     static let memory = VMConfigurationKey(
         name: "memory",
-        summary: "Guest memory in whole gigabytes.",
+        summary: "Guest memory in gigabytes, to the nearest megabyte: 8, or 1.5 for 1536 MB.",
         gate: .atRest,
-        read: { String($0.memorySizeInGB) },
+        read: { $0.memorySizeInGB.gibibytesText },
         write: { value, config, _ in
-            config.memorySizeInGB = try ConfigurationValue.integer(
-                value, key: "memory",
-                in: config.guestOS.minMemoryInGB...config.guestOS.maxMemoryInGB)
+            config.memorySizeInGB = try ConfigurationValue.memorySize(
+                value, key: "memory", in: VMResourceLimits.memorySize)
         })
 
     // MARK: - Display
@@ -318,8 +316,7 @@ enum VMConfigurationKeyRegistry {
         read: { String($0.displayBaseSize.width) },
         write: { value, config, _ in
             let width = try ConfigurationValue.integer(
-                value, key: "display.width",
-                in: config.displayBaseSizeRange.width)
+                value, key: "display.width", in: config.displayBaseSizeBounds)
             config.setDisplayBaseSize(width: width, height: config.displayBaseSize.height)
         },
         refusalOnResult: sizedToWindowRefusal("display.width"))
@@ -331,8 +328,7 @@ enum VMConfigurationKeyRegistry {
         read: { String($0.displayBaseSize.height) },
         write: { value, config, _ in
             let height = try ConfigurationValue.integer(
-                value, key: "display.height",
-                in: config.displayBaseSizeRange.height)
+                value, key: "display.height", in: config.displayBaseSizeBounds)
             config.setDisplayBaseSize(width: config.displayBaseSize.width, height: height)
         },
         refusalOnResult: sizedToWindowRefusal("display.height"))
@@ -652,18 +648,36 @@ enum ConfigurationValue {
             "\(key) takes true or false, not \u{201C}\(text)\u{201D}.")
     }
 
-    static func integer(_ text: String, key: String, in range: ClosedRange<Int>) throws -> Int {
+    static func integer(_ text: String, key: String, in bounds: InclusiveBounds<Int>) throws -> Int {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let value = Int(trimmed) else {
             throw CommandError.invalidArgument(
                 "\(key) takes a whole number, not \u{201C}\(text)\u{201D}.")
         }
-        guard range.contains(value) else {
-            throw CommandError.invalidArgument(
-                "\(key) takes \(range.lowerBound) to \(range.upperBound) on this virtual machine, "
-                    + "and \(value) is outside that.")
+        guard bounds.contains(value) else {
+            throw outOfBounds(key: key, lower: String(bounds.lower), upper: String(bounds.upper), value: trimmed)
         }
         return value
+    }
+
+    /// `text` as a decimal count of gigabytes, rounded to the nearest megabyte.
+    static func memorySize(
+        _ text: String, key: String, in bounds: InclusiveBounds<VMMemorySize>
+    ) throws -> VMMemorySize {
+        guard let value = VMMemorySize(gibibytesText: text) else {
+            throw CommandError.invalidArgument(
+                "\(key) takes a number of gigabytes, not \u{201C}\(text)\u{201D}.")
+        }
+        guard bounds.contains(value) else {
+            throw outOfBounds(
+                key: key, lower: bounds.lower.gibibytesText, upper: bounds.upper.gibibytesText,
+                value: value.gibibytesText)
+        }
+        return value
+    }
+
+    private static func outOfBounds(key: String, lower: String, upper: String, value: String) -> CommandError {
+        .invalidArgument("\(key) takes \(lower) to \(upper), and \(value) is outside that.")
     }
 
     /// `text` as one of `T`'s cases, listing every accepted spelling when it

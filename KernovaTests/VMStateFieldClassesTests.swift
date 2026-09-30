@@ -48,7 +48,7 @@ struct VMStateFieldClassesTests {
         let old = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
         var new = old
         new.name = "Renamed"
-        new.memorySizeInGB += 2
+        new.memorySizeInGB = new.memorySizeInGB.adding(gibibytes: 2)
         let classes = VMConfiguration.fieldClasses
         #expect(classes.refused(from: old, to: new, by: .edit(.rename)) == ["memorySizeInGB"])
         #expect(classes.refused(from: old, to: new, by: .edit([.rename, .machineKeys])) == [])

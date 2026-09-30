@@ -509,7 +509,7 @@ struct VirtualizationServiceTests {
         let instance = try library.registerOnDiskFixture(
             name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {
-            $0.memorySizeInGB = 16
+            $0.memorySizeInGB = .gibibytes(16)
             $0.macAddress = macAddress
         }
         let layout = instance.bundleLayout
@@ -517,7 +517,7 @@ struct VirtualizationServiceTests {
 
         // The capture: taken while the VM had 8 GB and a second disk.
         var capturedConfiguration = instance.configuration
-        capturedConfiguration.memorySizeInGB = 8
+        capturedConfiguration.memorySizeInGB = .gibibytes(8)
         capturedConfiguration.macAddress = capturedMACAddress ?? macAddress
         let extraID = UUID()
         capturedConfiguration.storageDisks = [
@@ -579,13 +579,13 @@ struct VirtualizationServiceTests {
 
         try await revert(fixture)
 
-        #expect(fixture.instance.configuration.memorySizeInGB == 8)
+        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
         #expect(fixture.instance.configuration.id == originalID)
         #expect(fixture.instance.configuration.name == "Revert VM")
         // On disk too, so a later load reads the same settings the saved state
         // was written under.
         let written = try VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
-        #expect(written.memorySizeInGB == 8)
+        #expect(written.memorySizeInGB == .gibibytes(8))
         #expect(written.name == "Revert VM")
     }
 
@@ -684,7 +684,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.phase.operation == nil)
         // The captured configuration is committed only once the restore
         // staged, so the VM still holds its own 16 GB, not the snapshot's 8.
-        #expect(fixture.instance.configuration.memorySizeInGB == 16)
+        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(16))
     }
 
     /// The text of the file at `url`, `nil` when there is none.
@@ -705,7 +705,7 @@ struct VirtualizationServiceTests {
 
         #expect(contents(of: layout.diskImageURL) == "live-disk")
         #expect(contents(of: layout.saveFileURL) == "own-suspend-slot")
-        #expect(fixture.instance.configuration.memorySizeInGB == 16)
+        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(16))
         #expect(!FileManager.default.fileExists(atPath: layout.restoreStagingURL.path(percentEncoded: false)))
         #expect(fixture.instance.phase == .suspended)
     }
@@ -728,7 +728,7 @@ struct VirtualizationServiceTests {
         #expect(slotAtCommit == "own-suspend-slot")
         #expect(contents(of: layout.diskImageURL) == "captured-disk")
         #expect(contents(of: layout.saveFileURL) == "captured-state")
-        #expect(fixture.instance.configuration.memorySizeInGB == 8)
+        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
     }
 
     /// Nothing rolls back: the swap is renames on one volume, and the disks it
@@ -751,8 +751,8 @@ struct VirtualizationServiceTests {
             }
         }
 
-        #expect(fixture.instance.configuration.memorySizeInGB == 8)
-        #expect(try VMConfiguration.load(fromBundle: fixture.instance.bundleURL).memorySizeInGB == 8)
+        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
+        #expect(try VMConfiguration.load(fromBundle: fixture.instance.bundleURL).memorySizeInGB == .gibibytes(8))
         #expect(contents(of: layout.diskImageURL) == "captured-disk")
         #expect(!layout.hasSaveFile)
         #expect(fixture.instance.status == .stopped)

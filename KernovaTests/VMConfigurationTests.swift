@@ -55,7 +55,7 @@ struct VMConfigurationTests {
         #expect(config.guestOS == .macOS)
         #expect(config.bootMode == .macOS)
         #expect(config.cpuCount == VMGuestOS.macOS.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.macOS.defaultMemoryInGB)
+        #expect(config.memorySizeInGB == VMGuestOS.macOS.defaultMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
         #expect(config.networkEnabled == true)
         #expect(config.displayWidth == 1920)
@@ -74,7 +74,7 @@ struct VMConfigurationTests {
         #expect(config.guestOS == .linux)
         #expect(config.bootMode == .efi)
         #expect(config.cpuCount == VMGuestOS.linux.defaultCPUCount)
-        #expect(config.memorySizeInGB == VMGuestOS.linux.defaultMemoryInGB)
+        #expect(config.memorySizeInGB == VMGuestOS.linux.defaultMemorySize)
         #expect(config.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
     }
 
@@ -84,10 +84,34 @@ struct VMConfigurationTests {
             name: "Test",
             guestOS: .linux,
             bootMode: .efi,
-            memorySizeInGB: 4
+            memorySizeInGB: .gibibytes(4)
         )
 
         #expect(config.memorySizeInBytes == 4 * 1024 * 1024 * 1024)
+    }
+
+    @Test("An existing config's whole-gigabyte memory decodes unchanged and re-encodes as the same integer")
+    func wholeGigabyteMemoryRoundTrips() throws {
+        let config = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
+        #expect(config.memorySizeInGB == .gibibytes(8))
+
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(config)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(String(decoding: encoded, as: UTF8.self).contains("\"memorySizeInGB\" : 8,"))
+        #expect(object["memorySizeInGB"] as? Int == 8)
+    }
+
+    @Test("A decimal memory size decodes to the nearest megabyte and re-encodes as the same decimal")
+    func decimalMemoryRoundTrips() throws {
+        let json = Self.makeBaseJSON().replacingOccurrences(
+            of: "\"memorySizeInGB\": 8", with: "\"memorySizeInGB\": 1.5")
+        let config = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        #expect(config.memorySizeInGB.mebibytes == 1536)
+        #expect(config.memorySizeInBytes == 1536 * 1024 * 1024)
+
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(config)
+        #expect(String(decoding: encoded, as: UTF8.self).contains("\"memorySizeInGB\" : 1.5,"))
     }
 
     @Test("Configuration preserves macOS-specific fields")
@@ -1396,7 +1420,7 @@ struct VMConfigurationTests {
             guestOS: .macOS,
             bootMode: .macOS,
             cpuCount: 12,
-            memorySizeInGB: 24,
+            memorySizeInGB: .gibibytes(24),
             diskSizeInGB: 256,
             displayWidth: 2560,
             displayHeight: 1440,
@@ -1568,7 +1592,7 @@ struct VMConfigurationTests {
     @Test("Adopting a snapshot's state takes its hardware and keeps this VM's identity")
     func adoptingSnapshotStateKeepsIdentity() {
         var current = VMConfiguration(name: "Renamed since", guestOS: .macOS, bootMode: .macOS)
-        current.memorySizeInGB = 16
+        current.memorySizeInGB = .gibibytes(16)
         current.cpuCount = 8
         current.audioInputEnabled = true
         current.hardwareModelData = Data("current-hardware".utf8)
@@ -1579,7 +1603,7 @@ struct VMConfigurationTests {
         var captured = current
         captured.id = UUID()
         captured.name = "Name at capture time"
-        captured.memorySizeInGB = 8
+        captured.memorySizeInGB = .gibibytes(8)
         captured.cpuCount = 4
         captured.audioInputEnabled = false
         captured.hardwareModelData = Data("captured-hardware".utf8)
@@ -1590,7 +1614,7 @@ struct VMConfigurationTests {
         let restored = current.adoptingSnapshotState(captured)
 
         // Device state the saved state was written under comes back.
-        #expect(restored.memorySizeInGB == 8)
+        #expect(restored.memorySizeInGB == .gibibytes(8))
         #expect(restored.cpuCount == 4)
         #expect(restored.audioInputEnabled == false)
         // Identity does not — a revert must not hand the guest a different machine.
