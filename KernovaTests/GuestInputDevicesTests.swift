@@ -73,7 +73,7 @@ struct GuestInputDevicesTests {
     @Test("A Linux install record leaves the version unknown, resolving to the Mac pair")
     func linuxInstallRecordResolvesMac() {
         var config = Self.makeConfig()
-        config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "22.04")
+        config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "22.04", digest: nil)
         #expect(GuestInputDevices.resolve(for: config) == .mac)
     }
 

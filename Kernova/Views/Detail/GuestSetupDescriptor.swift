@@ -20,6 +20,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     struct StepCopy: Sendable, Equatable {
         /// Verb the subtitle's first line leads with ("Downloading").
         let detailVerb: String
+        /// A secondary line under the progress detail, or `nil` for none.
+        var caption: String? = nil
     }
 
     let title: String
@@ -52,20 +54,26 @@ struct GuestSetupDescriptor: Sendable, Equatable {
         ])
 
     /// A Linux installer image: downloaded from where it is served, then
-    /// checked against the digest published or supplied for it.
-    static func linuxImage(named image: String) -> GuestSetupDescriptor {
+    /// checked against `digestSource`, or only hashed when there is none.
+    ///
+    /// Carries copy for both the Verify and the Checksum step whatever
+    /// `digestSource` is, so no step list ``GuestSetupState/linuxImage(digestSource:)``
+    /// builds can lack its copy.
+    static func linuxImage(named image: String, digestSource: DigestSource?) -> GuestSetupDescriptor {
         GuestSetupDescriptor(
-            title: "Downloading \(image)",
-            icon: .symbol("opticaldisc"),
+            title: "Downloading \(image)", icon: .symbol("opticaldisc"),
             stepCopy: [
                 .download: StepCopy(detailVerb: "Downloading"),
-                .verify: StepCopy(detailVerb: "Verifying"),
+                .verify: StepCopy(
+                    detailVerb: "Verifying",
+                    caption: digestSource.map { "Checking against \($0.phrase)" }),
+                .checksum: StepCopy(detailVerb: "Computing checksum"),
             ])
     }
 
     /// The descriptor for whichever setup `instance` has pending.
     @MainActor static func forSetup(of instance: VMInstance) -> GuestSetupDescriptor {
         guard let context = instance.configuration.linuxInstallContext else { return .macOSInstall }
-        return .linuxImage(named: context.imageDisplayName)
+        return .linuxImage(named: context.imageDisplayName, digestSource: context.source.digestSource)
     }
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The guest agent targets take their deployment floor from
+# The guest agent target takes its deployment floor from
 # KERNOVA_AGENT_DEPLOYMENT_TARGET in Config/Base.xcconfig; KernovaKit compiles
 # into the agent and must not raise it. SwiftPM cannot read an xcconfig, so
 # Package.swift's `.macOS(.vN)` is the one restatement of that floor — this
 # check is what holds the two together.
 #
-# It also holds the agent xcconfigs to the variable, so raising the floor in
+# It also holds the agent xcconfig to the variable, so raising the floor in
 # the file named for the agent — the obvious place to look — cannot bypass the
 # comparison above.
 
@@ -21,7 +21,6 @@ base="Config/Base.xcconfig"
 manifest="KernovaKit/Package.swift"
 agent_xcconfigs=(
     "Config/Targets/KernovaMacOSAgent.xcconfig"
-    "Config/Targets/KernovaMacOSAgentTests.xcconfig"
 )
 
 status=0

@@ -282,8 +282,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var createdAt: Date
 
     /// The installer image this VM was set up from, or `nil` when Kernova has
-    /// no record of one — a VM it did not install, or a Linux image the user
-    /// supplied by URL.
+    /// no record of one — a VM it did not install, or a Linux ISO the user
+    /// picked off their own disk.
     var installedImage: InstalledImage?
 
     // MARK: - Initializer

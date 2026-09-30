@@ -112,7 +112,7 @@ struct GuestAgentDiskDeliveryTests {
     @Test("A Linux install record never answers for a macOS guest's version")
     func linuxInstallRecordIsNotAVersion() {
         var config = Self.makeConfig()
-        config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "12.0.1")
+        config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "12.0.1", digest: nil)
         #expect(config.effectiveGuestMacOSVersion == nil)
         #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
     }

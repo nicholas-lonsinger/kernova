@@ -29,10 +29,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var macAddressField = ModelValueField()
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
-    private var ipAddressCopyButton: NSButton?
-    /// What the copy button copies — the observed address, `nil` while the
-    /// row shows anything else.
-    private var ipAddressCopyValue: String?
+    private var ipAddressCopyButton: CopyValueButton?
     /// Stands in for the card's rows while the mode is None.
     private var networkNoDeviceCaption = NSTextField()
     /// Holds the banner naming the other VMs sharing this one's MAC address.
@@ -121,14 +118,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let value = makeGroupedFormValueLabel("")
         ipAddressValueLabel = value
 
-        let copy = NSButton()
-        copy.image = .systemSymbol("doc.on.doc", accessibilityDescription: "Copy IP Address")
-        copy.imagePosition = .imageOnly
-        copy.isBordered = false
-        copy.contentTintColor = .secondaryLabelColor
-        copy.toolTip = "Copy IP Address"
-        copy.target = self
-        copy.action = #selector(copyIPAddressTapped)
+        let copy = CopyValueButton(name: "Copy IP Address")
         ipAddressCopyButton = copy
 
         let control = NSStackView(views: [value, copy])
@@ -144,15 +134,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// over a visible-but-empty control wherever there is nothing to state.
     private func refreshIPAddressRow() {
         let address = resolved.ipAddress
-        ipAddressCopyValue = address.address
         ipAddressRow?.isHidden = address.displayText == nil
-        ipAddressCopyButton?.isHidden = address.address == nil
+        ipAddressCopyButton?.value = address.address
         ipAddressValueLabel?.stringValue = address.displayText ?? ""
-    }
-
-    @objc private func copyIPAddressTapped() {
-        guard let value = ipAddressCopyValue else { return }
-        copyToPasteboard(value)
     }
 
     // MARK: MAC Address

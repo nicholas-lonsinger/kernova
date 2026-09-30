@@ -6,6 +6,7 @@ enum SetupStepID: String, Sendable, Equatable {
     case download
     case install
     case verify
+    case checksum
 }
 
 /// One step of a guest-setup flow, as the progress indicator draws it.
@@ -114,21 +115,16 @@ struct GuestSetupState: Sendable, Equatable {
             progress: .download(.zero))
     }
 
-    /// A Linux installer image: fetched from where it is served, then checked
-    /// against the digest published or supplied for it.
-    ///
-    /// A user-supplied URL can carry no digest, and there is then nothing to
-    /// verify — the fetch is the whole flow.
-    static func linuxImage(hasVerifyStep: Bool) -> GuestSetupState {
-        guard hasVerifyStep else {
-            return GuestSetupState(
-                steps: [SetupStep(id: .download, label: "Download")],
-                progress: .download(.zero))
-        }
-        return GuestSetupState(
+    /// A Linux installer image: fetched from where it is served, then hashed —
+    /// verified against `digestSource` when there is one, its checksum only
+    /// computed when there is none.
+    static func linuxImage(digestSource: DigestSource?) -> GuestSetupState {
+        GuestSetupState(
             steps: [
                 SetupStep(id: .download, label: "Download"),
-                SetupStep(id: .verify, label: "Verify"),
+                digestSource == nil
+                    ? SetupStep(id: .checksum, label: "Checksum")
+                    : SetupStep(id: .verify, label: "Verify"),
             ],
             progress: .download(.zero))
     }

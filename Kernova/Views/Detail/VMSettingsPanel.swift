@@ -251,6 +251,42 @@ func copyToPasteboard(_ string: String) {
     pasteboard.setString(string, forType: .string)
 }
 
+/// A copy button carrying the text it writes, so the value travels with the
+/// control; it is hidden while there is nothing to copy.
+@MainActor
+final class CopyValueButton: NSButton {
+    var value: String? { didSet { isHidden = value == nil } }
+
+    /// `name` titles the copy for its tooltip and accessibility label, e.g.
+    /// "Copy IP Address".
+    init(name: String, value: String? = nil) {
+        self.value = value
+        super.init(frame: .zero)
+        isHidden = value == nil
+        image = .systemSymbol("doc.on.doc", accessibilityDescription: name)
+        symbolConfiguration = NSImage.SymbolConfiguration(scale: .small)
+        imagePosition = .imageOnly
+        isBordered = false
+        contentTintColor = .secondaryLabelColor
+        toolTip = name
+        setAccessibilityLabel(name)
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        target = self
+        action = #selector(copyValue)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("CopyValueButton does not support NSCoder")
+    }
+
+    @objc private func copyValue() {
+        guard let value else { return }
+        copyToPasteboard(value)
+    }
+}
+
 /// What a panel header shows in place of a single section's own header.
 struct VMSettingsPanelChrome {
     var leading: [NSView] = []
