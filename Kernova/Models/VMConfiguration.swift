@@ -541,17 +541,18 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
 
-        // Regenerate IDs so virtio block device identifiers and USB UUIDs don't
-        // collide with the source bundle. Everything else, including the note,
-        // carries through — the clone references the same external files.
+        // A save file restores only under the USB mass storage `uuid`s it was
+        // saved with; virtio block identifiers are free to change
+        // (docs/research/2026-09-28-vz-restore-matches-usb-mass-storage-uuids.md).
+        // The clone carries no save file, so these new ids cost no restore.
+        // Everything else, including the note, carries through — the clone
+        // references the same external files.
         clone.storageDisks = storageDisks?.map { disk in
             var copy = disk
             copy.id = UUID()
             return copy
         }
 
-        // Regenerate removable media UUIDs for the same reason — VZ save-state
-        // matches by device UUID, and two bundles must not claim the same one.
         clone.removableMedia = removableMedia?.map { item in
             var copy = item
             copy.id = UUID()
