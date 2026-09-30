@@ -479,15 +479,17 @@ extension VMCommandCore {
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
         try require(anyOf: VMCapability.sharedDirectoryWrites, on: instance)
+        // Minted once, so every pass of the change adds the same shares.
+        let picks = files.map { (file: $0, id: UUID()) }
         try writeSharedDirectories(of: instance) { directories in
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
             var known = Set(directories.map { Self.comparablePath($0.path) })
-            for file in files where known.insert(Self.comparablePath(file.path)).inserted {
+            for pick in picks where known.insert(Self.comparablePath(pick.file.path)).inserted {
                 directories.append(
                     SharedDirectory(
-                        adding: file.path, readOnly: readOnly, bookmark: file.bookmark,
-                        to: directories))
+                        adding: pick.file.path, id: pick.id, readOnly: readOnly,
+                        bookmark: pick.file.bookmark, to: directories))
             }
         }
     }
@@ -546,6 +548,11 @@ extension VMCommandCore {
     /// Moves the VM's shared-directory list to what `change` makes of it, an
     /// emptied list stored as none; a change that leaves the list as it is
     /// writes nothing.
+    ///
+    /// `change` runs on the list in memory and again on the list the file
+    /// holds, so it is a function of the list alone: the two passes add the
+    /// same shares, and what the first opens scopes for is what the second
+    /// commits.
     ///
     /// Admission is ``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``.
     /// A move admitted as a live swap (``VMEditClasses/liveShares``) carries

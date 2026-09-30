@@ -984,6 +984,29 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.liveShares.installs.last?.share.entries.map(\.readOnly) == [true])
     }
 
+    @Test("A folder added live with a bookmark has its scope held under the share's id until removed")
+    func liveAddHoldsTheNewSharesScope() throws {
+        let harness = makeHarness()
+        let kept = SharedDirectory(path: try folder("kept"))
+        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+        let added = URL(fileURLWithPath: try folder("added"))
+        let bookmark = try #require(SecurityScopedBookmark.make(for: added))
+
+        try harness.core.addSharedDirectories(
+            .id(instance.id),
+            paths: [PickedFile(path: added.path(percentEncoded: false), bookmark: bookmark)])
+
+        let share = try #require(instance.configuration.sharedDirectories?.last)
+        #expect(share.bookmark == bookmark)
+        #expect(harness.liveShares.installs.last?.opened == [share.id])
+        #expect(harness.liveShares.heldScopeIDs == [share.id])
+
+        try harness.core.removeSharedDirectory(.id(instance.id), directory: share.id)
+
+        #expect(harness.liveShares.installs.last?.released == [share.id])
+        #expect(harness.liveShares.heldScopeIDs.isEmpty)
+    }
+
     /// Two folders of one name: the second is added under its id prefix, and
     /// removing the first renames neither the second in the running guest nor
     /// what a resume rebuilds from the configuration.

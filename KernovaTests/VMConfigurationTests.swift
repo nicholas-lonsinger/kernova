@@ -190,10 +190,10 @@ struct VMConfigurationTests {
     func addedShareTakesAFreeMountName() {
         let existing = [SharedDirectory(path: "/Users/a/src")]
         let fresh = SharedDirectory(
-            adding: "/Users/c/docs", readOnly: false, bookmark: nil, to: existing)
+            adding: "/Users/c/docs", id: UUID(), readOnly: false, bookmark: nil, to: existing)
         #expect(fresh.mountName == "docs")
         let colliding = SharedDirectory(
-            adding: "/Users/b/src", readOnly: true, bookmark: nil, to: existing)
+            adding: "/Users/b/src", id: UUID(), readOnly: true, bookmark: nil, to: existing)
         #expect(colliding.mountName == "\(colliding.id.uuidString.prefix(8))-src")
         #expect(colliding.readOnly)
     }

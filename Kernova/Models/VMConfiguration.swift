@@ -815,13 +815,13 @@ struct SharedDirectory: Codable, Sendable, Equatable {
         self.mountName = mountName ?? URL(fileURLWithPath: path).lastPathComponent
     }
 
-    /// A new share of the folder at `path`, mounted by a name none of
+    /// A new share `id` of the folder at `path`, mounted by a name none of
     /// `directories` holds: the folder's own, or the same prefixed with the
     /// share's id.
     init(
-        adding path: String, readOnly: Bool, bookmark: Data?, to directories: [SharedDirectory]
+        adding path: String, id: UUID, readOnly: Bool, bookmark: Data?,
+        to directories: [SharedDirectory]
     ) {
-        let id = UUID()
         let taken = Set(directories.map(\.mountName))
         let name = URL(fileURLWithPath: path).lastPathComponent
         let candidates = [
