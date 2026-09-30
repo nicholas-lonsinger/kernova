@@ -55,16 +55,20 @@ struct GuestSetupDescriptor: Sendable, Equatable {
 
     /// A Linux installer image: downloaded from where it is served, then
     /// checked against `digestSource`, or only hashed when there is none.
+    ///
+    /// Carries copy for both the Verify and the Checksum step whatever
+    /// `digestSource` is, so no step list ``GuestSetupState/linuxImage(digestSource:)``
+    /// builds can lack its copy.
     static func linuxImage(named image: String, digestSource: DigestSource?) -> GuestSetupDescriptor {
-        var stepCopy: [SetupStepID: StepCopy] = [.download: StepCopy(detailVerb: "Downloading")]
-        if let digestSource {
-            stepCopy[.verify] = StepCopy(
-                detailVerb: "Verifying", caption: "Checking against \(digestSource.phrase)")
-        } else {
-            stepCopy[.checksum] = StepCopy(detailVerb: "Computing checksum")
-        }
-        return GuestSetupDescriptor(
-            title: "Downloading \(image)", icon: .symbol("opticaldisc"), stepCopy: stepCopy)
+        GuestSetupDescriptor(
+            title: "Downloading \(image)", icon: .symbol("opticaldisc"),
+            stepCopy: [
+                .download: StepCopy(detailVerb: "Downloading"),
+                .verify: StepCopy(
+                    detailVerb: "Verifying",
+                    caption: digestSource.map { "Checking against \($0.phrase)" }),
+                .checksum: StepCopy(detailVerb: "Computing checksum"),
+            ])
     }
 
     /// The descriptor for whichever setup `instance` has pending.

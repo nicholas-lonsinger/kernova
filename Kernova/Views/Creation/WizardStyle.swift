@@ -189,25 +189,6 @@ func wizardApproximateSize(_ bytes: UInt64) -> String {
     "About \(DataFormatters.formatBytes(bytes))"
 }
 
-/// What a download pick will be checked against, and what both wizard
-/// surfaces say about it.
-///
-/// `nil` is a pick with nothing to check against. The check runs only once the
-/// image is downloaded, so neither form claims a result.
-struct WizardVerification {
-    let source: DigestSource?
-
-    /// The boot step badge's secondary line.
-    var badgeLine: String {
-        source.map { "Checked after download against \($0.phrase)" } ?? Self.unverified
-    }
-
-    /// The Review step's Verification row value.
-    var reviewValue: String { source?.title ?? Self.unverified }
-
-    private static let unverified = "Not verified"
-}
-
 /// Abbreviates a path with a leading `~` when it lives under a home
 /// directory the user would read as "mine".
 ///

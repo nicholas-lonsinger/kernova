@@ -451,8 +451,8 @@ extension VMCommandCore {
         }
     }
 
-    /// Maps a bring-up or install failure to copy naming the cause and the
-    /// remedy, or `nil` when the raw error description is the right surface.
+    /// Maps a bring-up or install failure to a title and message naming its
+    /// cause, or `nil` when the raw error description is the right surface.
     private func explainedFailure(
         for error: Error, verb: VMVerb, on instance: VMInstance
     ) -> (title: String, message: String)? {

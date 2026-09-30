@@ -105,10 +105,16 @@ struct GuestSetupDescriptorTests {
         for step in GuestSetupState.macOSInstall(hasDownloadStep: true).steps {
             #expect(GuestSetupDescriptor.macOSInstall.stepCopy[step.id] != nil)
         }
+        // Every Linux step has copy whatever the source, so no pairing of a
+        // state with a descriptor built from a different source can miss one.
+        let linuxSteps = Set(
+            [DigestSource.enteredByUser, nil].flatMap {
+                GuestSetupState.linuxImage(digestSource: $0).steps.map(\.id)
+            })
         for source in [DigestSource.enteredByUser, nil] {
             let linux = GuestSetupDescriptor.linuxImage(named: "Debian 13", digestSource: source)
-            for step in GuestSetupState.linuxImage(digestSource: source).steps {
-                #expect(linux.stepCopy[step.id] != nil)
+            for step in linuxSteps {
+                #expect(linux.stepCopy[step] != nil)
             }
         }
     }

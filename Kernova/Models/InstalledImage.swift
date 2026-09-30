@@ -14,7 +14,7 @@ enum InstalledImage: Sendable, Equatable {
 
     /// A Linux installer image from the bundled catalog, by the distribution
     /// and version the catalog names, and the digest the attached ISO hashed
-    /// to — `nil` when the record carries no digest keys.
+    /// to — `nil` when the record carries no digest.
     ///
     /// Attaching an ISO is not a completed install — the distribution's own
     /// installer runs inside the guest, and can write another distribution or
@@ -22,8 +22,9 @@ enum InstalledImage: Sendable, Equatable {
     /// the settings row it feeds is labelled for the media too.
     case linuxCatalogImage(distribution: String, version: String, digest: InstallerImageDigest?)
 
-    /// A Linux installer image fetched from a URL the user supplied, and the
-    /// digest the attached ISO hashed to.
+    /// A Linux installer image fetched from a URL the user supplied — as
+    /// ``CustomLinuxImage/recordedURL`` names it — and the digest the attached
+    /// ISO hashed to.
     case linuxURLImage(url: URL, digest: InstallerImageDigest)
 
     /// The record of an ISO fetched from `linuxSource` that hashed to `digest`.
@@ -33,12 +34,12 @@ enum InstalledImage: Sendable, Equatable {
             self = .linuxCatalogImage(
                 distribution: entry.distribution, version: entry.version, digest: digest)
         case .customURL(let image):
-            self = .linuxURLImage(url: image.url, digest: digest)
+            self = .linuxURLImage(url: image.recordedURL, digest: digest)
         }
     }
 
     /// The digest the attached ISO hashed to — `nil` for a macOS restore image,
-    /// and for a catalog record that carries no digest keys.
+    /// and for a catalog record that carries no digest.
     var digest: InstallerImageDigest? {
         switch self {
         case .macOSRestoreImage: nil
@@ -61,7 +62,8 @@ enum InstalledImage: Sendable, Equatable {
 
 extension InstalledImage: Codable {
     /// Which case a persisted record carries, so the payload keys sit flat
-    /// beside it rather than nested under a synthesized case name.
+    /// beside it rather than nested under a synthesized case name; the digest
+    /// alone nests, under `digest`, keeping its own keys out of this namespace.
     private enum Kind: String, Codable {
         case macOSRestoreImage
         case linuxCatalogImage
@@ -74,6 +76,7 @@ extension InstalledImage: Codable {
         case build
         case distribution
         case url
+        case digest
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -87,11 +90,11 @@ extension InstalledImage: Codable {
             try c.encode(Kind.linuxCatalogImage, forKey: .kind)
             try c.encode(distribution, forKey: .distribution)
             try c.encode(version, forKey: .version)
-            try digest?.encode(to: encoder)
+            try c.encodeIfPresent(digest, forKey: .digest)
         case .linuxURLImage(let url, let digest):
             try c.encode(Kind.linuxURLImage, forKey: .kind)
             try c.encode(url, forKey: .url)
-            try digest.encode(to: encoder)
+            try c.encode(digest, forKey: .digest)
         }
     }
 
@@ -106,11 +109,11 @@ extension InstalledImage: Codable {
             self = .linuxCatalogImage(
                 distribution: try c.decode(String.self, forKey: .distribution),
                 version: try c.decode(String.self, forKey: .version),
-                digest: try InstallerImageDigest.decodeIfPresent(from: decoder))
+                digest: try c.decodeIfPresent(InstallerImageDigest.self, forKey: .digest))
         case .linuxURLImage:
             self = .linuxURLImage(
                 url: try c.decode(URL.self, forKey: .url),
-                digest: try InstallerImageDigest(from: decoder))
+                digest: try c.decode(InstallerImageDigest.self, forKey: .digest))
         }
     }
 }

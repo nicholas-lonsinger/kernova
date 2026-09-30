@@ -16,14 +16,14 @@ struct InstalledImageTests {
         return try VMConfiguration.makeJSONDecoder().decode(InstalledImage.self, from: data)
     }
 
-    private func decode(_ json: [String: String]) throws -> InstalledImage {
+    private func decode(_ json: [String: Any]) throws -> InstalledImage {
         try VMConfiguration.makeJSONDecoder().decode(
             InstalledImage.self, from: JSONSerialization.data(withJSONObject: json))
     }
 
-    private func encodedObject(_ image: InstalledImage) throws -> [String: String] {
+    private func encodedObject(_ image: InstalledImage) throws -> NSDictionary {
         let data = try VMConfiguration.makeJSONEncoder().encode(image)
-        return try #require(JSONSerialization.jsonObject(with: data) as? [String: String])
+        return try #require(JSONSerialization.jsonObject(with: data) as? NSDictionary)
     }
 
     private func matched(_ source: DigestSource, filename: String) throws -> InstallerImageDigest {
@@ -67,11 +67,11 @@ struct InstalledImageTests {
         #expect(try roundTrip(image) == image)
     }
 
-    @Test("The payload keys sit flat beside the case name")
-    func encodesFlat() throws {
+    @Test("The payload keys sit flat beside the case name, the digest nested under its own key")
+    func encodesFlatWithNestedDigest() throws {
         #expect(
             try encodedObject(.macOSRestoreImage(version: "26.5.2", build: "25F84"))
-                == ["kind": "macOSRestoreImage", "version": "26.5.2", "build": "25F84"])
+                == ["kind": "macOSRestoreImage", "version": "26.5.2", "build": "25F84"] as NSDictionary)
         #expect(
             try encodedObject(
                 .linuxCatalogImage(
@@ -79,30 +79,37 @@ struct InstalledImageTests {
                     digest: try matched(.checksumList(Self.manifestURL), filename: "u.iso")))
                 == [
                     "kind": "linuxCatalogImage", "distribution": "Ubuntu Desktop",
-                    "version": "26.04 LTS", "filename": "u.iso", "sha256": Self.digest,
-                    "checkedAgainst": "checksumList",
-                    "checksumListURL": Self.manifestURL.absoluteString,
-                ])
+                    "version": "26.04 LTS",
+                    "digest": [
+                        "filename": "u.iso", "sha256": Self.digest,
+                        "checkedAgainst": "checksumList",
+                        "checksumListURL": Self.manifestURL.absoluteString,
+                    ],
+                ] as NSDictionary)
         #expect(
             try encodedObject(
                 .linuxURLImage(
                     url: Self.isoURL, digest: try matched(.enteredByUser, filename: "a.iso")))
                 == [
                     "kind": "linuxURLImage", "url": Self.isoURL.absoluteString,
-                    "filename": "a.iso", "sha256": Self.digest,
-                    "checkedAgainst": "enteredChecksum",
-                ])
+                    "digest": [
+                        "filename": "a.iso", "sha256": Self.digest,
+                        "checkedAgainst": "enteredChecksum",
+                    ],
+                ] as NSDictionary)
         #expect(
             try encodedObject(
                 .linuxURLImage(
                     url: Self.isoURL, digest: .unchecked(filename: "a.iso", sha256: Self.digest)))
                 == [
                     "kind": "linuxURLImage", "url": Self.isoURL.absoluteString,
-                    "filename": "a.iso", "sha256": Self.digest, "checkedAgainst": "nothing",
-                ])
+                    "digest": [
+                        "filename": "a.iso", "sha256": Self.digest, "checkedAgainst": "nothing",
+                    ],
+                ] as NSDictionary)
     }
 
-    @Test("A catalog record with no digest keys decodes with no digest")
+    @Test("A catalog record with no digest decodes with no digest")
     func decodesCatalogRecordWithoutDigest() throws {
         #expect(
             try decode(
@@ -115,7 +122,9 @@ struct InstalledImageTests {
         #expect(throws: DecodingError.self) {
             try decode([
                 "kind": "linuxURLImage", "url": Self.isoURL.absoluteString,
-                "filename": "a.iso", "sha256": "deadbeef", "checkedAgainst": "enteredChecksum",
+                "digest": [
+                    "filename": "a.iso", "sha256": "deadbeef", "checkedAgainst": "enteredChecksum",
+                ],
             ])
         }
     }
@@ -124,7 +133,9 @@ struct InstalledImageTests {
     func lowercasesDecodedDigest() throws {
         let image = try decode([
             "kind": "linuxURLImage", "url": Self.isoURL.absoluteString,
-            "filename": "a.iso", "sha256": Self.digest.uppercased(), "checkedAgainst": "nothing",
+            "digest": [
+                "filename": "a.iso", "sha256": Self.digest.uppercased(), "checkedAgainst": "nothing",
+            ],
         ])
 
         #expect(
@@ -178,5 +189,18 @@ struct InstalledImageTests {
         #expect(
             InstalledImage(linuxSource: source, digest: digest)
                 == .linuxURLImage(url: Self.isoURL, digest: digest))
+    }
+
+    @Test("A user-supplied URL is recorded without its credentials, query or fragment")
+    func recordsURLWithoutSecrets() throws {
+        let pasted = try #require(
+            URL(string: "https://user:secret@host/path/x.iso?X-Amz-Signature=abc&token=t#frag"))
+        let recorded = try #require(URL(string: "https://host/path/x.iso"))
+        let digest = InstallerImageDigest.unchecked(filename: "x.iso", sha256: Self.digest)
+
+        let record = InstalledImage(
+            linuxSource: .customURL(CustomLinuxImage(url: pasted, sha256: nil)), digest: digest)
+
+        #expect(record == .linuxURLImage(url: recorded, digest: digest))
     }
 }

@@ -691,9 +691,9 @@ final class VMLifecycleCoordinator {
         return digest
     }
 
-    /// Fetches the Linux installer image `context` names, checks it against the
-    /// digest published or supplied for it, and attaches it as the VM's boot
-    /// media.
+    /// Fetches the Linux installer image `context` names, hashes it — checked
+    /// against the digest published or supplied for it, recorded unchecked when
+    /// there is none — and attaches it as the VM's boot media.
     ///
     /// Every step is re-entrant: a cancelled or failed attempt leaves the
     /// context in place, so the next Start resolves again and resumes from

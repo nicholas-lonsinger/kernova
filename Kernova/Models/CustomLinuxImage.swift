@@ -23,6 +23,25 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
     /// Where ``expectedDigest`` comes from, or `nil` when there is none.
     var digestSource: DigestSource? { expectedDigest?.source }
 
+    /// ``url`` reduced to scheme, host, port and path — what outlives the
+    /// download in the VM's install record.
+    ///
+    /// A pasted link can carry a credential in its userinfo or query (a
+    /// presigned URL), and the record is kept, cloned and shown for the VM's
+    /// lifetime.
+    var recordedURL: URL {
+        // The fallback is the file's name alone, which carries neither.
+        let nameOnly = URL(filePath: url.lastPathComponent)
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nameOnly
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.url ?? nameOnly
+    }
+
     /// The name ``url`` itself gives the image, or a stand-in when it gives
     /// none.
     ///

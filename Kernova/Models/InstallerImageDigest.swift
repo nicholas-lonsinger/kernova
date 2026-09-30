@@ -78,10 +78,38 @@ struct InstallerImageDigest: Sendable, Equatable {
     }
 }
 
+// MARK: - Display
+
+/// What a Verification value reads when nothing was, or will be, checked.
+private let notVerified = "Not verified"
+
+extension InstallerImageDigest {
+    /// The settings card's Verification value: what the digest matched, or that
+    /// it was compared with nothing.
+    var verificationSummary: String {
+        matched.map { "Matched \($0.phrase)" } ?? notVerified
+    }
+}
+
+/// How the wizard describes a pick's check before the image is downloaded. The
+/// check runs only once the image is downloaded, so neither form claims a
+/// result.
+extension DigestSource {
+    /// A download badge's secondary line.
+    var pendingCheckLine: String { "Checked after download against \(phrase)" }
+}
+
+/// The wizard's forms for a pick that may have nothing to check against.
+extension DigestSource? {
+    /// A download badge's secondary line.
+    var pendingCheckLine: String { self?.pendingCheckLine ?? notVerified }
+
+    /// The Review step's Verification value.
+    var pendingCheckTitle: String { self?.title ?? notVerified }
+}
+
 // MARK: - Codable
 
-/// Encodes into the encoder it is handed rather than a nested container, so an
-/// enclosing record's keys and these sit flat side by side.
 extension InstallerImageDigest: Codable {
     private enum CheckedAgainst: String, Codable {
         case checksumList
@@ -127,14 +155,5 @@ extension InstallerImageDigest: Codable {
         self.init(
             filename: try c.decode(String.self, forKey: .filename),
             sha256: sha256.lowercased(), matched: matched)
-    }
-
-    /// The digest `decoder` holds, or `nil` when it holds no `sha256` key at
-    /// all.
-    static func decodeIfPresent(from decoder: any Decoder) throws -> InstallerImageDigest? {
-        guard try decoder.container(keyedBy: CodingKeys.self).contains(.sha256) else {
-            return nil
-        }
-        return try InstallerImageDigest(from: decoder)
     }
 }

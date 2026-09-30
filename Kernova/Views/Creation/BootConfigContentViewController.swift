@@ -162,7 +162,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                         entry.distribution, entry.version,
                         wizardApproximateSize(entry.approxSizeBytes),
                     ].joined(separator: "  ·  "),
-                    secondaryText: WizardVerification(source: entry.digestSource).badgeLine,
+                    secondaryText: entry.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeDistribution))
                 ))
@@ -172,8 +172,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     symbolName: "link",
                     text: [image.displayName, DataFormatters.formatBytes(sizeBytes)]
                         .joined(separator: "  ·  "),
-                    secondaryText: WizardVerification(source: image.digestSource)
-                        .badgeLine,
+                    secondaryText: image.digestSource.pendingCheckLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))
                 ))

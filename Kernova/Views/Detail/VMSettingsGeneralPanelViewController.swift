@@ -367,8 +367,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         guard let digest else { return }
         digestValueLabel?.stringValue = Self.abbreviatedDigest(digest.sha256)
         digestValueLabel?.toolTip = digest.sha256
-        verificationValueLabel?.stringValue =
-            digest.matched.map { "Matched \($0.phrase)" } ?? "Not verified"
+        verificationValueLabel?.stringValue = digest.verificationSummary
         verificationValueLabel?.toolTip =
             switch digest.matched {
             case .checksumList(let url): url.absoluteString

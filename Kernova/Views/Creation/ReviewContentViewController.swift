@@ -201,7 +201,7 @@ final class ReviewContentViewController: NSViewController {
                     rows.append(
                         valueRow(
                             "Verification",
-                            WizardVerification(source: entry.digestSource).reviewValue))
+                            entry.digestSource.title))
                     // The folder, not a file: which point release the mirror is
                     // serving — and so what the ISO is called — is only known
                     // once the download resolves it.
@@ -218,7 +218,7 @@ final class ReviewContentViewController: NSViewController {
                     rows.append(
                         valueRow(
                             "Verification",
-                            WizardVerification(source: image.digestSource).reviewValue))
+                            image.digestSource.pendingCheckTitle))
                     // The destination carries a suffix unique to this link, so
                     // it names a file only this pick can ever write.
                     rows.append(
