@@ -20,6 +20,8 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     struct StepCopy: Sendable, Equatable {
         /// Verb the subtitle's first line leads with ("Downloading").
         let detailVerb: String
+        /// A secondary line under the progress detail, or `nil` for none.
+        var caption: String? = nil
     }
 
     let title: String
@@ -52,20 +54,22 @@ struct GuestSetupDescriptor: Sendable, Equatable {
         ])
 
     /// A Linux installer image: downloaded from where it is served, then
-    /// checked against the digest published or supplied for it.
-    static func linuxImage(named image: String) -> GuestSetupDescriptor {
-        GuestSetupDescriptor(
-            title: "Downloading \(image)",
-            icon: .symbol("opticaldisc"),
-            stepCopy: [
-                .download: StepCopy(detailVerb: "Downloading"),
-                .verify: StepCopy(detailVerb: "Verifying"),
-            ])
+    /// checked against `digestSource`, or only hashed when there is none.
+    static func linuxImage(named image: String, digestSource: DigestSource?) -> GuestSetupDescriptor {
+        var stepCopy: [SetupStepID: StepCopy] = [.download: StepCopy(detailVerb: "Downloading")]
+        if let digestSource {
+            stepCopy[.verify] = StepCopy(
+                detailVerb: "Verifying", caption: "Checking against \(digestSource.phrase)")
+        } else {
+            stepCopy[.checksum] = StepCopy(detailVerb: "Computing checksum")
+        }
+        return GuestSetupDescriptor(
+            title: "Downloading \(image)", icon: .symbol("opticaldisc"), stepCopy: stepCopy)
     }
 
     /// The descriptor for whichever setup `instance` has pending.
     @MainActor static func forSetup(of instance: VMInstance) -> GuestSetupDescriptor {
         guard let context = instance.configuration.linuxInstallContext else { return .macOSInstall }
-        return .linuxImage(named: context.imageDisplayName)
+        return .linuxImage(named: context.imageDisplayName, digestSource: context.digestSource)
     }
 }

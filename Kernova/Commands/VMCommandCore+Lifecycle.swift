@@ -456,6 +456,9 @@ extension VMCommandCore {
     private func explainedFailure(
         for error: Error, verb: VMVerb, on instance: VMInstance
     ) -> (title: String, message: String)? {
+        if case DownloadError.checksumMismatch = error {
+            return (title: "Download Doesn't Match Its Checksum", message: error.localizedDescription)
+        }
         guard VirtualizationService.isVirtualMachineLimitExceeded(error) else { return nil }
         let action = Self.bringUpLabel(for: instance, verb: verb)
         // The heading names the operation, the message names the control: a
@@ -589,7 +592,8 @@ extension VMCommandCore {
 
     /// The confirmation a guest-setup cancel raises, worded for the step
     /// running now: a download's progress resumes, an install restarts from
-    /// the beginning (the image stays cached), a verify is simply redone.
+    /// the beginning (the image stays cached), a verify or checksum is simply
+    /// redone.
     static func cancelGuestSetupPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         let title: String
         let message: String
@@ -613,6 +617,13 @@ extension VMCommandCore {
             confirmTitle = "Cancel Verification"
             confirmIsDestructive = false
             dismissTitle = "Keep Verifying"
+        case .checksum:
+            title = "Cancel Checksum?"
+            message =
+                "The downloaded image is kept, and its checksum will be computed the next time you start the virtual machine."
+            confirmTitle = "Cancel Checksum"
+            confirmIsDestructive = false
+            dismissTitle = "Keep Computing"
         case .download, nil:
             title = "Cancel Download?"
             message =

@@ -1,7 +1,8 @@
 import AppKit
 
 /// Step-by-step progress UI for a guest setup — a macOS install
-/// (download → install), or a Linux installer image (download → verify).
+/// (download → install), or a Linux installer image (download → verify, or
+/// download → checksum).
 ///
 /// The steps come from the VM's ``GuestSetupState`` and are fixed for the run,
 /// so the indicator is built once at `loadView`; the wording comes from the
@@ -16,6 +17,7 @@ final class GuestSetupProgressViewController: NSViewController {
     private let progressBar = NSProgressIndicator()
     private let detailLine1Label = NSTextField(labelWithString: "")
     private let detailLine2Label = NSTextField(labelWithString: "")
+    private let captionLabel = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
 
     /// Line 2 (speed/ETA) refreshes at most once a second; line 1 (bytes/%) and
@@ -82,7 +84,13 @@ final class GuestSetupProgressViewController: NSViewController {
         }
         detailLine2Label.isHidden = true
 
-        let detailStack = NSStackView(views: [detailLine1Label, detailLine2Label])
+        captionLabel.font = .preferredFont(forTextStyle: .caption1)
+        captionLabel.textColor = .secondaryLabelColor
+        captionLabel.alignment = .center
+        captionLabel.isSelectable = false
+        captionLabel.isHidden = true
+
+        let detailStack = NSStackView(views: [detailLine1Label, detailLine2Label, captionLabel])
         detailStack.orientation = .vertical
         detailStack.alignment = .centerX
         detailStack.spacing = Spacing.hairline
@@ -226,8 +234,10 @@ final class GuestSetupProgressViewController: NSViewController {
 
         applyStepStates(state)
         progressBar.doubleValue = state.progress.fraction
-        refreshDetailLabels(
-            for: state.progress, verb: descriptor.copy(for: step.id).detailVerb)
+        let copy = descriptor.copy(for: step.id)
+        refreshDetailLabels(for: state.progress, verb: copy.detailVerb)
+        captionLabel.stringValue = copy.caption ?? ""
+        captionLabel.isHidden = copy.caption == nil
     }
 
     /// Refreshes the two subtitle labels.

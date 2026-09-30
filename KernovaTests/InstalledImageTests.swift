@@ -157,21 +157,26 @@ struct InstalledImageTests {
             ).displayName == "alpine-3.22-aarch64.iso")
     }
 
-    @Test("A catalog source records the distribution and version it publishes")
-    func recordsCatalogSource() {
+    @Test("A catalog source records the distribution and version it publishes, and the digest")
+    func recordsCatalogSource() throws {
         let source = LinuxInstallContext.Source.catalogEntry(
             makeLinuxCatalogEntry(distribution: "Fedora Workstation", version: "44"))
+        let digest = try matched(.checksumList(Self.manifestURL), filename: "Fedora-44.iso")
 
         #expect(
-            InstalledImage(linuxSource: source)
-                == .linuxCatalogImage(distribution: "Fedora Workstation", version: "44", digest: nil))
+            InstalledImage(linuxSource: source, digest: digest)
+                == .linuxCatalogImage(distribution: "Fedora Workstation", version: "44", digest: digest))
     }
 
-    @Test("A user-supplied URL records nothing")
-    func recordsNothingForURLSource() {
+    @Test("A user-supplied URL records the URL and the digest")
+    func recordsURLSource() {
         let source = LinuxInstallContext.Source.customURL(
-            CustomLinuxImage(url: Self.isoURL, sha256: String(repeating: "a", count: 64)))
+            CustomLinuxImage(url: Self.isoURL, sha256: nil))
+        let digest = InstallerImageDigest.unchecked(
+            filename: "alpine-3.22-aarch64.iso", sha256: Self.digest)
 
-        #expect(InstalledImage(linuxSource: source) == nil)
+        #expect(
+            InstalledImage(linuxSource: source, digest: digest)
+                == .linuxURLImage(url: Self.isoURL, digest: digest))
     }
 }

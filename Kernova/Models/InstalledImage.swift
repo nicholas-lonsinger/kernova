@@ -26,16 +26,14 @@ enum InstalledImage: Sendable, Equatable {
     /// digest the attached ISO hashed to.
     case linuxURLImage(url: URL, digest: InstallerImageDigest)
 
-    /// The record a pending Linux download supports: a catalog entry publishes
-    /// a distribution and version to record, a user-supplied URL publishes
-    /// neither.
-    init?(linuxSource: LinuxInstallContext.Source) {
+    /// The record of an ISO fetched from `linuxSource` that hashed to `digest`.
+    init(linuxSource: LinuxInstallContext.Source, digest: InstallerImageDigest) {
         switch linuxSource {
         case .catalogEntry(let entry):
             self = .linuxCatalogImage(
-                distribution: entry.distribution, version: entry.version, digest: nil)
-        case .customURL:
-            return nil
+                distribution: entry.distribution, version: entry.version, digest: digest)
+        case .customURL(let image):
+            self = .linuxURLImage(url: image.url, digest: digest)
         }
     }
 
