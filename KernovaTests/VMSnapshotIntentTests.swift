@@ -76,18 +76,22 @@ struct VMSnapshotIntentTests {
         #expect(!entity.isEphemeralBaseline)
         #expect(String(localized: entity.displayRepresentation.title) == "Before Update")
         let subtitle = try #require(entity.displayRepresentation.subtitle)
-        #expect(String(localized: subtitle) == SnapshotDateFormat.string(from: summary.createdAt))
+        #expect(
+            String(localized: subtitle)
+                == SnapshotEntity.captureDescription(summary.kind, summary.createdAt))
     }
 
-    @Test("A capture holding no memory image says so beside its date")
-    func coldCapturesReadBackWhatTheyHold() {
+    @Test("Every capture names its state beside its date")
+    func capturesReadBackTheirState() {
         let taken = Date(timeIntervalSince1970: 1_700_000_000)
         let date = SnapshotDateFormat.string(from: taken)
 
-        #expect(SnapshotEntity.captureDescription("warm", taken) == date)
+        #expect(
+            SnapshotEntity.captureDescription("warm", taken)
+                == "\(date) \u{00B7} \(SnapshotKindCopy.stateLabel(.warm))")
         #expect(
             SnapshotEntity.captureDescription("cold", taken)
-                == "\(date) \u{00B7} \(SnapshotKindCopy.captured(.cold))")
+                == "\(date) \u{00B7} \(SnapshotKindCopy.stateLabel(.cold))")
     }
 
     // MARK: - Reads

@@ -75,12 +75,11 @@ struct SnapshotEntity: AppEntity {
     }
 
     /// What a capture reads back as in the snapshot list's own words — the date
-    /// it was taken, and for a cold one what it holds in place of a memory
-    /// image.
+    /// it was taken and the state a revert leaves the VM in.
     static func captureDescription(_ kind: String, _ createdAt: Date) -> String {
         let taken = SnapshotDateFormat.string(from: createdAt)
-        guard VMSnapshotKind(rawValue: kind) == .cold else { return taken }
-        return "\(taken) \u{00B7} \(SnapshotKindCopy.captured(.cold))"
+        guard let kind = VMSnapshotKind(rawValue: kind) else { return taken }
+        return "\(taken) \u{00B7} \(SnapshotKindCopy.stateLabel(kind))"
     }
 }
 

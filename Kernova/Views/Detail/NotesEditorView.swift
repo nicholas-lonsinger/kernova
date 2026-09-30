@@ -224,19 +224,22 @@ extension NotesEditorView: NSTextViewDelegate {
 /// note can be written, and otherwise the note as static text — no rows at all
 /// when there is no note to read and no way to add one.
 ///
-/// Answers the box, if any, which the host commits as it goes away.
+/// Answers the box, if any, which the host commits as it goes away. `width` is
+/// the callout's body width, which the section fills.
 @MainActor
 func makeCalloutNotesSection(
-    _ notes: String, title: NSTextField, canEdit: Bool,
+    _ notes: String, title: NSTextField, canEdit: Bool, width: CGFloat = CalloutStyle.bodyWidth,
     onCommit: @escaping (String) -> Void, onCancel: @escaping () -> Void
 ) -> (rows: [NSView], editor: NotesEditorView?) {
     guard canEdit else {
         guard !notes.isEmpty else { return ([], nil) }
-        return ([title, makeCalloutBody(notes, color: .labelColor)], nil)
+        let body = makeCalloutBody(notes, color: .labelColor)
+        body.preferredMaxLayoutWidth = width
+        return ([title, body], nil)
     }
     let editor = NotesEditorView(text: notes)
     editor.onCommit = onCommit
     editor.onCancel = onCancel
-    editor.widthAnchor.constraint(equalToConstant: CalloutStyle.bodyWidth).isActive = true
+    editor.widthAnchor.constraint(equalToConstant: width).isActive = true
     return ([title, editor], editor)
 }

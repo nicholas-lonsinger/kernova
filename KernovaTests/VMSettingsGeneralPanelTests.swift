@@ -534,10 +534,8 @@ struct VMSettingsGeneralPanelTests {
         #expect(visibleLabel(EphemeralModeCopy.settingsCaption, in: vc.view))
     }
 
-    /// The kind decides what a shutdown comes to rest in, so the menu names it
-    /// where the baseline is chosen rather than only in Get Info.
-    @Test("Each baseline entry names what that snapshot restores")
-    func ephemeralBaselineMenuNamesEachKind() throws {
+    @Test("Each baseline entry is its snapshot's name")
+    func ephemeralBaselineMenuListsSnapshotNames() throws {
         let (vc, _) = makeEphemeralController(
             snapshots: [
                 makeSnapshot(index: 0, kind: .warm), makeSnapshot(index: 1, kind: .cold),
@@ -545,11 +543,7 @@ struct VMSettingsGeneralPanelTests {
         let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
 
         // Rows render newest first, so the cold one leads.
-        #expect(
-            popUp.itemArray.map(\.title) == [
-                "Snapshot 1 \u{00B7} \(SnapshotKindCopy.captured(.cold))",
-                "Snapshot 0 \u{00B7} \(SnapshotKindCopy.captured(.warm))",
-            ])
+        #expect(popUp.itemArray.map(\.title) == ["Snapshot 1", "Snapshot 0"])
     }
 
     /// Nothing keeps two snapshots from sharing a name, and both have to stay

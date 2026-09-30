@@ -379,11 +379,12 @@ final class SnapshotSectionView: NSView {
         return row
     }
 
-    /// "date · Disks and settings · size on disk" — the middle part only for a
-    /// snapshot that captured no memory, the last only once the size read lands.
+    /// "date · state · size on disk" — the size only once its read lands.
     func subtitleText(for snapshot: VMSnapshot) -> String {
-        var parts = [SnapshotDateFormat.string(from: snapshot.createdAt)]
-        if snapshot.kind == .cold { parts.append(SnapshotKindCopy.captured(.cold)) }
+        var parts = [
+            SnapshotDateFormat.string(from: snapshot.createdAt),
+            SnapshotKindCopy.stateLabel(snapshot.kind),
+        ]
         if let bytes = sizesByID[snapshot.id] {
             parts.append("\(DataFormatters.formatBytes(bytes)) on disk")
         }

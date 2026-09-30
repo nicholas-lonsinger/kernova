@@ -18,13 +18,6 @@ enum EphemeralModeCopy {
         ephemeralSessionRunning ? "\(name) (\(self.name))" : name
     }
 
-    /// The Baseline snapshot menu's entry for `snapshot` — its name beside what
-    /// reverting to it puts back, so the kind is legible while the baseline is
-    /// being chosen rather than only in Get Info.
-    static func baselineMenuTitle(for snapshot: VMSnapshot) -> String {
-        "\(snapshot.name) \u{00B7} \(SnapshotKindCopy.captured(snapshot.kind))"
-    }
-
     /// The caption naming the state a shutdown comes to rest in, which the
     /// baseline's kind decides: a warm baseline restores the guest's memory
     /// along with the disks, so the VM lands suspended on that session instead
