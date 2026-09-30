@@ -975,7 +975,7 @@ enum DownloadError: LocalizedError {
             case .checksumList:
                 "\(filename) doesn't match \(expected.source.phrase). Try downloading it again."
             case .enteredByUser:
-                "\(filename) doesn't match \(expected.source.phrase). Check the checksum and try again."
+                "\(filename) doesn't match \(expected.source.phrase)."
             }
         case .oversizedTransfer(let expectedBytes):
             "The download exceeded its expected size of \(DataFormatters.formatBytes(expectedBytes)) and was stopped."

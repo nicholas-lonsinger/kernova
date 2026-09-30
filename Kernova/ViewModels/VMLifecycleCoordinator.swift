@@ -604,14 +604,11 @@ final class VMLifecycleCoordinator {
     /// every later step reads the one file this pipeline names.
     ///
     /// The digest the adopted file matched, or `nil` whenever the candidate
-    /// cannot be shown to be the image — the ordinary download, and the only
-    /// outcome when the source publishes no digest to check against.
+    /// cannot be shown to be the image — the ordinary download.
     private func adoptLocalImage(
-        _ image: ResolvedLinuxImage, as destination: URL
+        _ image: ResolvedLinuxImage, matching expected: ExpectedDigest, as destination: URL
     ) async throws -> InstallerImageDigest? {
-        guard let downloads = downloadsDirectory, let expected = image.expected else {
-            return nil
-        }
+        guard let downloads = downloadsDirectory else { return nil }
         // A file already at the destination belongs to the download: it skips
         // over it and the verify step below holds it to this same digest. An
         // adoption is refused there in any case — asked before the hash rather
@@ -712,19 +709,14 @@ final class VMLifecycleCoordinator {
         )
 
         do {
-            instance.setupState = .linuxImage(digestSource: context.digestSource)
+            instance.setupState = .linuxImage(digestSource: context.source.digestSource)
 
             // Resolved on every attempt: a catalog entry because the mirror
             // renames its ISO in place (see `LinuxImageCatalogEntry`), a
             // pasted URL because the size it answers with is the ceiling
             // this transfer is held to.
-            let image: ResolvedLinuxImage
-            switch context.source {
-            case .catalogEntry(let entry):
-                image = try await linuxImageResolveService.resolve(entry)
-            case .customURL(let custom):
-                image = try await linuxImageResolveService.resolve(custom)
-            }
+            let (image, expected) = try await context.source.resolve(
+                using: linuxImageResolveService)
 
             // `image.destinationFilename`, never the name the source gave
             // the ISO: Downloads holds everything the user has ever
@@ -775,7 +767,10 @@ final class VMLifecycleCoordinator {
             // bytes the bar counts. The seeded `0 B / <size>` above is what
             // a transfer opening its connection shows too.
             let digest: InstallerImageDigest
-            if let adopted = try await adoptLocalImage(image, as: downloadDestination) {
+            if let expected,
+                let adopted = try await adoptLocalImage(
+                    image, matching: expected, as: downloadDestination)
+            {
                 // The digest decided the adoption, so Verify has nothing
                 // left to check and the step is drawn finished.
                 instance.setupState?.advance(progress: .fraction(1))
@@ -800,7 +795,7 @@ final class VMLifecycleCoordinator {
                 // URL with none behind it still has its checksum recorded.
                 instance.setupState?.advance(progress: .fraction(0))
                 digest = try await digestInstallerImage(
-                    at: downloadDestination, filename: image.filename, against: image.expected
+                    at: downloadDestination, filename: image.filename, against: expected
                 ) { fraction in
                     instance.setupState?.progress = .fraction(fraction)
                 }

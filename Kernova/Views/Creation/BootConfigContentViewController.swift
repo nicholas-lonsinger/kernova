@@ -172,7 +172,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     symbolName: "link",
                     text: [image.displayName, DataFormatters.formatBytes(sizeBytes)]
                         .joined(separator: "  ·  "),
-                    secondaryText: WizardVerification(source: image.expectedDigest?.source)
+                    secondaryText: WizardVerification(source: image.digestSource)
                         .badgeLine,
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))

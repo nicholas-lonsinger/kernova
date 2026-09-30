@@ -70,6 +70,6 @@ struct GuestSetupDescriptor: Sendable, Equatable {
     /// The descriptor for whichever setup `instance` has pending.
     @MainActor static func forSetup(of instance: VMInstance) -> GuestSetupDescriptor {
         guard let context = instance.configuration.linuxInstallContext else { return .macOSInstall }
-        return .linuxImage(named: context.imageDisplayName, digestSource: context.digestSource)
+        return .linuxImage(named: context.imageDisplayName, digestSource: context.source.digestSource)
     }
 }

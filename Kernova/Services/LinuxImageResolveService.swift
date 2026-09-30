@@ -8,9 +8,8 @@ import KernovaLogging
 /// For a catalog entry the manifest is the index: it is fetched, parsed,
 /// matched against the entry's glob, and the newest match is the image — no
 /// directory listing is scraped and no filename is guessed. What comes back
-/// carries the distribution's own SHA-256, which is what the download is
-/// verified against. A pasted URL names its file outright and carries only the
-/// digest the user typed, so all that is read is the file's length.
+/// carries the SHA-256 the manifest lists for it. A pasted URL names its file
+/// outright, so all that is read is the file's length.
 ///
 /// A class rather than a struct so `deinit` can invalidate the `URLSession`, the
 /// same reason `DownloadService` is one.
@@ -41,7 +40,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
         session.finishTasksAndInvalidate()
     }
 
-    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedLinuxImage {
+    func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedCatalogImage {
         // The entry reaching here came off a `config.json` a user can edit, so
         // it gets the catalog's own admission checks before it names a host to
         // contact or a file to read.
@@ -98,10 +97,9 @@ final class LinuxImageResolveService: LinuxImageResolving {
             Self.logger, .notice,
             "Resolved \(entry.id, privacy: .public) to '\(safeFilename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes)"
         )
-        return ResolvedLinuxImage(
-            isoURL: isoURL, filename: safeFilename,
-            expected: ExpectedDigest(sha256: sha256, source: entry.digestSource),
-            sizeBytes: sizeBytes)
+        return ResolvedCatalogImage(
+            image: ResolvedLinuxImage(isoURL: isoURL, filename: safeFilename, sizeBytes: sizeBytes),
+            sha256: sha256)
     }
 
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
@@ -123,11 +121,9 @@ final class LinuxImageResolveService: LinuxImageResolving {
 
         #log(
             Self.logger, .notice,
-            "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.expectedDigest == nil ? "unverified" : "verified", privacy: .public))"
+            "Checked the image at \(image.url.host() ?? "?", privacy: .public): '\(filename, privacy: .public)' (\(sizeBytes, privacy: .public) bytes, \(image.sha256 == nil ? "unverified" : "verified", privacy: .public))"
         )
-        return ResolvedLinuxImage(
-            isoURL: image.url, filename: filename, expected: image.expectedDigest,
-            sizeBytes: sizeBytes)
+        return ResolvedLinuxImage(isoURL: image.url, filename: filename, sizeBytes: sizeBytes)
     }
 
     // MARK: - HTTP

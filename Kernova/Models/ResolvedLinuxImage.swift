@@ -1,22 +1,19 @@
 import Foundation
 
-/// The one installer image a source names right now.
+/// The one installer image a source names right now: what a catalog entry
+/// resolved to against its mirror's checksum manifest, or what a user-supplied
+/// URL was found to serve.
 ///
-/// What a catalog entry resolved to against its mirror's checksum manifest, or
-/// what a user-supplied URL was found to serve — and, either way, what the
-/// download is checked against.
+/// Carries no digest: what the download is checked against belongs to the
+/// source, which builds it in ``LinuxInstallContext/Source/resolve(using:)``.
 struct ResolvedLinuxImage: Sendable, Equatable {
     /// Where the ISO is served from.
     var isoURL: URL
     /// The name the source gives the ISO, checked to be one visible path
     /// component.
     ///
-    /// Shown, logged and named in a checksum failure — never written. What the
-    /// bytes land on is ``destinationFilename``.
+    /// Never a path on disk: the bytes land on ``destinationFilename``.
     var filename: String
-    /// The digest to check the download against, or `nil` when the source
-    /// published none and there is nothing to verify.
-    var expected: ExpectedDigest?
     /// The ISO's length in bytes, as the mirror reports it.
     var sizeBytes: UInt64
 
@@ -25,4 +22,12 @@ struct ResolvedLinuxImage: Sendable, Equatable {
     var destinationFilename: String {
         LinuxImageFilename.destination(for: isoURL)
     }
+}
+
+/// A catalog entry's image, with the SHA-256 its checksum manifest lists for
+/// it.
+struct ResolvedCatalogImage: Sendable, Equatable {
+    var image: ResolvedLinuxImage
+    /// The manifest row's digest, as the manifest spells it.
+    var sha256: String
 }

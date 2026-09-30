@@ -3623,8 +3623,8 @@ struct VMLibraryViewModelTests {
         let contents = Data("kernova linux image fixture".utf8)
         let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
         let resolveService = MockLinuxImageResolveService()
-        resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: digest, sizeBytes: UInt64(contents.count))
+        resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
+        resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
         downloadService.downloadedContents = contents
 

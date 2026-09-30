@@ -218,7 +218,7 @@ final class ReviewContentViewController: NSViewController {
                     rows.append(
                         valueRow(
                             "Verification",
-                            WizardVerification(source: image.expectedDigest?.source).reviewValue))
+                            WizardVerification(source: image.digestSource).reviewValue))
                     // The destination carries a suffix unique to this link, so
                     // it names a file only this pick can ever write.
                     rows.append(

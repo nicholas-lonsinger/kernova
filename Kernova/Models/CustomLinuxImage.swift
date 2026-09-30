@@ -20,6 +20,9 @@ struct CustomLinuxImage: Codable, Sendable, Equatable {
         sha256.map { ExpectedDigest(sha256: $0, source: .enteredByUser) }
     }
 
+    /// Where ``expectedDigest`` comes from, or `nil` when there is none.
+    var digestSource: DigestSource? { expectedDigest?.source }
+
     /// The name ``url`` itself gives the image, or a stand-in when it gives
     /// none.
     ///

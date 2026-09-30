@@ -16,6 +16,36 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         case catalogEntry(LinuxImageCatalogEntry)
         /// A URL the user supplied, with the digest they supplied for it.
         case customURL(CustomLinuxImage)
+
+        /// What the download is checked against once it lands, or `nil` when
+        /// nothing is — the Verify step the progress indicator draws exists
+        /// only when this does, and ``resolve(using:)`` credits every digest it
+        /// builds to this.
+        var digestSource: DigestSource? {
+            switch self {
+            case .catalogEntry(let entry): entry.digestSource
+            case .customURL(let image): image.digestSource
+            }
+        }
+
+        /// The image this source names right now, and the one digest the
+        /// download is checked against: the manifest row the resolve read for a
+        /// catalog entry, the checksum entered for a URL, `nil` when there is
+        /// none.
+        func resolve(
+            using resolver: any LinuxImageResolving
+        ) async throws -> (image: ResolvedLinuxImage, expected: ExpectedDigest?) {
+            switch self {
+            case .catalogEntry(let entry):
+                let resolved = try await resolver.resolve(entry)
+                return (
+                    resolved.image,
+                    ExpectedDigest(sha256: resolved.sha256, source: entry.digestSource)
+                )
+            case .customURL(let image):
+                return (try await resolver.resolve(image), image.expectedDigest)
+            }
+        }
     }
 
     var source: Source
@@ -42,16 +72,6 @@ struct LinuxInstallContext: Codable, Sendable, Equatable {
         // The name in the link, not the name on disk: the destination carries a
         // uniqueness suffix the user never typed and would not recognize.
         case .customURL(let image): image.displayName
-        }
-    }
-
-    /// What the download is checked against once it lands, or `nil` when
-    /// nothing is — the Verify step the progress indicator draws exists only
-    /// when this does.
-    var digestSource: DigestSource? {
-        switch source {
-        case .catalogEntry(let entry): entry.digestSource
-        case .customURL(let image): image.expectedDigest?.source
         }
     }
 

@@ -1092,8 +1092,8 @@ struct VMLifecycleCoordinatorTests {
         let digest = SHA256.hash(data: contents).map { String(format: "%02x", $0) }.joined()
 
         let resolveService = MockLinuxImageResolveService()
-        resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: digest, sizeBytes: UInt64(contents.count))
+        resolveService.resolveResult = makeResolvedLinuxImage(sizeBytes: UInt64(contents.count))
+        resolveService.manifestSHA256 = digest
         let downloadService = MockDownloadService()
         downloadService.downloadedContents = contents
         let fileSystem = MockFileSystem()
@@ -1179,9 +1179,6 @@ struct VMLifecycleCoordinatorTests {
         let entry = makeLinuxCatalogEntry(
             distribution: "Ubuntu Desktop", version: "26.04 LTS",
             manifestDirectoryURLString: "https://checksums.example/ubuntu/")
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: fixture.digest, digestSource: entry.digestSource,
-            sizeBytes: UInt64(fixture.contents.count))
         let instance = makeLinuxInstance(
             context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
 
@@ -1197,9 +1194,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("downloadLinuxImage records a URL pick's digest as matching the checksum entered")
     func downloadLinuxImageRecordsAURL() async throws {
         let fixture = try makeLinuxFixture()
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: fixture.digest, digestSource: .enteredByUser,
-            sizeBytes: UInt64(fixture.contents.count))
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1368,9 +1362,9 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         // The mirror's manifest and the bytes disagree — a truncated or
         // tampered-with download.
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: String(repeating: "a", count: 64))
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        fixture.resolveService.manifestSHA256 = String(repeating: "a", count: 64)
+        let entry = makeLinuxCatalogEntry()
+        let context = LinuxInstallContext(source: .catalogEntry(entry))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         let expected = fixture.downloads.appendingPathComponent(
@@ -1388,7 +1382,11 @@ struct VMLifecycleCoordinatorTests {
             #expect(filename == fixture.resolveService.resolveResult.filename)
             // The digest the manifest stated, and where, against what the
             // bytes hash to.
-            #expect(expected == fixture.resolveService.resolveResult.expected)
+            #expect(
+                expected
+                    == ExpectedDigest(
+                        sha256: String(repeating: "a", count: 64),
+                        source: .checksumList(entry.manifestURL)))
             #expect(actual == fixture.digest)
             #expect(
                 error.localizedDescription
@@ -1456,8 +1454,7 @@ struct VMLifecycleCoordinatorTests {
     @Test("A digest failure trashes only the file the download wrote")
     func downloadLinuxImageMismatchSparesACollidingFile() async throws {
         let fixture = try makeLinuxFixture()
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: String(repeating: "a", count: 64))
+        fixture.resolveService.manifestSHA256 = String(repeating: "a", count: 64)
         let resolved = fixture.resolveService.resolveResult
         let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
         try Data("the user's own ISO".utf8).write(to: usersFile)
@@ -1515,12 +1512,12 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.setupState == nil)
         #expect(instance.status == .stopped)
         // The digest that admitted the file is the one recorded.
-        let source = try #require(resolved.expected?.source)
         #expect(
             instance.configuration.installedImage
                 == .linuxCatalogImage(
                     distribution: "Debian", version: "13",
-                    digest: try matchedDigest(fixture, source: source)))
+                    digest: try matchedDigest(
+                        fixture, source: .checksumList(makeLinuxCatalogEntry().manifestURL))))
     }
 
     @Test("A same-named file of the right length but the wrong bytes is downloaded past")
@@ -1552,8 +1549,6 @@ struct VMLifecycleCoordinatorTests {
         let fixture = try makeLinuxFixture()
         // The very bytes the pipeline is about to fetch are already there under
         // the source's name — and with no digest published, nothing can say so.
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: nil, sizeBytes: UInt64(fixture.contents.count))
         let resolved = fixture.resolveService.resolveResult
         try fixture.contents.write(
             to: fixture.downloads.appendingPathComponent(resolved.filename))
@@ -1626,7 +1621,6 @@ struct VMLifecycleCoordinatorTests {
         let isoURL = fixture.resolveService.resolveResult.isoURL
         fixture.resolveService.resolveResult = makeResolvedLinuxImage(
             filename: LinuxImageFilename.destination(for: isoURL),
-            sha256: fixture.digest,
             sizeBytes: UInt64(fixture.contents.count))
         let destination = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -1756,10 +1750,8 @@ struct VMLifecycleCoordinatorTests {
     @Test("A URL pick with no digest computes its checksum and records it unchecked")
     func downloadLinuxImageFromUnverifiedURL() async throws {
         let fixture = try makeLinuxFixture()
-        // What the server serves is not what any digest names — with none
-        // supplied there is nothing to hold it to, which is what the wizard
-        // told the user.
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(sha256: nil)
+        // With no digest supplied there is nothing to hold the bytes to, which
+        // is what the wizard told the user.
         let context = makeCustomURLContext(fixture: fixture, verified: false)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
@@ -1789,7 +1781,6 @@ struct VMLifecycleCoordinatorTests {
     @Test("A restarted URL pick with no digest hashes the file already downloaded")
     func downloadLinuxImageChecksumsAFileAlreadyDownloaded() async throws {
         let fixture = try makeLinuxFixture()
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(sha256: nil)
         // What a setup cancelled during Checksum leaves: the whole file at the
         // destination, which the download skips over without fetching.
         fixture.downloadService.downloadedContents = nil
@@ -1815,8 +1806,6 @@ struct VMLifecycleCoordinatorTests {
     func downloadLinuxImageFromURLChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
         let wrong = String(repeating: "0", count: 64)
-        fixture.resolveService.resolveResult = makeResolvedLinuxImage(
-            sha256: wrong, digestSource: .enteredByUser)
         let context = LinuxInstallContext(
             source: .customURL(
                 CustomLinuxImage(
@@ -1833,7 +1822,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(expectedDigest.source == .enteredByUser)
         #expect(
             error?.localizedDescription
-                == "\(filename) doesn't match the checksum you entered. Check the checksum and try again.")
+                == "\(filename) doesn't match the checksum you entered.")
 
         // Left in place it would satisfy the skip-existing fast path forever.
         let expected = fixture.downloads.appendingPathComponent(

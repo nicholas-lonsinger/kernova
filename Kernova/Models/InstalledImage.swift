@@ -14,7 +14,7 @@ enum InstalledImage: Sendable, Equatable {
 
     /// A Linux installer image from the bundled catalog, by the distribution
     /// and version the catalog names, and the digest the attached ISO hashed
-    /// to — `nil` only in a record that predates digests being kept.
+    /// to — `nil` when the record carries no digest keys.
     ///
     /// Attaching an ISO is not a completed install — the distribution's own
     /// installer runs inside the guest, and can write another distribution or
@@ -38,7 +38,7 @@ enum InstalledImage: Sendable, Equatable {
     }
 
     /// The digest the attached ISO hashed to — `nil` for a macOS restore image,
-    /// and for a catalog record that predates digests being kept.
+    /// and for a catalog record that carries no digest keys.
     var digest: InstallerImageDigest? {
         switch self {
         case .macOSRestoreImage: nil
