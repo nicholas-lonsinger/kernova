@@ -182,6 +182,7 @@ struct VMSessionContextTests {
             clipboardInputPipe: Pipe(),
             clipboardOutputPipe: Pipe(),
             coldRemovableMedia: coldRemovableMedia,
+            directoryShare: nil,
             vmnetNetworks: MockVmnetNetworkProvider(),
             entitlements: .unentitled)
     }

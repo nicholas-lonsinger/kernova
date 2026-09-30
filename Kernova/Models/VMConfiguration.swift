@@ -563,7 +563,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
         // Regenerate shared directory IDs to avoid VirtioFS collisions
         clone.sharedDirectories = sharedDirectories?.map { dir in
-            SharedDirectory(id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark)
+            SharedDirectory(
+                id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark,
+                mountName: dir.mountName)
         }
 
         // The clone copies the source bundle's post-install artifacts, so
@@ -797,11 +799,47 @@ struct SharedDirectory: Codable, Sendable, Equatable {
     /// see ``StorageDisk/bookmark`` for the nil semantics.
     var bookmark: Data?
 
-    init(id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil) {
+    /// The name a macOS guest mounts this folder by, fixed when the share is
+    /// added so no later change to the list, or to `path`, renames it.
+    let mountName: String
+
+    /// A share mounted by `mountName`, by default the folder's own name.
+    init(
+        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil,
+        mountName: String? = nil
+    ) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
         self.bookmark = bookmark
+        self.mountName = mountName ?? URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    /// A new share of the folder at `path`, mounted by a name none of
+    /// `directories` holds: the folder's own, or the same prefixed with the
+    /// share's id.
+    init(
+        adding path: String, readOnly: Bool, bookmark: Data?, to directories: [SharedDirectory]
+    ) {
+        let id = UUID()
+        let taken = Set(directories.map(\.mountName))
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let candidates = [
+            name, "\(id.uuidString.prefix(8))-\(name)", "\(id.uuidString)-\(name)",
+        ]
+        self.init(
+            id: id, path: path, readOnly: readOnly, bookmark: bookmark,
+            mountName: candidates.first { !taken.contains($0) } ?? candidates[2])
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let path = try c.decode(String.self, forKey: .path)
+        self.init(
+            id: try c.decode(UUID.self, forKey: .id), path: path,
+            readOnly: try c.decode(Bool.self, forKey: .readOnly),
+            bookmark: try c.decodeIfPresent(Data.self, forKey: .bookmark),
+            mountName: try c.decodeIfPresent(String.self, forKey: .mountName))
     }
 
     /// The last path component, used as the display name in the UI and as the share name in VirtioFS.

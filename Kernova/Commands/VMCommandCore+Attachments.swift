@@ -485,7 +485,9 @@ extension VMCommandCore {
             var known = Set(directories.map { Self.comparablePath($0.path) })
             for file in files where known.insert(Self.comparablePath(file.path)).inserted {
                 directories.append(
-                    SharedDirectory(path: file.path, readOnly: readOnly, bookmark: file.bookmark))
+                    SharedDirectory(
+                        adding: file.path, readOnly: readOnly, bookmark: file.bookmark,
+                        to: directories))
             }
         }
     }
@@ -546,12 +548,15 @@ extension VMCommandCore {
     /// writes nothing.
     ///
     /// Admission is ``VMCapabilityCatalog/sharedDirectoriesOffer(_:on:posture:)``.
-    /// On a live session the device's share follows, in three steps that each
-    /// run only once the one before succeeded: the scopes of the folders the
-    /// list adds are opened and the share is built from the list the commit
-    /// writes, validated as a boot validates it; the list is committed; the
-    /// share is installed. So `config.json` never names shares the device was
-    /// not given.
+    /// A move admitted as a live swap (``VMEditClasses/liveShares``) carries
+    /// the running device with it, in three steps that each run only once the
+    /// one before succeeded: the scopes of the folders the list adds are
+    /// opened and the device's next share is built from the list the commit
+    /// writes and the share the device serves
+    /// (``ConfigurationBuilder/macOSDirectoryShare(for:serving:)``); the list
+    /// is committed; the share is installed. So `config.json` never names
+    /// shares the device was not given. A folder the swap cannot share is
+    /// refused as the argument it is.
     private func writeSharedDirectories(
         of instance: VMInstance, _ change: @escaping (inout [SharedDirectory]) -> Void
     ) throws {
@@ -566,7 +571,7 @@ extension VMCommandCore {
 
         let admitted = try requireSharedDirectories(directories, on: instance)
 
-        guard let sessionID = instance.liveSessionID else {
+        guard admitted.contains(.liveShares) else {
             try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
                 try requireSaved(
                     library.updateConfiguration(permit) { $0.sharedDirectories = changed($0) },
@@ -574,22 +579,36 @@ extension VMCommandCore {
             }
             return
         }
+        guard let sessionID = instance.liveSessionID, let context = instance.sessionContext,
+            let serving = context.directoryShare
+        else {
+            #log(
+                Self.logger, .fault,
+                "A share swap on '\(instance.name, privacy: .public)' found no automount device share")
+            assertionFailure("A share swap is admitted only on a running guest booted with a share")
+            throw invalidState(instance)
+        }
 
-        let heldIDs = Set((held ?? []).map(\.id))
+        let servedIDs = Set(serving.entries.map(\.id))
         var staged = instance.configuration
         staged.sharedDirectories = directories
         var opened: [UUID: ScopedAccess] = [:]
         for reference in staged.externalFileReferences
-        where reference.kind == .sharedDirectory && !heldIDs.contains(reference.id) {
+        where reference.kind == .sharedDirectory && !servedIDs.contains(reference.id) {
             opened[reference.id] = ScopedAccess.open(reference)?.scope
         }
-        var share = MacOSDirectoryShare(entries: [])
+        var share = serving
         do {
             try edit(admitted, on: instance, verb: .editSharedDirectory) { permit in
                 try requireSaved(
                     library.updateConfiguration(permit) { config in
                         let committed = changed(config)
-                        share = try ConfigurationBuilder.macOSDirectoryShare(for: committed ?? [])
+                        do {
+                            share = try ConfigurationBuilder.macOSDirectoryShare(
+                                for: committed ?? [], serving: serving)
+                        } catch {
+                            throw CommandError.invalidArgument(error.localizedDescription)
+                        }
                         config.sharedDirectories = committed
                     },
                     of: instance, verb: .editSharedDirectory)
@@ -600,9 +619,10 @@ extension VMCommandCore {
         }
         let sharedIDs = Set(share.entries.map(\.id))
         for (id, scope) in opened where !sharedIDs.contains(id) { scope.release() }
+        context.directoryShare = share
         lifecycle.liveDirectorySharing.install(
             share, holding: opened.filter { sharedIDs.contains($0.key) },
-            releasing: heldIDs.subtracting(sharedIDs), on: instance, for: sessionID)
+            releasing: servedIDs.subtracting(sharedIDs), on: instance, for: sessionID)
     }
 
     // MARK: - Guest Agent Disk

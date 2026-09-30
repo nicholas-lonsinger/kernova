@@ -465,6 +465,39 @@ struct VMSettingsSharingPanelTests {
         #expect(visibleLabel(caption, in: emptyPanel))
     }
 
+    @Test("A live read-only change the folder refuses is presented, and the switch shows what is committed")
+    func refusedLiveReadOnlyChangeIsPresentedAndReverted() throws {
+        let folder = scratch.url.appendingPathComponent(UUID().uuidString).path(percentEncoded: false)
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder)
+        }
+        let share = SharedDirectory(path: folder, readOnly: true)
+        let presenter = MockVMLibraryPresenting()
+        let viewModel = makeViewModel()
+        viewModel.presenter = presenter
+        let instance = viewModel.library.registerFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID())
+        ) { $0.sharedDirectories = [share] }
+        instance.beginSessionContextForTesting().directoryShare =
+            try ConfigurationBuilder.macOSDirectoryShare(for: [share])
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: true)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.sharing)
+        let panel = try #require(vc.panelForTesting(.sharing))
+        let toggle = try #require(firstSwitch(action: "sharedReadOnlyToggled:", in: panel))
+        #expect(toggle.isEnabled)
+
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(presenter.errors == ["Shared directory is not writable: \(folder)."])
+        #expect(toggle.state == .on)
+        #expect(instance.configuration.sharedDirectories?.first?.readOnly == true)
+    }
+
     @Test("A stopped VM states no share rule")
     func stoppedVMStatesNoShareRule() throws {
         let (vc, _) = makeSharingController(

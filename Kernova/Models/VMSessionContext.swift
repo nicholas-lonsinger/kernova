@@ -130,6 +130,13 @@ final class VMSessionContext {
     /// running.
     var liveRemovableMedia: [RemovableMediaDeviceInfo] = []
 
+    // MARK: - Directory Sharing
+
+    /// The share a macOS guest's automount device carries: what the boot
+    /// built it with, then what each live swap installed; `nil` when the
+    /// session has no such device.
+    var directoryShare: MacOSDirectoryShare?
+
     // MARK: - Initializer
 
     init(
@@ -168,6 +175,7 @@ final class VMSessionContext {
         serialInputPipe = nil
         serialOutputPipe = nil
         liveRemovableMedia = []
+        directoryShare = nil
         // Releasing the session releases the actor, its delegate adapter, and
         // the `VZVirtualMachine`; the boot paths' file-lock retry covers the
         // lagging deallocation of the VM's advisory locks.

@@ -929,14 +929,29 @@ struct VMCommandCoreAttachmentTests {
         return path
     }
 
+    /// A running macOS guest booted with `directories`, its session holding
+    /// the share its boot built — or, with `serving`, the share given.
+    private func makeRunningMacOSGuest(
+        in harness: Harness, name: String = "Core VM", sharing directories: [SharedDirectory],
+        serving: MacOSDirectoryShare? = nil
+    ) throws -> (instance: VMInstance, sessionID: UUID) {
+        let sessionID = UUID()
+        let instance = makeInstance(
+            in: harness, name: name, phase: .running(sessionID: sessionID), guestOS: .macOS
+        ) { $0.sharedDirectories = directories.isEmpty ? nil : directories }
+        let context = instance.beginSessionContextForTesting()
+        if !directories.isEmpty {
+            context.directoryShare =
+                try serving ?? ConfigurationBuilder.macOSDirectoryShare(for: directories)
+        }
+        return (instance, sessionID)
+    }
+
     @Test("A running macOS guest with one share takes another live, its device given the list committed")
     func runningMacOSGuestAddsAShareLive() throws {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS
-        ) { $0.sharedDirectories = [kept] }
+        let (instance, sessionID) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
         let added = try folder("added")
 
         try harness.core.addSharedDirectories(
@@ -949,6 +964,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(install.sessionID == sessionID)
         #expect(install.share.entries.map(\.id) == directories.map(\.id))
         #expect(install.released.isEmpty)
+        #expect(instance.sessionContext?.directoryShare == install.share)
     }
 
     @Test("Removing one of two shares from a running macOS guest swaps live and lets the removed one go")
@@ -956,9 +972,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
         let going = SharedDirectory(path: try folder("going"))
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS
-        ) { $0.sharedDirectories = [kept, going] }
+        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept, going])
 
         try harness.core.removeSharedDirectory(.id(instance.id), directory: going.id)
         try harness.core.setSharedDirectoryReadOnly(
@@ -970,13 +984,67 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.liveShares.installs.last?.share.entries.map(\.readOnly) == [true])
     }
 
-    @Test("A share that fails validation leaves the configuration as it was and the device untouched")
+    /// Two folders of one name: the second is added under its id prefix, and
+    /// removing the first renames neither the second in the running guest nor
+    /// what a resume rebuilds from the configuration.
+    @Test("Removing a share never renames another, live or at the next build")
+    func removingAShareKeepsEveryOtherMountName() throws {
+        let harness = makeHarness()
+        let first = SharedDirectory(path: try folder("a") + "/src")
+        try FileManager.default.createDirectory(
+            atPath: first.path, withIntermediateDirectories: true)
+        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [first])
+        let secondPath = try folder("b") + "/src"
+        try FileManager.default.createDirectory(
+            atPath: secondPath, withIntermediateDirectories: true)
+
+        try harness.core.addSharedDirectories(
+            .id(instance.id), paths: [PickedFile(path: secondPath, bookmark: nil)])
+        let second = try #require(instance.configuration.sharedDirectories?.last)
+        #expect(second.mountName == "\(second.id.uuidString.prefix(8))-src")
+        #expect(harness.liveShares.installs.last?.share.entries.map(\.name) == ["src", second.mountName])
+
+        try harness.core.removeSharedDirectory(.id(instance.id), directory: first.id)
+
+        #expect(harness.liveShares.installs.last?.share.entries.map(\.name) == [second.mountName])
+        let rebuilt = try ConfigurationBuilder.macOSDirectoryShare(
+            for: instance.configuration.sharedDirectories ?? [])
+        #expect(rebuilt.entries.map(\.name) == [second.mountName])
+    }
+
+    /// The device serves the folder it was built with; a later swap neither
+    /// fails on the path the folder left nor re-points the mount at whatever
+    /// folder now sits there.
+    @Test("A live swap keeps serving a share whose folder moved from its stored path")
+    func liveSwapKeepsWhatTheDeviceServes() throws {
+        let harness = makeHarness()
+        let served = try folder("served")
+        for storedPathExists in [false, true] {
+            let stored = externalPath("stored")
+            if storedPathExists {
+                try FileManager.default.createDirectory(
+                    atPath: stored, withIntermediateDirectories: true)
+            }
+            let moved = SharedDirectory(path: stored, mountName: "moved")
+            let serving = MacOSDirectoryShare(entries: [
+                .init(id: moved.id, name: "moved", url: URL(fileURLWithPath: served), readOnly: false)
+            ])
+            let (instance, _) = try makeRunningMacOSGuest(
+                in: harness, name: "Moved \(storedPathExists)", sharing: [moved], serving: serving)
+
+            try harness.core.addSharedDirectories(
+                .id(instance.id), paths: [PickedFile(path: try folder("added"), bookmark: nil)])
+
+            let first = try #require(harness.liveShares.installs.last?.share.entries.first)
+            #expect(first == serving.entries[0], "stored path exists: \(storedPathExists)")
+        }
+    }
+
+    @Test("A folder a live swap cannot share is refused as the argument it is, and nothing is written")
     func liveShareFailingValidationWritesNothing() async throws {
         let harness = makeHarness()
         let kept = SharedDirectory(path: try folder("kept"))
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS
-        ) { $0.sharedDirectories = [kept] }
+        let (instance, _) = try makeRunningMacOSGuest(in: harness, sharing: [kept])
 
         let refusal = await commandError {
             try harness.core.addSharedDirectories(
@@ -984,11 +1052,10 @@ struct VMCommandCoreAttachmentTests {
                 paths: [PickedFile(path: externalPath("never-created"), bookmark: nil)])
         }
 
-        guard case .operationFailed(let verb, _, _, _) = try #require(refusal) else {
-            Issue.record("expected an operation failure, got \(String(describing: refusal))")
+        guard case .invalidArgument = try #require(refusal) else {
+            Issue.record("expected an argument refusal, got \(String(describing: refusal))")
             return
         }
-        #expect(verb == .editSharedDirectory)
         instance.activity.refreshFromBundle()
         #expect(instance.configuration.sharedDirectories == [kept])
         #expect(harness.liveShares.installs.isEmpty)

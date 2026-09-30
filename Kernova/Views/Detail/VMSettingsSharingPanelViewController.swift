@@ -537,6 +537,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     @objc private func sharedReadOnlyToggled(_ sender: NSSwitch) {
         guard let id = attachmentUUID(from: sender) else { return }
         viewModel.setSharedDirectoryReadOnly(id, readOnly: sender.state == .on, on: instance)
+        // A refused edit leaves the row's model as it was, so the list's diff
+        // would leave the click showing; the switch shows what is committed.
+        let committed = currentSharedDirectories.first { $0.id == id }?.readOnly ?? false
+        sender.state = committed ? .on : .off
     }
 
     @objc private func sharedDeleteTapped(_ sender: NSButton) {
