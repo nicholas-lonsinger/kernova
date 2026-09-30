@@ -53,7 +53,7 @@ enum DetailRoute: Equatable {
             }
             // An operation claims an active display only while it still has a
             // session to host: a revert ends one before it copies, and a
-            // disks-only capture never had one. Without this they route to the
+            // cold capture never had one. Without this they route to the
             // display pane, which replaces the Settings form with the backing
             // view for the length of the copy.
             guard operation.session != nil else { return .transition(label: label) }

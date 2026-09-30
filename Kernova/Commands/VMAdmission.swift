@@ -270,8 +270,8 @@ enum VMAdmission {
     /// How a capture taken from `phase` right now is made, or `nil` when the
     /// phase admits none.
     ///
-    /// Disks alone are captured only from a plainly stopped VM: `.initialBoot`
-    /// holds disks with no installed guest, and `.failed` says the last
+    /// A capture with no memory is taken only from a plainly stopped VM:
+    /// `.initialBoot` holds disks with no installed guest, and `.failed` says the last
     /// operation did not finish.
     static func captureMode(phase: VMLifecyclePhase, facts: Facts) -> VMSnapshotCaptureMode? {
         if phase.isSettledLive { return .live }

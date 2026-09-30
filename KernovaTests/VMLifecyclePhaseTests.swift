@@ -110,7 +110,7 @@ struct VMLifecyclePhaseTests {
             Row(
                 status: .saving, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
-            // Capturing live, and disks alone.
+            // Capturing live, and cold.
             Row(
                 status: .snapshotting, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),

@@ -314,7 +314,8 @@ final class VirtualizationService {
     /// a live capture writes the guest's memory into the snapshot's own saved
     /// state and copies the bundle's disks beside it, a suspended capture
     /// clones the bundle's suspend slot beside the disk copies, and a stopped
-    /// capture copies the disks alone.
+    /// capture copies the disks with no saved state. Every mode records the
+    /// VM's configuration beside them.
     ///
     /// A live capture pauses the guest for the write and puts it back the way it
     /// was found, so the VM keeps running across a snapshot — and the suspend
@@ -402,8 +403,8 @@ final class VirtualizationService {
             VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }
 
-    /// The bundle's disks alone, from a stopped VM — no VZ work, so nothing is
-    /// paused and no saved state is written.
+    /// The bundle's disks and the VM's configuration, from a stopped VM — no VZ
+    /// work, so nothing is paused and no saved state is written.
     private func takeColdSnapshot(
         _ instance: VMInstance, _ context: borrowing VMOperationContext,
         snapshot: VMSnapshotRecord
@@ -424,7 +425,7 @@ final class VirtualizationService {
         }
         #log(
             Self.logger, .notice,
-            "Took a disks-only snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
+            "Took a cold snapshot '\(snapshot.name, privacy: .public)' of stopped VM '\(instance.name, privacy: .public)'"
         )
         return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
     }

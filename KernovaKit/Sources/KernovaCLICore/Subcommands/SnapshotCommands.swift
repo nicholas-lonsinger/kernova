@@ -54,8 +54,9 @@ extension KernovaCommand.Snapshot {
         static let configuration = CommandConfiguration(
             commandName: "take",
             abstract: "Take a snapshot of a virtual machine.",
-            discussion: "A running guest is captured with its memory and pauses briefly while "
-                + "the state is written; a stopped one is captured as disks alone. Without "
+            discussion: "A snapshot captures the VM's disks and settings. A running guest's "
+                + "memory is captured with them, and it pauses briefly while the state is "
+                + "written; a stopped one is captured with no memory. Without "
                 + "--name Kernova names the snapshot the way its own sheet proposes: "
                 + "\u{201C}Snapshot\u{201D}, then \u{201C}Snapshot 2\u{201D}, and so on. Prints "
                 + "the new snapshot as one row of `snapshot list`.")

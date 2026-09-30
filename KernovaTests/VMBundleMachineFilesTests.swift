@@ -356,9 +356,9 @@ struct VMBundleMachineFilesTests {
         #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
     }
 
-    // MARK: - Disks-only snapshots
+    // MARK: - Cold snapshots
 
-    @Test("A disks-only snapshot plans a restore without a saved state")
+    @Test("A snapshot taken while stopped plans a restore without a saved state")
     func coldPlanNeedsNoSavedState() throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
@@ -376,7 +376,7 @@ struct VMBundleMachineFilesTests {
         #expect(plan.relativePaths.contains("Disk.asif"))
     }
 
-    @Test("A disks-only revert writes the disks back and clears the bundle's suspend slot")
+    @Test("A revert to a snapshot taken while stopped writes the disks back and clears the bundle's suspend slot")
     func coldRestoreDropsTheSuspendSlot() throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
@@ -403,7 +403,7 @@ struct VMBundleMachineFilesTests {
                 atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
-    @Test("A disks-only revert of a bundle holding no suspend slot succeeds")
+    @Test("A bundle holding no suspend slot reverts to a snapshot taken while stopped")
     func coldRestoreToleratesAnAbsentSaveFile() throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())

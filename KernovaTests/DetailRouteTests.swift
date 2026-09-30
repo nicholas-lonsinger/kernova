@@ -112,7 +112,7 @@ struct DetailRouteTests {
 
     @Test("A session-less transition routes to its spinner, not the display pane")
     func sessionLessTransitionsRouteToTransition() {
-        // A revert ends the session before it copies, and a disks-only capture
+        // A revert ends the session before it copies, and a cold capture
         // never had one — both would otherwise replace the Settings form with
         // the display backing view for the whole copy.
         for phase in [

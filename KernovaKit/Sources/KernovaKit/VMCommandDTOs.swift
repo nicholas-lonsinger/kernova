@@ -117,8 +117,8 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
     public let name: String
     /// The user's free-form note, empty when there is none.
     public let notes: String
-    /// `warm` when the capture holds the guest's memory, `cold` when it holds
-    /// the disks alone.
+    /// `warm` when the capture holds the guest's memory, `cold` when it does
+    /// not.
     public let kind: String
     /// When the capture was taken.
     public let createdAt: Date

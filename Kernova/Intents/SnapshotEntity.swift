@@ -46,7 +46,7 @@ struct SnapshotEntity: AppEntity {
     var notes: String
 
     /// What the capture holds, as its stable wire name — `warm` for one that
-    /// carries the guest's memory, `cold` for the disks alone.
+    /// carries the guest's memory, `cold` for one that does not.
     @Property(title: "Kind")
     var kind: String
 
@@ -75,11 +75,12 @@ struct SnapshotEntity: AppEntity {
     }
 
     /// What a capture reads back as in the snapshot list's own words — the date
-    /// it was taken, and for a cold one that it holds no memory image.
+    /// it was taken, and for a cold one what it holds in place of a memory
+    /// image.
     static func captureDescription(_ kind: String, _ createdAt: Date) -> String {
         let taken = SnapshotDateFormat.string(from: createdAt)
         guard VMSnapshotKind(rawValue: kind) == .cold else { return taken }
-        return "\(taken) \u{00B7} Disks only"
+        return "\(taken) \u{00B7} \(SnapshotKindCopy.captured(.cold))"
     }
 }
 

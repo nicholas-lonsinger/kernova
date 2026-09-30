@@ -122,7 +122,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
     @Test("A memory-and-disks capture says so, and warns about the pause")
     func warmCopyNamesMemoryAndThePause() {
         let (sheet, _) = makeSheet(mode: .live)
-        #expect(sheet.headerBodyText.contains("memory and disks"))
+        #expect(sheet.headerBodyText.contains("memory, disks, and settings"))
         #expect(sheet.captionText.contains("pauses briefly"))
     }
 
@@ -136,21 +136,21 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.captionText.contains("share their blocks"))
     }
 
-    @Test("A disks-only capture says the VM comes back powered off, with no pause")
+    @Test("A capture of a stopped VM says the VM comes back powered off, with no pause")
     func coldCopyNamesTheOutcome() {
         let (sheet, _) = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
         #expect(sheet.headerBodyText.contains("powered off"))
-        #expect(!sheet.headerBodyText.contains("memory and disks"))
+        #expect(!sheet.headerBodyText.contains("memory, disks, and settings"))
         #expect(!sheet.captionText.contains("pauses briefly"))
         // The shared-blocks note stands either way.
         #expect(sheet.captionText.contains("share their blocks"))
     }
 
-    @Test("A guest powering off while the sheet is up moves its copy to disks-only")
+    @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
     func updatingTheModeRewritesTheRenderedCopy() {
         let (sheet, _) = makeSheet(mode: .live)
-        let body = findLabel(containing: "memory and disks", in: sheet.view)
+        let body = findLabel(containing: "memory, disks, and settings", in: sheet.view)
         #expect(body != nil)
 
         sheet.update(mode: .stopped)
@@ -158,7 +158,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.mode == .stopped)
         // The same labels, rewritten — not a stale copy left on screen.
         #expect(body?.stringValue.contains("powered off") == true)
-        #expect(findLabel(containing: "memory and disks", in: sheet.view) == nil)
+        #expect(findLabel(containing: "memory, disks, and settings", in: sheet.view) == nil)
         #expect(findLabel(containing: "pauses briefly", in: sheet.view) == nil)
     }
 }
