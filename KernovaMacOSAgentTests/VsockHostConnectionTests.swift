@@ -5,11 +5,11 @@ import Darwin
 import KernovaKit
 import KernovaTestSupport
 
-// Substrings identifying the drain worker's own records; production owns the
+// Substrings identifying the connection's own records; production owns the
 // wording, these pick the line out of a ring or a recorder.
 private let bufferFullMarker = "Log forward buffer full"
-private let sendFailedMarker = "Log channel send failed"
 private let droppedCountMarker = "buffered log record(s) while the host channel was behind"
+private let channelEndMarker = "record(s) for the next connection"
 
 /// Captures `VsockHostConnection`'s own log records for the length of one test,
 /// and optionally feeds them back through `forwardLog` the way
@@ -17,8 +17,8 @@ private let droppedCountMarker = "buffered log record(s) while the host channel 
 ///
 /// `KernovaLogger.forwardingSink` is process-wide, so the sink is narrowed to
 /// the one category under test and the suite runs `.serialized`. `changed`
-/// fires after each record has been forwarded, which is the drain worker's only
-/// signal — it reports its outcome by logging and nothing else.
+/// fires after each record has been forwarded, which is the connection's only
+/// signal — it reports its outcomes by logging and nothing else.
 private final class AgentLogSink: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [String] = []
@@ -67,11 +67,14 @@ struct VsockHostConnectionTests {
     }
 
     private func pendingMessages(_ conn: VsockHostConnection) -> [String] {
-        conn.lock.withLock {
-            conn.pendingLogs.compactMap { frame -> String? in
-                guard case .logRecord(let record) = frame.payload else { return nil }
-                return record.segments.map(\.text).joined()
-            }
+        conn.lock.withLock { conn.pendingLogs }.compactMap { framed -> String? in
+            var decoder = StreamFrameDecoder()
+            decoder.feed(framed)
+            guard let payload = try? decoder.nextFrame(),
+                let frame = try? Frame(serializedBytes: payload),
+                case .logRecord(let record) = frame.payload
+            else { return nil }
+            return record.segments.map(\.text).joined()
         }
     }
 
@@ -273,11 +276,13 @@ struct VsockHostConnectionTests {
             #expect(await firstByteWritten(to: hostFd) == 1)
             #expect(pendingLogCount(conn) == 0)
 
+            // The parked record counts against the limit, so the ring itself
+            // stops one short of it.
             let cap = VsockHostConnection.logBufferLimit
             for i in 0..<(cap + 50) {
                 conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "queued\(i)")
             }
-            #expect(pendingLogCount(conn) == cap)
+            #expect(pendingLogCount(conn) == cap - 1)
 
             // The call under test: with the worker parked in the socket,
             // forwarding is still nothing but an append.
@@ -289,15 +294,13 @@ struct VsockHostConnectionTests {
                 returned.increment()
             }
             try await returned.changed.wait { returned.value == 1 }
-            #expect(pendingLogCount(conn) == cap)
+            #expect(pendingLogCount(conn) == cap - 1)
 
-            // Closing the host end wakes the parked write with EPIPE, putting
-            // the frame it was carrying back into a ring already at the cap.
-            // The count the warning carries is the ring as the worker saw it
-            // under the lock that re-inserted the frame; from then on the ring
-            // is the drain's again.
+            // Closing the host end ends the channel with the parked record
+            // still unsent. The end's count takes it in whether its failed send
+            // has put it back in the ring yet or not.
             Darwin.close(hostFd)
-            try await sink.changed.wait { sink.count(matching: sendFailedMarker) == 1 }
+            try await sink.changed.wait { sink.count(matching: channelEndMarker) == 1 }
             #expect(sink.count(matching: "holding \(cap) record(s)") == 1)
         }
     }
@@ -349,11 +352,12 @@ struct VsockHostConnectionTests {
 
     // MARK: - Re-entrancy through the process-wide sink
 
-    /// The conversion of this class to `KernovaLogger` turns its own warnings
-    /// into `forwardLog` calls that re-enter it, so the drain has to log with
-    /// its lock released and without scheduling itself again.
-    @Test("A drain's send-failure warning re-enters forwardLog exactly once")
-    func sendFailureWarningReentersForwardLogOnce() async throws {
+    /// The conversion of this class to `KernovaLogger` turns its own records
+    /// into `forwardLog` calls that re-enter it, so a channel's end has to be
+    /// logged with the lock released, and the drain run that record wakes has
+    /// to find no channel rather than one more refusing send.
+    @Test("A channel's end notice re-enters forwardLog exactly once")
+    func channelEndNoticeReentersForwardLogOnce() async throws {
         try await withDialledConnection(label: "log-reentrancy-test", socketBufferBytes: 8192) { dialled in
             let conn = dialled.conn
             let hostFd = dialled.hostFds[0]
@@ -367,6 +371,8 @@ struct VsockHostConnectionTests {
             sink.install()
             defer { sink.uninstall() }
 
+            // Far more than the socket takes, so most of it is still held when
+            // the channel ends, wherever the drain has got to by then.
             let payload = String(repeating: "x", count: 4096)
             for i in 0..<40 {
                 conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "re\(i)-\(payload)")
@@ -375,18 +381,19 @@ struct VsockHostConnectionTests {
 
             Darwin.close(hostFd)
 
-            // The sink records the warning and only then forwards it, so the
+            // The sink records the notice and only then forwards it, so the
             // ring — the state the assertions below read — is what this waits
             // on; the sink's own tally is true one step earlier.
             try await sink.changed.wait {
-                pendingMessages(conn).contains { $0.contains(sendFailedMarker) }
+                pendingMessages(conn).contains { $0.contains(channelEndMarker) }
             }
-            // One warning for the outage, whatever else the agent logs into the
-            // broken channel afterwards — and it reached the ring, so the
-            // forward ran to completion rather than deadlocking on the drain's
-            // own lock.
-            #expect(sink.count(matching: sendFailedMarker) == 1)
-            #expect(pendingMessages(conn).filter { $0.contains(sendFailedMarker) }.count == 1)
+            // One notice for the channel, and it reached the ring, so the
+            // forward ran to completion rather than deadlocking on the
+            // connection's own lock.
+            let notices = sink.messages.filter { $0.contains(channelEndMarker) }
+            #expect(notices.count == 1)
+            #expect(notices.first?.contains("holding 0 record(s)") == false)
+            #expect(pendingMessages(conn).filter { $0.contains(channelEndMarker) }.count == 1)
             #expect(pendingLogCount(conn) <= VsockHostConnection.logBufferLimit)
         }
     }
@@ -459,45 +466,37 @@ struct VsockHostConnectionTests {
         #expect(pendingLogCount(conn) == 0)
     }
 
-    /// The failed send's frame reaches `holdForNextConnection` after
-    /// `setEnabled(false)` has already cleared the ring — the pause that
-    /// disabling performs is what fails the send.
-    @Test("Explicitly disabled: a frame parked by a failed send is dropped, and a later enable does not deliver it")
-    func explicitlyDisabledDropsParkedFrame() throws {
-        let conn = VsockHostConnection()
-        conn.setEnabled(false)
+    /// Disabling disowns the record a send has in flight in the same hold that
+    /// closes admission, so that send failing afterwards — before the later
+    /// enable or after it — cannot put the record back.
+    @Test("Explicitly disabled: a record in flight when forwarding goes off is not delivered after a later enable")
+    func explicitlyDisabledDropsRecordInFlight() async throws {
+        try await withDialledConnection(
+            label: "log-disabled-in-flight-test", attempts: 2, socketBufferBytes: 8192
+        ) { dialled in
+            let conn = dialled.conn
+            defer { Darwin.close(dialled.hostFds[0]) }
 
-        let sink = AgentLogSink()
-        sink.install()
-        defer { sink.uninstall() }
+            conn.start()
+            conn.setEnabled(true)
 
-        conn.holdForNextConnection(
-            makeLogFrame(message: "parked"), failedOn: try makeClosedChannel(),
-            failure: VsockChannelError.closed)
+            // One record larger than the socket can hold: the first byte proves
+            // the worker is carrying it, and its write cannot finish.
+            let payload = String(repeating: "x", count: 64 * 1024)
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "in-flight-\(payload)")
+            #expect(await firstByteWritten(to: dialled.hostFds[0]) == 1)
 
-        #expect(pendingLogCount(conn) == 0)
-        #expect(sink.count(matching: sendFailedMarker) == 0)
+            conn.setEnabled(false)
 
-        conn.setEnabled(true)
-        #expect(pendingLogCount(conn) == 0)
-    }
+            let host = VsockChannel(fileDescriptor: dialled.hostFds[1])
+            host.start()
+            defer { host.close() }
+            conn.setEnabled(true)
+            conn.forwardLog(level: .info, subsystem: "t", category: "t", message: "after")
 
-    @Test("Enabled: a frame parked by a failed send goes back to the head of the buffer")
-    func enabledParksFrameAtHead() throws {
-        let conn = VsockHostConnection()
-        conn.setEnabled(true)
-        conn.bufferFrameUnlessDisabled(makeLogFrame(message: "queued"))
-
-        let sink = AgentLogSink()
-        sink.install()
-        defer { sink.uninstall() }
-
-        conn.holdForNextConnection(
-            makeLogFrame(message: "parked"), failedOn: try makeClosedChannel(),
-            failure: VsockChannelError.closed)
-
-        #expect(pendingMessages(conn) == ["parked", "queued"])
-        #expect(sink.count(matching: "\(sendFailedMarker), holding 2 record(s)") == 1)
+            #expect(try await message(from: host) == "after")
+            #expect(dialled.dialled.value == 2)
+        }
     }
 
     // MARK: - Undecided policy: pre-handshake buffering (#598)
@@ -637,16 +636,6 @@ struct VsockHostConnectionTests {
             #expect(try await message(from: host1) == "buffered")
             #expect(dialled.dialled.value == 2)
         }
-    }
-
-    /// A channel whose send has already failed, standing in for the one a
-    /// drain was sending on.
-    private func makeClosedChannel() throws -> VsockChannel {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        Darwin.close(hostFd)
-        let channel = VsockChannel(fileDescriptor: agentFd)
-        channel.close()
-        return channel
     }
 
     /// The message of the next `LogRecord` frame on `channel`.
