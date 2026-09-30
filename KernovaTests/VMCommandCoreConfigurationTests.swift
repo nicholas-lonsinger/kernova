@@ -79,8 +79,14 @@ struct VMCommandCoreConfigurationTests {
         let descriptors = harness.core.configurationKeys()
 
         #expect(descriptors.map(\.name) == VMConfigurationKeyRegistry.keys.map(\.name))
-        #expect(descriptors.contains { $0.name == "cpus" && !$0.editableWhileRunning })
-        #expect(descriptors.contains { $0.name == "ephemeral" && $0.editableWhileRunning })
+        #expect(
+            descriptors.contains {
+                $0.name == "cpus" && $0.editableWhileRunning == ["macOS": false, "linux": false]
+            })
+        #expect(
+            descriptors.contains {
+                $0.name == "ephemeral" && $0.editableWhileRunning == ["macOS": true, "linux": true]
+            })
         // The listing is the whole documentation of what a key takes, so a key
         // reaching it without a summary is a key nobody can set.
         for descriptor in descriptors {

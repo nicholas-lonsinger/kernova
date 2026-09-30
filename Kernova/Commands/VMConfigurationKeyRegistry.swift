@@ -89,9 +89,9 @@ struct VMConfigurationKey: Sendable {
     let summary: String
     /// When a write of this key is taken on a guest of each OS.
     let gate: @Sendable (VMGuestOS) -> VMConfigurationKeyGate
-    /// Whether the key means anything for this VM at all. A key that does not
-    /// apply is left out of a whole-VM read and refused when named.
-    let applies: @Sendable (VMConfiguration) -> Bool
+    /// Whether the key means anything for a guest of each OS at all. A key
+    /// that does not apply is left out of a whole-VM read and refused when named.
+    private let appliesToGuest: @Sendable (VMGuestOS) -> Bool
     let field: Field
 
     /// A key over the VM's configuration, taken under `gate` on every guest.
@@ -99,7 +99,7 @@ struct VMConfigurationKey: Sendable {
         name: String,
         summary: String,
         gate: VMConfigurationKeyGate,
-        applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
+        applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
         read: @escaping @Sendable (VMConfiguration) -> String,
         write:
             @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
@@ -116,7 +116,7 @@ struct VMConfigurationKey: Sendable {
         name: String,
         summary: String,
         gateByGuest gate: @escaping @Sendable (VMGuestOS) -> VMConfigurationKeyGate,
-        applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
+        applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
         read: @escaping @Sendable (VMConfiguration) -> String,
         write:
             @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
@@ -126,7 +126,7 @@ struct VMConfigurationKey: Sendable {
         self.name = name
         self.summary = summary
         self.gate = gate
-        self.applies = applies
+        self.appliesToGuest = applies
         field = .configuration(
             ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
     }
@@ -142,7 +142,7 @@ struct VMConfigurationKey: Sendable {
     init(
         name: String,
         summary: String,
-        applies: @escaping @Sendable (VMConfiguration) -> Bool = { _ in true },
+        applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
         readHostState: @escaping @Sendable (VMHostState) -> String,
         changeHostState:
             @escaping @Sendable (String, VMConfigurationWriteContext) throws
@@ -151,9 +151,15 @@ struct VMConfigurationKey: Sendable {
         self.name = name
         self.summary = summary
         self.gate = { _ in .live }
-        self.applies = applies
+        self.appliesToGuest = applies
         field = .hostState(HostStateField(read: readHostState, change: changeHostState))
     }
+
+    /// Whether the key means anything for a `guestOS` guest.
+    func applies(to guestOS: VMGuestOS) -> Bool { appliesToGuest(guestOS) }
+
+    /// Whether the key means anything for the VM `configuration` describes.
+    func applies(_ configuration: VMConfiguration) -> Bool { applies(to: configuration.guestOS) }
 
     /// The value as `set` accepts it back.
     func read(_ settings: VMSettings) -> String {
@@ -216,11 +222,14 @@ struct VMConfigurationKey: Sendable {
     }
 
     /// How this key describes itself to a client listing the keyspace, which
-    /// names no VM: editable while running only when every guest takes it so.
+    /// names no VM: whether a running VM takes it, for each guest it applies to.
     var descriptor: ConfigurationKeyDescriptor {
         ConfigurationKeyDescriptor(
             name: name, summary: summary,
-            editableWhileRunning: VMGuestOS.allCases.allSatisfy { gate($0).editableWhileRunning })
+            editableWhileRunning: Dictionary(
+                uniqueKeysWithValues: VMGuestOS.allCases.filter(applies(to:)).map {
+                    ($0.rawValue, gate($0).editableWhileRunning)
+                }))
     }
 
     /// What a write of `value` on a `guestOS` guest touches — the edit classes
@@ -332,7 +341,7 @@ enum VMConfigurationKeyRegistry {
         name: "display.hidpi",
         summary: "Boot the guest display Retina-sharp: true or false.",
         gate: .atRest,
-        applies: { $0.guestOS.supportsDisplayDensity },
+        applies: { $0.supportsDisplayDensity },
         read: { String($0.guestOS.supportsDisplayDensity && $0.displayHiDPI) },
         write: { value, config, _ in
             let hiDPI = try ConfigurationValue.boolean(value, key: "display.hidpi")
@@ -412,7 +421,7 @@ enum VMConfigurationKeyRegistry {
         name: "input.devices",
         summary: "The keyboard and pointer a macOS guest sees: automatic, mac or usb.",
         gate: .atRest,
-        applies: { $0.guestOS == .macOS },
+        applies: { $0 == .macOS },
         read: { $0.inputDeviceMode.rawValue },
         write: { value, config, _ in
             config.inputDeviceMode = try ConfigurationValue.choice(value, key: "input.devices")
@@ -558,8 +567,7 @@ enum VMConfigurationKeyRegistry {
 
     static let clipboardSharing = VMConfigurationKey(
         name: "clipboard.sharing",
-        summary:
-            "Exchange clipboard text with the guest: true or false. Editable while a macOS guest runs.",
+        summary: "Exchange clipboard text with the guest: true or false.",
         gateByGuest: { $0.sharesClipboardThroughDevice ? .atRest : .live },
         read: { String($0.clipboardSharingEnabled) },
         write: { value, config, _ in
@@ -589,7 +597,7 @@ enum VMConfigurationKeyRegistry {
         name: "dropFiles",
         summary: "Send files dropped on the display to the guest's Downloads: true or false.",
         gate: .live,
-        applies: { $0.guestOS == .macOS },
+        applies: { $0 == .macOS },
         read: { String($0.dropFilesEnabled) },
         write: { value, config, _ in
             config.dropFilesEnabled = try ConfigurationValue.boolean(value, key: "dropFiles")
@@ -599,7 +607,7 @@ enum VMConfigurationKeyRegistry {
         name: "agent.logForwarding",
         summary: "Forward the guest agent's log records to this Mac: true or false.",
         gate: .live,
-        applies: { $0.guestOS == .macOS },
+        applies: { $0 == .macOS },
         read: { String($0.agentLogForwardingEnabled) },
         write: { value, config, _ in
             config.agentLogForwardingEnabled = try ConfigurationValue.boolean(
@@ -609,7 +617,7 @@ enum VMConfigurationKeyRegistry {
     static let agentInstallReminder = VMConfigurationKey(
         name: "agent.installReminder",
         summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
-        applies: { $0.guestOS == .macOS },
+        applies: { $0 == .macOS },
         readHostState: { String(!$0.agentInstallNudgeDismissed) },
         changeHostState: { value, _ in
             let reminds = try ConfigurationValue.boolean(value, key: "agent.installReminder")

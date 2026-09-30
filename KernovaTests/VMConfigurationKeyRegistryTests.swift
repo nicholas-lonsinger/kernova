@@ -137,16 +137,20 @@ struct VMConfigurationKeyRegistryTests {
         #expect(VMConfigurationKeyRegistry.key(named: "cpu") == nil)
     }
 
-    @Test("A descriptor reports the key's own gate")
-    func descriptorsReportTheGate() {
-        for key in VMConfigurationKeyRegistry.keys {
+    @Test("The keyspace listing answers, per guest the key applies to, whether a running VM takes it")
+    func descriptorsAnswerPerGuest() throws {
+        func listing(_ name: String) throws -> [String: Bool] {
+            let key = try #require(VMConfigurationKeyRegistry.key(named: name))
             #expect(key.descriptor.name == key.name)
             #expect(key.descriptor.summary == key.summary)
-            #expect(
-                key.descriptor.editableWhileRunning
-                    == VMGuestOS.allCases.allSatisfy { key.gate($0) != .atRest })
-            #expect(!key.summary.isEmpty)
+            return key.descriptor.editableWhileRunning
         }
+        #expect(try listing("cpus") == ["macOS": false, "linux": false])
+        #expect(try listing("clipboard.sharing") == ["macOS": true, "linux": false])
+        #expect(try listing("network.mode") == ["macOS": true, "linux": true])
+        #expect(try listing("ephemeral") == ["macOS": true, "linux": true])
+        #expect(try listing("dropFiles") == ["macOS": true])
+        for key in VMConfigurationKeyRegistry.keys { #expect(!key.summary.isEmpty) }
     }
 
     @Test("Each gate names the capability that decides it")
@@ -172,7 +176,6 @@ struct VMConfigurationKeyRegistryTests {
         let clipboard = try #require(VMConfigurationKeyRegistry.key(named: "clipboard.sharing"))
         #expect(clipboard.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
         #expect(clipboard.capability(writing: "true", for: .linux) == .editConfiguration)
-        #expect(!clipboard.descriptor.editableWhileRunning)
     }
 
     // MARK: - Values

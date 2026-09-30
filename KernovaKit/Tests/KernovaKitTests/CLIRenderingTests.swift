@@ -254,10 +254,16 @@ struct CLIRenderingTests {
     private let keyspace = [
         ConfigurationKeyDescriptor(
             name: "cpus", summary: "Virtual CPU cores, within what the guest allows.",
-            editableWhileRunning: false),
+            editableWhileRunning: ["macOS": false, "linux": false]),
+        ConfigurationKeyDescriptor(
+            name: "ephemeral", summary: "Return the VM to its baseline snapshot.",
+            editableWhileRunning: ["macOS": true, "linux": true]),
         ConfigurationKeyDescriptor(
             name: "clipboard.sharing", summary: "Exchange clipboard text with the guest.",
-            editableWhileRunning: true),
+            editableWhileRunning: ["macOS": true, "linux": false]),
+        ConfigurationKeyDescriptor(
+            name: "dropFiles", summary: "Send dropped files to the guest.",
+            editableWhileRunning: ["macOS": true]),
     ]
 
     @Test("A settings listing names its two columns and keeps the order it was answered in")
@@ -291,7 +297,7 @@ struct CLIRenderingTests {
     func keyspaceListingCarriesEveryColumn() {
         let lines = TableRenderer.render(keyspace, quiet: false).components(separatedBy: "\n")
 
-        #expect(lines.count == 3)
+        #expect(lines.count == 5)
         for heading in ["KEY", "WHILE RUNNING", "SUMMARY"] {
             #expect(lines[0].contains(heading), "missing \(heading)")
         }
@@ -299,12 +305,19 @@ struct CLIRenderingTests {
         #expect(lines[1].contains("No"))
         #expect(lines[1].contains("Virtual CPU cores"))
         #expect(lines[2].contains("Yes"))
-        #expect(lines[2].contains("Exchange clipboard text"))
+        #expect(lines[2].contains("Return the VM"))
+        // Taken on some guests the key applies to and not others: the listing
+        // names the ones that take it.
+        #expect(lines[3].contains("macOS guests"))
+        #expect(!lines[3].contains("linux"))
+        #expect(lines[3].contains("Exchange clipboard text"))
+        // A key that applies to one guest alone answers for that guest alone.
+        #expect(lines[4].contains("Yes"))
     }
 
     @Test("--quiet on a keyspace listing prints the names alone, which get and set take back")
     func quietKeyspaceListingIsNamesOnly() {
-        #expect(TableRenderer.render(keyspace, quiet: true) == "cpus\nclipboard.sharing")
+        #expect(TableRenderer.render(keyspace, quiet: true) == "cpus\nephemeral\nclipboard.sharing\ndropFiles")
     }
 
     @Test("An empty keyspace prints nothing at all")
@@ -329,6 +342,9 @@ struct CLIRenderingTests {
         for field in ["name", "summary", "editableWhileRunning"] {
             #expect(objects.first?[field] != nil, "missing \(field)")
         }
+        // One answer per guest, keyed by the guest's wire name.
+        #expect(
+            objects.last?["editableWhileRunning"] as? [String: Bool] == ["macOS": true])
     }
 
     // MARK: - Shares
