@@ -394,9 +394,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case invalidArgument(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
-    /// This build cannot do what was asked, and no VM was named — a host-scoped
-    /// verb whose capability the build lacks, where naming a virtual machine
-    /// would describe something the caller never asked about.
+    /// This build cannot do what was asked: the cause is the build, whatever
+    /// VM the verb named, so the refusal names no virtual machine.
     case unsupportedByBuild(capability: String)
     /// The VM answered; something the verb named *on* it did not. `item` is
     /// what was looked for, in the words the user reads.

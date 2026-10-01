@@ -72,7 +72,7 @@ struct VMOverviewSummaryTests {
                         .first { $0.toggle == .ephemeralMode })
 
                 #expect(
-                    state.isEnabled == key.accepts(String(!ephemeral), for: instance),
+                    state.isEnabled == key.accepts(String(!ephemeral), for: instance, entitlements: .entitled),
                     "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
             }
         }

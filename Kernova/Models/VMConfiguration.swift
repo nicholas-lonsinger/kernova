@@ -38,6 +38,23 @@ enum VMJoinedNetwork: Hashable, Sendable {
     case bridged
     /// An app-managed vmnet network.
     case vmnet(VmnetNetworkID)
+
+    /// Whether this is one VM's network of its own.
+    var isOwn: Bool {
+        guard case .vmnet(let id) = self else { return false }
+        return id.owner != nil
+    }
+
+    /// What a build that cannot attach this network lacks, as a refusal
+    /// names it.
+    var entitledCapability: String {
+        switch self {
+        case .bridged: "bridged networking"
+        case .vmnet(let id) where id.owner != nil: "isolating a virtual machine from other virtual machines"
+        case .vmnet(let id) where id.kind == .hostOnly: "host-only networking"
+        case .vmnet: "Shared Network"
+        }
+    }
 }
 
 /// Persistent configuration for a virtual machine, serialized to `config.json`
@@ -527,10 +544,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     /// Whether this VM's device joins a network of its own — what every
     /// surface reports as isolated.
-    var joinsOwnNetwork: Bool {
-        guard case .vmnet(let network) = joinedNetwork else { return false }
-        return network.owner != nil
-    }
+    var joinsOwnNetwork: Bool { joinedNetwork?.isOwn ?? false }
 
     /// Gives a VM with no address of its own one, for the reason
     /// ``applyNetworkMode(_:)`` states.

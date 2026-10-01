@@ -136,9 +136,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshIsolationRow(editable: Bool) {
         let config = instance.configuration
-        let onAppManagedNetwork = config.joinedNetwork.map { $0 != .bridged } ?? false
-        isolationRow?.isHidden =
-            !onAppManagedNetwork || !(entitlements.hasVMNetworking || config.isolatedNetwork)
+        // Offered where the build can attach the VM's own network of its mode,
+        // and shown to a VM already isolated so it can be turned off.
+        if case .vmnet(let network) = config.joinedNetwork {
+            let own = VMJoinedNetwork.vmnet(VmnetNetworkID(kind: network.kind, owner: config.id))
+            isolationRow?.isHidden = !(entitlements.canAttach(own) || config.isolatedNetwork)
+        } else {
+            isolationRow?.isHidden = true
+        }
         isolationSwitch.state = config.isolatedNetwork ? .on : .off
         applyGroupedFormRowEnabled(editable, control: isolationSwitch)
     }
@@ -260,7 +265,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let liveSwitchable = networkModeIsLiveSwitchable
         let current = NetworkModeChoice(instance.configuration)
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
-        if entitlements.hasVMNetworking {
+        if offers(.hostOnly) {
             addNetworkModeItem("Host Only", choice: .hostOnly, to: menu)
         } else if current == .hostOnly {
             // A host-only VM in a build the entitlement doesn't cover: the
@@ -275,7 +280,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
         renderedNetworkChoice = current
         renderedNetworkLiveSwitchable = liveSwitchable
-        if entitlements.hasVMNetworking {
+        if offers(.bridged) {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
             if let interfaces {
@@ -308,6 +313,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
 
         selectNetworkModeItem()
+    }
+
+    /// Whether the picker offers `mode`: the network choosing it puts the VM
+    /// on is one this build can attach — what the mode key's write checks.
+    private func offers(_ mode: VMNetworkMode) -> Bool {
+        var candidate = instance.configuration
+        candidate.applyNetworkMode(mode)
+        return candidate.joinedNetwork.map(entitlements.canAttach) ?? false
     }
 
     /// Appends one Mode entry.

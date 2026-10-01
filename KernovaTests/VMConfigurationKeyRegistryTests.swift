@@ -31,8 +31,10 @@ struct VMConfigurationKeyRegistryTests {
         return VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
     }
 
-    private func context(_ manifest: VMSnapshotManifest? = nil) -> VMConfigurationWriteContext {
-        VMConfigurationWriteContext(snapshots: manifest ?? makeManifest())
+    private func context(
+        _ manifest: VMSnapshotManifest? = nil, entitlements: EntitlementService = .entitled
+    ) -> VMConfigurationWriteContext {
+        VMConfigurationWriteContext(snapshots: manifest ?? makeManifest(), entitlements: entitlements)
     }
 
     /// Writes `key` into whichever half of `settings` holds it.
@@ -409,6 +411,50 @@ struct VMConfigurationKeyRegistryTests {
         #expect(read(key, config) == "true")
         #expect(key.capability(writing: "false", for: .linux) == .switchNetworkMode)
         #expect(throws: CommandError.self) { try write(key, "own", to: &config) }
+    }
+
+    @Test("A build without VM networking refuses a write onto a network it cannot attach, naming the build")
+    func unattachableNetworksAreRefusedWhereEntered() throws {
+        let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
+        let isolated = try #require(VMConfigurationKeyRegistry.key(named: "network.isolated"))
+        let unentitled = context(entitlements: .unentitled)
+        func refusal(_ key: VMConfigurationKey, _ value: String, on config: VMConfiguration) -> CommandError? {
+            var settings = VMSettings(configuration: config, hostState: VMHostState())
+            do {
+                try key.apply(value, to: &settings, context: unentitled)
+                return nil
+            } catch let error as CommandError {
+                return error
+            } catch {
+                Issue.record("Unexpected error \(error)")
+                return nil
+            }
+        }
+        let shared = makeConfiguration()
+
+        #expect(refusal(mode, "hostOnly", on: shared) == .unsupportedByBuild(capability: "host-only networking"))
+        #expect(refusal(mode, "bridged", on: shared) == .unsupportedByBuild(capability: "bridged networking"))
+        #expect(
+            refusal(isolated, "true", on: shared)
+                == .unsupportedByBuild(capability: "isolating a virtual machine from other virtual machines"))
+        #expect(refusal(mode, "shared", on: shared) == nil)
+        #expect(refusal(isolated, "false", on: shared) == nil)
+        #expect(
+            !mode.accepts(
+                "hostOnly", settings: VMSettings(configuration: shared, hostState: VMHostState()), context: unentitled))
+
+        // A VM that arrived on such a network can be moved off it, and writing
+        // back what it holds is no move at all.
+        var hostOnly = shared
+        hostOnly.networkMode = .hostOnly
+        #expect(refusal(mode, "shared", on: hostOnly) == nil)
+        #expect(refusal(mode, "hostOnly", on: hostOnly) == nil)
+
+        // The same writes land in a build that can attach them.
+        var settings = VMSettings(configuration: shared, hostState: VMHostState())
+        try mode.apply("hostOnly", to: &settings, context: context())
+        try isolated.apply("true", to: &settings, context: context())
+        #expect(settings.configuration.joinsOwnNetwork)
     }
 
     @Test("An empty bridged interface is automatic, and an empty MAC removes it")

@@ -88,4 +88,14 @@ struct EntitlementService: Sendable {
         hasTopologyObservation = reader.hasEntitlement(
             "com.apple.developer.networking.topology-observation")
     }
+
+    /// Whether this build can attach a guest to `network` — the one answer
+    /// every surface that offers, writes or builds a network reads.
+    ///
+    /// Without `com.apple.vm.networking` the only attachment is system NAT,
+    /// which every Shared guest joins, so Shared Network's common network is
+    /// the one that remains.
+    func canAttach(_ network: VMJoinedNetwork) -> Bool {
+        hasVMNetworking || network == .vmnet(VmnetNetworkID(kind: .shared, owner: nil))
+    }
 }

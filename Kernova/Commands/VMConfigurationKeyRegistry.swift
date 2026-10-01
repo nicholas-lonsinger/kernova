@@ -28,15 +28,20 @@ struct VMConfigurationWriteContext: Sendable {
     /// The VM's restore points, which an Ephemeral Mode enable pins its
     /// baseline from.
     let snapshots: VMSnapshotManifest
+    /// What this build authorizes, which decides the networks a write may
+    /// move the VM onto.
+    let entitlements: EntitlementService
 
-    init(snapshots: VMSnapshotManifest) {
+    init(snapshots: VMSnapshotManifest, entitlements: EntitlementService) {
         self.snapshots = snapshots
+        self.entitlements = entitlements
     }
 
-    /// What `instance` holds for a key's write to read.
+    /// What `instance` holds, in a build authorizing `entitlements`, for a
+    /// key's write to read.
     @MainActor
-    init(_ instance: VMInstance) {
-        self.init(snapshots: instance.snapshotManifest)
+    init(_ instance: VMInstance, entitlements: EntitlementService) {
+        self.init(snapshots: instance.snapshotManifest, entitlements: entitlements)
     }
 }
 
@@ -205,10 +210,13 @@ struct VMConfigurationKey: Sendable {
         return field.refusalOnResult(candidate.configuration) == nil
     }
 
-    /// ``accepts(_:settings:context:)`` against what `instance` holds.
+    /// ``accepts(_:settings:context:)`` against what `instance` holds, in a
+    /// build authorizing `entitlements`.
     @MainActor
-    func accepts(_ value: String, for instance: VMInstance) -> Bool {
-        accepts(value, settings: instance.settings, context: VMConfigurationWriteContext(instance))
+    func accepts(_ value: String, for instance: VMInstance, entitlements: EntitlementService) -> Bool {
+        accepts(
+            value, settings: instance.settings,
+            context: VMConfigurationWriteContext(instance, entitlements: entitlements))
     }
 
     /// An assignment of `value` to this key.
@@ -451,14 +459,16 @@ enum VMConfigurationKeyRegistry {
         summary: "The network the guest joins: none, shared, bridged or hostOnly.",
         gate: .networkMode,
         read: { $0.effectiveNetworkMode?.rawValue ?? noNetworkValue },
-        write: { value, config, _ in
+        write: { value, config, context in
             guard value != noNetworkValue else {
                 config.applyNetworkMode(nil)
                 return
             }
+            let before = config
             config.applyNetworkMode(
                 try ConfigurationValue.choice(
                     value, key: "network.mode", also: [noNetworkValue]))
+            try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         })
 
     static let networkBridgedInterface = VMConfigurationKey(
@@ -478,9 +488,26 @@ enum VMConfigurationKeyRegistry {
             + "guest reaches: true or false.",
         gate: .networkDevice,
         read: { String($0.isolatedNetwork) },
-        write: { value, config, _ in
+        write: { value, config, context in
+            let before = config
             config.isolatedNetwork = try ConfigurationValue.boolean(value, key: "network.isolated")
+            try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         })
+
+    /// Refuses a write that moves the VM onto a network this build cannot
+    /// attach (``EntitlementService/canAttach(_:)``), where the user enters it
+    /// rather than at the next start (docs/NETWORKING.md). A VM already on
+    /// such a network can still be moved off it, and a write that leaves the
+    /// network where it is stays a no-op.
+    private static func requireAttachableNetwork(
+        movingFrom old: VMConfiguration, to new: VMConfiguration,
+        context: VMConfigurationWriteContext
+    ) throws {
+        guard let network = new.joinedNetwork, network != old.joinedNetwork,
+            !context.entitlements.canAttach(network)
+        else { return }
+        throw CommandError.unsupportedByBuild(capability: network.entitledCapability)
+    }
 
     static let networkMAC = VMConfigurationKey(
         name: "network.mac",

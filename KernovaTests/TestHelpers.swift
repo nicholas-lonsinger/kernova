@@ -79,6 +79,7 @@ func makeWiredLibrary(
     preferences: AppPreferences = makeTestPreferences(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
+    entitlements: EntitlementService = .entitled,
     guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore()
 ) -> VMLibrary {
     let library = VMLibrary(
@@ -88,7 +89,7 @@ func makeWiredLibrary(
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        entitlements: .entitled,
+        entitlements: entitlements,
         guestAccountPasswords: guestAccountPasswords)
     return library
 }

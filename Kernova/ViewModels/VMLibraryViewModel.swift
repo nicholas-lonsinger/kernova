@@ -52,7 +52,7 @@ final class VMLibraryViewModel {
 
     /// What this build's signature authorizes, as every surface that degrades
     /// without an entitlement reads it.
-    let entitlements: EntitlementService
+    var entitlements: EntitlementService { library.entitlements }
 
     // MARK: - Library Forwarding
 
@@ -527,7 +527,6 @@ final class VMLibraryViewModel {
         self.storageService = storageService
         self.diskImageService = diskImageService
         self.preferences = preferences
-        self.entitlements = entitlements
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
         let lifecycle = VMLifecycleCoordinator(

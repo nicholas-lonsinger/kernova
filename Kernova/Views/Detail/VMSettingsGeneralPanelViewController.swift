@@ -412,7 +412,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 VMConfigurationKeyRegistry.ephemeralBaseline,
                 writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
             control: ephemeralBaselinePopUp)
-        ephemeralNoSnapshotsCaption.isHidden = key.accepts("true", for: instance)
+        ephemeralNoSnapshotsCaption.isHidden = key.accepts(
+            "true", for: instance, entitlements: viewModel.entitlements)
         ephemeralGroup?.isSubOptionHidden = !enabled
 
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }

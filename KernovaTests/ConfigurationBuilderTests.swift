@@ -55,8 +55,7 @@ struct ConfigurationBuilderTests {
             Issue.record("The fixture bundle holds no EFI variable store")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled,
-            .isolatedNetworkingNotEntitled:
+            .networkNotEntitled:
             break
         }
     }
@@ -1154,7 +1153,7 @@ struct ConfigurationBuilderTests {
             try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .bridgedNetworkingNotEntitled = e
+                case .networkNotEntitled(.bridged) = e
             else { return false }
             return true
         }
@@ -1186,7 +1185,7 @@ struct ConfigurationBuilderTests {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .hostOnlyNetworkingNotEntitled = e
+                case .networkNotEntitled(.vmnet(let id)) = e, id == VmnetNetworkID.common(.hostOnly)
             else { return false }
             return true
         }
@@ -1240,7 +1239,7 @@ struct ConfigurationBuilderTests {
             try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .isolatedNetworkingNotEntitled = e
+                case .networkNotEntitled(let network) = e, network.isOwn
             else { return false }
             return true
         }
