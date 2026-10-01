@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Shared design tokens and atom factories for the native macOS *grouped form*
 /// look — rounded, subtly-filled cards with hairline-separated rows, section

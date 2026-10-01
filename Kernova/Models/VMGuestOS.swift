@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The guest operating system type for a virtual machine.
 enum VMGuestOS: String, Codable, CaseIterable, Sendable {

@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Step 3 of the creation wizard: name the VM and allocate resources.
 ///
@@ -182,9 +183,7 @@ final class ResourceConfigContentViewController: NSViewController {
     /// typing "16" momentarily reads as 1), desyncing the two.
     private func applyCPUFieldEdit() {
         let clamped = VMResourceLimits.cpuCount.clamp(cpuField.integerValue)
-        // Only a change is a choice; the standing value may still be following
-        // the guest's default.
-        if clamped != creationVM.cpuCount { creationVM.cpuCount = clamped }
+        creationVM.cpuCount = clamped
         cpuStepper.integerValue = clamped
         cpuField.integerValue = clamped
     }
@@ -192,10 +191,8 @@ final class ResourceConfigContentViewController: NSViewController {
     /// The memory field takes decimal gigabytes; text that names no size is
     /// dropped.
     private func applyMemoryFieldEdit() {
-        if let typed = VMMemorySize(gibibytesText: memoryField.stringValue),
-            case let clamped = VMResourceLimits.memorySize.clamp(typed), clamped != creationVM.memorySize
-        {
-            creationVM.memorySize = clamped
+        if let typed = VMMemorySize(gibibytesText: memoryField.stringValue) {
+            creationVM.memorySize = VMResourceLimits.memorySize.clamp(typed)
         }
         showMemorySize()
     }

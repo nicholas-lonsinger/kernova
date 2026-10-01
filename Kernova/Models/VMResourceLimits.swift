@@ -1,3 +1,4 @@
+import KernovaKit
 import Virtualization
 
 /// The CPU and memory a virtual machine may be given, as the Virtualization

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 @testable import Kernova
 
@@ -215,7 +216,7 @@ struct VMCreationViewModelTests {
 
     // MARK: - Resource defaults
 
-    @Test("Resource defaults follow the selected guest until the user chooses", arguments: VMGuestOS.allCases)
+    @Test("Resources start at the selected guest's defaults", arguments: VMGuestOS.allCases)
     func resourceDefaultsFollowTheGuest(os: VMGuestOS) {
         let vm = VMCreationViewModel()
         vm.selectedOS = os
@@ -223,10 +224,21 @@ struct VMCreationViewModelTests {
         #expect(vm.cpuCount == os.defaultCPUCount)
         #expect(vm.memorySize == os.defaultMemorySize)
         #expect(vm.diskSizeInGB == VMGuestOS.defaultDiskSizeInGB)
+    }
 
+    @Test("Switching guest resets the resources to the new guest's defaults; reselecting it keeps them")
+    func switchingGuestResetsResources() {
+        let vm = VMCreationViewModel()
         vm.cpuCount = 3
-        vm.selectedOS = os == .macOS ? .linux : .macOS
+        vm.memorySize = VMMemorySize(mebibytes: 1536)
+
+        vm.selectedOS = .macOS
         #expect(vm.cpuCount == 3)
+        #expect(vm.memorySize.mebibytes == 1536)
+
+        vm.selectedOS = .linux
+        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
+        #expect(vm.memorySize == VMGuestOS.linux.defaultMemorySize)
     }
 
     // MARK: - buildConfiguration
