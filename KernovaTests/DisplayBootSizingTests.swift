@@ -28,42 +28,50 @@ struct DisplayBootSizingTests {
         #expect(resolution.ppi == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
-    @Test("Fractional and odd pixel counts round down to even")
-    func roundsDownToEvenPixels() {
+    @Test("Fractional pixel counts round down; a 1× surface keeps an odd count")
+    func roundsDownToWholePixels() {
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: CGSize(width: 1401.7, height: 903.2), backingScaleFactor: 1)
 
-        #expect(resolution.width == 1400)
-        #expect(resolution.height == 902)
+        #expect(resolution.width == 1401)
+        #expect(resolution.height == 903)
     }
 
-    @Test("A surface below the floor clamps up to 800 × 600")
-    func clampsUpToFloor() {
+    @Test("A 2× surface stores an even pixel count, so its base halves exactly")
+    func retinaFitRoundsToEven() {
+        let resolution = DisplayBootSizing.resolution(
+            fittingPoints: CGSize(width: 700.7, height: 450.2), backingScaleFactor: 2)
+
+        #expect(resolution.width == 1400)
+        #expect(resolution.height == 900)
+    }
+
+    @Test("A small surface is taken as it is, down to 1 pixel")
+    func smallSurfaceIsTaken() {
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: CGSize(width: 640, height: 400), backingScaleFactor: 1)
 
-        #expect(resolution.width == DisplayBootSizing.minimumWidth)
-        #expect(resolution.height == DisplayBootSizing.minimumHeight)
+        #expect(resolution.width == 640)
+        #expect(resolution.height == 400)
     }
 
-    @Test("A surface above the ceiling scales down whole, keeping its shape")
-    func clampsDownToCeiling() {
-        // 6000 × 5000 points at 2× is 12000 × 10000 pixels; × 8192/12000 fits
-        // the ceiling without squaring the 6:5 pair off against it.
+    @Test("A large surface is taken whole: Kernova sets no maximum")
+    func largeSurfaceIsTaken() {
         let resolution = DisplayBootSizing.resolution(
             fittingPoints: CGSize(width: 6000, height: 5000), backingScaleFactor: 2)
 
-        #expect(resolution.width == DisplayBootSizing.maximumDimension)
-        #expect(resolution.height == 6826)
+        #expect(resolution.width == 12000)
+        #expect(resolution.height == 10000)
     }
 
-    @Test("A degenerate surface clamps to the floor rather than trapping")
-    func degenerateSurfaceClampsToFloor() {
+    @Test("A degenerate surface clamps to 1 × 1 rather than trapping", arguments: [1.0, 2.0])
+    func degenerateSurfaceClampsToFloor(scale: CGFloat) {
         let resolution = DisplayBootSizing.resolution(
-            fittingPoints: CGSize(width: 0, height: -10), backingScaleFactor: 2)
+            fittingPoints: CGSize(width: 0, height: -10), backingScaleFactor: scale)
+        let factor = scale >= 2 ? 2 : 1
 
-        #expect(resolution.width == DisplayBootSizing.minimumWidth)
-        #expect(resolution.height == DisplayBootSizing.minimumHeight)
+        #expect(resolution.width == DisplayBootSizing.minimumDimension * factor)
+        #expect(resolution.height == DisplayBootSizing.minimumDimension * factor)
     }
 
     // MARK: - HiDPI rewrite
@@ -79,35 +87,25 @@ struct DisplayBootSizingTests {
         #expect(DisplayBootSizing.halved(retina) == base)
     }
 
-    @Test("A double that overflows the ceiling keeps its shape through the round-trip")
-    func doubledPreservesAspectAtCeiling() {
-        let base = DisplayBootSizing.Resolution(
-            width: 6000, height: 5000, ppi: DisplayBootSizing.standardPixelsPerInch)
-        let ratio = Double(base.width) / Double(base.height)
+    @Test("Doubling the largest base an Int holds does not overflow")
+    func doubledNeverOverflows() {
+        let huge = DisplayBootSizing.Resolution(
+            width: .max, height: .max, ppi: DisplayBootSizing.standardPixelsPerInch)
 
-        // 12000 × 10000 scaled by 8192/12000 — not squared off at 8192 × 8192.
-        let retina = DisplayBootSizing.doubled(base)
-        #expect(
-            retina
-                == DisplayBootSizing.Resolution(
-                    width: DisplayBootSizing.maximumDimension, height: 6826,
-                    ppi: DisplayBootSizing.hiDPIPixelsPerInch))
-        #expect(abs(Double(retina.width) / Double(retina.height) - ratio) < 0.001)
+        let retina = DisplayBootSizing.doubled(huge)
 
-        let standard = DisplayBootSizing.halved(retina)
-        #expect(abs(Double(standard.width) / Double(standard.height) - ratio) < 0.001)
+        #expect(retina.width == (Int.max / 2) * 2)
+        #expect(DisplayBootSizing.halved(retina).width == Int.max / 2)
     }
 
-    @Test("halved clamps at the floor")
+    @Test("halved clamps at 1")
     func halvedClampsAtFloor() {
         let small = DisplayBootSizing.Resolution(
-            width: 1000, height: 800, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+            width: 1, height: 3, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
 
         let halved = DisplayBootSizing.halved(small)
 
-        #expect(halved.width == DisplayBootSizing.minimumWidth)
-        #expect(halved.height == DisplayBootSizing.minimumHeight)
-        #expect(halved.ppi == DisplayBootSizing.standardPixelsPerInch)
+        #expect(halved == DisplayBootSizing.Resolution(width: 1, height: 1, ppi: 144))
     }
 
     @Test("rescaled picks the direction from the flag")
@@ -130,13 +128,12 @@ struct DisplayBootSizingTests {
 
     // MARK: - A chosen base size
 
-    @Test("A HiDPI base fits half the ceiling, so doubling it lands on the real one")
-    func hiDPIBaseHonorsLoweredCeiling() {
-        let retina = DisplayBootSizing.resolution(base: 6000, height: 5000, hiDPI: true)
+    @Test("A base size's bounds are 1 up to what an Int's pixel count holds", arguments: [false, true])
+    func baseBounds(hiDPI: Bool) {
+        let bounds = DisplayBootSizing.baseBounds(hiDPI: hiDPI)
 
-        #expect(retina.width == DisplayBootSizing.maximumDimension)
-        #expect(retina.height == 6826)
-        #expect(retina.ppi == DisplayBootSizing.hiDPIPixelsPerInch)
+        #expect(bounds.lower == 1)
+        #expect(bounds.upper == Int.max / (hiDPI ? 2 : 1))
     }
 
     @Test("An odd HiDPI base keeps its parity, so halving the stored pixels gives it back")
@@ -146,13 +143,13 @@ struct DisplayBootSizingTests {
         #expect(retina == DisplayBootSizing.Resolution(width: 1602, height: 1802, ppi: 220))
     }
 
-    @Test("A standard base rounds down to even pixels")
-    func standardBaseRoundsToEven() {
+    @Test("A standard base keeps an odd size")
+    func standardBaseKeepsAnOddSize() {
         let standard = DisplayBootSizing.resolution(base: 1281, height: 801, hiDPI: false)
 
         #expect(
             standard
                 == DisplayBootSizing.Resolution(
-                    width: 1280, height: 800, ppi: DisplayBootSizing.standardPixelsPerInch))
+                    width: 1281, height: 801, ppi: DisplayBootSizing.standardPixelsPerInch))
     }
 }

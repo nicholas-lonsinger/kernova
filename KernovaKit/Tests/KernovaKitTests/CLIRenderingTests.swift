@@ -15,10 +15,12 @@ struct CLIRenderingTests {
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
         name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved, heldByAnotherCopy: false)
 
-    private func info(ipAddress: GuestIPAddress = .observed("192.168.64.4")) -> VMInfo {
+    private func info(
+        ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30
+    ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
+            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
@@ -127,6 +129,18 @@ struct CLIRenderingTests {
         #expect(rendered.contains("Running"))
         #expect(rendered.contains("8 GB"))
         #expect(rendered.contains("192.168.64.4"))
+    }
+
+    @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")
+    func infoStatesMemoryAsTheKeyDoes() throws {
+        let memory = { (bytes: UInt64) throws -> String in
+            try #require(
+                TableRenderer.render(self.info(memoryBytes: bytes), quiet: false)
+                    .components(separatedBy: "\n").first { $0.hasPrefix("Memory") })
+        }
+        #expect(try memory(1536 << 20).hasSuffix(" 1.5 GB"))
+        #expect(try memory(1537 << 20).hasSuffix(" 1.501 GB"))
+        #expect(try memory(8 << 30).hasSuffix(" 8 GB"))
     }
 
     @Test("--quiet on info prints the name alone")

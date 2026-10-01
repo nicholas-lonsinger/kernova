@@ -193,11 +193,9 @@ enum TableRenderer {
         return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
-    /// Memory in the unit a person reads it in.
+    /// Memory in gigabytes, as every other surface and the `memory` key state it.
     private static func memory(_ bytes: UInt64) -> String {
-        let gigabytes = Double(bytes) / Double(1 << 30)
-        return gigabytes.rounded() == gigabytes
-            ? "\(Int(gigabytes)) GB" : String(format: "%.1f GB", gigabytes)
+        "\(VMMemorySize(roundingDown: bytes).gibibytesText) GB"
     }
 
     /// `cell` widened to `width` characters.

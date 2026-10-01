@@ -17,7 +17,7 @@ struct VMConfigurationKeyRegistryTests {
     private func makeConfiguration(guestOS: VMGuestOS = .macOS) -> VMConfiguration {
         VMConfiguration(
             name: "Alpha", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: guestOS.defaultCPUCount, memorySizeInGB: guestOS.defaultMemoryInGB,
+            cpuCount: guestOS.defaultCPUCount, memorySizeInGB: guestOS.defaultMemorySize,
             displayWidth: 3840, displayHeight: 2400,
             displayPPI: guestOS == .macOS
                 ? DisplayBootSizing.hiDPIPixelsPerInch : DisplayBootSizing.standardPixelsPerInch,
@@ -219,14 +219,15 @@ struct VMConfigurationKeyRegistryTests {
     func outOfRangeValuesAreRefused() throws {
         let original = makeConfiguration()
         let cases: [(key: String, value: String)] = [
-            ("cpus", "1"),
-            ("cpus", String(original.guestOS.maxCPUCount + 1)),
+            ("cpus", String(VMResourceLimits.cpuCount.lower - 1)),
+            ("cpus", String(VMResourceLimits.cpuCount.upper + 1)),
             ("cpus", "four"),
-            ("memory", "1"),
-            ("memory", String(original.guestOS.maxMemoryInGB + 1)),
-            ("display.width", String(original.displayBaseSizeRange.width.lowerBound - 1)),
-            ("display.width", String(original.displayBaseSizeRange.width.upperBound + 1)),
-            ("display.height", String(original.displayBaseSizeRange.height.lowerBound - 1)),
+            ("memory", "0"),
+            ("memory", VMResourceLimits.memorySize.upper.adding(gibibytes: 1).gibibytesText),
+            ("memory", "lots"),
+            ("display.width", "0"),
+            ("display.width", String(original.displayBaseSizeBounds.upper + 1)),
+            ("display.height", "0"),
             ("display.autoResize", "maybe"),
             ("display.preference", "windowed"),
             ("input.systemKeys", "sometimes"),
@@ -320,21 +321,38 @@ struct VMConfigurationKeyRegistryTests {
         #expect(config.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
-    @Test("A base size a HiDPI display cannot double is refused rather than clamped")
-    func sizeKeysStopAtHalfTheCeiling() throws {
+    @Test("A size key takes any size down to 1 and sets no maximum of its own")
+    func sizeKeysTakeTheFrameworksBounds() throws {
         let width = try #require(VMConfigurationKeyRegistry.key(named: "display.width"))
         var config = makeConfiguration()
-        let before = config
 
-        #expect(throws: CommandError.self) {
-            try write(width, String(DisplayBootSizing.maximumDimension), to: &config)
-        }
-        #expect(config == before)
+        try write(width, "1", to: &config)
+        #expect(config.displayWidth == 2)
 
-        // A 1× guest lays out in whole pixels, so the whole ceiling is its own.
+        try write(width, "20000", to: &config)
+        #expect(config.displayWidth == 40000)
+
         var standard = makeConfiguration(guestOS: .linux)
-        try write(width, String(DisplayBootSizing.maximumDimension), to: &standard)
-        #expect(standard.displayWidth == DisplayBootSizing.maximumDimension)
+        try write(width, "1", to: &standard)
+        #expect(standard.displayWidth == 1)
+        try write(width, "20000", to: &standard)
+        #expect(standard.displayWidth == 20000)
+    }
+
+    // MARK: - Resources
+
+    @Test("Memory takes decimal gigabytes to the nearest megabyte and reads them back")
+    func memoryTakesDecimalGigabytes() throws {
+        let memory = try #require(VMConfigurationKeyRegistry.key(named: "memory"))
+        var config = makeConfiguration()
+
+        try write(memory, "1.5", to: &config)
+        #expect(config.memorySizeInGB.mebibytes == 1536)
+        #expect(read(memory, config) == "1.5")
+
+        try write(memory, "2", to: &config)
+        #expect(config.memorySizeInGB == .gibibytes(2))
+        #expect(read(memory, config) == "2")
     }
 
     @Test("A size key states its refusal while the display is sized to its window")

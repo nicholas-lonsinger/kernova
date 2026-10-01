@@ -1714,7 +1714,7 @@ struct VMLibraryViewModelTests {
 
     /// A CPU count the guest takes that is not `config`'s own.
     private func movedCPUCount(_ config: VMConfiguration) -> Int {
-        config.cpuCount == config.guestOS.minCPUCount ? config.cpuCount + 1 : config.cpuCount - 1
+        config.cpuCount == VMResourceLimits.cpuCount.lower ? config.cpuCount + 1 : config.cpuCount - 1
     }
 
     @Test("the configuration forward hands a consent refusal back without presenting it")

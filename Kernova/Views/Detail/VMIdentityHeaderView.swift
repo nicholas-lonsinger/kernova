@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// The header above the settings form: a tile, a title, and a status dot beside
 /// a one-line facts summary.
@@ -91,12 +92,12 @@ final class VMIdentityHeaderView: NSView {
     /// How the facts line reads, skipping every segment this VM has no answer
     /// for rather than standing a placeholder in its place.
     static func factsLine(
-        status: String, osVersion: String?, cores: Int, memoryGB: Int, diskBytes: UInt64?
+        status: String, osVersion: String?, cores: Int, memory: VMMemorySize, diskBytes: UInt64?
     ) -> String {
         var parts = [status]
         if let osVersion { parts.append(osVersion) }
         parts.append(cores == 1 ? "1 core" : "\(cores) cores")
-        parts.append("\(memoryGB) GB memory")
+        parts.append("\(memory.gibibytesText) GB memory")
         if let diskBytes { parts.append("\(DataFormatters.formatBytes(diskBytes)) disk") }
         return parts.joined(separator: " · ")
     }
@@ -152,7 +153,7 @@ final class VMIdentityHeaderView: NSView {
             status: instance.statusDisplayName,
             osVersion: instance.guestOSVersionDisplay,
             cores: config.cpuCount,
-            memoryGB: config.memorySizeInGB,
+            memory: config.memorySizeInGB,
             diskBytes: bootDiskBytes)
         factsLabel.stringValue = renderedFactsLine
     }

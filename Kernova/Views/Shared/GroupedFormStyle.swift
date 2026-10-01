@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Shared design tokens and atom factories for the native macOS *grouped form*
 /// look — rounded, subtly-filled cards with hairline-separated rows, section
@@ -776,23 +777,67 @@ func makeGroupedFormSteppedControl(
     return control
 }
 
+/// Sets up a count field and its stepper over `bounds`, showing `value`.
 @MainActor
-func configureGroupedFormNumeric(
-    field: NSTextField, stepper: NSStepper, min: Int, max: Int, value: Int,
+func configureGroupedFormCount(
+    field: NSTextField, stepper: NSStepper, bounds: InclusiveBounds<Int>, value: Int,
     delegate: any NSTextFieldDelegate, target: AnyObject, stepperAction: Selector
 ) {
-    let clamped = Swift.min(Swift.max(value, min), max)
+    configureGroupedFormStepped(
+        field: field, fieldWidth: 44, stepper: stepper, delegate: delegate, target: target,
+        stepperAction: stepperAction)
+    stepper.minValue = Double(bounds.lower)
+    stepper.maxValue = Double(bounds.upper)
+    field.integerValue = value
+    stepper.integerValue = value
+}
+
+/// Sets up a memory field and its stepper over `bounds`, showing `value`.
+///
+/// The field takes decimal gigabytes; the arrows move between whole ones, as
+/// ``groupedFormMemoryStep(_:from:within:)`` reads them.
+@MainActor
+func configureGroupedFormMemory(
+    field: NSTextField, stepper: NSStepper, bounds: InclusiveBounds<VMMemorySize>,
+    value: VMMemorySize, delegate: any NSTextFieldDelegate, target: AnyObject, stepperAction: Selector
+) {
+    // Wide enough for a size named to the megabyte, such as 1.501.
+    configureGroupedFormStepped(
+        field: field, fieldWidth: 56, stepper: stepper, delegate: delegate, target: target,
+        stepperAction: stepperAction)
+    stepper.minValue = bounds.lower.gibibytes
+    stepper.maxValue = bounds.upper.gibibytes
+    field.stringValue = value.gibibytesText
+    stepper.doubleValue = value.gibibytes
+}
+
+/// The size an arrow click on `stepper` moves `current` to: the next whole
+/// gigabyte in the arrow's direction, within `bounds`, or `nil` when the click
+/// moved nothing.
+///
+/// Reads the direction off the stepper, which must hold `current` from
+/// before the click.
+@MainActor
+func groupedFormMemoryStep(
+    _ stepper: NSStepper, from current: VMMemorySize, within bounds: InclusiveBounds<VMMemorySize>
+) -> VMMemorySize? {
+    let clicked = stepper.doubleValue
+    guard clicked != current.gibibytes else { return nil }
+    return bounds.clamp(current.nextWholeGibibyte(upward: clicked > current.gibibytes))
+}
+
+@MainActor
+private func configureGroupedFormStepped(
+    field: NSTextField, fieldWidth: CGFloat, stepper: NSStepper, delegate: any NSTextFieldDelegate, target: AnyObject,
+    stepperAction: Selector
+) {
     field.alignment = .right
     field.delegate = delegate
-    field.integerValue = clamped
-    field.widthAnchor.constraint(equalToConstant: 44).isActive = true
+    field.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
 
     stepper.controlSize = .small
-    stepper.minValue = Double(min)
-    stepper.maxValue = Double(max)
     stepper.increment = 1
     stepper.valueWraps = false
-    stepper.integerValue = clamped
     stepper.target = target
     stepper.action = stepperAction
 }

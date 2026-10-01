@@ -512,7 +512,7 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let target = makeSnapshot()
         var captured = instance.configuration
-        captured.memorySizeInGB = instance.configuration.memorySizeInGB + 8
+        captured.memorySizeInGB = instance.configuration.memorySizeInGB.adding(gibibytes: 8)
         captured.name = "Name from the snapshot"
         seed(harness, instance, [target], capturedConfiguration: captured)
         let originalName = instance.configuration.name

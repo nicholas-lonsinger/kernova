@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 import Virtualization
 
@@ -161,9 +162,15 @@ final class VMCreationViewModel {
     // MARK: - Step 1: OS Selection
 
     /// The guest to create. Only a macOS guest is offered an account, so this
-    /// decides the walk — see ``clampToWalkedStep()``.
+    /// decides the walk — see ``clampToWalkedStep()`` — and a change resets the
+    /// resources to the new guest's defaults.
     var selectedOS: VMGuestOS = .macOS {
-        didSet { clampToWalkedStep() }
+        didSet {
+            clampToWalkedStep()
+            guard oldValue != selectedOS else { return }
+            cpuCount = selectedOS.defaultCPUCount
+            memorySize = selectedOS.defaultMemorySize
+        }
     }
 
     // MARK: - Step 2: Boot Config
@@ -250,9 +257,12 @@ final class VMCreationViewModel {
     // MARK: - Step 3: Resources
 
     var vmName: String = "My Virtual Machine"
-    var cpuCount: Int = 4
-    var memoryInGB: Int = 8
-    var diskSizeInGB: Int = 100
+
+    // Start at the defaults of `selectedOS`'s initial value.
+    var cpuCount: Int = VMGuestOS.macOS.defaultCPUCount
+    var memorySize: VMMemorySize = VMGuestOS.macOS.defaultMemorySize
+
+    var diskSizeInGB: Int = VMGuestOS.defaultDiskSizeInGB
     var networkEnabled: Bool = true
 
     // MARK: - Step 4: Guest Account
@@ -941,7 +951,7 @@ final class VMCreationViewModel {
             guestOS: selectedOS,
             bootMode: bootMode,
             cpuCount: cpuCount,
-            memorySizeInGB: memoryInGB,
+            memorySizeInGB: memorySize,
             diskSizeInGB: diskSizeInGB,
             networkEnabled: networkEnabled,
             macAddress: macAddress,

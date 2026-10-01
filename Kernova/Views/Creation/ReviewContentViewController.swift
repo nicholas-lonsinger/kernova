@@ -124,7 +124,7 @@ final class ReviewContentViewController: NSViewController {
             "Resources",
             rows: [
                 valueRow("CPU cores", "\(creationVM.cpuCount)"),
-                valueRow("Memory", "\(creationVM.memoryInGB) GB"),
+                valueRow("Memory", "\(creationVM.memorySize.gibibytesText) GB"),
                 valueRow("Disk size", DataFormatters.formatDiskSize(creationVM.diskSizeInGB)),
             ], to: summary)
 

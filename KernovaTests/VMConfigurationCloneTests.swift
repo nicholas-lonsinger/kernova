@@ -90,13 +90,13 @@ struct VMConfigurationCloneTests {
             guestOS: .linux,
             bootMode: .efi,
             cpuCount: 8,
-            memorySizeInGB: 16,
+            memorySizeInGB: .gibibytes(16),
             diskSizeInGB: 128
         )
         let clone = original.clonedForNewInstance(existingNames: [])
 
         #expect(clone.cpuCount == 8)
-        #expect(clone.memorySizeInGB == 16)
+        #expect(clone.memorySizeInGB == .gibibytes(16))
         #expect(clone.diskSizeInGB == 128)
     }
 

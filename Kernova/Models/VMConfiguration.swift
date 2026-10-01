@@ -47,7 +47,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Resources
 
     var cpuCount: Int
-    var memorySizeInGB: Int
+    /// Persisted under this key as a number of gibibytes.
+    var memorySizeInGB: VMMemorySize
     var diskSizeInGB: Int
 
     // MARK: - Display
@@ -294,7 +295,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         guestOS: VMGuestOS,
         bootMode: VMBootMode,
         cpuCount: Int? = nil,
-        memorySizeInGB: Int? = nil,
+        memorySizeInGB: VMMemorySize? = nil,
         diskSizeInGB: Int? = nil,
         displayWidth: Int = 1920,
         displayHeight: Int = 1200,
@@ -339,7 +340,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.guestOS = guestOS
         self.bootMode = bootMode
         self.cpuCount = cpuCount ?? guestOS.defaultCPUCount
-        self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemoryInGB
+        self.memorySizeInGB = memorySizeInGB ?? guestOS.defaultMemorySize
         self.diskSizeInGB = diskSizeInGB ?? VMGuestOS.defaultDiskSizeInGB
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
@@ -394,7 +395,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
         self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
-        self.memorySizeInGB = try c.decode(Int.self, forKey: .memorySizeInGB)
+        self.memorySizeInGB = try c.decode(VMMemorySize.self, forKey: .memorySizeInGB)
         self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
         self.displayWidth = try c.decode(Int.self, forKey: .displayWidth)
         self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
@@ -587,7 +588,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Computed
 
     var memorySizeInBytes: UInt64 {
-        UInt64(memorySizeInGB) * 1024 * 1024 * 1024
+        memorySizeInGB.bytes
     }
 
     /// The setup a first start runs before the guest can boot, or `nil` when a
@@ -646,10 +647,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         DisplayBootSizing.resolution(base: width, height: height, hiDPI: displayResolutionIsHiDPI)
     }
 
-    /// The "looks like" sizes this VM takes at its stored density — every
-    /// size ``displayBaseSize`` can read back, so a read is always a valid write.
-    var displayBaseSizeRange: (width: ClosedRange<Int>, height: ClosedRange<Int>) {
-        DisplayBootSizing.baseRange(hiDPI: displayResolutionIsHiDPI)
+    /// The "looks like" sizes this VM takes in either axis at its stored
+    /// density.
+    var displayBaseSizeBounds: InclusiveBounds<Int> {
+        DisplayBootSizing.baseBounds(hiDPI: displayResolutionIsHiDPI)
     }
 
     // MARK: - Clipboard

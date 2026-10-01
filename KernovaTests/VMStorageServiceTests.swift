@@ -77,7 +77,7 @@ struct VMStorageServiceTests {
             guestOS: .macOS,
             bootMode: .macOS,
             cpuCount: 6,
-            memorySizeInGB: 12
+            memorySizeInGB: .gibibytes(12)
         )
 
         let bundleURL = try makeBundle(config)
@@ -86,7 +86,7 @@ struct VMStorageServiceTests {
         #expect(loaded.id == config.id)
         #expect(loaded.name == config.name)
         #expect(loaded.cpuCount == 6)
-        #expect(loaded.memorySizeInGB == 12)
+        #expect(loaded.memorySizeInGB == .gibibytes(12))
     }
 
     @Test("Save updated configuration")

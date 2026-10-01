@@ -430,7 +430,7 @@ struct VMBundleMachineFilesTests {
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let snapshotID = UUID()
         var configuration = fixture.configuration
-        configuration.memorySizeInGB = 8
+        configuration.memorySizeInGB = .gibibytes(8)
 
         let prepared = try store.prepareSnapshot(
             bundleURL: fixture.bundleURL, snapshotID: snapshotID, configuration: configuration)
@@ -440,7 +440,7 @@ struct VMBundleMachineFilesTests {
         try Data("saved-state".utf8).write(to: prepared.saveFileURL)
 
         let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
-        #expect(plan.configuration.memorySizeInGB == 8)
+        #expect(plan.configuration.memorySizeInGB == .gibibytes(8))
     }
 
     @Test("The restore plan lists what the snapshot captured, not what the VM configures now")

@@ -173,7 +173,7 @@ struct VMCommandCoreConfigurationTests {
         // Another Kernova copy changed memory and the display preference after
         // this one read the bundle.
         var onDisk = instance.configuration
-        onDisk.memorySizeInGB += 2
+        onDisk.memorySizeInGB = onDisk.memorySizeInGB.adding(gibibytes: 2)
         harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
         var hostStateOnDisk = instance.hostState
         hostStateOnDisk.displayPreference = .fullscreen
@@ -277,8 +277,8 @@ struct VMCommandCoreConfigurationTests {
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
     }
 
-    @Test("A Retina base size down to half the pixel floor is taken, not refused")
-    func aRetinaBaseTakesHalfThePixelFloor() throws {
+    @Test("A Retina base size down to 1 is taken, not refused")
+    func aRetinaBaseTakesTheFrameworksFloor() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, guestOS: .macOS) {
             $0.displaySizesToWindow = false
@@ -286,19 +286,18 @@ struct VMCommandCoreConfigurationTests {
             $0.displayResolution = DisplayBootSizing.Resolution(
                 width: 1920, height: 1200, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
         }
-        let floor = DisplayBootSizing.Resolution(
-            width: DisplayBootSizing.minimumWidth, height: DisplayBootSizing.minimumHeight,
-            ppi: DisplayBootSizing.hiDPIPixelsPerInch)
 
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [
-                ConfigurationEntry(key: "display.width", value: String(floor.width / 2)),
-                ConfigurationEntry(key: "display.height", value: String(floor.height / 2)),
+                ConfigurationEntry(key: "display.width", value: "1"),
+                ConfigurationEntry(key: "display.height", value: "1"),
             ],
             confirmed: false)
 
-        #expect(instance.configuration.displayResolution == floor)
+        #expect(instance.configuration.displayWidth == 2)
+        #expect(instance.configuration.displayHeight == 2)
+        #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
     @Test("One bad value in a batch writes nothing at all")
@@ -524,7 +523,7 @@ struct VMCommandCoreConfigurationTests {
             .name("Alpha"),
             assignments: [
                 ConfigurationEntry(key: "cpus", value: String(before.cpuCount)),
-                ConfigurationEntry(key: "memory", value: String(before.memorySizeInGB)),
+                ConfigurationEntry(key: "memory", value: before.memorySizeInGB.gibibytesText),
             ],
             confirmed: false)
 
@@ -772,10 +771,12 @@ struct VMCommandCoreConfigurationTests {
     @Test("Every value a get answers is a value a set takes back")
     func readValuesAreWritableValues() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
+        // A size named to the megabyte, so memory's decimal read is written back.
+        let instance = makeInstance(in: harness) { $0.memorySizeInGB = VMMemorySize(mebibytes: 1537) }
         let before = instance.configuration
 
         let entries = try harness.core.configuration(.name("Alpha"), keys: nil)
+        #expect(entries.contains(ConfigurationEntry(key: "memory", value: "1.501")))
         let answered = try harness.core.setConfiguration(
             .name("Alpha"), assignments: entries, confirmed: false)
 
@@ -851,7 +852,7 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
-    @Test("A size the pane would not offer is refused, whichever axis names it")
+    @Test("A size below 1 is refused, whichever axis names it")
     func displaySizeBelowTheMinimumIsRefused() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, guestOS: .macOS) {
@@ -861,22 +862,12 @@ struct VMCommandCoreConfigurationTests {
         }
         let before = instance.configuration
 
-        // A HiDPI base is doubled before it reaches VZ, so it stops at half the
-        // pixel floor and half the pixel ceiling.
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(
-                        key: "display.width", value: String(DisplayBootSizing.minimumWidth / 2 - 1))
-                ],
-                confirmed: false)
-        }
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "display.width", value: "5000")],
-                confirmed: false)
+        for key in ["display.width", "display.height"] {
+            #expect(throws: CommandError.self) {
+                try harness.core.setConfiguration(
+                    .name("Alpha"), assignments: [ConfigurationEntry(key: key, value: "0")],
+                    confirmed: false)
+            }
         }
         #expect(instance.configuration == before)
     }

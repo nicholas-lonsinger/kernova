@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -30,17 +31,16 @@ struct OSSelectionContentViewControllerTests {
         #expect(findButton(titled: "macOS", in: vc.view)?.state == .off)
     }
 
-    @Test("Selecting an OS leaves the resource values the user is standing on")
-    func selectingLeavesResourceValues() {
+    @Test("Selecting another OS resets the resources to its defaults")
+    func selectingResetsResources() {
         let vm = VMCreationViewModel()
-        let originalCPU = vm.cpuCount
-        let originalMemory = vm.memoryInGB
         let vc = OSSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
+        vm.memorySize = VMMemorySize(mebibytes: 1536)
 
         findButton(titled: "Linux", in: vc.view)?.performClick(nil)
 
-        #expect(vm.cpuCount == originalCPU)
-        #expect(vm.memoryInGB == originalMemory)
+        #expect(vm.cpuCount == VMGuestOS.linux.defaultCPUCount)
+        #expect(vm.memorySize == VMGuestOS.linux.defaultMemorySize)
     }
 }
