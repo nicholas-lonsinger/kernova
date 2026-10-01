@@ -94,6 +94,13 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// one; both `nil` for Linux guests, which have no agent to report one.
     private var guestOSVersionRow: GroupedFormCollapsibleRow?
     private var guestOSVersionValueLabel: NSTextField?
+    /// The Machine ID row and its value label, hidden while the VM has no
+    /// machine identifier.
+    private var machineIDRow: GroupedFormCollapsibleRow?
+    private var machineIDValueLabel: NSTextField?
+    /// Names the other VMs holding this one's machine ID, hidden while there
+    /// are none.
+    private var sharedMachineIDCaption = NSTextField()
 
     // Startup
     private var autoStartSwitch = NSSwitch()
@@ -174,6 +181,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCardRow("Name", control: nameLabel),
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
+            makeMachineIDRow(),
         ]
         // The install-record and OS rows are built whatever the VM knows today,
         // then hidden until it knows: an install completing or a first agent Hello fills one in
@@ -201,7 +209,22 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 control: makeGroupedFormValueLabel(
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
         ]
-        return makeGroupedFormSection([lockRegistry.makeHeader("General"), makeGroupedFormCard(rows: rows)])
+        sharedMachineIDCaption = makeGroupedFormCaption("")
+        refreshMachineID()
+        return makeGroupedFormSection([
+            lockRegistry.makeHeader("General"),
+            makeGroupedFormCard(rows: rows, notes: [sharedMachineIDCaption]),
+        ])
+    }
+
+    /// The Machine ID row, empty until `refreshMachineID()` fills it.
+    private func makeMachineIDRow() -> NSView {
+        let label = makeGroupedFormValueLabel("")
+        label.font = .monospacedSystemFont(ofSize: Typography.body.pointSize, weight: .regular)
+        machineIDValueLabel = label
+        let row = GroupedFormCollapsibleRow(row: makeGroupedFormCardRow("Machine ID", control: label))
+        machineIDRow = row
+        return row
     }
 
     /// The install-record row and the digest rows under it, empty until
@@ -333,6 +356,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             nameLabel.textColor = canRename ? .labelColor : .disabledControlTextColor
         }
         refreshInstallRecord()
+        refreshMachineID()
         let reportedOSVersion = instance.guestOSVersionDisplay
         guestOSVersionValueLabel?.stringValue = reportedOSVersion ?? ""
         guestOSVersionRow?.isHidden = reportedOSVersion == nil
@@ -344,6 +368,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         } else {
             nameLabel.endEditing()
         }
+    }
+
+    /// Renders the machine ID's fingerprint and the other VMs holding it.
+    private func refreshMachineID() {
+        let fingerprint = instance.machineIdentity?.fingerprint
+        machineIDRow?.isHidden = fingerprint == nil
+        machineIDValueLabel?.stringValue = fingerprint?.short ?? ""
+        machineIDValueLabel?.toolTip = fingerprint?.digest
+        let note = resolved.sharedMachineIDNote
+        sharedMachineIDCaption.stringValue = note ?? ""
+        sharedMachineIDCaption.isHidden = note == nil
     }
 
     /// Renders the install record — built or revised while the pane is open,

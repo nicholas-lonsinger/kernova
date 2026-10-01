@@ -102,6 +102,12 @@ final class VMLibraryViewModel {
         library.macAddresses.vmNamesSharingMACAddress(with: instance)
     }
 
+    /// The other VMs holding `instance`'s machine identity, in library order —
+    /// whatever their MAC addresses.
+    func vmNamesSharingMachineIdentity(with instance: VMInstance) -> [String] {
+        instances.filter { $0 !== instance && instance.sharesMachineIdentity(with: $0) }.map(\.name)
+    }
+
     func guestAddress(for instance: VMInstance) -> GuestIPAddress {
         library.guestAddresses.address(for: instance)
     }

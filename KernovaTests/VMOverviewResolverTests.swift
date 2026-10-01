@@ -227,6 +227,40 @@ struct VMOverviewResolverTests {
                 + "on separate networks.")
     }
 
+    @Test("The shared machine ID note names one holder, or several in a list")
+    func sharedMachineIDNoteNamesTheHolders() {
+        #expect(VMOverviewResolver.sharedMachineIDNote(holders: []) == nil)
+        #expect(
+            VMOverviewResolver.sharedMachineIDNote(holders: ["Work"])
+                == "Same machine ID as \u{201C}Work\u{201D}.")
+        #expect(
+            VMOverviewResolver.sharedMachineIDNote(holders: ["Work", "Home"])
+                == "Same machine ID as \u{201C}Work\u{201D} and \u{201C}Home\u{201D}.")
+    }
+
+    @Test("A VM sharing its machine ID gets the note, whatever the MAC addresses")
+    func sharedMachineIDIsANote() {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let identity = Data([2, 7, 1, 8])
+        let instance = viewModel.library.admitFixture {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:01"
+            $0.genericMachineIdentifierData = identity
+        }
+        viewModel.library.admitFixture {
+            $0.name = "Twin"
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:02"
+            $0.genericMachineIdentifierData = identity
+        }
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
+
+        resolver.refresh()
+
+        #expect(resolver.resolved.sharedMachineIDNote == "Same machine ID as \u{201C}Twin\u{201D}.")
+        #expect(resolver.resolved.warnings[.general] == nil)
+    }
+
     @Test("A VM alone on its address raises no Network warning")
     func soleHolderOfAMACRaisesNothing() {
         let instance = VMInstanceFixture.make {

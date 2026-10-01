@@ -7,13 +7,6 @@ import Virtualization
 
 @testable import Kernova
 
-/// Box for `withObservationTracking`'s `@Sendable` `onChange`, which runs inline
-/// in the mutating property's `willSet` — on whatever actor performed the write.
-private final class ObservationFlag: @unchecked Sendable {
-    private(set) var fired = false
-    func fire() { fired = true }
-}
-
 /// A sink target that keeps whatever descriptor it is handed open, so EOF on
 /// the peer proves the sink was cleared rather than never set.
 private final class RetainingAcceptor: VsockDataConnectionAccepting {
@@ -43,14 +36,14 @@ struct VMSessionContextTests {
         reading track: @MainActor () -> Void,
         on mutate: @MainActor () -> Void
     ) -> Bool {
-        let flag = ObservationFlag()
+        let flag = ObservationFireRecorder()
         withObservationTracking {
             track()
         } onChange: {
-            flag.fire()
+            flag.record()
         }
         mutate()
-        return flag.fired
+        return flag.didFire
     }
 
     // MARK: - Teardown
