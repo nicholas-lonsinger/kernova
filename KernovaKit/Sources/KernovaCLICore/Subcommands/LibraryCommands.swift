@@ -3,31 +3,31 @@ import Foundation
 import KernovaKit
 
 extension KernovaCommand {
-    /// What `kernova clone` does with the source's machine identity.
+    /// What `kernova clone` makes of the source.
     ///
     /// Neither flag follows Kernova's own clone preference, which is why this
     /// carries no third case: "whatever the app is set to" is the absence of a
     /// flag, not a flag of its own.
-    enum CloneIdentity: String, EnumerableFlag {
-        /// Mint a fresh identity, so both virtual machines can run at once.
-        case newIdentity
-        /// Keep the source's identity and MAC address, so the clone is the same
-        /// machine to its guest and its network.
-        case keepIdentity
+    enum CloneOutcomeFlag: String, EnumerableFlag {
+        case newMachine
+        case exactCopy
 
-        /// The wire choice this flag names.
-        var machineIdentity: CloneMachineIdentity {
+        /// The wire outcome this flag names.
+        var outcome: CloneOutcome {
             switch self {
-            case .newIdentity: .new
-            case .keepIdentity: .keep
+            case .newMachine: .newMachine
+            case .exactCopy: .exactCopy
             }
         }
 
         /// What each flag's help says.
-        static func help(for value: CloneIdentity) -> ArgumentHelp? {
+        static func help(for value: CloneOutcomeFlag) -> ArgumentHelp? {
             switch value {
-            case .newIdentity: "Give the clone a fresh machine identity, so both can run at once."
-            case .keepIdentity:
+            case .newMachine:
+                ArgumentHelp(
+                    "Give the clone its own machine identity and MAC address, so both can run at once. "
+                        + "Not offered for a guest running macOS 12 or earlier.")
+            case .exactCopy:
                 "Keep the source's machine identity and MAC address; the two never run at once on one network."
             }
         }
@@ -41,17 +41,17 @@ extension KernovaCommand {
             abstract: "Copy a virtual machine into a new one.",
             discussion: "Returns once the copy has finished, printing the new virtual machine the "
                 + "way `list` prints one row; --no-wait returns as soon as the copy has started, "
-                + "printing the row while it is still being written. Without either identity flag "
-                + "the clone follows Kernova's own clone preference.")
+                + "printing the row while it is still being written. Without --new-machine or "
+                + "--exact-copy the clone follows Kernova's own clone preference.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         var vm: String
 
-        /// What the clone does with the source's machine identity; absent
-        /// follows the app's preference.
+        /// What the clone is of its source; absent follows the app's
+        /// preference.
         @Flag(exclusivity: .exclusive)
-        var identity: CloneIdentity?
+        var outcome: CloneOutcomeFlag?
 
         /// Return as soon as the copy has started.
         @Flag(name: .long, help: "Return without waiting for the copy to finish.")
@@ -65,7 +65,7 @@ extension KernovaCommand {
         func request() throws -> VMCommandRequest.Verb {
             .clone(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                machineIdentity: identity?.machineIdentity ?? .followPreference,
+                outcome: outcome?.outcome,
                 waitForOutcome: !noWait)
         }
 

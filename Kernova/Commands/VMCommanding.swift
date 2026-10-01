@@ -219,7 +219,10 @@ protocol VMCommanding: AnyObject {
         guestAccountPassword: String?
     ) throws -> VMSummary
 
-    /// Copies the VM's bundle into a new one.
+    /// Copies the VM's bundle into a new one, as `outcome` — `nil` follows the
+    /// app's clone preference (``AppPreferences/cloneOutcome(for:)``). New
+    /// Machine is refused for a VM that does not offer it
+    /// (``VMConfiguration/offersNewMachineClone``).
     ///
     /// `waitForOutcome` answers the VM the copy became, throwing the copy's
     /// failure to this call alone; without it the arrival's row is answered at
@@ -227,16 +230,16 @@ protocol VMCommanding: AnyObject {
     /// arrival is registered before this call first suspends.
     @discardableResult
     func clone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+        _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
     ) async throws -> VMSummary
 
     /// The clone nobody waits on, which never suspends: the arrival is
     /// registered and its row answered in the caller's own turn.
-    /// ``clone(_:machineIdentity:waitForOutcome:)`` without `waitForOutcome`
+    /// ``clone(_:outcome:waitForOutcome:)`` without `waitForOutcome`
     /// is this.
     @discardableResult
     func beginClone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+        _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMSummary
 
     func rename(_ selector: VMSelector, to newName: String) throws
@@ -253,7 +256,7 @@ protocol VMCommanding: AnyObject {
     /// row when the bundle is already in the library, and joining the import
     /// already copying it when there is one.
     ///
-    /// `waitForOutcome` is ``clone(_:machineIdentity:waitForOutcome:)``'s.
+    /// `waitForOutcome` is ``clone(_:outcome:waitForOutcome:)``'s.
     @discardableResult
     func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary
 

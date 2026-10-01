@@ -201,6 +201,29 @@ struct VMOverviewResolverTests {
         #expect(warning.contains("MAC address"))
     }
 
+    @Test("An exact copy is named in a note, and raises no Network warning")
+    func exactCopyIsANoteNotAWarning() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let identity = Data([2, 7, 1, 8])
+        let instance = viewModel.library.admitFixture {
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+            $0.genericMachineIdentifierData = identity
+        }
+        viewModel.library.admitFixture {
+            $0.name = "Twin"
+            $0.networkEnabled = true
+            $0.macAddress = "AA:BB:CC:DD:EE:FF"
+            $0.genericMachineIdentifierData = identity
+        }
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
+
+        resolver.refresh()
+
+        #expect(resolver.resolved.warnings[.network] == nil)
+        #expect(resolver.resolved.exactCopyNote == "An exact copy of \u{201C}Twin\u{201D}.")
+    }
+
     @Test("A VM alone on its address raises no Network warning")
     func soleHolderOfAMACRaisesNothing() {
         let instance = VMInstanceFixture.make {

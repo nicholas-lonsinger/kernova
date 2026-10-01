@@ -74,9 +74,10 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
         case setSnapshotNotes(VMSelector, snapshot: UUID, notes: String)
 
+        /// `outcome` `nil` follows the app's clone preference.
         /// `waitForOutcome` answers the settled VM, or throws the copy's
         /// failure; without it the row the copy fills is answered at once.
-        case clone(VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool)
+        case clone(VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool)
         case rename(VMSelector, newName: String)
         case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], confirmed: Bool)
         /// `path` is read as this Mac names it; the app obtains the authority to

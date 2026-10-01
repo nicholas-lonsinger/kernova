@@ -6,8 +6,9 @@ import KernovaLogging
 ///
 /// Hosts the *Always show advanced options* toggle — whether advanced menu
 /// actions (e.g. *Start in Recovery Mode*) are always visible or revealed only
-/// on an Option (⌥) hold — the two machine-identity toggles (blocking duplicate
-/// machine IDs from booting, and whether Clone generates a new machine ID), and
+/// on an Option (⌥) hold — the machine-identity settings (blocking duplicate
+/// machine IDs from booting, and what Clone makes: a New Machine or an Exact
+/// Copy), and
 /// the command-line tool's two installs — the symlink, and a shell's completion
 /// file. The toggles are backed by `AppPreferences`;
 /// the menus re-read the preferences each time they open, so no change
@@ -21,7 +22,7 @@ final class AdvancedSettingsViewController: NSViewController {
     private let preferences: AppPreferences
     private let alwaysShowSwitch = NSSwitch()
     private let blockDuplicateIDSwitch = NSSwitch()
-    private let cloneNewIDSwitch = NSSwitch()
+    private let cloneOutcomePopUp = NSPopUpButton()
 
     init(preferences: AppPreferences = .shared) {
         self.preferences = preferences
@@ -43,9 +44,13 @@ final class AdvancedSettingsViewController: NSViewController {
         blockDuplicateIDSwitch.target = self
         blockDuplicateIDSwitch.action = #selector(blockDuplicateIDToggled)
 
-        cloneNewIDSwitch.controlSize = .small
-        cloneNewIDSwitch.target = self
-        cloneNewIDSwitch.action = #selector(cloneNewIDToggled)
+        cloneOutcomePopUp.controlSize = .small
+        for outcome in CloneOutcome.allCases {
+            cloneOutcomePopUp.addItem(withTitle: outcome.displayName)
+            cloneOutcomePopUp.lastItem?.representedObject = outcome.rawValue
+        }
+        cloneOutcomePopUp.target = self
+        cloneOutcomePopUp.action = #selector(cloneOutcomeChosen)
 
         let card = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Always show advanced options", control: alwaysShowSwitch)
@@ -64,14 +69,14 @@ final class AdvancedSettingsViewController: NSViewController {
                 + "undefined behavior.")
 
         let cloneCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Clones get a new machine ID", control: cloneNewIDSwitch)
+            makeGroupedFormCardRow("Clone as", control: cloneOutcomePopUp)
         ])
         let cloneCaption = makeGroupedFormCaption(
-            "A new machine ID gives each clone its own identity, so it can run alongside its "
-                + "source. macOS 12 and earlier guests may not boot after their ID changes — "
-                + "clone those keeping the ID. To do the opposite for one clone, use the second "
-                + "Clone item in the Virtual Machine menu, or hold Option (⌥) over Clone in the "
-                + "VM's context menu.")
+            "A New Machine gets its own machine ID and MAC address, so it can run alongside its "
+                + "source. An Exact Copy keeps both, so the two are the same machine to their "
+                + "guests and networks, and never run on the same network at once. For one clone "
+                + "of the other kind, use the second Clone item in the Virtual Machine menu, or "
+                + "hold Option (⌥) over Clone in the VM's context menu.")
 
         var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),
@@ -174,7 +179,7 @@ final class AdvancedSettingsViewController: NSViewController {
         preferredContentSize = view.fittingSize
         alwaysShowSwitch.state = preferences.alwaysShowAdvancedOptions ? .on : .off
         blockDuplicateIDSwitch.state = preferences.blockDuplicateMachineIDBoot ? .on : .off
-        cloneNewIDSwitch.state = preferences.cloneGeneratesNewMachineID ? .on : .off
+        cloneOutcomePopUp.selectItem(at: CloneOutcome.allCases.firstIndex(of: preferences.cloneOutcome) ?? 0)
     }
 
     @objc private func alwaysShowToggled() {
@@ -185,8 +190,11 @@ final class AdvancedSettingsViewController: NSViewController {
         preferences.blockDuplicateMachineIDBoot = (blockDuplicateIDSwitch.state == .on)
     }
 
-    @objc private func cloneNewIDToggled() {
-        preferences.cloneGeneratesNewMachineID = (cloneNewIDSwitch.state == .on)
+    @objc private func cloneOutcomeChosen() {
+        guard let raw = cloneOutcomePopUp.selectedItem?.representedObject as? String,
+            let outcome = CloneOutcome(rawValue: raw)
+        else { return }
+        preferences.cloneOutcome = outcome
     }
 
     /// Asks where the tool should go, then links it there.

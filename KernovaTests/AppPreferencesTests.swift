@@ -108,34 +108,61 @@ struct AppPreferencesTests {
         #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == false)
     }
 
-    @Test("cloneGeneratesNewMachineID defaults to true")
-    func cloneGeneratesNewMachineIDDefaultsToTrue() {
+    @Test("cloneOutcome defaults to New Machine")
+    func cloneOutcomeDefaultsToNewMachine() {
         let (prefs, _) = makePreferences()
-        #expect(prefs.cloneGeneratesNewMachineID == true)
+        #expect(prefs.cloneOutcome == .newMachine)
     }
 
-    @Test("cloneGeneratesNewMachineID round-trips through UserDefaults with inverted storage")
-    func cloneGeneratesNewMachineIDRoundTrips() {
+    @Test("cloneOutcome round-trips through the cloneKeepsMachineID key")
+    func cloneOutcomeRoundTrips() {
         let (prefs, defaults) = makePreferences()
-        // Stored inverted under `cloneKeepsMachineID`, so the false-default
-        // key yields the desired `true` default (see the property's doc
-        // comment).
-        prefs.cloneGeneratesNewMachineID = false
-        #expect(prefs.cloneGeneratesNewMachineID == false)
+        prefs.cloneOutcome = .exactCopy
+        #expect(prefs.cloneOutcome == .exactCopy)
         #expect(defaults.bool(forKey: "cloneKeepsMachineID") == true)
 
-        prefs.cloneGeneratesNewMachineID = true
-        #expect(prefs.cloneGeneratesNewMachineID == true)
+        prefs.cloneOutcome = .newMachine
+        #expect(prefs.cloneOutcome == .newMachine)
         #expect(defaults.bool(forKey: "cloneKeepsMachineID") == false)
     }
 
-    @Test("cloneAlternateMenuTitle names the opposite of the clone machine-ID setting")
-    func cloneAlternateMenuTitleFollowsPreference() {
+    @Test("The Clone menu items name the preferred outcome first and the other as the alternate")
+    func cloneMenuItemsFollowPreference() {
         let (prefs, _) = makePreferences()
-        #expect(prefs.cloneAlternateMenuTitle == "Clone (Keep Machine ID)")
+        let byDefault = prefs.cloneMenuItems(for: nil)
+        #expect(byDefault.primary.title == "Clone as New Machine")
+        #expect(byDefault.alternate?.title == "Clone as Exact Copy")
 
-        prefs.cloneGeneratesNewMachineID = false
-        #expect(prefs.cloneAlternateMenuTitle == "Clone (New Machine ID)")
+        prefs.cloneOutcome = .exactCopy
+        let exact = prefs.cloneMenuItems(for: nil)
+        #expect(exact.primary.title == "Clone as Exact Copy")
+        #expect(exact.alternate?.title == "Clone as New Machine")
+    }
+
+    @Test("A guest running macOS 12 or earlier is offered only Clone as Exact Copy")
+    func cloneMenuItemsOfAMontereyGuestOfferOnlyAnExactCopy() {
+        let (prefs, _) = makePreferences()
+        var monterey = VMConfiguration(name: "Monterey", guestOS: .macOS, bootMode: .macOS)
+        monterey.lastSeenGuestOSVersion = "12.7.6"
+        for preferred in CloneOutcome.allCases {
+            prefs.cloneOutcome = preferred
+            let items = prefs.cloneMenuItems(for: monterey)
+            #expect(items.primary.outcome == .exactCopy)
+            #expect(items.alternate == nil)
+            #expect(prefs.cloneOutcome(for: monterey) == .exactCopy)
+        }
+
+        // A guest whose version nothing has vouched for, or one past 12, offers both.
+        var unknown = monterey
+        unknown.lastSeenGuestOSVersion = nil
+        var ventura = monterey
+        ventura.lastSeenGuestOSVersion = "13.0"
+        prefs.cloneOutcome = .newMachine
+        for configuration in [unknown, ventura] {
+            let items = prefs.cloneMenuItems(for: configuration)
+            #expect(items.primary.outcome == .newMachine)
+            #expect(items.alternate?.outcome == .exactCopy)
+        }
     }
 
     @Test("menuBarQuitReminderDismissed defaults to false")

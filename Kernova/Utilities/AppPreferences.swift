@@ -133,13 +133,19 @@ struct AppPreferences {
         nonmutating set { setInvertedBool(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
-    /// Whether Clone gives the copy a fresh machine identifier, defaulting to `true`.
-    ///
-    /// When `false`, clones keep the source VM's identifier. The Option-held
-    /// Clone menu item performs the opposite of this setting.
-    var cloneGeneratesNewMachineID: Bool {
-        get { invertedBool(forKey: Keys.cloneKeepsMachineID) }
-        nonmutating set { setInvertedBool(newValue, forKey: Keys.cloneKeepsMachineID) }
+    /// What Clone makes of a VM that offers both outcomes, defaulting to New
+    /// Machine.
+    var cloneOutcome: CloneOutcome {
+        get { defaults.bool(forKey: Keys.cloneKeepsMachineID) ? .exactCopy : .newMachine }
+        nonmutating set { defaults.set(newValue == .exactCopy, forKey: Keys.cloneKeepsMachineID) }
+    }
+
+    /// What Clone makes of the VM `configuration` describes: ``cloneOutcome``,
+    /// or Exact Copy where New Machine is absent
+    /// (``VMConfiguration/offersNewMachineClone``). `nil` is no VM, which
+    /// offers both.
+    func cloneOutcome(for configuration: VMConfiguration?) -> CloneOutcome {
+        configuration?.offersNewMachineClone == false ? .exactCopy : cloneOutcome
     }
 
     /// Ceiling on the total of one paste's file representations, in bytes.
@@ -155,10 +161,16 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.clipboardMaxPasteBytes) }
     }
 
-    /// Title of the Option-alternate Clone menu item, which clones with the
-    /// opposite machine-identity behavior to the one this preference selects.
-    var cloneAlternateMenuTitle: String {
-        cloneGeneratesNewMachineID ? "Clone (Keep Machine ID)" : "Clone (New Machine ID)"
+    /// The Clone menu items for the VM `configuration` describes: `primary`
+    /// makes what ``cloneOutcome(for:)`` resolves to, and `alternate` the
+    /// other outcome — `nil` where only one is offered.
+    func cloneMenuItems(
+        for configuration: VMConfiguration?
+    ) -> (primary: CloneMenuItem, alternate: CloneMenuItem?) {
+        let primary = cloneOutcome(for: configuration)
+        let other: CloneOutcome = primary == .newMachine ? .exactCopy : .newMachine
+        let offersOther = other == .exactCopy || configuration?.offersNewMachineClone != false
+        return (CloneMenuItem(outcome: primary), offersOther ? CloneMenuItem(outcome: other) : nil)
     }
 
     /// Re-arms every host-side reminder by clearing its dismissed flag, so each
@@ -169,5 +181,22 @@ struct AppPreferences {
     /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
     func resetHostReminders() {
         menuBarQuitReminderDismissed = false
+    }
+}
+
+/// One Clone menu item: the outcome it makes, and its title.
+struct CloneMenuItem: Equatable {
+    let outcome: CloneOutcome
+
+    var title: String { "Clone as \(outcome.displayName)" }
+}
+
+extension CloneOutcome {
+    /// How every app surface names the outcome.
+    var displayName: String {
+        switch self {
+        case .newMachine: "New Machine"
+        case .exactCopy: "Exact Copy"
+        }
     }
 }

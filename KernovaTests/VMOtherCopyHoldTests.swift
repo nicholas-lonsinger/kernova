@@ -166,31 +166,47 @@ struct VMOtherCopyHoldTests {
 
     nonisolated private static let sharedMAC = "02:4b:4e:56:00:01"
 
-    /// The two ways a twin collides: the MAC address on one network, and the
-    /// machine identity while the preference blocks it.
-    nonisolated private static let twins: [(String, VMIdentityConflict.Reason)] = [
+    /// The ways a twin collides: the MAC address on one network, the machine
+    /// identity while the preference blocks it, and both at once — an exact
+    /// copy.
+    nonisolated private static let twins: [(String, ConflictReason)] = [
         ("MAC address", .macAddress),
         ("machine identity", .machineIdentity),
+        ("exact copy", .exactCopy(bar: .runningAtOnce)),
     ]
 
+    /// Makes the `index`th VM of a pair colliding on `reason`.
+    nonisolated private static func twin(
+        _ reason: ConflictReason, index: UInt8, identity: Data
+    ) -> (inout VMConfiguration) -> Void {
+        { config in
+            config.networkEnabled = true
+            switch reason {
+            case .macAddress:
+                config.macAddress = sharedMAC
+            case .machineIdentity:
+                config.genericMachineIdentifierData = identity
+                config.macAddress = String(format: "02:4b:4e:56:01:%02x", index)
+            default:
+                config.genericMachineIdentifierData = identity
+                config.macAddress = sharedMAC
+            }
+        }
+    }
+
     @Test("A twin of a VM another copy holds is refused, naming the source", arguments: twins)
-    func twinOfAHeldVMIsRefused(label: String, reason: VMIdentityConflict.Reason) {
+    func twinOfAHeldVMIsRefused(label: String, reason: ConflictReason) {
         let storage = MockVMStorageService()
         let preferences = makeTestPreferences()
         preferences.blockDuplicateMachineIDBoot = true
         let library = makeWiredLibrary(storage: storage, preferences: preferences)
         let identity = Data([7, 7, 7])
-        func twin(_ config: inout VMConfiguration) {
-            switch reason {
-            case .macAddress:
-                config.networkEnabled = true
-                config.macAddress = Self.sharedMAC
-            case .machineIdentity:
-                config.genericMachineIdentifierData = identity
-            }
-        }
-        let source = library.registerFixture(name: "Source", preferences: preferences, mutate: twin)
-        let copy = library.registerFixture(name: "Copy", preferences: preferences, mutate: twin)
+        let source = library.registerFixture(
+            name: "Source", preferences: preferences,
+            mutate: Self.twin(reason, index: 1, identity: identity))
+        let copy = library.registerFixture(
+            name: "Copy", preferences: preferences,
+            mutate: Self.twin(reason, index: 2, identity: identity))
         storage.files.holdElsewhere(source.bundleURL)
 
         let decision = copy.activity.decide(.start(recovery: false), posture: .commit)
@@ -212,25 +228,17 @@ struct VMOtherCopyHoldTests {
     @Test(
         "A twin's refusal names the other copy for a held source, and a stop step only for one live here",
         arguments: twins)
-    func twinRefusalWordsWhoClaimsTheIdentity(label: String, reason: VMIdentityConflict.Reason) throws {
+    func twinRefusalWordsWhoClaimsTheIdentity(label: String, reason: ConflictReason) throws {
         for held in [false, true] {
             let harness = makeCore()
             let preferences = harness.preferences
             preferences.blockDuplicateMachineIDBoot = true
-            func twin(_ config: inout VMConfiguration) {
-                switch reason {
-                case .macAddress:
-                    config.networkEnabled = true
-                    config.macAddress = Self.sharedMAC
-                case .machineIdentity:
-                    config.genericMachineIdentifierData = Data([4, 2])
-                }
-            }
             let source = harness.library.registerFixture(
                 name: "Source", phase: held ? .stopped : .running(sessionID: UUID()),
-                preferences: preferences, mutate: twin)
+                preferences: preferences, mutate: Self.twin(reason, index: 1, identity: Data([4, 2])))
             let copy = harness.library.registerFixture(
-                name: "Copy", preferences: preferences, mutate: twin)
+                name: "Copy", preferences: preferences,
+                mutate: Self.twin(reason, index: 2, identity: Data([4, 2])))
             if held { harness.store.holdElsewhere(source.bundleURL) }
 
             guard

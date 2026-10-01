@@ -1175,9 +1175,11 @@ struct VMCommandCoreTests {
         let identity = Data([1, 2, 3, 4])
         let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID())) {
             $0.genericMachineIdentifierData = identity
+            $0.macAddress = "02:4b:4e:56:03:01"
         }
         let twin = makeInstance(in: harness, name: "Twin") {
             $0.genericMachineIdentifierData = identity
+            $0.macAddress = "02:4b:4e:56:03:02"
         }
 
         let error = try #require(
@@ -1380,7 +1382,7 @@ struct VMCommandCoreTests {
             return
         }
         #expect(other.id == live.id)
-        #expect(reason == .machineIdentity)
+        #expect(reason == .exactCopy(bar: .runningAtOnce))
         // Refused at admission: the restore never reached the service.
         #expect(harness.virtualization.startCallCount == 0)
         #expect(harness.virtualization.stopCallCount == 0)
@@ -2076,7 +2078,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Source")
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: true)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: true)
 
         #expect(harness.library.instances.count == 2)
         #expect(harness.library.instances.contains { $0.id == summary.id })
@@ -2086,7 +2088,7 @@ struct VMCommandCoreTests {
         #expect(
             await commandError {
                 _ = try await harness.core.clone(
-                    .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+                    .id(instance.id), outcome: .newMachine, waitForOutcome: false)
             }?.isInvalidState == true)
         #expect(harness.library.arrivals.isEmpty)
     }
@@ -2101,7 +2103,7 @@ struct VMCommandCoreTests {
         harness.storage.publishHold = publishHold
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         let arrival = try #require(harness.library.arrivals.first)
         #expect(arrival.id == summary.id)
@@ -2130,7 +2132,7 @@ struct VMCommandCoreTests {
         let hold = DispatchSemaphore(value: 0)
         harness.storage.cloneHold = hold
         let clone = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         let deleteError = try #require(
             await commandError {
@@ -2427,7 +2429,7 @@ struct VMCommandCoreTests {
         harness.storage.cloneHold = hold
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         #expect(summary.status == "preparing")
         #expect(harness.core.list().first { $0.id == summary.id }?.status == "preparing")
@@ -2447,7 +2449,7 @@ struct VMCommandCoreTests {
         harness.storage.cloneHold = hold
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         var added: VMLibraryEvent?
         while let event = await events.next() {
@@ -2497,7 +2499,7 @@ struct VMCommandCoreTests {
         var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -2532,7 +2534,7 @@ struct VMCommandCoreTests {
         var events = VMLibraryEventReader(harness.core.events())
 
         let summary = try await harness.core.clone(
-            .id(instance.id), machineIdentity: .new, waitForOutcome: false)
+            .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
         while let event = await events.next() {
@@ -2561,7 +2563,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let withMain = makeInstance(in: harness, name: "With Main") { $0.storageDisks = nil }
         _ = try await harness.core.clone(
-            .id(withMain.id), machineIdentity: .new, waitForOutcome: true)
+            .id(withMain.id), outcome: .newMachine, waitForOutcome: true)
         #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == true)
 
         let withoutMain = makeInstance(in: harness, name: "Without Main") {
@@ -2570,7 +2572,7 @@ struct VMCommandCoreTests {
             ]
         }
         _ = try await harness.core.clone(
-            .id(withoutMain.id), machineIdentity: .new, waitForOutcome: true)
+            .id(withoutMain.id), outcome: .newMachine, waitForOutcome: true)
         #expect(harness.storage.lastCloneFilesToCopy?.contains("Disk.asif") == false)
     }
 
@@ -3362,7 +3364,7 @@ struct VMCommandCoreTests {
 
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         let clone = commandError {
-            _ = try harness.core.beginClone(.id(instance.id), machineIdentity: .keep)
+            _ = try harness.core.beginClone(.id(instance.id), outcome: .exactCopy)
         }
         #expect(clone?.isBusy == true)
 

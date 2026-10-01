@@ -129,14 +129,32 @@ struct MainMenuValidationTests {
         #expect(item.title == model.title)
     }
 
-    @Test("The clone alternate names the preference with no VM selected")
-    func cloneAlternateTitleWithoutSelection() {
-        preferences.cloneGeneratesNewMachineID = true
+    @Test("The Clone items name the preference with no VM selected")
+    func cloneTitlesWithoutSelection() {
+        preferences.cloneOutcome = .newMachine
         let fixture = makeFixture(instance: nil)
-        let item = makeMenuItem(#selector(AppDelegate.cloneVMAlternate(_:)))
+        let clone = makeMenuItem(#selector(AppDelegate.cloneVM(_:)))
+        let alternate = makeMenuItem(#selector(AppDelegate.cloneVMAlternate(_:)))
 
-        #expect(!fixture.controller.validate(item))
-        #expect(item.title == preferences.cloneAlternateMenuTitle)
+        #expect(!fixture.controller.validate(clone))
+        #expect(!fixture.controller.validate(alternate))
+        #expect(clone.title == "Clone as New Machine")
+        #expect(alternate.title == "Clone as Exact Copy")
+        #expect(!alternate.isHidden)
+    }
+
+    @Test("A guest running macOS 12 shows only Clone as Exact Copy")
+    func cloneTitlesForAMontereyGuest() {
+        preferences.cloneOutcome = .newMachine
+        let instance = makeMenuInstance { $0.lastSeenGuestOSVersion = "12.7.6" }
+        let fixture = makeFixture(instance: instance)
+        let clone = makeMenuItem(#selector(AppDelegate.cloneVM(_:)))
+        let alternate = makeMenuItem(#selector(AppDelegate.cloneVMAlternate(_:)))
+
+        _ = fixture.controller.validate(clone)
+        _ = fixture.controller.validate(alternate)
+        #expect(clone.title == "Clone as Exact Copy")
+        #expect(alternate.isHidden)
     }
 
     @Test("The pop-out title follows where the display lives")

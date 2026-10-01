@@ -34,7 +34,7 @@ struct VMOverviewSummaryTests {
     }
 
     private func sharingNote(_ instance: VMInstance) -> String? {
-        VMOverviewSummary.note(for: .sharing, instance: instance)
+        VMOverviewSummary.note(for: .sharing, instance: instance, resolved: VMOverviewResolved())
     }
 
     /// Answers only through the VM's own activity, so any library serves.
@@ -256,13 +256,23 @@ struct VMOverviewSummaryTests {
         #expect(sharingNote(running) == "Passthrough on \u{00B7} No shared folders")
     }
 
-    @Test("Sharing is the only card closing with a line")
+    @Test("Sharing is the only card closing with a line for a VM that is no exact copy")
     func onlySharingCarriesANote() {
         let instance = makeInstance()
         for category in VMSettingsCategory.allCases {
-            let note = VMOverviewSummary.note(for: category, instance: instance)
+            let note = VMOverviewSummary.note(
+                for: category, instance: instance, resolved: VMOverviewResolved())
             #expect((note != nil) == (category == .sharing))
         }
+    }
+
+    @Test("Network closes with the exact-copy note the resolver found")
+    func networkCarriesTheExactCopyNote() {
+        var resolved = VMOverviewResolved()
+        resolved.exactCopyNote = "An exact copy of \u{201C}Twin\u{201D}."
+        #expect(
+            VMOverviewSummary.note(for: .network, instance: makeInstance(), resolved: resolved)
+                == "An exact copy of \u{201C}Twin\u{201D}.")
     }
 
     @Test("Snapshots states only the newest in its body")

@@ -357,20 +357,25 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // still copying would disable the GUI's only full-quit affordance.
         guard let capability = Self.capability(for: menuItem.action) else { return true }
 
-        // The two titles that do not depend on a VM, applied before the
-        // selection guard so neither strands the last selection's wording: the
+        // The titles a missing selection still words, applied before the
+        // selection guard so none strands the last selection's wording: the
         // guest-agent item's title is part of what it reports (see
-        // `unavailableTitle`), and the clone alternate's names a preference.
+        // `unavailableTitle`), and the Clone items name the preference.
+        let target = host?.menuCommandTarget(of: menuItem)
         switch menuItem.action {
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
+        case #selector(AppDelegate.cloneVM(_:)):
+            menuItem.title = preferences.cloneMenuItems(for: target?.configuration).primary.title
         case #selector(AppDelegate.cloneVMAlternate(_:)):
-            menuItem.title = preferences.cloneAlternateMenuTitle
+            let alternate = preferences.cloneMenuItems(for: target?.configuration).alternate
+            menuItem.isHidden = alternate == nil
+            if let alternate { menuItem.title = alternate.title }
         default:
             break
         }
 
-        guard let instance = host?.menuCommandTarget(of: menuItem) else { return false }
+        guard let instance = target else { return false }
         let isAvailable = viewModel.capabilities.isAvailable(capability, on: instance)
 
         switch menuItem.action {
@@ -583,17 +588,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Finder's single-item Rename), not a dialog.
         vmMenu.addItem(
             withTitle: "Rename", action: #selector(AppDelegate.renameVM(_:)), keyEquivalent: "")
+        let cloneItems = preferences.cloneMenuItems(for: nil)
         vmMenu.addItem(
-            withTitle: "Clone", action: #selector(AppDelegate.cloneVM(_:)), keyEquivalent: "d")
-        // Clones with the opposite machine-identity behavior to the setting.
-        // Always visible, like Start in Recovery Mode: this menu shows advanced
-        // actions plainly, reserving ⌥-alternates for irreversible ones.
-        // `validate(_:)` re-reads the title on every menu open, so a setting
-        // change while the menu exists is picked up. The ⌥⌘D key equivalent is
-        // eclipsed by the system's Dock-hiding hotkey; the item fires from the
-        // pointer.
+            withTitle: cloneItems.primary.title, action: #selector(AppDelegate.cloneVM(_:)),
+            keyEquivalent: "d")
+        // Clones as the other outcome. Always visible, like Start in Recovery
+        // Mode: this menu shows advanced actions plainly, reserving
+        // ⌥-alternates for irreversible ones. `validate(_:)` re-reads both
+        // titles on every menu open, so a setting change or a VM offering one
+        // outcome is picked up. The ⌥⌘D key equivalent is eclipsed by the
+        // system's Dock-hiding hotkey; the item fires from the pointer.
         let cloneAlternateItem = vmMenu.addItem(
-            withTitle: preferences.cloneAlternateMenuTitle,
+            withTitle: cloneItems.alternate?.title ?? "",
             action: #selector(AppDelegate.cloneVMAlternate(_:)),
             keyEquivalent: "d")
         cloneAlternateItem.keyEquivalentModifierMask = [.command, .option]

@@ -465,6 +465,7 @@ extension CommandErrorDTO {
             switch reason {
             case .machineIdentity: "Duplicate Machine ID"
             case .macAddress: "Duplicate MAC Address"
+            case .exactCopy: "Exact Copy In Use"
             case .macAddressInUse: "MAC Address In Use"
             }
         case .operationFailed(_, let title, _, _):
@@ -561,6 +562,8 @@ extension CommandErrorDTO {
         case .macAddressInUse(let address, let holding, let otherHolders):
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
+        case .exactCopy(let bar):
+            exactCopyMessage(vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy, bar: bar)
         case .machineIdentity where otherHeldByAnotherCopy:
             "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
                 + "Two virtual machines with the same machine ID must not run at once. "
@@ -577,6 +580,30 @@ extension CommandErrorDTO {
             "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which is active. "
                 + "Two virtual machines with the same MAC address must not run on the same network at once. "
                 + "Stop \u{201C}\(other)\u{201D} first, or give one of them a new address in Network settings."
+        }
+    }
+
+    /// What an ``ConflictReason/exactCopy(bar:)`` refusal tells the user.
+    ///
+    /// Nothing records which of two exact copies came first, so the pair is
+    /// named from `vm`'s side: the sentence reads true whichever one is refused.
+    private static func exactCopyMessage(
+        vm: String, other: String, otherHeldByAnotherCopy: Bool, bar: ExactCopyBar
+    ) -> String {
+        let pair =
+            "\u{201C}\(vm)\u{201D} is an exact copy of \u{201C}\(other)\u{201D}, "
+            + (otherHeldByAnotherCopy ? "which another copy of Kernova is using. " : "which is active. ")
+        switch bar {
+        case .runningAtOnce:
+            return pair + "Exact copies share a machine ID, so they must not run at once. "
+                + (otherHeldByAnotherCopy
+                    ? "To start it anyway, allow this in Settings \u{2192} Advanced."
+                    : "Stop \u{201C}\(other)\u{201D} first, or allow this in Settings \u{2192} Advanced.")
+        case .oneNetwork:
+            return pair + "Exact copies share a MAC address, so they must not run on the same network at once. "
+                + (otherHeldByAnotherCopy
+                    ? "Give \u{201C}\(vm)\u{201D} a new address in Network settings."
+                    : "Stop \u{201C}\(other)\u{201D} first, or give one of them a new address in Network settings.")
         }
     }
 

@@ -134,7 +134,7 @@ struct VMCapabilityAgreementTests {
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
                 confirmed: true)
-        case .clone: try core.beginClone(vm, machineIdentity: .new)
+        case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], confirmed: false)
         case .showInFinder: try core.showInFinder(vm)

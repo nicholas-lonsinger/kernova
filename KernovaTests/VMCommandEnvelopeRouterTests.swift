@@ -719,7 +719,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Source")
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
+            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
@@ -739,7 +739,7 @@ struct VMCommandEnvelopeRouterTests {
         harness.core.onFailure = { failure, _ in reported.append(failure) }
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
+            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
 
         guard case .operationFailed(let verb, _, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -759,7 +759,7 @@ struct VMCommandEnvelopeRouterTests {
         defer { hold.signal() }
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
@@ -780,7 +780,7 @@ struct VMCommandEnvelopeRouterTests {
         harness.storage.cloneHold = hold
         let waiting = Task {
             try await harness.transport.send(
-                .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: true))
+                .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
         }
         // Held inside the copy, so the cancel is what the settle finds rather
         // than a race with it.
@@ -809,7 +809,7 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
@@ -838,7 +838,7 @@ struct VMCommandEnvelopeRouterTests {
         var events = harness.transport.router.eventResponses().makeAsyncIterator()
 
         let response = try await harness.transport.send(
-            .clone(.id(instance.id), machineIdentity: .new, waitForOutcome: false))
+            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return

@@ -288,10 +288,10 @@ final class VMIntentGateway {
     /// Unwaited, so the clone answers without suspending once its arrival is
     /// registered, and the `info` read is the same main-actor turn — the row is
     /// always there to describe.
-    func clone(_ id: UUID, machineIdentity: CloneMachineIdentity) async throws -> VMEntity {
+    func clone(_ id: UUID, outcome: CloneOutcome?) async throws -> VMEntity {
         try await perform(.clone, on: id) {
             let copy = try await self.commands.clone(
-                .id(id), machineIdentity: machineIdentity, waitForOutcome: false)
+                .id(id), outcome: outcome, waitForOutcome: false)
             return VMEntity(try self.commands.info(.id(copy.id)))
         }
     }
@@ -302,7 +302,7 @@ final class VMIntentGateway {
     /// The one library verb here that waits, and the security-scoped bracket is
     /// why: the authority to read `url` is the caller's, held only for the span
     /// of this call, and the copy reads the source for as long as it runs.
-    /// Answering the arrival the way ``clone(_:machineIdentity:)`` does would
+    /// Answering the arrival the way ``clone(_:outcome:)`` does would
     /// drop that authority out from under a copy still reading through it.
     func importVM(from url: URL) async throws -> VMEntity {
         try await perform(.importVM, on: nil) {

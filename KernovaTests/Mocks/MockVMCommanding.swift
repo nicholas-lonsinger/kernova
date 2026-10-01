@@ -151,7 +151,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var createCalls:
         [(configuration: VMConfiguration, startAfterCreate: Bool, guestAccountPassword: String?)] =
             []
-    private(set) var cloneCalls: [(selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool)] =
+    private(set) var cloneCalls: [(selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool)] =
         []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
     private(set) var deleteCalls:
@@ -521,23 +521,23 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func clone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+        _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
     ) async throws -> VMSummary {
         let copy = try registerClone(
-            selector, machineIdentity: machineIdentity, waitForOutcome: waitForOutcome)
-        return waitForOutcome ? try await outcome(of: copy) : copy
+            selector, outcome: outcome, waitForOutcome: waitForOutcome)
+        return waitForOutcome ? try await self.outcome(of: copy) : copy
     }
 
     func beginClone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+        _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMSummary {
-        try registerClone(selector, machineIdentity: machineIdentity, waitForOutcome: false)
+        try registerClone(selector, outcome: outcome, waitForOutcome: false)
     }
 
     private func registerClone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+        _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
     ) throws -> VMSummary {
-        cloneCalls.append((selector, machineIdentity, waitForOutcome))
+        cloneCalls.append((selector, outcome, waitForOutcome))
         if let cloneError { throw cloneError }
         let source = try resolve(selector)
         let copy =

@@ -196,10 +196,10 @@ struct VMCommandEnvelopeRouter {
             try commands.setSnapshotNotes(selector, snapshot: snapshot, notes: notes)
             return .ok
 
-        case .clone(let selector, let machineIdentity, let waitForOutcome):
+        case .clone(let selector, let outcome, let waitForOutcome):
             return .summary(
                 try await commands.clone(
-                    selector, machineIdentity: machineIdentity, waitForOutcome: waitForOutcome))
+                    selector, outcome: outcome, waitForOutcome: waitForOutcome))
         case .rename(let selector, let newName):
             try commands.rename(selector, to: newName)
             return .ok

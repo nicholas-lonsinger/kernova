@@ -1305,7 +1305,7 @@ struct VMCommandCoreAttachmentTests {
         let hold = DispatchSemaphore(value: 0)
         harness.storage.cloneHold = hold
         let clone = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
 
         let removeError = try #require(
