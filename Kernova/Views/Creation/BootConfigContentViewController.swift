@@ -45,8 +45,14 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     override func loadView() {
-        let title = makeWizardTitle("Boot Configuration")
-        let subtitle = makeWizardSubtitle("Choose how to boot your Linux virtual machine.")
+        let title = makeWizardTitle(
+            "Boot Configuration",
+            info: [
+                .body(
+                    "Choose a Distribution… picks an installer image from Kernova's list; it "
+                        + "downloads when you first start the virtual machine. Image URL… downloads "
+                        + "one from a link you supply. ISO File… boots an image already on your Mac.")
+            ])
 
         bootModeControl.selectedSegment = creationVM.selectedBootMode == .linuxKernel ? 1 : 0
         bootModeControl.target = self
@@ -57,19 +63,16 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         conditionalContainer.alignment = .leading
         conditionalContainer.spacing = Spacing.standard
 
-        let stack = NSStackView(views: [title, subtitle, bootModeControl, conditionalContainer])
+        let stack = NSStackView(views: [title, bootModeControl, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: title)
         stack.setCustomSpacing(16, after: bootModeControl)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
-        NSLayoutConstraint.activate([
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         view = scrollView
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
@@ -112,8 +115,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         commandLineField.delegate = self
 
         addFullWidth(
-            GroupedFormStateNote.temporarilyStanding("Provide the kernel image and optional initrd/command line."))
-        addFullWidth(
             makeGroupedFormCard(rows: [
                 makeFileRow(
                     label: "Kernel", path: creationVM.kernelPath, browseAction: #selector(browseKernel)),
@@ -127,30 +128,15 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     /// badge naming what it is.
     private func addImageSection() {
         let catalogOption = makeSourceRadio(
-            for: .catalog,
-            symbol: "list.bullet",
-            title: "Choose a Distribution…",
-            description: "Download a Linux installer image after the virtual machine is created."
-        )
-        let urlOption = makeSourceRadio(
-            for: .customURL,
-            symbol: "link",
-            title: "Image URL…",
-            description: "Download an installer image from a link you supply."
-        )
-        let localOption = makeSourceRadio(
-            for: .localISO,
-            symbol: "folder",
-            title: "ISO File…",
-            description: "Boot an ISO image already on your Mac."
-        )
+            for: .catalog, symbol: "list.bullet", title: "Choose a Distribution…")
+        let urlOption = makeSourceRadio(for: .customURL, symbol: "link", title: "Image URL…")
+        let localOption = makeSourceRadio(for: .localISO, symbol: "folder", title: "ISO File…")
 
         let options = NSStackView(views: [catalogOption, urlOption, localOption])
         options.orientation = .vertical
         options.alignment = .leading
         options.spacing = Spacing.large
 
-        addFullWidth(GroupedFormStateNote.temporarilyStanding("Choose the installer image to boot from via EFI."))
         addFullWidth(options)
 
         switch creationVM.linuxSelection {
@@ -176,14 +162,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))
                 ))
-            if image.sha256 == nil {
-                addFullWidth(
-                    makeGroupedFormBanner(
-                        symbolName: "exclamationmark.triangle.fill",
-                        tint: .systemYellow,
-                        message: "This download won't be verified. Choose a host you trust."
-                    ))
-            }
         case .localISO(let path, _):
             conditionalContainer.addArrangedSubview(
                 makeWizardPathBadge(
@@ -196,14 +174,12 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         }
     }
 
-    private func makeSourceRadio(
-        for source: ImageSource, symbol: String, title: String, description: String
-    ) -> NSView {
+    private func makeSourceRadio(for source: ImageSource, symbol: String, title: String) -> NSView {
         let radio = NSButton(
             radioButtonWithTitle: title, target: self, action: #selector(sourceRadioClicked(_:)))
         radio.state = source == currentImageSource ? .on : .off
         radios[source] = radio
-        return makeWizardRadioOption(radio: radio, iconSymbol: symbol, description: description)
+        return makeWizardRadioOption(radio: radio, iconSymbol: symbol)
     }
 
     /// Which radio the current pick lights, or `nil` while nothing is picked.

@@ -9,7 +9,7 @@ import Testing
 /// Behavior tests for the Clipboard settings pane.
 ///
 /// The pane's job is to make the paste ceiling selectable *and* legible: the
-/// popup has to reflect and write the stored value, and the estimate line has to
+/// popup has to reflect and write the stored value, and the row's info estimate has to
 /// track the selection rather than freeze on the value it first rendered.
 @Suite("Clipboard Settings Tests", .serialized, .caseScoped)
 @MainActor
@@ -93,34 +93,43 @@ struct ClipboardSettingsViewControllerTests {
 
     // MARK: - The explanation
 
-    @Test("the pane states what the ceiling protects against, not just its size")
-    func paneExplainsTheDeadline() {
-        let controller = makeLaidOutController()
-
-        // The failure the limit governs is the point of the pane — a bare byte
-        // field would teach nothing.
-        for fragment in ["60 seconds in Finder", "while the pasting app waits"] {
-            let caption = findLabel(containing: fragment, in: controller.view)
-            #expect(caption != nil, "caption '\(fragment)…' missing from the view tree")
-            #expect(caption?.frame.height ?? 0 > 0, "caption '\(fragment)…' collapsed")
+    /// The row's info paragraphs, as its popover would render them.
+    private func sizeInfo(in controller: ClipboardSettingsViewController) throws -> [String] {
+        let info = try #require(firstSubview(InfoButtonView.self, in: controller.view))
+        return info.paragraphs.map {
+            switch $0 {
+            case .body(let text), .code(let text): text
+            }
         }
     }
 
-    @Test("the estimate line names the selected ceiling and its transfer time")
+    @Test("the row's info states what the ceiling protects against, not just its size")
+    func infoExplainsTheDeadline() throws {
+        let controller = makeLaidOutController()
+
+        let info = try sizeInfo(in: controller).joined(separator: "\n")
+        for fragment in ["60 seconds in Finder", "while the pasting app waits"] {
+            #expect(info.contains(fragment), "info lacks '\(fragment)…'")
+        }
+        #expect(findLabel(containing: "60 seconds in Finder", in: controller.view) == nil)
+    }
+
+    @Test("the row's info names the selected ceiling and its transfer time")
     func estimateNamesTheSelection() throws {
         let controller = makeLaidOutController()
         let popUp = try popUp(in: controller)
 
-        // The default's estimate is on screen before anything is touched.
-        #expect(findLabel(containing: "2 GB transfers in about 6 seconds", in: controller.view) != nil)
+        // The default's estimate is in the info before anything is touched.
+        #expect(try sizeInfo(in: controller).contains { $0.contains("2 GB transfers in about 6 seconds") })
 
         let raised = 16 * 1024 * 1024 * 1024
         popUp.selectItem(at: try #require(ClipboardPasteLimit.choices.firstIndex(of: raised)))
         popUp.sendAction(popUp.action, to: popUp.target)
 
         // It recomputes rather than freezing on the value it first rendered.
-        #expect(findLabel(containing: "16 GB transfers in about 45 seconds", in: controller.view) != nil)
-        #expect(findLabel(containing: "2 GB transfers in about 6 seconds", in: controller.view) == nil)
+        let info = try sizeInfo(in: controller)
+        #expect(info.contains { $0.contains("16 GB transfers in about 45 seconds") })
+        #expect(!info.contains { $0.contains("2 GB transfers in about 6 seconds") })
     }
 
     @Test("the estimate quotes the measured throughput it divides by")

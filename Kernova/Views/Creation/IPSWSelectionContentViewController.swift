@@ -66,34 +66,22 @@ final class IPSWSelectionContentViewController: NSViewController {
     }
 
     override func loadView() {
-        let title = makeWizardTitle("macOS Restore Image")
-        let subtitle = makeWizardSubtitle(
-            "Choose how to obtain the macOS restore image (IPSW) for installation.")
+        let title = makeWizardTitle(
+            "macOS Restore Image",
+            info: [
+                .body(
+                    "Download Latest fetches the newest macOS restore image this Mac can install, "
+                        + "from Apple. Choose a Version… lists every release Apple still hosts, "
+                        + "including older ones. Paste an IPSW URL… installs from a link you supply; "
+                        + "Choose Local File… uses an IPSW already on your Mac.")
+            ])
 
         let downloadOption = makeSourceRadio(
-            for: .downloadLatest,
-            symbol: "arrow.down.circle",
-            title: "Download Latest",
-            description: "Download the latest compatible macOS restore image from Apple."
-        )
+            for: .downloadLatest, symbol: "arrow.down.circle", title: "Download Latest")
         let catalogOption = makeSourceRadio(
-            for: .catalogVersion,
-            symbol: "list.bullet",
-            title: "Choose a Version…",
-            description: "Browse every macOS release Apple still hosts, including older versions."
-        )
-        let urlOption = makeSourceRadio(
-            for: .customURL,
-            symbol: "link",
-            title: "Paste an IPSW URL…",
-            description: "Install from a restore image at a URL you supply."
-        )
-        let localOption = makeSourceRadio(
-            for: .localFile,
-            symbol: "folder",
-            title: "Choose Local File…",
-            description: "Select an IPSW file already on your Mac."
-        )
+            for: .catalogVersion, symbol: "list.bullet", title: "Choose a Version…")
+        let urlOption = makeSourceRadio(for: .customURL, symbol: "link", title: "Paste an IPSW URL…")
+        let localOption = makeSourceRadio(for: .localFile, symbol: "folder", title: "Choose Local File…")
 
         let options = NSStackView(views: [downloadOption, catalogOption, urlOption, localOption])
         options.orientation = .vertical
@@ -104,17 +92,16 @@ final class IPSWSelectionContentViewController: NSViewController {
         conditionalContainer.alignment = .leading
         conditionalContainer.spacing = Spacing.medium
 
-        let stack = NSStackView(views: [title, subtitle, options, conditionalContainer])
+        let stack = NSStackView(views: [title, options, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: title)
         stack.setCustomSpacing(20, after: options)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             options.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -185,13 +172,11 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     // MARK: - Source radios
 
-    private func makeSourceRadio(
-        for source: IPSWSource, symbol: String, title: String, description: String
-    ) -> NSView {
+    private func makeSourceRadio(for source: IPSWSource, symbol: String, title: String) -> NSView {
         let radio = NSButton(
             radioButtonWithTitle: title, target: self, action: #selector(sourceRadioClicked(_:)))
         radios[source] = radio
-        return makeWizardRadioOption(radio: radio, iconSymbol: symbol, description: description)
+        return makeWizardRadioOption(radio: radio, iconSymbol: symbol)
     }
 
     @objc private func sourceRadioClicked(_ sender: NSButton) {
@@ -291,13 +276,8 @@ final class IPSWSelectionContentViewController: NSViewController {
                     changeAction: #selector(changeLocalFile)
                 )
             case .pending:
+                // The nav bar says the check is what Next waits on.
                 addLocalFilePathBadge(path: image.path)
-                addFullWidthBanner(
-                    makeGroupedFormBanner(
-                        symbolName: "magnifyingglass.circle.fill",
-                        tint: .systemBlue,
-                        message: "Checking this restore image…"
-                    ))
             case .unusable(let error):
                 addLocalFilePathBadge(path: image.path)
                 guard let message = error.errorDescription else {
@@ -337,17 +317,17 @@ final class IPSWSelectionContentViewController: NSViewController {
         conditionalContainer.addArrangedSubview(header)
         conditionalContainer.setCustomSpacing(Spacing.small, after: header)
 
-        let card = makeGroupedFormCard(
-            rows: [makeGroupedFormCardRow("Set up macOS automatically", control: toggle)])
+        let card = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow(
+                "Set up macOS automatically", control: toggle,
+                info: [
+                    .body(
+                        "macOS skips its setup questions and creates the account you enter on the "
+                            + "Account step when the installation finishes.")
+                ])
+        ])
         conditionalContainer.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
-        conditionalContainer.setCustomSpacing(Spacing.small, after: card)
-
-        let caption = GroupedFormStateNote.temporarilyStanding(
-            "macOS skips its setup questions and creates the account you enter "
-                + "on the Account step.")
-        conditionalContainer.addArrangedSubview(caption)
-        caption.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
     /// Reads the sender rather than a held reference: this card is rebuilt
@@ -411,8 +391,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
                     tint: .systemYellow,
-                    message: subject.map { "\($0) is already downloaded. It will be replaced when downloading." }
-                        ?? "A file already exists at this location. It will be replaced when downloading.",
+                    message: subject.map { "\($0) is already downloaded." } ?? "A file is already at this location.",
                     trailingButtons: [useExisting, replace]
                 ))
         } else if creationVM.hasResumableDownload {
@@ -420,10 +399,8 @@ final class IPSWSelectionContentViewController: NSViewController {
                 makeGroupedFormBanner(
                     symbolName: "arrow.clockwise.circle.fill",
                     tint: .systemBlue,
-                    message: subject.map {
-                        "A previous download of \($0) was interrupted. It will resume when the install starts."
-                    }
-                        ?? "A previous download was interrupted at this location. It will resume when the install starts."
+                    message: subject.map { "An interrupted download of \($0) will resume when the install starts." }
+                        ?? "An interrupted download at this location will resume when the install starts."
                 ))
         }
     }

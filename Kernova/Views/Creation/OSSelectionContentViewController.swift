@@ -3,21 +3,13 @@ import AppKit
 /// Step 1 of the creation wizard: choose the guest operating system.
 ///
 /// Selecting a radio writes ``VMCreationViewModel/selectedOS`` directly. Each
-/// radio lives in its own option view so its description can sit beneath it, so
-/// they aren't siblings and AppKit's automatic radio grouping doesn't apply —
-/// exclusivity is enforced explicitly from the model in ``updateSelection()``.
+/// radio lives in its own option view beside its icon, so they aren't siblings
+/// and AppKit's automatic radio grouping doesn't apply — exclusivity is enforced
+/// explicitly from the model in ``updateSelection()``.
 @MainActor
 final class OSSelectionContentViewController: NSViewController {
     private let creationVM: VMCreationViewModel
     private var radios: [VMGuestOS: NSButton] = [:]
-
-    /// User-facing description shown beneath each OS name.
-    private static func description(for os: VMGuestOS) -> String {
-        switch os {
-        case .macOS: "Run macOS in a virtual machine on Apple Silicon."
-        case .linux: "Run Linux distributions using EFI or direct kernel boot."
-        }
-    }
 
     init(creationVM: VMCreationViewModel) {
         self.creationVM = creationVM
@@ -33,19 +25,17 @@ final class OSSelectionContentViewController: NSViewController {
         let container = NSView()
 
         let heading = makeWizardTitle("Choose Operating System")
-        let subtitle = makeWizardSubtitle(
-            "Select the operating system you want to run in your virtual machine.")
 
         let options = NSStackView(views: VMGuestOS.allCases.map(makeOSOption))
         options.orientation = .vertical
         options.alignment = .leading
         options.spacing = Spacing.large
 
-        let stack = NSStackView(views: [heading, subtitle, options])
+        let stack = NSStackView(views: [heading, options])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: heading)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
@@ -55,8 +45,6 @@ final class OSSelectionContentViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
-            // Full-width so the wrapping text lays out at the step width.
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             options.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
@@ -68,8 +56,7 @@ final class OSSelectionContentViewController: NSViewController {
         let radio = NSButton(
             radioButtonWithTitle: os.displayName, target: self, action: #selector(osChanged(_:)))
         radios[os] = radio
-        return makeWizardRadioOption(
-            radio: radio, iconSymbol: os.iconName, description: Self.description(for: os))
+        return makeWizardRadioOption(radio: radio, iconSymbol: os.iconName)
     }
 
     @objc private func osChanged(_ sender: NSButton) {

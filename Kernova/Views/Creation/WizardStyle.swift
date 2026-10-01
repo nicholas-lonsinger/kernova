@@ -25,9 +25,6 @@ enum WizardStyle {
 
     /// Inset around the chrome rows (step indicator, navigation bar).
     static let chromePadding: CGFloat = 20
-
-    /// Font for a step's explanatory subtitle row.
-    static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
 
 /// A step's title, followed by an info button holding `info` when it has
@@ -47,18 +44,6 @@ func makeWizardTitle(_ text: String, info: [InfoPopoverParagraph] = []) -> NSVie
     row.alignment = .centerY
     row.spacing = Spacing.small
     return row
-}
-
-@MainActor
-func makeWizardSubtitle(_ text: String) -> NSTextField {
-    let label = NSTextField(wrappingLabelWithString: text)
-    label.font = WizardStyle.subtitleFont
-    label.textColor = .secondaryLabelColor
-    label.alignment = .left
-    label.lineBreakMode = .byWordWrapping
-    label.maximumNumberOfLines = 0
-    label.isSelectable = false
-    return label
 }
 
 // MARK: - Radio options

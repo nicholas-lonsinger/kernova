@@ -1012,11 +1012,20 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         return stack
     }
 
+    /// What automatic passthrough does while it is on, for the row's info.
+    static func passthroughExplanation(vmName: String) -> String {
+        "\u{201C}\(vmName)\u{201D} continuously receives whatever you copy on this Mac, and its own "
+            + "clipboard is placed here \u{2014} with no per-copy confirmation. That includes "
+            + "passwords and other sensitive content."
+    }
+
     private func makePassthroughRow() -> NSView {
-        let label = NSTextField(labelWithString: "Automatic passthrough")
+        let title = "Automatic passthrough"
+        let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.isSelectable = false
-        label.toolTip = ClipboardPassthroughConsent.prompt(vmName: instance.name).message
+        let info = makeGroupedFormInfoButton(
+            label: title, paragraphs: [.body(Self.passthroughExplanation(vmName: instance.name))])
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -1025,7 +1034,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         passthroughSwitch.target = self
         passthroughSwitch.action = #selector(passthroughToggled)
 
-        let stack = NSStackView(views: [label, spacer, passthroughSwitch])
+        let stack = NSStackView(views: [label, info, spacer, passthroughSwitch])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 0, right: 12)

@@ -124,7 +124,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
         #expect(findLabel(containing: "newer than this Mac", in: vc.view) != nil)
     }
 
-    @Test("An unrecognized filename says the version is unknown")
+    @Test("An unrecognized filename leads the badge with the unknown version")
     func unknownVersionIsCalledOut() async {
         let probe = MockRestoreImageProbeService()
         probe.probeResult = makeProbedImage(
@@ -134,7 +134,27 @@ struct RestoreImageURLSheetContentViewControllerTests {
         await check(vc)
 
         #expect(vc.checkedImage != nil)
-        #expect(findLabel(containing: "doesn't name a macOS version", in: vc.view) != nil)
+        #expect(
+            findLabel(
+                withText: "Unrecognized version · \(DataFormatters.formatBytes(probe.probeResult.sizeBytes)) "
+                    + "· Installs in a virtual machine",
+                in: vc.view) != nil)
+    }
+
+    @Test("A recognized filename leads the badge with its version")
+    func recognizedVersionLeadsBadge() async {
+        let probe = MockRestoreImageProbeService()
+        probe.probeResult = makeProbedImage(version: "26.0", build: "25A354")
+        let vc = makeSheet(
+            probe: probe, initialURL: "https://example.com/R.ipsw", hostMajor: 26)
+
+        await check(vc)
+
+        #expect(
+            findLabel(
+                withText: "macOS 26.0 (25A354) · \(DataFormatters.formatBytes(probe.probeResult.sizeBytes)) "
+                    + "· Installs in a virtual machine",
+                in: vc.view) != nil)
     }
 
     @Test("Editing the URL invalidates the previous verdict")

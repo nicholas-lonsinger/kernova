@@ -47,7 +47,9 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
     }
 
-    @Test("An unverified URL pick says so on the badge and in a banner")
+    /// The URL sheet already warned before the pick was made, so the step says
+    /// it once, on the badge.
+    @Test("An unverified URL pick says so on the badge alone")
     func unverifiedURLPickWarns() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
@@ -57,10 +59,7 @@ struct BootConfigContentViewControllerTests {
 
         #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
         #expect(findLabel(containing: "Checked after download", in: vc.view) == nil)
-        #expect(
-            findLabel(
-                containing: "This download won't be verified. Choose a host you trust.",
-                in: vc.view) != nil)
+        #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
     }
 
     @Test("A catalog pick lights its radio and names the image on a badge")

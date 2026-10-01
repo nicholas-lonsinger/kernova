@@ -18,8 +18,8 @@ final class ClipboardSettingsViewController: NSViewController {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardSettingsViewController")
 
-    /// The static half of the explanation — what the limit governs.
-    static let deadlineCaption =
+    /// The static half of the row's explanation — what the limit governs.
+    static let deadlineExplanation =
         "Copied files transfer while the pasting app waits, and macOS gives that wait a deadline — "
         + "about 60 seconds in Finder, about 120 seconds in other apps. Kernova refuses a larger "
         + "paste up front rather than running out the clock and delivering nothing."
@@ -28,9 +28,9 @@ final class ClipboardSettingsViewController: NSViewController {
     private var preferences: AppPreferences { viewModel.preferences }
 
     private let sizePopUp = NSPopUpButton()
-    private lazy var estimateCaption = GroupedFormStateNote.temporarilyStanding { [unowned self] in
-        Self.estimateText(for: preferences.clipboardMaxPasteBytes)
-    }
+    private lazy var sizeRow = makeGroupedFormCardRow(
+        "Maximum paste size", control: sizePopUp,
+        info: Self.infoParagraphs(for: preferences.clipboardMaxPasteBytes))
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -43,15 +43,20 @@ final class ClipboardSettingsViewController: NSViewController {
         fatalError("ClipboardSettingsViewController does not support NSCoder")
     }
 
-    /// What one ceiling costs in transfer time, so the trade the selection makes
-    /// is legible at the moment it is made rather than at the failed paste.
+    /// The Maximum paste size row's info: the deadline the limit guards, then
+    /// what `bytes` costs in transfer time.
+    static func infoParagraphs(for bytes: Int) -> [InfoPopoverParagraph] {
+        [.body(deadlineExplanation), .body(estimateText(for: bytes))]
+    }
+
+    /// What one ceiling costs in transfer time.
     static func estimateText(for bytes: Int) -> String {
         let throughput = ClipboardPasteLimit.displayLimit(
             ClipboardPasteLimit.measuredThroughputBytesPerSecond)
         let seconds = ClipboardPasteLimit.estimatedStreamSeconds(bytes)
         return
             "At Kernova's measured \(throughput)/s, \(ClipboardPasteLimit.displayLimit(bytes)) "
-            + "transfers in about \(seconds) second\(seconds == 1 ? "" : "s") — before a copied "
+            + "transfers in about \(seconds) second\(seconds == 1 ? "" : "s"), before a copied "
             + "folder's archive and extract passes."
     }
 
@@ -70,14 +75,11 @@ final class ClipboardSettingsViewController: NSViewController {
         sizePopUp.target = self
         sizePopUp.action = #selector(maxPasteSizeChanged)
 
-        let card = makeGroupedFormCard(
-            rows: [makeGroupedFormCardRow("Maximum paste size", control: sizePopUp)],
-            notes: [estimateCaption])
+        let card = makeGroupedFormCard(rows: [sizeRow])
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("Clipboard Transfers"),
             card,
-            GroupedFormStateNote.temporarilyStanding(Self.deadlineCaption),
         ])
         section.orientation = .vertical
         section.alignment = .leading
@@ -105,11 +107,11 @@ final class ClipboardSettingsViewController: NSViewController {
         super.viewWillAppear()
         refresh()
         // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height, after `refresh()` has settled the estimate line's own.
+        // fitting height.
         preferredContentSize = view.fittingSize
     }
 
-    /// Selects the stored ceiling and renders its estimate.
+    /// Selects the stored ceiling and renders its estimate into the row's info.
     private func refresh() {
         let stored = preferences.clipboardMaxPasteBytes
         // `AppPreferences` resolves onto the ladder on read, so a miss here means
@@ -119,19 +121,24 @@ final class ClipboardSettingsViewController: NSViewController {
                 Self.logger, .fault,
                 "Stored paste ceiling \(stored, privacy: .public) is not an offered choice")
             assertionFailure("Stored paste ceiling \(stored) is not an offered choice")
-            estimateCaption.refresh()
+            renderInfo(for: stored)
             return
         }
         sizePopUp.selectItem(at: index)
-        estimateCaption.refresh()
+        renderInfo(for: stored)
     }
 
     @objc private func maxPasteSizeChanged() {
         guard let bytes = sizePopUp.selectedItem?.representedObject as? Int else { return }
         preferences.clipboardMaxPasteBytes = bytes
-        estimateCaption.refresh()
+        renderInfo(for: bytes)
         // The guest enforces its own copy of the ceiling, so a running agent
         // has to be told; the host's checks read the preference directly.
         viewModel.applyClipboardPasteLimitChange()
+    }
+
+    private func renderInfo(for bytes: Int) {
+        sizeRow.infoButton?.configure(
+            label: sizeRow.titleLabel.stringValue, paragraphs: Self.infoParagraphs(for: bytes))
     }
 }

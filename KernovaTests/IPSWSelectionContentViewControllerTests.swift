@@ -231,8 +231,10 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
     }
 
-    @Test("A pending pick shows a checking banner")
-    func pendingPickShowsCheckingBanner() async throws {
+    /// The nav bar owns why Next is disabled, so the step adds no banner saying
+    /// the same.
+    @Test("A pending pick leaves the checking message to the nav bar")
+    func pendingPickLeavesCheckingToNavBar() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
@@ -242,7 +244,9 @@ struct IPSWSelectionContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(findLabel(containing: "Checking this restore image", in: vc.view) != nil)
+        #expect(findLabel(containing: "Checking", in: vc.view) == nil)
+        vm.currentStep = .bootConfig
+        #expect(vm.validationMessage == "Checking the selected restore image\u{2026}")
 
         inspector.release()
         await vc.localFileInspectionTaskForTesting?.value

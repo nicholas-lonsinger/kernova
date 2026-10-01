@@ -123,28 +123,32 @@ struct TakeSnapshotSheetContentViewControllerTests {
     func warmCopyNamesMemoryAndThePause() {
         let (sheet, _) = makeSheet(mode: .live)
         #expect(sheet.headerBodyText.contains("memory, disks, and settings"))
-        #expect(sheet.captionText.contains("pauses briefly"))
+        #expect(sheet.captionText?.contains("pauses briefly") == true)
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view)?.isHidden == false)
     }
 
     @Test("A suspended-state capture names the suspended session, and says nothing about pausing")
     func suspendedCopyNamesTheSuspendedSession() {
         let (sheet, _) = makeSheet(mode: .suspended)
-        #expect(sheet.headerBodyText.contains("suspended"))
-        #expect(sheet.captionText.contains("suspended session"))
-        #expect(!sheet.captionText.contains("pauses briefly"))
-        // The shared-blocks note stands either way.
-        #expect(sheet.captionText.contains("share their blocks"))
+        #expect(sheet.headerBodyText.contains("suspended session"))
+        #expect(sheet.captionText == "The VM stays suspended.")
     }
 
-    @Test("A capture of a stopped VM says the VM comes back powered off, with no pause")
+    @Test("A capture of a stopped VM says the VM comes back powered off, with no caption")
     func coldCopyNamesTheOutcome() {
         let (sheet, _) = makeSheet(mode: .stopped)
         #expect(sheet.headerBodyText.contains("disks and settings"))
         #expect(sheet.headerBodyText.contains("powered off"))
         #expect(!sheet.headerBodyText.contains("memory, disks, and settings"))
-        #expect(!sheet.captionText.contains("pauses briefly"))
-        // The shared-blocks note stands either way.
-        #expect(sheet.captionText.contains("share their blocks"))
+        #expect(sheet.captionText == nil)
+    }
+
+    @Test("The shared-blocks explanation sits behind the title's info button")
+    func sharedBlocksLiveInTitleInfo() throws {
+        let (sheet, _) = makeSheet(mode: .live)
+        let info = try #require(firstSubview(InfoButtonView.self, in: sheet.view))
+        #expect(info.paragraphs == [.body(TakeSnapshotSheetContentViewController.sharedBlocksExplanation)])
+        #expect(findLabel(containing: "share their blocks", in: sheet.view) == nil)
     }
 
     @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
@@ -159,6 +163,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
         // The same labels, rewritten — not a stale copy left on screen.
         #expect(body?.stringValue.contains("powered off") == true)
         #expect(findLabel(containing: "memory, disks, and settings", in: sheet.view) == nil)
-        #expect(findLabel(containing: "pauses briefly", in: sheet.view) == nil)
+        // A stopped VM has no pause to warn about, so the caption hides.
+        #expect(findLabel(containing: "pauses briefly", in: sheet.view)?.isHidden ?? true)
     }
 }

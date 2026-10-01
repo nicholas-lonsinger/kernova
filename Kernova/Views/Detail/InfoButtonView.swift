@@ -14,6 +14,9 @@ final class InfoButtonView: NSView {
     /// Owns the per-button popover lifecycle.
     private let coordinator = Coordinator()
 
+    /// The paragraphs the popover renders on the next click.
+    var paragraphs: [InfoPopoverParagraph] { coordinator.paragraphs }
+
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false

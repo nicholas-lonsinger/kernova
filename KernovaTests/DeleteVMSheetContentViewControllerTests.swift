@@ -53,7 +53,6 @@ struct DeleteVMSheetContentViewControllerTests {
         let labels = collectLabels(in: vc.view).map(\.stringValue)
         #expect(labels.contains("Removed with the VM"))
         #expect(labels.contains("Saved State"))
-        #expect(labels.contains("In-bundle machine state"))
         // Read-only like the disk rows — the saved state can't be kept behind.
         #expect(vc.checkboxes.isEmpty)
     }

@@ -1794,9 +1794,7 @@ struct VMCommandCoreTests {
         #expect(prompt.kind == .deleteVM)
         #expect(prompt.title == "Move \u{201C}Doomed\u{201D} to the Trash?")
         #expect(
-            prompt.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks. "
-                + "Restore them with Finder's Put Back, or empty the Trash to delete them "
-                + "permanently.")
+            prompt.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks.")
         #expect(prompt.confirmTitle == "Move to Trash")
         #expect(prompt.confirmIsDestructive)
         #expect(prompt.dismissTitle == "Cancel")
@@ -1833,8 +1831,7 @@ struct VMCommandCoreTests {
             instance, permanently: false, externals: [])
         #expect(
             suspendedToTrash.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks "
-                + "and its saved state. Restore them with Finder's Put Back, or empty the Trash "
-                + "to delete them permanently.")
+                + "and its saved state.")
 
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Before", macAddress: nil)]))
 
@@ -1874,8 +1871,7 @@ struct VMCommandCoreTests {
         let trash = VMCommandCore.deletePrompt(instance, permanently: false, externals: [owned])
         #expect(
             trash.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks, and any "
-                + "external files you choose. Restore them with Finder's Put Back, or empty the "
-                + "Trash to delete them permanently.")
+                + "external files you choose.")
     }
 
     private func makeExternalAttachment(

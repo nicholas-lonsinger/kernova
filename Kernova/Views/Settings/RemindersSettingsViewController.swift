@@ -43,15 +43,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     ///
     /// The label is grayed in step with a disabled switch.
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
-    /// Describes the per-VM switches while there are any.
-    private lazy var vmCaption = GroupedFormStateNote(
-        "Turn a virtual machine off to stop its own reminder. This has no effect once the "
-            + "agent is installed.",
-        shownWhen: { [unowned self] in !vmSwitches.isEmpty })
     /// Explains the disabled per-VM rows while the app-wide switch is off.
     private lazy var vmOverrideCaption = GroupedFormStateNote(
-        "The reminder above is off, so these have no effect. Turn it back on to choose per "
-            + "virtual machine.",
+        "No effect while the reminder above is off.",
         shownWhen: { [unowned self] in viewModel.agentInstallPromptDisabled })
     /// Flashes the pane's scroller when its content overflows the viewport,
     /// signaling there's more below.
@@ -84,76 +78,58 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
 
-        // One card per reminder, each with its own caption, so no description has
-        // to name the switch it belongs to.
         let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu bar quit reminder", control: menuBarQuitSwitch)
+            makeGroupedFormCardRow(
+                "Menu bar quit reminder", control: menuBarQuitSwitch,
+                info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")])
         ])
-        let menuBarCaption = GroupedFormStateNote.temporarilyStanding(
-            "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
-                + "it — and your virtual machines — are still going.")
 
         // The governing control of the Virtual Machine Reminders section, so it
         // heads that section rather than sitting with the app reminder above.
         let agentInstallCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Guest agent install reminder", control: agentInstallSwitch)
+            makeGroupedFormCardRow(
+                "Guest agent install reminder", control: agentInstallSwitch,
+                info: [
+                    .body(
+                        "The sidebar prompt to install the Kernova guest agent on a running macOS "
+                            + "virtual machine. Turn a virtual machine off below to stop only its "
+                            + "reminder. A virtual machine's reminder stops on its own once its "
+                            + "agent is installed.")
+                ])
         ])
-        let agentInstallCaption = GroupedFormStateNote.temporarilyStanding(
-            "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "
-                + "machine.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
+        // Indented beneath the switch that governs them, the alignment Apple's
+        // guidance uses to show a control's subordinates.
         vmSection.orientation = .vertical
         vmSection.alignment = .leading
         vmSection.spacing = Spacing.none
-
-        // Indented beneath the switch that governs them, the alignment Apple's
-        // guidance uses to show a control's subordinates.
-        let vmSubordinates = NSStackView(views: [vmSection, vmCaption])
-        vmSubordinates.orientation = .vertical
-        vmSubordinates.alignment = .leading
-        vmSubordinates.spacing = Spacing.small
-        vmSubordinates.translatesAutoresizingMaskIntoConstraints = false
-        let vmGroup = makeGroupedFormIndented(vmSubordinates)
-        for member in [vmSection, vmCaption] {
-            member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
-        }
+        vmSection.translatesAutoresizingMaskIntoConstraints = false
+        let vmGroup = makeGroupedFormIndented(vmSection)
 
         let resetButton = NSButton(
             title: "Reset All Reminders", target: self, action: #selector(resetAllReminders))
         resetButton.bezelStyle = .push
         resetButton.controlSize = .small
         resetButton.setContentHuggingPriority(.required, for: .horizontal)
-        let resetCaption = GroupedFormStateNote.temporarilyStanding(
-            "Turns every reminder above back on, including for all virtual machines.")
 
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
             menuBarCard,
-            menuBarCaption,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             agentInstallCard,
-            agentInstallCaption,
             vmGroup,
             resetButton,
-            resetCaption,
         ])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
-        // A caption closes its group, so the gap after one is what separates
-        // blocks. The governing switch's caption keeps the tighter step, so its
-        // subordinates read as continuing the same group rather than opening a
-        // new one.
-        content.setCustomSpacing(Spacing.section, after: menuBarCaption)
+        content.setCustomSpacing(Spacing.section, after: menuBarCard)
         content.setCustomSpacing(Spacing.section, after: vmGroup)
 
-        // Full-width members (cards and wrapping captions). The reset button is
-        // excluded so it hugs its intrinsic width at the leading edge.
-        for member in [
-            menuBarCard, menuBarCaption, agentInstallCard, agentInstallCaption,
-            vmGroup, resetCaption,
-        ] {
+        // Full-width members. The reset button is excluded so it hugs its
+        // intrinsic width at the leading edge.
+        for member in [menuBarCard, agentInstallCard, vmGroup] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
@@ -319,11 +295,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
-        // The caption talks about the per-VM switches. With no VMs the section
-        // is a lone "No virtual machines yet." row, so it would be describing
-        // controls that aren't on screen.
         let hasVMs = !vmSwitches.isEmpty
-        vmCaption.refresh()
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
         vmOverrideCaption.refresh()
 

@@ -109,25 +109,12 @@ struct RemindersSettingsViewControllerTests {
         #expect(delivered)
     }
 
-    private func expectHeadersAndCaptionsVisible(in root: NSView) {
+    private func expectHeadersVisible(in root: NSView) {
         for text in ["App Reminders", "Virtual Machine Reminders"] {
             let header = findLabel(withText: text, in: root)
             #expect(header != nil, "header '\(text)' missing from the view tree")
             if let header {
                 #expect(header.frame.height > 0, "header '\(text)' collapsed: \(header.frame)")
-            }
-        }
-        for fragment in [
-            "Appears when you quit",
-            "sidebar prompt to install",
-            "stop its own reminder",
-            "Turns every reminder above back on",
-        ] {
-            let caption = findLabel(containing: fragment, in: root)
-            #expect(caption != nil, "caption '\(fragment)…' missing from the view tree")
-            if let caption {
-                #expect(
-                    caption.frame.height > 0, "caption '\(fragment)…' collapsed: \(caption.frame)")
             }
         }
     }
@@ -137,7 +124,7 @@ struct RemindersSettingsViewControllerTests {
         let controller = makeLaidOutController(vmCount: 9)
         defer { controller.viewDidDisappear() }
 
-        expectHeadersAndCaptionsVisible(in: controller.view)
+        expectHeadersVisible(in: controller.view)
 
         // The content must keep its natural height and overflow the capped
         // pane — a squeezed document exactly matching the pane's height is the
@@ -147,8 +134,7 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    /// Each governing switch owns a card, so its caption sits directly under it
-    /// and needs no "The <name> reminder…" prefix to say what it describes.
+    /// Each section's governing switch heads its own card.
     @Test("Each reminder switch is its own single-row card")
     func remindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
@@ -199,14 +185,14 @@ struct RemindersSettingsViewControllerTests {
 
         #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
         // A state note holds no text while its state is off.
-        #expect(findLabel(containing: "so these have no effect", in: controller.view) == nil)
+        #expect(findLabel(containing: "No effect while the reminder above is off", in: controller.view) == nil)
 
         try setAppWideInstallReminder(on: false, in: controller)
 
         #expect(viewModel.agentInstallPromptDisabled == true)
         #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
         let explanation = try #require(
-            findLabel(containing: "so these have no effect", in: controller.view))
+            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
         #expect(!explanation.isHidden)
 
         try setAppWideInstallReminder(on: true, in: controller)
@@ -282,10 +268,9 @@ struct RemindersSettingsViewControllerTests {
         #expect(indicator.flashCountForTesting == 1)
     }
 
-    /// Both captions describe the per-VM switches, so with none on screen they
-    /// point at nothing — "these have no effect" directly under "No macOS
-    /// virtual machines yet." reads as a bug.
-    @Test("Neither per-VM caption shows when there are no virtual machines")
+    /// The override note describes the per-VM switches, so with none on screen
+    /// it would point at nothing.
+    @Test("The override note does not show when there are no virtual machines")
     func perVMCaptionsHideWithoutVMs() throws {
         let controller = RemindersSettingsViewController(viewModel: makeViewModel())
         _ = controller.view
@@ -303,8 +288,7 @@ struct RemindersSettingsViewControllerTests {
         #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
         // The override caption is a note of the per-VM card, which the empty
         // state does not build.
-        #expect(findLabel(containing: "have no effect", in: controller.view) == nil)
-        #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
+        #expect(findLabel(containing: "No effect", in: controller.view) == nil)
     }
 
     /// The disabled rows keep showing each VM's own setting, so turning the
@@ -377,7 +361,7 @@ struct RemindersSettingsViewControllerTests {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
-        expectHeadersAndCaptionsVisible(in: controller.view)
+        expectHeadersVisible(in: controller.view)
 
         // Hugged: everything fits, so nothing scrolls.
         let scrollView = try #require(controller.view as? NSScrollView)

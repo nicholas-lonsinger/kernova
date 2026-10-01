@@ -6,8 +6,9 @@ import ServiceManagement
 /// Hosts two app-lifecycle toggles:
 /// - *Open at Login*, backed by `SMAppService.mainApp` through
 ///   `LoginItemService`. `.status` is the source of truth (never persisted): the
-///   switch is synced from it on appear and whenever the app regains focus, so a
-///   change made in System Settings → Login Items is reflected without a restart.
+///   switch and its approval note are synced from it on appear and whenever the
+///   app regains focus, so a change made in System Settings → Login Items is
+///   reflected without a restart.
 /// - *Continue running in the menu bar*, backed by `AppPreferences` through the
 ///   view model's observable mirror. Governs whether a GUI-origin quit (⌘Q) or a
 ///   last-window close leaves Kernova resident in the menu bar, or quits the
@@ -19,6 +20,11 @@ final class GeneralSettingsViewController: NSViewController {
     private let openAtLoginSwitch = NSSwitch()
     private let keepInMenuBarSwitch = NSSwitch()
     private var focusObserver: (any NSObjectProtocol)?
+    /// Says the login item waits on the user while `SMAppService` reports it
+    /// needs approval — the switch reads off until they give it.
+    private lazy var loginApprovalNote = GroupedFormStateNote(
+        "Needs approval in System Settings › General › Login Items.",
+        shownWhen: { [unowned self] in loginItem.status == .requiresApproval })
 
     init(loginItem: LoginItemService = .shared, viewModel: VMLibraryViewModel) {
         self.loginItem = loginItem
@@ -41,12 +47,6 @@ final class GeneralSettingsViewController: NSViewController {
         keepInMenuBarSwitch.target = self
         keepInMenuBarSwitch.action = #selector(keepInMenuBarToggled)
 
-        let loginCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Open at Login", control: openAtLoginSwitch)
-        ])
-        let loginCaption = GroupedFormStateNote.temporarilyStanding(
-            "Open Kernova automatically when you log in. With Continue running in "
-                + "the menu bar on, it opens in the menu bar with no window.")
         let openLoginItemsButton = NSButton(
             title: "Open Login Items Settings…", target: self,
             action: #selector(openLoginItemsSettings))
@@ -54,29 +54,35 @@ final class GeneralSettingsViewController: NSViewController {
         openLoginItemsButton.controlSize = .small
         openLoginItemsButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Continue running in the menu bar", control: keepInMenuBarSwitch)
+        let card = makeGroupedFormCard(rows: [
+            GroupedFormNotedRow(
+                makeGroupedFormCardRow(
+                    "Open at Login", control: openAtLoginSwitch,
+                    info: [
+                        .body(
+                            "With Continue running in the menu bar on, Kernova opens in the menu "
+                                + "bar with no window.")
+                    ]),
+                notes: [loginApprovalNote]),
+            makeGroupedFormCardRow(
+                "Continue running in the menu bar", control: keepInMenuBarSwitch,
+                info: [
+                    .body(
+                        "Quitting (⌘Q) or closing the last window leaves Kernova, and any running "
+                            + "virtual machines, in the menu bar. To quit fully, choose Quit from the "
+                            + "menu bar item or press ⌥⌘Q. With this off, Kernova has no menu bar "
+                            + "item and quits when its last window closes.")
+                ]),
         ])
-        let menuBarCaption = GroupedFormStateNote.temporarilyStanding(
-            "Quitting (⌘Q) or closing all windows will keep Kernova running in the menu bar. To "
-                + "fully quit, either Quit directly from the menu bar item or with Quit Kernova "
-                + "(⌥⌘Q). With this off, Kernova has no menu bar item and quits when you close "
-                + "its last window.")
 
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("General"),
-            loginCard,
-            loginCaption,
+            card,
             openLoginItemsButton,
-            menuBarCard,
-            menuBarCaption,
         ])
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = Spacing.small
-        // Keep each caption tight to its card, but separate the two card+caption
-        // groups so they read as distinct settings.
-        section.setCustomSpacing(Spacing.section, after: openLoginItemsButton)
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
@@ -94,10 +100,7 @@ final class GeneralSettingsViewController: NSViewController {
             section.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -pad),
             section.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -pad),
             root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
-            loginCard.widthAnchor.constraint(equalTo: section.widthAnchor),
-            loginCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
-            menuBarCard.widthAnchor.constraint(equalTo: section.widthAnchor),
-            menuBarCaption.widthAnchor.constraint(equalTo: section.widthAnchor),
+            card.widthAnchor.constraint(equalTo: section.widthAnchor),
         ])
         view = root
     }
@@ -108,9 +111,10 @@ final class GeneralSettingsViewController: NSViewController {
         // fitting height. Without this the window keeps whatever height it
         // already has (e.g. a stale tall autosaved frame), and the four-edge
         // section pin stretches the cards over the excess.
-        preferredContentSize = view.fittingSize
+        // Measured after the refresh, so a showing approval note counts.
         keepInMenuBarSwitch.state = viewModel.keepInMenuBarOnQuit ? .on : .off
         refreshFromStatus()
+        preferredContentSize = view.fittingSize
         // Refresh when the app regains focus — e.g. returning from System Settings
         // after approving/toggling the login item there.
         if focusObserver == nil {
@@ -131,9 +135,11 @@ final class GeneralSettingsViewController: NSViewController {
         }
     }
 
-    /// Mirrors the switch to the live `SMAppService` status (the source of truth).
+    /// Mirrors the switch and the approval note to the live `SMAppService` status
+    /// (the source of truth).
     private func refreshFromStatus() {
         openAtLoginSwitch.state = loginItem.isEnabled ? .on : .off
+        loginApprovalNote.refresh()
     }
 
     @objc private func openAtLoginToggled() {

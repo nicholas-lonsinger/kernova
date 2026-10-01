@@ -191,21 +191,18 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         checksumField.delegate = self
         checksumField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let checksumNote = GroupedFormStateNote.temporarilyStanding(
-            "Without a checksum, the download isn't verified.")
-
         resultContainer.orientation = .vertical
         resultContainer.alignment = .leading
         resultContainer.spacing = Spacing.standard
 
         let stack = NSStackView(views: [
-            urlLabel, urlRow, checksumLabel, checksumField, checksumNote, resultContainer,
+            urlLabel, urlRow, checksumLabel, checksumField, resultContainer,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.small
         stack.setCustomSpacing(Spacing.medium, after: urlRow)
-        stack.setCustomSpacing(Spacing.medium, after: checksumNote)
+        stack.setCustomSpacing(Spacing.medium, after: checksumField)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(stack)
@@ -218,7 +215,6 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
                 lessThanOrEqualTo: container.bottomAnchor, constant: -Self.padding),
             urlRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             checksumField.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            checksumNote.widthAnchor.constraint(equalTo: stack.widthAnchor),
             resultContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         return container
@@ -237,13 +233,6 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     private func makeFooter() -> NSView {
         let container = NSView()
 
-        let note = NSTextField(labelWithString: "Checked without downloading")
-        note.font = .preferredFont(forTextStyle: .caption1)
-        note.textColor = .tertiaryLabelColor
-        note.lineBreakMode = .byTruncatingTail
-        note.isSelectable = false
-        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -257,7 +246,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         useButton.action = #selector(useTapped)
         useButton.bezelStyle = .push
 
-        let stack = NSStackView(views: [note, spacer, cancel, useButton])
+        let stack = NSStackView(views: [spacer, cancel, useButton])
         stack.orientation = .horizontal
         stack.spacing = Spacing.standard
         stack.alignment = .centerY
