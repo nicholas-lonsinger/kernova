@@ -373,6 +373,16 @@ struct VMSettingsNetworkPanelTests {
         }
     }
 
+    @Test("A build without app-managed networking describes only Shared Network in the Mode info")
+    func unentitledModeInfoDescribesOnlyShared() throws {
+        let (vc, _) = makeNetworkController(entitled: false)
+        let button = try #require(infoButton(about: "Mode", in: vc.view))
+        let text = paragraphText(button.paragraphs)
+        #expect(text.contains { $0.hasPrefix("Shared Network:") })
+        #expect(!text.contains { $0.hasPrefix("Host Only:") })
+        #expect(!text.contains { $0.contains("Bridged") })
+    }
+
     /// The Shared paragraph's reach clause, as the Mode info button would show it now.
     private func sharedReachText(in vc: VMSettingsViewController) throws -> String {
         let button = try #require(infoButton(about: "Mode", in: vc.view))
