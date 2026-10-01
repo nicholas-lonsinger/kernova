@@ -758,3 +758,12 @@ extension NSColor {
         return try #require(resolved)
     }
 }
+
+extension NSView {
+    /// The accessibility elements VoiceOver reaches inside this view, in order.
+    @MainActor
+    var unignoredAccessibilityElements: [NSAccessibilityProtocol] {
+        NSAccessibility.unignoredChildren(from: accessibilityChildren() ?? [])
+            .compactMap { $0 as? NSAccessibilityProtocol }
+    }
+}

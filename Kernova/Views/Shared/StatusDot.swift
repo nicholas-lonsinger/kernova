@@ -7,6 +7,6 @@ func makeStatusDot() -> NSImageView {
     let dot = NSImageView(image: .systemSymbol("circle.fill", accessibilityDescription: ""))
     dot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
     dot.setContentHuggingPriority(.required, for: .horizontal)
-    dot.setAccessibilityElement(false)
+    dot.cell?.setAccessibilityElement(false)
     return dot
 }

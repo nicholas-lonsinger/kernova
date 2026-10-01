@@ -97,8 +97,7 @@ final class WizardStepIndicatorView: NSView {
         for (step, views) in stepViews {
             let isCurrent = step == currentStep
             views.dot.contentTintColor = isCurrent ? .controlAccentColor : .tertiaryLabelColor
-            views.dot.setAccessibilityElement(isCurrent)
-            views.dot.setAccessibilityLabel(isCurrent ? "Current step" : nil)
+            views.label.cell?.setAccessibilityValue(isCurrent ? "\(step.title), current step" : step.title)
             views.label.textColor = isCurrent ? .labelColor : .secondaryLabelColor
         }
     }
