@@ -85,4 +85,15 @@ struct ClipboardProgressMenuItemViewTests {
         // The menu takes this height once, so the line has to share a row.
         #expect(view.frame.height == height)
     }
+
+    @Test("the bar shows a snapshot applied while the view has no window")
+    func barShowsASnapshotAppliedOffScreen() {
+        // The status item's dropdown applies snapshots before it opens.
+        let view = ClipboardProgressMenuItemView()
+        #expect(view.window == nil)
+
+        view.apply(makeSnapshot(isCancellable: true))
+
+        #expect(view.barFractionForTesting == 0.1)
+    }
 }

@@ -704,7 +704,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         for (failure, message) in expected {
             // A fresh `date` is what re-fires the transient for a repeat refusal.
             report(failure, gesture: .peerPaste, for: instance)
-            vc.simulateObservationForTesting()
+            vc.simulateTransferReportForTesting()
             #expect(vc.indicatorTextForTesting == message)
         }
     }
@@ -721,7 +721,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         report(
             .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes), gesture: .copy,
             for: instance)
-        vc.simulateObservationForTesting()
+        vc.simulateTransferReportForTesting()
         #expect(
             vc.indicatorTextForTesting
                 == ClipboardTransferWording.overCopyBudgetMessage(
@@ -744,7 +744,7 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 
         // That promise fires on a paste and fails against the dead channel.
         superseded.reportRefusal(.timedOut, gesture: .paste)
-        vc.simulateObservationForTesting()
+        vc.simulateTransferReportForTesting()
 
         #expect(
             vc.indicatorTextForTesting
@@ -771,12 +771,88 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
                     filesCompleted: 0, fileCount: 1, bytesTransferred: 25, totalBytes: 100,
                     bytesPerSecond: nil, secondsRemaining: nil, gesture: .drop,
                     elapsedSeconds: 1), since: Date()))
-        vc.simulateObservationForTesting()
+        vc.simulateTransferReportForTesting()
         #expect(vc.transferBarFractionForTesting == 0.25)
 
         instance.clipboardTransfers.retire(operation)
-        vc.simulateObservationForTesting()
+        vc.simulateTransferReportForTesting()
         #expect(vc.transferBarFractionForTesting == nil)
+    }
+
+    /// A drop's running readout at `bytes` of 100, published on `instance`'s
+    /// report the way a producer does.
+    private func publishRunning(bytes: UInt64, on instance: VMInstance) {
+        let operation = ClipboardTransferOperation(
+            gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
+            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .outbound, peerName: instance.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: bytes, totalBytes: 100,
+                    bytesPerSecond: nil, secondsRemaining: nil, gesture: .drop,
+                    elapsedSeconds: 1), since: Date()))
+    }
+
+    /// A loaded controller whose transfer-report renders notify `applied`.
+    private func makeObservedController(instance: VMInstance, applied: AsyncGate)
+        -> ClipboardContentViewController
+    {
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+        vc.onTransferReportAppliedForTesting = { applied.notify() }
+        _ = vc.view
+        return vc
+    }
+
+    @Test("a running report moves the bar through the report's own observer")
+    func runningReportMovesTheBar() async throws {
+        let instance = makeClipboardInstance()
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
+        let applied = AsyncGate()
+        let vc = makeObservedController(instance: instance, applied: applied)
+        #expect(vc.transferBarFractionForTesting == nil)
+
+        publishRunning(bytes: 25, on: instance)
+        try await applied.wait { vc.transferBarFractionForTesting == 0.25 }
+
+        publishRunning(bytes: 60, on: instance)
+        try await applied.wait { vc.transferBarFractionForTesting == 0.6 }
+    }
+
+    @Test("a finished report with wording shows its message exactly once")
+    func finishedReportShowsItsMessageOnce() async throws {
+        let instance = makeClipboardInstance()
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
+        let applied = AsyncGate()
+        let vc = makeObservedController(instance: instance, applied: applied)
+
+        report(.peerReported(.pasteTimeout), gesture: .peerPaste, for: instance)
+        try await applied.wait { vc.finishMessagesShownForTesting == 1 }
+        #expect(vc.indicatorTextForTesting == "The clipboard transfer to the guest timed out")
+
+        // Neither the window's other pass nor a repeat render of the same
+        // report shows it again.
+        vc.simulateObservationForTesting()
+        vc.simulateTransferReportForTesting()
+        #expect(vc.finishMessagesShownForTesting == 1)
+    }
+
+    @Test("a report already standing when the window loads renders on load")
+    func standingReportRendersOnLoad() {
+        let instance = makeClipboardInstance()
+        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
+        report(.peerReported(.pasteFailed), gesture: .peerPaste, for: instance)
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+
+        _ = vc.view
+
+        #expect(vc.finishMessagesShownForTesting == 1)
+        #expect(vc.indicatorTextForTesting == "Clipboard transfer failed on the guest side")
     }
 }
 

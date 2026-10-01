@@ -23,9 +23,6 @@ public final class ClipboardProgressMenuItemView: NSView {
     private let headline = NSTextField(labelWithString: "")
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private let bar = NSProgressIndicator()
-    /// The fraction the bar should show, committed to it only while the view is
-    /// on screen — see `viewDidMoveToWindow`.
-    private var pendingFraction: Double = 0
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let timeRemaining = NSTextField(labelWithString: "")
@@ -149,34 +146,13 @@ public final class ClipboardProgressMenuItemView: NSView {
         return stack
     }
 
-    /// Commits the bar's stored fraction when the view lands on screen.
-    ///
-    /// The only place a detached bar's value catches up: `apply` runs on every
-    /// throttled snapshot from the reveal onward, and committing those to an
-    /// `NSProgressIndicator` with no window leaves its first on-screen frame
-    /// animating out of never-displayed state (observed as the bar opening around
-    /// 40 % and springing back). Withholding commits until the view is attached
-    /// keeps that first animation an ordinary fill from zero.
-    public override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if window != nil {
-            bar.doubleValue = pendingFraction
-        } else {
-            // The view is kept across transfers: park the control at zero so its
-            // next appearance fills from empty again.
-            bar.doubleValue = 0
-        }
-    }
-
     /// Applies a snapshot in place, so the readout keeps advancing while its
     /// menu is open.
     public func apply(_ snapshot: ClipboardProgressSnapshot) {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
             gesture: snapshot.gesture)
-        pendingFraction = snapshot.fractionComplete
-        // Off screen, the value is only recorded — see `viewDidMoveToWindow`.
-        if window != nil { bar.doubleValue = pendingFraction }
+        bar.doubleValue = snapshot.fractionComplete
         byteProgress.stringValue = ClipboardProgressFormat.byteProgress(
             bytesTransferred: snapshot.bytesTransferred,
             totalBytes: snapshot.totalBytes,
@@ -204,5 +180,8 @@ public final class ClipboardProgressMenuItemView: NSView {
     /// Test seam: the Cancel button, so a test can assert its visibility and
     /// drive its action without a live menu.
     public var cancelButtonForTesting: NSButton { cancelButton }
+
+    /// Test seam: the fraction the bar shows.
+    public var barFractionForTesting: Double { bar.doubleValue }
     #endif
 }
