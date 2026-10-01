@@ -155,7 +155,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                     "Memory", control: makeGroupedFormSteppedControl(memoryField, memoryStepper, unit: "GB"),
                     info: [
                         .body(
-                            "The memory the guest sees. The VM takes it from this Mac as the guest uses it, not all at start."
+                            "The memory the guest sees. The virtual machine takes it from this Mac as the guest uses it, not all at start."
                         )
                     ]),
                 memoryField, memoryStepper),
@@ -312,7 +312,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                         "Audio input", control: audioInputSwitch,
                         info: [
                             .body(
-                                "Lets the guest capture from your Mac's audio input. macOS asks for microphone permission the first time a VM uses it."
+                                "Lets the guest capture from your Mac's audio input. macOS asks for microphone permission the first time a virtual machine uses it."
                             )
                         ]),
                     audioInputSwitch),

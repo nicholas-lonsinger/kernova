@@ -2,7 +2,9 @@ import AppKit
 
 /// One paragraph rendered inside an ``InfoPopoverContentViewController``.
 enum InfoPopoverParagraph: Equatable {
-    /// Plain wrapping body text in the shared `.callout` style.
+    /// Wrapping body text in the shared `.callout` style, in which a
+    /// backtick-delimited span renders in ``CalloutStyle/codeFont`` without
+    /// its backticks.
     case body(String)
     /// Monospaced, selectable text for shell commands and similar
     /// copy-worthy snippets.
@@ -40,7 +42,9 @@ final class InfoPopoverContentViewController: NSViewController {
         for paragraph in paragraphs {
             switch paragraph {
             case .body(let text):
-                stack.addArrangedSubview(makeCalloutBody(text))
+                let label = makeCalloutBody(text)
+                label.attributedStringValue = Self.renderedBody(text)
+                stack.addArrangedSubview(label)
             case .code(let text):
                 stack.addArrangedSubview(makeCalloutCode(text))
             }
@@ -57,6 +61,24 @@ final class InfoPopoverContentViewController: NSViewController {
         ])
 
         view = container
+    }
+
+    /// `text` in the body style, each backtick-delimited span set in the code
+    /// font with its backticks dropped; an unpaired backtick stays as written.
+    static func renderedBody(_ text: String) -> NSAttributedString {
+        var parts = text.components(separatedBy: "`")
+        if parts.count.isMultiple(of: 2), let unpaired = parts.popLast() {
+            parts[parts.count - 1] += "`" + unpaired
+        }
+        let rendered = NSMutableAttributedString()
+        for (index, part) in parts.enumerated() {
+            let font = index.isMultiple(of: 2) ? CalloutStyle.bodyFont : CalloutStyle.codeFont
+            rendered.append(
+                NSAttributedString(
+                    string: part,
+                    attributes: [.font: font, .foregroundColor: CalloutStyle.bodyColor]))
+        }
+        return rendered
     }
 
     override func viewDidLayout() {

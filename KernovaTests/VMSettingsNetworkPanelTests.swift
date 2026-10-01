@@ -357,30 +357,51 @@ struct VMSettingsNetworkPanelTests {
         "The Mode info describes only the modes the picker offers",
         arguments: [[.shared], [.shared, .hostOnly], [.shared, .hostOnly, .bridged]] as [Set<VMNetworkMode>])
     func modeInfoDescribesOnlyOfferedModes(offered: Set<VMNetworkMode>) {
-        let paragraphs = VMSettingsNetworkPanelViewController.modeInfoParagraphs(
-            offered: offered, observesGuestAddress: true, guestOS: .macOS)
-        let text = paragraphs.map {
-            switch $0 {
-            case .body(let body), .code(let body): body
-            }
-        }
+        let text = paragraphText(
+            VMSettingsNetworkPanelViewController.modeInfoParagraphs(
+                offered: offered, sharedAddressShown: false, guestOS: .macOS))
         #expect(text.contains { $0.hasPrefix("Shared Network:") })
         #expect(text.contains { $0.hasPrefix("Host Only:") } == offered.contains(.hostOnly))
         #expect(text.contains { $0.contains("Bridged") } == offered.contains(.bridged))
     }
 
-    @Test("The Shared reach clause points at the IP address row only where it can show the address")
-    func modeInfoReachClauseFollowsAddressObservation() {
-        for observes in [true, false] {
-            let text = VMSettingsNetworkPanelViewController.modeInfoParagraphs(
-                offered: [.shared], observesGuestAddress: observes, guestOS: .macOS
-            ).map {
-                switch $0 {
-                case .body(let body), .code(let body): body
-                }
+    private func paragraphText(_ paragraphs: [InfoPopoverParagraph]) -> [String] {
+        paragraphs.map {
+            switch $0 {
+            case .body(let body), .code(let body): body
             }
-            #expect(text.contains { $0.contains("the address in the IP address row") } == observes)
         }
+    }
+
+    /// The Shared paragraph's reach clause, as the Mode info button would show it now.
+    private func sharedReachText(in vc: VMSettingsViewController) throws -> String {
+        let button = try #require(infoButton(about: "Mode", in: vc.view))
+        return try #require(paragraphText(button.paragraphs).first { $0.hasPrefix("Shared Network:") })
+    }
+
+    @Test("The Mode info points at the IP address row only while it shows the Shared address")
+    func sharedReachClauseFollowsTheIPAddressRow() async throws {
+        let arpTable = ScriptedARPTable()
+        let viewModel = makeAddressedViewModel(arpTable)
+        let (vc, _) = makeNetworkController(
+            isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
+
+        #expect(!visibleLabel("192.168.64.10", in: vc.view))
+        #expect(try sharedReachText(in: vc).contains("its address on that subnet"))
+
+        arpTable.table = [.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)]
+        await readGuestAddresses(viewModel)
+
+        #expect(visibleLabel("192.168.64.10", in: vc.view))
+        #expect(try sharedReachText(in: vc).contains("the address in the IP address row"))
+    }
+
+    @Test("A stopped Shared VM's Mode info names no IP address row")
+    func stoppedSharedVMReachClauseNamesNoRow() throws {
+        let (vc, _) = makeNetworkController()
+
+        #expect(!visibleLabel("IP address", in: vc.view))
+        #expect(try !sharedReachText(in: vc).contains("IP address row"))
     }
 
     @Test("Choosing an interface sets the bridged mode and the interface in one gesture")

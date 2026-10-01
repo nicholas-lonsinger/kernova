@@ -853,7 +853,7 @@ struct VMSettingsGeneralPanelTests {
         if let warning {
             // The vendor's claim, at the vendor's strength.
             #expect(warning.contains("macOS runs at most two at once"))
-            #expect(warning.hasPrefix("\(testCase.marked) macOS VMs"))
+            #expect(warning.hasPrefix("\(testCase.marked) macOS virtual machines"))
         }
     }
 

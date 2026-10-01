@@ -102,24 +102,24 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// What the capture takes, in outcome terms.
     var headerBodyText: String {
         switch mode {
-        case .live: "Captures the VM's memory, disks, and settings."
+        case .live: "Captures the virtual machine's memory, disks, and settings."
         case .suspended: "Captures the suspended session, disks, and settings."
-        case .stopped: "Captures the VM's disks and settings. Reverting returns it powered off."
+        case .stopped: "Captures the virtual machine's disks and settings. Reverting returns it powered off."
         }
     }
 
     /// What the capture does to the running guest, or `nil` when there is none.
     var captionText: String? {
         switch mode {
-        case .live: "The VM pauses briefly while its state is written."
-        case .suspended: "The VM stays suspended."
+        case .live: "The virtual machine pauses briefly while its state is written."
+        case .suspended: "The virtual machine stays suspended."
         case .stopped: nil
         }
     }
 
     /// Why a snapshot's listed size overstates the space it takes.
     static let sharedBlocksExplanation =
-        "Disks are copied on the same volume, so the copies share their blocks with the VM's "
+        "Disks are copied on the same volume, so the copies share their blocks with the virtual machine's "
         + "disks and take almost no extra space until one side changes \u{2014} but the "
         + "snapshot's listed size counts those shared blocks in full."
 

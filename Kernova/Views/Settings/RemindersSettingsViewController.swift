@@ -25,12 +25,13 @@ import KernovaLogging
 final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
-    /// Height at which the pane stops growing and starts scrolling — keeps a
-    /// long VM list from making the Settings window unreasonably tall.
-    private static let maxPaneHeight: CGFloat = 520
-
     private let viewModel: VMLibraryViewModel
     private var preferences: AppPreferences { viewModel.preferences }
+
+    /// Caps the pane at ``SettingsPaneMetrics/maxHeight(in:)``, past which a
+    /// long VM list scrolls; re-read on every publish, since the window may have
+    /// moved to another screen.
+    private var heightCap: NSLayoutConstraint?
 
     private let menuBarQuitSwitch = NSSwitch()
     private let agentInstallSwitch = NSSwitch()
@@ -139,9 +140,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         // Flash-only (no chevron/fade overlays): this scroll view *is* the pane's
         // root, so it has no superview of its own to host them until the tab view
-        // adopts it. The window is sized once per tab selection, so content that
-        // grows while the pane is on screen — a VM added or removed, the override
-        // caption appearing — overflows in place; the flash is what says so.
+        // adopts it. The window follows the content only up to the height cap,
+        // so content that grows past it while the pane is on screen — a VM
+        // added, the override caption appearing — overflows in place; the flash
+        // is what says so.
         // Not armed at birth: the tab container cues every arrival explicitly,
         // and a born-armed flash fires from `viewWillAppear`'s layout churn — in
         // the already-visible window, behind the tab transition — so the first
@@ -156,18 +158,18 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let hugHeight = scrollView.heightAnchor.constraint(
             equalTo: content.heightAnchor, constant: Spacing.large * 2)
         hugHeight.priority = .defaultLow
+        let heightCap = scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: 0)
+        self.heightCap = heightCap
         NSLayoutConstraint.activate([
             scrollView.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             hugHeight,
-            scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maxPaneHeight),
         ])
         view = SettingsPaneRootView(content: scrollView)
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        // Publishes the pane's size, clamped by the height cap — the scroll view
-        // otherwise masks the document's intrinsic height.
+        // Publishes the pane's size, clamped by the height cap.
         refreshVMRows()
         startVMObservation()
     }
@@ -213,7 +215,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     /// Publishes the pane's size for the window to follow.
     private func publishSize() {
-        publishSettingsPaneSize(layoutHeight: Self.maxPaneHeight)
+        let maxHeight = SettingsPaneMetrics.maxHeight(in: view.window)
+        if let maxHeight { heightCap?.constant = maxHeight }
+        heightCap?.isActive = maxHeight != nil
+        publishSettingsPaneSize(layoutHeight: maxHeight ?? SettingsPaneMetrics.width)
     }
 
     /// Re-arms the flash for a fresh appearance, so arriving at an overflowing

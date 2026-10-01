@@ -43,7 +43,7 @@ struct SettingsTabViewControllerTests {
     private func makeOverflowingPane() throws -> (
         SettingsTabViewController, RemindersSettingsViewController
     ) {
-        let tabController = SettingsTabViewController(viewModel: makeViewModel(vmCount: 9))
+        let tabController = SettingsTabViewController(viewModel: makeViewModel(vmCount: overflowingVMCount()))
         tabController.loadViewIfNeeded()
         let item = try remindersItem(in: tabController)
         // Select before hosting: selecting moves the pane's view into the tab

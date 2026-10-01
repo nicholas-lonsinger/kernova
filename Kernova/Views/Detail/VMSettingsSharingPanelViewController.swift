@@ -261,7 +261,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// Shown under the "Show install reminder" row while the app-wide
     /// preference turns the install prompt off, so the greyed row reads as
     /// controlled elsewhere.
-    static let installPromptDisabledCaption = "Turned off for all VMs in Settings → Reminders."
+    static let installPromptDisabledCaption = "Turned off for all virtual machines in Settings → Reminders."
 
     /// Info-popover copy for the "Clipboard sharing" row on a Linux guest,
     /// whose clipboard rides SPICE.
@@ -319,7 +319,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     "Drag and drop files", control: dropFilesSwitch,
                     info: [
                         .body(
-                            "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder."
+                            "Lets you drag files and folders from this Mac onto the virtual machine's display; the guest agent saves them to the guest's Downloads folder."
                         )
                     ]),
                 GroupedFormNotedRow(

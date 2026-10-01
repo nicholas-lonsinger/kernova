@@ -131,7 +131,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
     func suspendedCopyNamesTheSuspendedSession() {
         let (sheet, _) = makeSheet(mode: .suspended)
         #expect(sheet.headerBodyText.contains("suspended session"))
-        #expect(sheet.captionText == "The VM stays suspended.")
+        #expect(sheet.captionText == "The virtual machine stays suspended.")
     }
 
     @Test("A capture of a stopped VM says the VM comes back powered off, with no caption")

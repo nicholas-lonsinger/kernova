@@ -35,6 +35,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: CopyValueButton?
+    /// The Mode row's info button, re-pointed whenever the IP address row
+    /// changes, since its Shared paragraph names that row only while it shows
+    /// an address.
+    private var modeInfoButton: InfoButtonView?
     /// Holds the banner naming the other VMs sharing this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
@@ -59,14 +63,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// the picker offers — and nothing about a mode it cannot offer.
     ///
     /// "UI copy states only what is known": the Shared reach clause points at
-    /// the IP address row only where that row can show a Shared guest's address
-    /// (`observesGuestAddress`), and the Wi-Fi limitation is stated at the
+    /// the IP address row only while that row shows a Shared guest's address
+    /// (`sharedAddressShown`), and the Wi-Fi limitation is stated at the
     /// standard's strength, on the surface the user picks a mode from.
     static func modeInfoParagraphs(
-        offered: Set<VMNetworkMode>, observesGuestAddress: Bool, guestOS: VMGuestOS
+        offered: Set<VMNetworkMode>, sharedAddressShown: Bool, guestOS: VMGuestOS
     ) -> [InfoPopoverParagraph] {
         let sharedReachClause =
-            observesGuestAddress
+            sharedAddressShown
             ? "this Mac reaches it at the address in the IP address row"
             : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = []
@@ -107,11 +111,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // dimming (and the section lock hint it makes moot).
         networkModePopUp = makeNetworkModePopUp()
         let modeRow = makeGroupedFormCardRow(
-            "Mode", control: networkModePopUp,
-            info: Self.modeInfoParagraphs(
-                offered: offeredModes,
-                observesGuestAddress: sharedRidesVmnet && entitlements.supportsGuestAddressObservation,
-                guestOS: instance.configuration.guestOS))
+            "Mode", control: networkModePopUp, info: modeInfoParagraphs())
+        modeInfoButton = modeRow.infoButton
 
         let rows: [NSView] = [
             modeRow, makeIsolationRow(), makeIPAddressRow(), makeMACAddressRow(),
@@ -192,6 +193,16 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         ipAddressRow?.isHidden = address.displayText == nil
         ipAddressCopyButton?.value = address.address
         ipAddressValueLabel?.stringValue = address.displayText ?? ""
+        modeInfoButton?.configure(label: "Mode", paragraphs: modeInfoParagraphs())
+    }
+
+    /// The Mode info for this VM as the panel shows it now.
+    private func modeInfoParagraphs() -> [InfoPopoverParagraph] {
+        Self.modeInfoParagraphs(
+            offered: offeredModes,
+            sharedAddressShown: instance.configuration.networkMode == .shared
+                && resolved.ipAddress.address != nil,
+            guestOS: instance.configuration.guestOS)
     }
 
     // MARK: MAC Address
@@ -330,12 +341,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// whose network this build can attach.
     private var offeredModes: Set<VMNetworkMode> {
         Set(VMNetworkMode.allCases.filter { $0 == .shared || offers($0) })
-    }
-
-    /// Whether a Shared guest rides an app-managed network, where the host's
-    /// table can show its address, rather than the system NAT.
-    private var sharedRidesVmnet: Bool {
-        entitlements.realization(of: .vmnet(.common(.shared))) != .systemNAT
     }
 
     /// Whether the picker offers `mode`: the network choosing it puts the VM

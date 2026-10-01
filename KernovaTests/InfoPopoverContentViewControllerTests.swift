@@ -54,6 +54,32 @@ struct InfoPopoverContentViewControllerTests {
         #expect(label.font?.isFixedPitch == true)
     }
 
+    @Test("A body's code span renders monospaced without its backticks")
+    func bodyCodeSpanRendersMonospaced() throws {
+        let vc = InfoPopoverContentViewController(paragraphs: [
+            .body("The interface usually appears as `enp0s1`. Check `os.Logger`.")
+        ])
+        vc.loadViewIfNeeded()
+        let label = try #require(
+            (vc.view.subviews.first as? NSStackView)?.arrangedSubviews.first as? NSTextField)
+        #expect(label.stringValue == "The interface usually appears as enp0s1. Check os.Logger.")
+
+        let rendered = label.attributedStringValue
+        func font(at substring: String) -> NSFont? {
+            let range = (rendered.string as NSString).range(of: substring)
+            return rendered.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont
+        }
+        #expect(font(at: "enp0s1")?.isFixedPitch == true)
+        #expect(font(at: "os.Logger")?.isFixedPitch == true)
+        #expect(font(at: "The interface")?.isFixedPitch == false)
+    }
+
+    @Test("An unpaired backtick in a body stays as written")
+    func unpairedBacktickStaysLiteral() {
+        let rendered = InfoPopoverContentViewController.renderedBody("Use `a` then ` alone")
+        #expect(rendered.string == "Use a then ` alone")
+    }
+
     @Test("empty paragraph list still loads")
     func emptyParagraphList() {
         let vc = InfoPopoverContentViewController(paragraphs: [])

@@ -148,7 +148,7 @@ final class SnapshotSectionView: NSView {
                 ),
                 .body(
                     "A snapshot's copies share blocks with the disks they came from until either "
-                        + "side changes, so the listed sizes overlap with the VM and with each "
+                        + "side changes, so the listed sizes overlap with the virtual machine and with each "
                         + "other rather than add up."
                 ),
             ])

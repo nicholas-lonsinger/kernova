@@ -76,6 +76,17 @@ enum SettingsPaneMetrics {
     /// Each pane's root view pins to this explicitly instead of inheriting the
     /// tab view's bounds — see `SettingsTabViewController`'s sizing contract.
     static let width: CGFloat = 520
+
+    /// The tallest a pane can be while its window still fits the visible area
+    /// of the screen it is on — the main screen before it has one — or `nil`
+    /// with no screen at all.
+    ///
+    /// A pane taller than this scrolls; below it, the window follows the pane.
+    static func maxHeight(in window: NSWindow?) -> CGFloat? {
+        guard let screen = window?.screen ?? NSScreen.main else { return nil }
+        let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
+        return screen.visibleFrame.height - chrome
+    }
 }
 
 /// The toolbar-style tab container for the Settings window.

@@ -24,8 +24,8 @@ enum EphemeralModeCopy {
     /// session instead of stopped.
     static func baselineCaption(for kind: VMSnapshotKind) -> String {
         switch kind {
-        case .warm: "Each shutdown discards changes and leaves the VM suspended at this snapshot."
-        case .cold: "Each shutdown discards changes and leaves the VM stopped at this snapshot."
+        case .warm: "Each shutdown discards changes and leaves the virtual machine suspended at this snapshot."
+        case .cold: "Each shutdown discards changes and leaves the virtual machine stopped at this snapshot."
         }
     }
 
@@ -37,7 +37,7 @@ enum EphemeralModeCopy {
             "Suspending keeps the session — including when Kernova quits and suspends running VMs. The session still reverts at its next shutdown."
         ),
         .body(
-            "Discarding a suspended ephemeral session returns the VM to its baseline. Turning the mode off clears the baseline choice."
+            "Discarding a suspended ephemeral session returns the virtual machine to its baseline. Turning the mode off clears the baseline choice."
         ),
     ]
 

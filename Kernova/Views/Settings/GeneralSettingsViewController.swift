@@ -59,9 +59,10 @@ final class GeneralSettingsViewController: NSViewController {
                 makeGroupedFormCardRow(
                     "Open at Login", control: openAtLoginSwitch,
                     info: [
+                        .body("Opens Kernova when you log in."),
                         .body(
                             "With Continue running in the menu bar on, Kernova opens in the menu "
-                                + "bar with no window.")
+                                + "bar with no window."),
                     ]),
                 notes: [loginApprovalNote]),
             makeGroupedFormCardRow(

@@ -212,7 +212,7 @@ final class VMOverviewResolver {
         isMacOSGuest: Bool, markedMacOSVMCount: Int
     ) -> String? {
         guard isMacOSGuest, markedMacOSVMCount > concurrentMacOSGuestLimit else { return nil }
-        return "\(markedMacOSVMCount) macOS VMs are set to start when Kernova opens, "
+        return "\(markedMacOSVMCount) macOS virtual machines are set to start when Kernova opens, "
             + "but macOS runs at most two at once — the rest won't start."
     }
 
