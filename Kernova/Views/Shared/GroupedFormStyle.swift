@@ -147,13 +147,6 @@ func applyCappedColumn(_ content: NSView, in container: NSView, maxWidth: CGFloa
 @MainActor
 protocol GroupedFormFullBleedRow: NSView {}
 
-/// A card row built around another row, which ``makeGroupedFormCard(rows:notes:)``
-/// reads through to find a ``GroupedFormFieldRow`` for its label column.
-@MainActor
-protocol GroupedFormRowWrapper: NSView {
-    var wrappedRow: NSView { get }
-}
-
 @MainActor
 func makeGroupedFormHairline() -> NSView {
     let line = NSBox()
@@ -278,11 +271,8 @@ final class GroupedFormFieldRow: GroupedFormControlRow {
 /// separator. This carries that hairline instead, so `isHidden` takes both.
 /// Never a card's first row — the hairline would have nothing above it.
 @MainActor
-final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow, GroupedFormRowWrapper {
-    let wrappedRow: NSView
-
+final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
     init(row: NSView) {
-        wrappedRow = row
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -314,7 +304,7 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow, Gro
 /// hidden note collapses, leaving no gap. ``makeGroupedFormCard(rows:notes:)``
 /// treats it as the row it wraps.
 @MainActor
-final class GroupedFormNotedRow: NSStackView, GroupedFormRowWrapper {
+final class GroupedFormNotedRow: NSStackView {
     let wrappedRow: NSView
 
     init(_ row: NSView, notes: [NSView]) {
@@ -326,7 +316,8 @@ final class GroupedFormNotedRow: NSStackView, GroupedFormRowWrapper {
         translatesAutoresizingMaskIntoConstraints = false
         // A full-bleed row spans to the card's trailing edge and insets its own
         // content; its notes take the inset a row's content has.
-        let noteInset = groupedFormRowBleeds(row) ? GroupedFormStyle.cardPadding : 0
+        let noteInset =
+            groupedFormJudgedRow(row) is GroupedFormFullBleedRow ? GroupedFormStyle.cardPadding : 0
         for view in [row] + notes {
             addArrangedSubview(view)
             view.widthAnchor.constraint(
@@ -341,20 +332,13 @@ final class GroupedFormNotedRow: NSStackView, GroupedFormRowWrapper {
     }
 }
 
-/// Whether a card spans `row` to its trailing edge rather than insetting it.
+/// The row ``makeGroupedFormCard(rows:notes:)`` infers layout from for `row`:
+/// the row inside any ``GroupedFormNotedRow``, since its notes change nothing
+/// about how the row sits in the card.
 @MainActor
-private func groupedFormRowBleeds(_ row: NSView) -> Bool {
-    if let noted = row as? GroupedFormNotedRow { return groupedFormRowBleeds(noted.wrappedRow) }
-    return row is GroupedFormFullBleedRow
-}
-
-/// Whether `row` carries the hairline above it, so the card draws none.
-@MainActor
-private func groupedFormRowCarriesHairline(_ row: NSView) -> Bool {
-    if let noted = row as? GroupedFormNotedRow {
-        return groupedFormRowCarriesHairline(noted.wrappedRow)
-    }
-    return row is GroupedFormCollapsibleRow
+private func groupedFormJudgedRow(_ row: NSView) -> NSView {
+    guard let noted = row as? GroupedFormNotedRow else { return row }
+    return groupedFormJudgedRow(noted.wrappedRow)
 }
 
 /// Builds a card: hairline-separated rows on a rounded, filled background.
@@ -362,8 +346,9 @@ private func groupedFormRowCarriesHairline(_ row: NSView) -> Bool {
 /// Separators run from the label edge to the card's trailing edge — the
 /// asymmetry System Settings draws — so the content stack spans to that edge
 /// and every non-hairline row is inset back by ``GroupedFormStyle/cardPadding``.
-/// The ``GroupedFormFieldRow``s among `rows` share one label column, the width
-/// of their widest label, so their controls start at one edge.
+/// The ``GroupedFormFieldRow``s among `rows`, bare or in a
+/// ``GroupedFormNotedRow``, share one label column, the width of their widest
+/// label, so their controls start at one edge.
 ///
 /// `notes` describe the card as a whole and sit inside it under the rows, at
 /// the rows' leading edge, with no hairline, collapsing when hidden; a note
@@ -381,10 +366,11 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     for (index, row) in rows.enumerated() {
         // A collapsible row carries its own hairline, so that hiding it takes
         // the separator with it.
-        if index > 0, !groupedFormRowCarriesHairline(row) {
+        let judged = groupedFormJudgedRow(row)
+        if index > 0, !(judged is GroupedFormCollapsibleRow) {
             arranged.append((GroupedFormCardSeparator(), true))
         }
-        arranged.append((row, groupedFormRowBleeds(row)))
+        arranged.append((row, judged is GroupedFormFullBleedRow))
     }
     arranged += notes.map { ($0, false) }
     arranged.forEach { content.addArrangedSubview($0.view) }
@@ -412,10 +398,8 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
             equalTo: content.widthAnchor, constant: entry.bleeds ? 0 : -pad
         ).isActive = true
     }
-    let fieldTitles = rows.compactMap { row in
-        let innermost = sequence(first: row) { ($0 as? GroupedFormRowWrapper)?.wrappedRow }
-            .reduce(row) { $1 }
-        return (innermost as? GroupedFormFieldRow)?.titleLabel
+    let fieldTitles = rows.compactMap {
+        (groupedFormJudgedRow($0) as? GroupedFormFieldRow)?.titleLabel
     }
     for title in fieldTitles.dropFirst() {
         title.widthAnchor.constraint(equalTo: fieldTitles[0].widthAnchor).isActive = true
