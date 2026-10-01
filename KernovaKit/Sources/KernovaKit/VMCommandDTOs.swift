@@ -254,6 +254,40 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case removeAttachment
     /// Letting the guest read whatever is copied on the host, continuously.
     case enableClipboardPassthrough
+    /// Starting a VM while another one with the same machine identity is
+    /// active.
+    case startBesideSharedMachineIdentity
+}
+
+/// The confirmations a caller has given for one call of a verb.
+///
+/// A set rather than a yes, because one call can need more than one — a revert
+/// that resumes beside a VM sharing its machine identity needs both — and each
+/// is asked with its own consequence in front of the user.
+public struct Consent: Codable, Sendable, Hashable {
+    /// The confirmations given.
+    public let kinds: Set<ConfirmationKind>
+
+    /// Gives the confirmations in `kinds`.
+    public init(_ kinds: Set<ConfirmationKind>) {
+        self.kinds = kinds
+    }
+
+    /// No confirmation given.
+    public static let none = Consent([])
+    /// Every confirmation given — what a door that consents up front, such as
+    /// `--yes`, answers.
+    public static let all = Consent(Set(ConfirmationKind.allCases))
+
+    /// Whether `kind` was confirmed.
+    public func covers(_ kind: ConfirmationKind) -> Bool {
+        kinds.contains(kind)
+    }
+
+    /// These confirmations, and `kind` too.
+    public func adding(_ kind: ConfirmationKind) -> Consent {
+        Consent(kinds.union([kind]))
+    }
 }
 
 /// A second way to satisfy a confirmation, beside its own confirm action.
@@ -292,7 +326,7 @@ public struct ConfirmationAlternative: Codable, Sendable, Hashable {
 ///
 /// The core presents nothing: it describes the confirmation and leaves each
 /// surface to gather it — an AppKit sheet, a wire client's own consent — then
-/// re-issue the verb with `confirmed: true`.
+/// re-issue the verb with ``kind`` in its ``Consent``.
 public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     /// Which confirmation this is.
     public let kind: ConfirmationKind
@@ -302,9 +336,9 @@ public struct ConfirmationPrompt: Codable, Sendable, Hashable {
     public let message: String
     /// The confirm action's title.
     public let confirmTitle: String
-    /// Whether confirming discards something, so a surface tints the action and
-    /// keeps it off the Return key. A confirmation is raised for a destructive
-    /// verb by definition; the gentle routes opt out.
+    /// Whether confirming discards or risks something, so a surface tints the
+    /// action and keeps it off the Return key. A confirmation is raised for a
+    /// destructive verb by definition; the gentle routes opt out.
     public let confirmIsDestructive: Bool
     /// The title of the action that walks away, worded for what declining
     /// leaves running.
@@ -443,6 +477,17 @@ public enum CommandRecoveryDTO: Codable, Sendable, Hashable {
     case removeStartFailedAttachment(id: UUID, label: String)
 }
 
+extension ConflictReason {
+    /// The heading a refusal over this reason is shown under.
+    public var title: String {
+        switch self {
+        case .machineIdentity: "Duplicate Machine ID"
+        case .macAddress: "Duplicate MAC Address"
+        case .macAddressInUse: "MAC Address In Use"
+        }
+    }
+}
+
 /// How every surface words a refusal.
 ///
 /// The copy lives on the wire type rather than on the app's own error, because
@@ -462,12 +507,7 @@ extension CommandErrorDTO {
         case .guestAccountPasswordRequired(let prompt):
             "Couldn\u{2019}t Start \u{201C}\(prompt.vm.name)\u{201D}"
         case .conflict(_, _, let reason):
-            switch reason {
-            case .machineIdentity: "Duplicate Machine ID"
-            case .macAddress: "Duplicate MAC Address"
-            case .exactCopy: "Exact Copy In Use"
-            case .macAddressInUse: "MAC Address In Use"
-            }
+            reason.title
         case .operationFailed(_, let title, _, _):
             title ?? "Error"
         }
@@ -562,20 +602,15 @@ extension CommandErrorDTO {
         case .macAddressInUse(let address, let holding, let otherHolders):
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
-        case .exactCopy(let bar):
-            exactCopyMessage(vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy, bar: bar)
-        case .machineIdentity where otherHeldByAnotherCopy:
-            "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
-                + "Two virtual machines with the same machine ID must not run at once. "
-                + "To start it anyway, allow this in Settings \u{2192} Advanced."
+        case .machineIdentity:
+            sharedMachineIdentitySentence(
+                vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy)
+                + " Two virtual machines with the same machine ID must not run at once."
+                + (otherHeldByAnotherCopy ? "" : " Stop \u{201C}\(other)\u{201D} first.")
         case .macAddress where otherHeldByAnotherCopy:
             "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
                 + "Two virtual machines with the same MAC address must not run on the same network at once. "
                 + "Give \u{201C}\(vm)\u{201D} a new address in Network settings."
-        case .machineIdentity:
-            "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, which is active. "
-                + "Two virtual machines with the same machine ID must not run at once. "
-                + "Stop \u{201C}\(other)\u{201D} first, or allow this in Settings \u{2192} Advanced."
         case .macAddress:
             "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which is active. "
                 + "Two virtual machines with the same MAC address must not run on the same network at once. "
@@ -583,28 +618,14 @@ extension CommandErrorDTO {
         }
     }
 
-    /// What an ``ConflictReason/exactCopy(bar:)`` refusal tells the user.
-    ///
-    /// Nothing records which of two exact copies came first, so the pair is
-    /// named from `vm`'s side: the sentence reads true whichever one is refused.
-    private static func exactCopyMessage(
-        vm: String, other: String, otherHeldByAnotherCopy: Bool, bar: ExactCopyBar
+    /// The sentence naming the VM `vm` shares its machine identity with, and
+    /// who is running it — public so the confirmation that offers starting
+    /// `vm` anyway opens with the words its refusal does.
+    public static func sharedMachineIdentitySentence(
+        vm: String, other: String, otherHeldByAnotherCopy: Bool
     ) -> String {
-        let pair =
-            "\u{201C}\(vm)\u{201D} is an exact copy of \u{201C}\(other)\u{201D}, "
-            + (otherHeldByAnotherCopy ? "which another copy of Kernova is using. " : "which is active. ")
-        switch bar {
-        case .runningAtOnce:
-            return pair + "Exact copies share a machine ID, so they must not run at once. "
-                + (otherHeldByAnotherCopy
-                    ? "To start it anyway, allow this in Settings \u{2192} Advanced."
-                    : "Stop \u{201C}\(other)\u{201D} first, or allow this in Settings \u{2192} Advanced.")
-        case .oneNetwork:
-            return pair + "Exact copies share a MAC address, so they must not run on the same network at once. "
-                + (otherHeldByAnotherCopy
-                    ? "Give \u{201C}\(vm)\u{201D} a new address in Network settings."
-                    : "Stop \u{201C}\(other)\u{201D} first, or give one of them a new address in Network settings.")
-        }
+        "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, "
+            + (otherHeldByAnotherCopy ? "which another copy of Kernova is using." : "which is active.")
     }
 
     /// `seconds` written the way a person types a deadline: whole where it is

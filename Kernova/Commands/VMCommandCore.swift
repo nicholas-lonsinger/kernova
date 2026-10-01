@@ -323,7 +323,7 @@ final class VMCommandCore: VMCommanding {
     func admissionRefusal(
         _ reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb?
     ) -> CommandError {
-        let error = commandError(for: reason, on: instance)
+        let error = commandError(for: reason, on: instance, verb: verb)
         #log(
             Self.logger, .notice,
             "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
@@ -332,9 +332,10 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// What `reason` reads as in the command vocabulary, unrecorded — what a
-    /// verb reports goes through ``admissionRefusal(_:on:verb:)``.
+    /// verb reports goes through ``admissionRefusal(_:on:verb:)``. `verb`
+    /// words the confirmation a conflict that offers starting anyway raises.
     func commandError(
-        for reason: VMAdmission.Refusal, on instance: VMInstance
+        for reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb? = nil
     ) -> CommandError {
         switch reason {
         case .busy(let kind):
@@ -343,6 +344,10 @@ final class VMCommandCore: VMCommanding {
             invalidState(instance)
         case .removed:
             .notFound(.id(instance.id))
+        case .identityConflict(let conflict) where conflict.offersOverride:
+            .confirmationRequired(
+                Self.startBesideSharedMachineIdentityPrompt(
+                    instance, sharingWith: conflict.other, verb: verb))
         case .identityConflict(let conflict):
             .conflict(
                 vm: summary(instance), with: summary(conflict.other),
@@ -358,6 +363,29 @@ final class VMCommandCore: VMCommanding {
         case .heldByAnotherCopy:
             .heldByAnotherCopy(vm: summary(instance))
         }
+    }
+
+    /// The confirmation that starts `instance` beside `other`, which shares its
+    /// machine identity — worded for the bring-up `verb` performs.
+    static func startBesideSharedMachineIdentityPrompt(
+        _ instance: VMInstance, sharingWith other: VMInstance, verb: VMVerb?
+    ) -> ConfirmationPrompt {
+        let verb =
+            switch verb {
+            case .resume, .revertToSnapshot: "Resume"
+            case .restart: "Restart"
+            default: "Start"
+            }
+        return ConfirmationPrompt(
+            kind: .startBesideSharedMachineIdentity,
+            title: "\(verb) \u{201C}\(instance.name)\u{201D} Anyway?",
+            message: CommandErrorDTO.sharedMachineIdentitySentence(
+                vm: instance.name, other: other.name,
+                otherHeldByAnotherCopy: other.heldByAnotherCopy)
+                + " Apple: \u{201C}Running two virtual machines concurrently with the same "
+                + "identifier results in undefined behavior in the guest operating system.\u{201D}",
+            confirmTitle: "\(verb) Anyway",
+            dismissTitle: "Cancel")
     }
 
     /// What a VM held by an operation of `kind` is busy doing, as a refusal

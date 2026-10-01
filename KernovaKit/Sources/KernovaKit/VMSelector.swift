@@ -168,22 +168,18 @@ public enum CloneOutcome: String, Codable, Sendable, Hashable, CaseIterable {
     /// runs beside its source.
     case newMachine
     /// The source's machine identity and MAC address, so it is the same machine
-    /// to its guest and its network. It never runs beside its source on one
-    /// network, and never runs beside it at all while duplicate machine IDs are
-    /// blocked from booting.
+    /// to its guest and its network. The two never run on the same network at
+    /// once, and run at once only when one is started anyway.
     case exactCopy
 }
 
 /// What two VMs collide on.
 public enum ConflictReason: Codable, Sendable, Hashable {
-    /// The two share a machine identity and nothing else.
+    /// The two share a machine identity.
     case machineIdentity
     /// Two VMs would run at once on one network with one address, which both
-    /// of them already carry under different machine identities.
+    /// of them already carry.
     case macAddress
-    /// The two are exact copies of each other — one machine identity and one
-    /// MAC address — and `bar` is the rule the bring-up would break.
-    case exactCopy(bar: ExactCopyBar)
     /// Other VMs in the library already hold `address`, whatever state any is
     /// in — the uniqueness every writer of an address preserves. It travels
     /// here because it is the address the caller asked for, which the VM being
@@ -194,14 +190,6 @@ public enum ConflictReason: Codable, Sendable, Hashable {
     /// every further VM that does, in library order.
     case macAddressInUse(
         address: String, holding: MACAddressHolding, otherHolders: [MACAddressHolder])
-}
-
-/// What keeps two exact copies apart.
-public enum ExactCopyBar: String, Codable, Sendable, Hashable, CaseIterable {
-    /// Their shared machine identity: the two never run at once.
-    case runningAtOnce
-    /// Their shared MAC address: the two never run on one network at once.
-    case oneNetwork
 }
 
 /// How one VM holds a MAC address: in its configuration, in snapshots taken

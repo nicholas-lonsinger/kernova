@@ -661,11 +661,93 @@ struct DetailAlertsPresenterTests {
         #expect(answers.answered == ["hold"])
     }
 
+    // MARK: - A confirmation a verb waits on
+
+    private func confirmationRequest(answers: Box<[PresenterAnswer<Bool>]>) -> ConfirmationRequest {
+        ConfirmationRequest(
+            prompt: ConfirmationPrompt(
+                kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
+                message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
+                confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+            answer: { answers.value.append($0) })
+    }
+
+    /// Holds what the requests under test are answered with.
+    private final class Box<Value> {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    @Test("A confirmation's buttons answer the verb waiting on it, once")
+    func aConfirmationIsAnsweredByItsButton() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let answers = Box<[PresenterAnswer<Bool>]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+        #expect(presenter.isShowingAlertForTesting)
+        #expect(presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
+        presenter.stop()
+
+        #expect(answers.value == [.answered(true)])
+    }
+
+    @Test("A confirmation with no window to ask in is answered unasked at once")
+    func aConfirmationWithNoWindowIsUnasked() {
+        let (presenter, _) = makePresenter()
+        let answers = Box<[PresenterAnswer<Bool>]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+
+        // The verb is suspended on this answer; a queue would hold it until a
+        // window that may never come back.
+        #expect(answers.value == [.unasked])
+        #expect(presenter.pendingCountForTesting == 0)
+    }
+
+    @Test("A confirmation raised while another alert is up is answered unasked at once")
+    func aConfirmationBehindAnotherAlertIsUnasked() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        presenter.presentError("Something else", title: "Couldn't Start")
+        let answers = Box<[PresenterAnswer<Bool>]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+
+        #expect(answers.value == [.unasked])
+        #expect(presenter.pendingCountForTesting == 0)
+    }
+
+    @Test("Tearing the window down answers the confirmation on screen unasked")
+    func stoppingUnasksTheShownConfirmation() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let answers = Box<[PresenterAnswer<Bool>]>([])
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+        #expect(presenter.isShowingAlertForTesting)
+
+        presenter.stop()
+
+        #expect(answers.value == [.unasked])
+    }
+
+    @Test("Cancel on a confirmation answers that the user declined")
+    func cancelDeclinesAConfirmation() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let answers = Box<[PresenterAnswer<Bool>]>([])
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+
+        #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
+
+        #expect(answers.value == [.answered(false)])
+    }
+
     // MARK: - The guest account a VM still owes
 
     /// Collects the answers the account prompts under test are given.
     private final class AccountAnswers {
-        var answered: [GuestAccountPasswordAnswer] = []
+        var answered: [PresenterAnswer<GuestAccountPasswordAnswer>] = []
     }
 
     private func accountRequest(
@@ -685,23 +767,21 @@ struct DetailAlertsPresenterTests {
     private static let accountVMID =
         UUID(uuidString: "5E00A1A0-0000-4000-8000-000000000001") ?? UUID()
 
-    @Test("An account prompt with no window to ask in starts nothing")
-    func anAccountPromptWithNoWindowIsCancelled() {
+    @Test("An account prompt with no window to ask in is answered unasked")
+    func anAccountPromptWithNoWindowIsUnasked() {
         let (presenter, _) = makePresenter()
         let answers = AccountAnswers()
 
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 
         // The start is suspended on this answer, so it is answered now rather
-        // than queued behind a window that may never arrive — and cancelled
-        // rather than waved through, because proceeding retracts the account
-        // and only the user may decide that.
-        #expect(answers.answered == [.cancelled])
+        // than queued behind a window that may never arrive.
+        #expect(answers.answered == [.unasked])
         #expect(presenter.pendingCountForTesting == 0)
     }
 
-    @Test("An account prompt raised while another alert is up starts nothing")
-    func anAccountPromptBehindAnotherAlertIsCancelled() {
+    @Test("An account prompt raised while another alert is up is answered unasked")
+    func anAccountPromptBehindAnotherAlertIsUnasked() {
         let (presenter, _) = makePresenter()
         presenter.start(window: showTestWindow(styleMask: [.titled]))
         presenter.presentError("Something else", title: "Couldn't Start")
@@ -710,7 +790,7 @@ struct DetailAlertsPresenterTests {
 
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 
-        #expect(answers.answered == [.cancelled])
+        #expect(answers.answered == [.unasked])
     }
 
     @Test("A second Start while the prompt is up is turned away, not asked twice")
@@ -729,7 +809,7 @@ struct DetailAlertsPresenterTests {
         // already asking about this VM is brought forward — the click lands on
         // the question gating the start. Only the answer is assertable here;
         // that the window comes to the front is not observable headlessly.
-        #expect(second.answered == [.cancelled])
+        #expect(second.answered == [.answered(.cancelled)])
         #expect(first.answered.isEmpty)
         #expect(presenter.isShowingAlertForTesting)
     }
@@ -744,8 +824,8 @@ struct DetailAlertsPresenterTests {
         presenter.stop()
 
         // A suspended `withCheckedContinuation` nothing resumes strands that
-        // start for the rest of the session.
-        #expect(answers.answered == [.cancelled])
+        // start for the rest of the session; the user answered nothing.
+        #expect(answers.answered == [.unasked])
     }
 
     @Test("Tearing the window down takes the sheet with it, and frees the slot")
@@ -801,7 +881,7 @@ struct DetailAlertsPresenterTests {
 
         presenter.stop()
 
-        #expect(answers.answered == [.cancelled])
+        #expect(answers.answered == [.unasked])
     }
 
     @Test("A prompt answered once is not answered again by the teardown")
@@ -816,7 +896,7 @@ struct DetailAlertsPresenterTests {
 
         // Resuming a checked continuation twice traps, so this is the other
         // half of "exactly once".
-        #expect(answers.answered == [.skip])
+        #expect(answers.answered == [.answered(.skip)])
     }
 
     @Test("Skip Setup answers the waiting start and frees the slot")
@@ -829,7 +909,7 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.dismissShownAlertForTesting(.alertSecondButtonReturn))
 
-        #expect(answers.answered == [.skip])
+        #expect(answers.answered == [.answered(.skip)])
         #expect(!presenter.isShowingAlertForTesting)
     }
 
@@ -842,7 +922,7 @@ struct DetailAlertsPresenterTests {
 
         #expect(presenter.dismissShownAlertForTesting(.alertThirdButtonReturn))
 
-        #expect(answers.answered == [.cancelled])
+        #expect(answers.answered == [.answered(.cancelled)])
         #expect(!presenter.isShowingAlertForTesting)
     }
 
@@ -860,7 +940,7 @@ struct DetailAlertsPresenterTests {
         #expect(presenter.isShowingAlertForTesting)
 
         #expect(presenter.dismissShownAlertForTesting(.alertThirdButtonReturn))
-        #expect(answers.answered == [.cancelled])
+        #expect(answers.answered == [.answered(.cancelled)])
         #expect(!presenter.isShowingAlertForTesting)
     }
 }

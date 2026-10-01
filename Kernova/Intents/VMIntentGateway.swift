@@ -130,16 +130,16 @@ final class VMIntentGateway {
 
     // MARK: - Lifecycle
 
-    func start(_ id: UUID, recovery: Bool) async throws {
+    func start(_ id: UUID, recovery: Bool, consent: Consent) async throws {
         try await perform(.start, on: id) {
-            try await self.commands.start(.id(id), recovery: recovery)
+            try await self.commands.start(.id(id), recovery: recovery, consent: consent)
         }
     }
 
-    func stop(_ id: UUID, disposition: StopDisposition, confirmed: Bool) async throws {
+    func stop(_ id: UUID, disposition: StopDisposition, consent: Consent) async throws {
         try await perform(.stop, on: id) {
             try await self.commands.stop(
-                .id(id), disposition: disposition, confirmed: confirmed)
+                .id(id), disposition: disposition, consent: consent)
         }
     }
 
@@ -147,16 +147,20 @@ final class VMIntentGateway {
         try await perform(.pause, on: id) { try await self.commands.pause(.id(id)) }
     }
 
-    func resume(_ id: UUID) async throws {
-        try await perform(.resume, on: id) { try await self.commands.resume(.id(id)) }
+    func resume(_ id: UUID, consent: Consent) async throws {
+        try await perform(.resume, on: id) {
+            try await self.commands.resume(.id(id), consent: consent)
+        }
     }
 
     func suspend(_ id: UUID) async throws {
         try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
     }
 
-    func restart(_ id: UUID) async throws {
-        try await perform(.restart, on: id) { try await self.commands.restart(.id(id), timeout: nil) }
+    func restart(_ id: UUID, consent: Consent) async throws {
+        try await perform(.restart, on: id) {
+            try await self.commands.restart(.id(id), timeout: nil, consent: consent)
+        }
     }
 
     func open(_ id: UUID) async throws {
@@ -193,9 +197,9 @@ final class VMIntentGateway {
         try await reveal(best.id)
     }
 
-    func cancelGuestSetup(_ id: UUID, confirmed: Bool) async throws {
+    func cancelGuestSetup(_ id: UUID, consent: Consent) async throws {
         try await perform(.cancelGuestSetup, on: id) {
-            try self.commands.cancelGuestSetup(.id(id), confirmed: confirmed)
+            try self.commands.cancelGuestSetup(.id(id), consent: consent)
         }
     }
 
@@ -221,21 +225,21 @@ final class VMIntentGateway {
     }
 
     func revertToSnapshot(
-        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, confirmed: Bool
+        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, consent: Consent
     ) async throws {
         try await perform(.revertToSnapshot, on: id) {
             let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.revertToSnapshot(
                 .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
-                confirmed: confirmed)
+                consent: consent)
         }
     }
 
-    func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, confirmed: Bool) async throws {
+    func deleteSnapshot(_ id: UUID, snapshot: SnapshotEntityID, consent: Consent) async throws {
         try await perform(.deleteSnapshot, on: id) {
             let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.deleteSnapshot(
-                .id(id), snapshot: listed, confirmed: confirmed)
+                .id(id), snapshot: listed, consent: consent)
         }
     }
 
@@ -325,16 +329,16 @@ final class VMIntentGateway {
     /// both left to the app's own sheet: one is a user-confirmed exception to
     /// the project's file-deletion rule, and the other names files this surface
     /// never showed the user.
-    func delete(_ id: UUID, confirmed: Bool) async throws {
+    func delete(_ id: UUID, consent: Consent) async throws {
         try await perform(.delete, on: id) {
             try await self.commands.delete(
-                .id(id), permanently: false, alsoRemoving: [], confirmed: confirmed)
+                .id(id), permanently: false, alsoRemoving: [], consent: consent)
         }
     }
 
-    func cancelPreparing(_ id: UUID, confirmed: Bool) async throws {
+    func cancelPreparing(_ id: UUID, consent: Consent) async throws {
         try await perform(.cancelPreparing, on: id) {
-            try self.commands.cancelPreparing(.id(id), confirmed: confirmed)
+            try self.commands.cancelPreparing(.id(id), consent: consent)
         }
     }
 

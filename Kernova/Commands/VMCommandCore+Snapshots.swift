@@ -79,14 +79,29 @@ extension VMCommandCore {
     // MARK: - Revert
 
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, confirmed: Bool
+        _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, consent: Consent
     ) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         try require(.revertToSnapshot, on: instance)
-        guard confirmed else {
+        guard consent.covers(.revertToSnapshot) else {
             throw CommandError.confirmationRequired(
                 Self.revertPrompt(snapshot, on: instance))
+        }
+        let identity = VMIdentityOverride(consent)
+        // Decided before the check-point, as a start is decided before
+        // anything else: a revert refused — or asking whether to resume beside
+        // a VM sharing its machine identity — refuses before a capture its
+        // re-issue would take a second time.
+        if case .refuse(let reason) = instance.activity.decide(
+            .operation(
+                .bringUp(
+                    .reverting(
+                        snapshotID: snapshot.id,
+                        resumesAfter: Self.revertResumes(instance, to: snapshot)))),
+            posture: .commit, identity: identity)
+        {
+            throw admissionRefusal(reason, on: instance, verb: .revertToSnapshot)
         }
         if takingCheckpoint {
             // Required, not conditional: a VM that stopped being capturable
@@ -98,7 +113,8 @@ extension VMCommandCore {
         // Awaited *and* answered for: a caller that waited on the revert is told
         // whether the rollback happened, rather than getting a success while an
         // alert about the failure goes somewhere else.
-        try await awaitRevert(instance, startRevert(instance, to: snapshot))
+        try await awaitRevert(
+            instance, startRevert(instance, to: snapshot, identity: identity))
     }
 
     /// The refusal a revert raises, and the copy every surface renders it with.
@@ -165,20 +181,28 @@ extension VMCommandCore {
     ///
     /// The manifest's current marker is written inside the revert operation,
     /// once the snapshot's files are in the bundle.
-    func startRevert(_ instance: VMInstance, to snapshot: VMSnapshot) throws -> VMOutcome {
+    ///
+    /// `identity` is what the caller can do about another active VM sharing
+    /// the machine identity a revert that resumes would claim.
+    func startRevert(
+        _ instance: VMInstance, to snapshot: VMSnapshot,
+        identity: VMIdentityOverride = .unavailable
+    ) throws -> VMOutcome {
         do {
-            return try launchRevert(instance, to: snapshot, origin: .newWork, resolving: VMOutcome())
+            return try launchRevert(
+                instance, to: snapshot, origin: .newWork, identity: identity,
+                resolving: VMOutcome())
         } catch {
             throw failure(error, verb: .revertToSnapshot, on: instance)
         }
     }
 
-    /// ``startRevert(_:to:)`` resolving `outcome`, throwing what refused it as
+    /// ``startRevert(_:to:identity:)`` resolving `outcome`, throwing what refused it as
     /// it was raised.
     @discardableResult
     private func launchRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin,
-        resolving outcome: VMOutcome
+        identity: VMIdentityOverride = .unavailable, resolving outcome: VMOutcome
     ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
@@ -191,11 +215,10 @@ extension VMCommandCore {
                     "\u{201C}\(instance.name)\u{201D} no longer lists the snapshot \u{201C}\(snapshot.name)\u{201D}."
             )
         }
-        // A VM that is live goes back to being live once the files are in
-        // place; a cold snapshot ends the session for good.
-        let resumesAfter = instance.phase.isSettledLive && snapshot.kind == .warm
+        let resumesAfter = Self.revertResumes(instance, to: snapshot)
         try lifecycle.startRevert(
-            instance, to: snapshot, resumesAfter: resumesAfter, origin: origin, resolving: outcome,
+            instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
+            identity: identity, resolving: outcome,
             commitConfiguration: { [library] permit, plan in
                 try library.commitRevertedConfiguration(plan, permit)
             },
@@ -208,6 +231,13 @@ extension VMCommandCore {
         // the revert's task begins with.
         if resumesAfter { readyDisplay?(instance) }
         return outcome
+    }
+
+    /// Whether reverting `instance` to `snapshot` resumes the guest: a VM that
+    /// is live goes back to being live once the files are in place, and a cold
+    /// snapshot ends the session for good.
+    private static func revertResumes(_ instance: VMInstance, to snapshot: VMSnapshot) -> Bool {
+        instance.phase.isSettledLive && snapshot.kind == .warm
     }
 
     /// Waits for the revert `outcome` belongs to and throws how it failed.
@@ -270,7 +300,7 @@ extension VMCommandCore {
 
     // MARK: - Delete
 
-    func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, confirmed: Bool) async throws {
+    func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         // Re-checked at the write as well as at the confirmation: the baseline
@@ -284,7 +314,7 @@ extension VMCommandCore {
             throw CommandError.unsupported(capability: "deleting a VM's Ephemeral Mode baseline")
         }
         try require(.deleteSnapshot, on: instance)
-        guard confirmed else {
+        guard consent.covers(.deleteSnapshot) else {
             throw CommandError.confirmationRequired(
                 Self.deleteSnapshotPrompt(snapshot, on: instance))
         }

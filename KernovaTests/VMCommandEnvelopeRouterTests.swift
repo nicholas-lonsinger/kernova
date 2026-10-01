@@ -255,7 +255,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness)
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
@@ -270,7 +270,7 @@ struct VMCommandEnvelopeRouterTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
-            .stop(.id(instance.id), disposition: .graceful, confirmed: false, timeout: 60))
+            .stop(.id(instance.id), disposition: .graceful, consent: .none, timeout: 60))
 
         guard case .timedOut(let vm, let verb, let seconds) = response.failure else {
             Issue.record("expected a timeout failure, got \(response.result)")
@@ -330,7 +330,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         guard case .invalidState(_, let current, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -347,7 +347,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Doomed")
 
         let refused = try await harness.transport.send(
-            .delete(.id(instance.id), permanently: false, alsoRemoving: [], confirmed: false))
+            .delete(.id(instance.id), permanently: false, alsoRemoving: [], consent: .none))
 
         guard case .confirmationRequired(let prompt)? = refused.failure else {
             Issue.record("expected a consent refusal, got \(String(describing: refused.failure))")
@@ -359,7 +359,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.count == 1)
 
         let confirmed = try await harness.transport.send(
-            .delete(.id(instance.id), permanently: false, alsoRemoving: [], confirmed: true))
+            .delete(.id(instance.id), permanently: false, alsoRemoving: [], consent: .all))
 
         #expect(confirmed.result == .ok)
         #expect(harness.library.instances.isEmpty)
@@ -374,7 +374,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Capped")
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         guard case .operationFailed(_, let title, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -399,7 +399,7 @@ struct VMCommandEnvelopeRouterTests {
         defer { setup.task?.cancel() }
 
         let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), confirmed: false))
+            .cancelGuestSetup(.id(instance.id), consent: .none))
 
         guard case .confirmationRequired(let prompt)? = response.failure else {
             Issue.record("expected a consent refusal, got \(String(describing: response.failure))")
@@ -422,7 +422,7 @@ struct VMCommandEnvelopeRouterTests {
         }
 
         let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), confirmed: true))
+            .cancelGuestSetup(.id(instance.id), consent: .all))
 
         #expect(response.result == .ok)
         for await _ in cancelStream.stream { break }
@@ -434,7 +434,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .stopped)
 
         let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), confirmed: true))
+            .cancelGuestSetup(.id(instance.id), consent: .all))
 
         guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -455,14 +455,14 @@ struct VMCommandEnvelopeRouterTests {
         }
 
         let started = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false))
+            .start(.id(instance.id), recovery: false, consent: .none))
         #expect(started.result == .ok)
         for await _ in installService.installStartedStream { break }
 
         // The gate covers exactly the setup phase: while the install pipeline
         // is still running, cancelGuestSetup is offered and cancelling it works.
         let firstCancel = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), confirmed: true))
+            .cancelGuestSetup(.id(instance.id), consent: .all))
         #expect(firstCancel.result == .ok)
 
         // Drain the setup operation before asserting or firing the second
@@ -474,7 +474,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.installContext != nil)
 
         let secondCancel = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), confirmed: true))
+            .cancelGuestSetup(.id(instance.id), consent: .all))
         guard case .invalidState? = secondCancel.failure else {
             Issue.record("expected an invalid state, got \(String(describing: secondCancel.failure))")
             return
@@ -509,7 +509,7 @@ struct VMCommandEnvelopeRouterTests {
                 source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
         }
 
-        let started = try await transport.send(.start(.id(instance.id), recovery: false))
+        let started = try await transport.send(.start(.id(instance.id), recovery: false, consent: .none))
         #expect(started.result == .ok)
 
         // The install completes synchronously (`MockMacOSInstallService` has no
@@ -518,7 +518,7 @@ struct VMCommandEnvelopeRouterTests {
         // and the gate should already be closed.
         await virtualization.waitUntilSuspended()
 
-        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), confirmed: true))
+        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), consent: .all))
         guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
             return
@@ -542,7 +542,7 @@ struct VMCommandEnvelopeRouterTests {
 
         for edit: StorageDiskEdit in [
             .create(sizeInGB: 32),
-            .remove(disk: disk, trashFile: true, confirmed: true),
+            .remove(disk: disk, trashFile: true, consent: .all),
             .rename(disk: disk, newLabel: "Scratch"),
             .setNotes(disk: disk, notes: "the build cache"),
             .setReadOnly(disk: disk, readOnly: true),
@@ -571,7 +571,7 @@ struct VMCommandEnvelopeRouterTests {
         let item = UUID()
 
         for edit: RemovableMediaEdit in [
-            .remove(item: item, trashFile: false, confirmed: true),
+            .remove(item: item, trashFile: false, consent: .all),
             .eject(item: item),
             .rename(item: item, newLabel: "Installer"),
             .setNotes(item: item, notes: "from the mirror"),
@@ -656,7 +656,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let refused = try await harness.transport.send(
             .editStorageDisk(
-                .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: false)))
+                .id(instance.id), .remove(disk: disk.id, trashFile: true, consent: .none)))
         guard case .confirmationRequired(let prompt) = try #require(refused.failure) else {
             Issue.record("expected a consent refusal, got \(String(describing: refused.failure))")
             return
@@ -666,7 +666,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let confirmed = try await harness.transport.send(
             .editStorageDisk(
-                .id(instance.id), .remove(disk: disk.id, trashFile: true, confirmed: true)))
+                .id(instance.id), .remove(disk: disk.id, trashFile: true, consent: .all)))
         #expect(confirmed.result == .ok)
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
     }
@@ -787,7 +787,7 @@ struct VMCommandEnvelopeRouterTests {
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
 
-        try harness.core.cancelPreparing(.id(arrival.id), confirmed: true)
+        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
         hold.signal()
         let settled = try await waiting.value
 
@@ -876,7 +876,7 @@ struct VMCommandEnvelopeRouterTests {
     func foreignProtocolVersionIsRefused() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false))
+        var request = VMCommandRequest(verb: .start(.id(instance.id), recovery: false, consent: .none))
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
 
         let response = try await harness.transport.sendRaw(try JSONEncoder().encode(request))
@@ -981,9 +981,9 @@ struct VMCommandEnvelopeRouterTests {
         let assignments = [ConfigurationEntry(key: "cpus", value: "3")]
         #expect(
             try await transport.send(
-                .setConfiguration(.name("Alpha"), assignments: assignments, confirmed: true)
+                .setConfiguration(.name("Alpha"), assignments: assignments, consent: .all)
             ).result == .configuration(assignments))
-        #expect(double.setConfigurationCalls.map(\.confirmed) == [true])
+        #expect(double.setConfigurationCalls.map { !$0.consent.kinds.isEmpty } == [true])
         #expect(double.setConfigurationCalls.map(\.assignments) == [assignments])
     }
 
@@ -996,7 +996,7 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await transport.send(
             .setConfiguration(
                 .name("Alpha"), assignments: [ConfigurationEntry(key: "cpu", value: "3")],
-                confirmed: false))
+                consent: .none))
 
         #expect(
             response.failure

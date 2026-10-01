@@ -16,14 +16,34 @@ private final class OneShotGuestAccountAnswer {
     /// reachable from outside is one a caller could fire a second time, which
     /// is what this exists to make unrepresentable.
     let prompt: GuestAccountPrompt
-    private var answer: (@MainActor (GuestAccountPasswordAnswer) -> Void)?
+    private var answer: (@MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void)?
 
     init(_ request: GuestAccountPasswordRequest) {
         self.prompt = request.prompt
         self.answer = request.answer
     }
 
-    func callAsFunction(_ value: GuestAccountPasswordAnswer) {
+    func callAsFunction(_ value: PresenterAnswer<GuestAccountPasswordAnswer>) {
+        guard let answer else { return }
+        self.answer = nil
+        answer(value)
+    }
+}
+
+/// A ``ConfirmationRequest`` whose answer fires at most once — a button, or the
+/// window going away under the alert or the queue it waits in — for the reason
+/// ``OneShotGuestAccountAnswer`` exists.
+@MainActor
+private final class OneShotConfirmation {
+    let prompt: ConfirmationPrompt
+    private var answer: (@MainActor (PresenterAnswer<Bool>) -> Void)?
+
+    init(_ request: ConfirmationRequest) {
+        self.prompt = request.prompt
+        self.answer = request.answer
+    }
+
+    func callAsFunction(_ value: PresenterAnswer<Bool>) {
         guard let answer else { return }
         self.answer = nil
         answer(value)
@@ -101,6 +121,9 @@ final class DetailAlertsPresenter: NSObject {
     /// Held so ``stop()`` can answer it. Every other request here is one the
     /// user can raise again; this one has a start suspended behind it.
     private var outstandingGuestAccount: OneShotGuestAccountAnswer?
+    /// The confirmation on screen, with a verb suspended behind it, held so
+    /// ``stop()`` can decline it.
+    private var outstandingConfirmations: [OneShotConfirmation] = []
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -133,16 +156,19 @@ final class DetailAlertsPresenter: NSObject {
         // the next window or nowhere.
         let host = window
         window = nil
+        // A question on screen or waiting in the queue has a suspended verb
+        // behind it that nothing else will resume, and the user answered none
+        // of them: each is answered unasked before the dismissal below, whose
+        // cancel action its one-shot then ignores, so the verb's refusal takes
+        // the error path rather than reading as the user's no.
+        outstandingGuestAccount?(.unasked)
+        outstandingGuestAccount = nil
+        for confirmation in outstandingConfirmations { confirmation(.unasked) }
+        outstandingConfirmations.removeAll()
         // The alert on screen is attached to a window that is going away, so
         // it is dismissed as a cancel: its buttons would otherwise stay on a
         // sheet nobody can act on, with `isShowingAlert` left true under them.
         dismissShownAlert(attachedTo: host)
-        // The queue just went, and a guest-account prompt waiting in it has a
-        // suspended start behind it — one nothing else will ever resume. A
-        // prompt that was on screen answered above; the one-shot is what makes
-        // both endings exactly one answer.
-        outstandingGuestAccount?(.cancelled)
-        outstandingGuestAccount = nil
         // Reset, not close: `reset()` drops `isShown` *synchronously* rather than
         // via the async dismissal completion, so a sheet whose parent window is
         // torn down before that completion fires can't leave `isShown` stuck
@@ -369,6 +395,29 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.cancelPreparingConfig(prompt, arrival)) }
     }
 
+    /// Asks the user to confirm what a verb they started refused without.
+    ///
+    /// Answered ``PresenterAnswer/unasked`` rather than queued when it cannot
+    /// be shown right now — no window, or something else on screen — for the
+    /// reason ``presentGuestAccountPassword(_:)`` is: the verb is suspended on
+    /// the answer, and a queue waits on a window that may not come back. The
+    /// verb's refusal then takes the error path, which does queue. ``stop()``
+    /// answers the one on screen the same way.
+    func presentConfirmationRequest(_ request: ConfirmationRequest) {
+        let confirmation = OneShotConfirmation(request)
+        guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, pending.isEmpty
+        else {
+            #log(
+                Self.logger, .notice,
+                "Nowhere to ask '\(request.prompt.title, privacy: .public)'; leaving its refusal standing")
+            confirmation(.unasked)
+            return
+        }
+        outstandingConfirmations.append(confirmation)
+        show(confirmationRequestConfig(confirmation), in: window)
+    }
+
     func presentInstallerMounted(
         vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
     ) {
@@ -406,9 +455,8 @@ final class DetailAlertsPresenter: NSObject {
     /// treatment the pairing prompt gets, for a different reason: the start that
     /// raised this is suspended on the answer, so a request waiting in a queue
     /// that ``stop()`` drops would leave that start suspended for the rest of
-    /// the session. ``GuestAccountPasswordAnswer/cancelled`` is what an
-    /// unaskable prompt answers, because the alternative retracts the account
-    /// and only the user may decide that.
+    /// the session. ``PresenterAnswer/unasked`` is what an unaskable prompt
+    /// answers, so the start's refusal takes the error path, which does queue.
     ///
     /// A prompt already on screen is one of those cases, which is also what
     /// keeps a second Start from booting the guest out from under the question
@@ -430,7 +478,7 @@ final class DetailAlertsPresenter: NSObject {
                 Self.logger, .notice,
                 "Already asking for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; raising that question"
             )
-            request.answer(.cancelled)
+            request.answer(.answered(.cancelled))
             return
         }
         guard window != nil, !isShowingAlert, !deleteSheetPresenter.isShown,
@@ -438,9 +486,9 @@ final class DetailAlertsPresenter: NSObject {
         else {
             #log(
                 Self.logger, .notice,
-                "Nowhere to ask for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; not starting it"
+                "Nowhere to ask for the account password '\(request.prompt.vm.name, privacy: .public)' was set up with; leaving its refusal standing"
             )
-            request.answer(.cancelled)
+            request.answer(.unasked)
             return
         }
         showGuestAccountPassword(
@@ -458,7 +506,7 @@ final class DetailAlertsPresenter: NSObject {
         refusal: String?
     ) {
         guard let window else {
-            answer(.cancelled)
+            answer(.unasked)
             return
         }
         outstandingGuestAccount = answer
@@ -470,7 +518,7 @@ final class DetailAlertsPresenter: NSObject {
                     if self?.outstandingGuestAccount === answer {
                         self?.outstandingGuestAccount = nil
                     }
-                    answer(value)
+                    answer(.answered(value))
                 },
                 retry: { [weak self] message in
                     // Through the queue rather than straight back to `show`: the
@@ -608,6 +656,20 @@ final class DetailAlertsPresenter: NSObject {
             "No \(verb, privacy: .public) route for alternative '\(alternative.title, privacy: .public)'"
         )
         assertionFailure("No \(verb) route for alternative '\(alternative.title)'")
+    }
+
+    /// A confirmation a suspended verb waits on, answered by its buttons.
+    private func confirmationRequestConfig(
+        _ confirmation: OneShotConfirmation
+    ) -> AlertConfiguration {
+        let settle: (Bool) -> Void = { [weak self, weak confirmation] value in
+            guard let confirmation else { return }
+            self?.outstandingConfirmations.removeAll { $0 === confirmation }
+            confirmation(.answered(value))
+        }
+        return AlertConfiguration(
+            confirming: confirmation.prompt, confirm: { settle(true) },
+            dismiss: { settle(false) })
     }
 
     /// The cancel confirmation for a create, clone or import, drawn from the

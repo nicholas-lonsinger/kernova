@@ -30,8 +30,7 @@ extension KernovaCommand {
             case .exactCopy:
                 ArgumentHelp(
                     "Keep the source's machine identity and MAC address. The two never run on the same "
-                        + "network at once, and never run at once at all while Kernova blocks duplicate "
-                        + "machine IDs from booting.")
+                        + "network at once, and run at once only when one is started anyway.")
             }
         }
     }
@@ -193,7 +192,7 @@ extension KernovaCommand {
             // that cannot show what would go should not decide it silently.
             .delete(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                permanently: permanent, alsoRemoving: [], confirmed: options.yes)
+                permanently: permanent, alsoRemoving: [], consent: options.consent)
         }
 
         /// Deletes the VM.

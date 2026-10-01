@@ -7,15 +7,12 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        try await start(try resolve(selector), recovery: recovery)
-    }
-
-    /// The start every surface reaches, with the instance already resolved —
-    /// ``startNow(_:recovery:policy:resolving:)``, awaited.
-    func start(_ instance: VMInstance, recovery: Bool = false) async throws {
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
+        let instance = try resolve(selector)
         do {
-            try await startNow(instance, recovery: recovery, policy: .command).value()
+            try await startNow(
+                instance, recovery: recovery, policy: .command(VMIdentityOverride(consent))
+            ).value()
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
@@ -24,13 +21,24 @@ extension VMCommandCore {
     /// What a start may begin beyond the bring-up itself.
     enum StartPolicy: Sendable, Equatable {
         /// Someone asked for this start: it runs the guest setup the VM still
-        /// owes, which chains the boot.
-        case command
+        /// owes, which chains the boot. `identity` is what they can do about
+        /// another active VM sharing its machine identity.
+        case command(VMIdentityOverride)
         /// A standing preference asked for it
         /// (``VMHostState/startsAutomaticallyOnLaunch``), with nobody at the
         /// machine to watch what a start would put on screen: it begins no
-        /// guest setup.
+        /// guest setup, and nobody can confirm starting beside a VM sharing its
+        /// machine identity.
         case standing
+
+        /// What this start can do about another active VM sharing its machine
+        /// identity.
+        var identity: VMIdentityOverride {
+            switch self {
+            case .command(let identity): identity
+            case .standing: .unavailable
+            }
+        }
     }
 
     /// Decides the start `instance`'s state names and launches it, resolving
@@ -54,10 +62,13 @@ extension VMCommandCore {
         _ instance: VMInstance, recovery: Bool = false, policy: StartPolicy,
         resolving outcome: VMOutcome = VMOutcome()
     ) throws -> VMOutcome {
-        switch instance.activity.decide(.start(recovery: recovery), posture: .commit) {
+        switch instance.activity.decide(
+            .start(recovery: recovery), posture: .commit, identity: policy.identity)
+        {
         case .refuse(let reason):
             if recovery, reason == .invalidState,
-                instance.activity.decide(.start(recovery: false), posture: .commit) == .admit
+                instance.activity.decide(
+                    .start(recovery: false), posture: .commit, identity: policy.identity) == .admit
             {
                 throw CommandError.unsupported(capability: "starting in macOS Recovery")
             }
@@ -83,11 +94,12 @@ extension VMCommandCore {
         case .setup:
             // The setup pipeline chains the boot that spends the account, and
             // reads the answer where this did.
-            try runGuestSetup(on: instance)
+            try runGuestSetup(on: instance, identity: policy.identity)
             outcome.resolve(.success(()))
         case .guestStart(let kind):
             try lifecycle.launchStart(
-                instance, kind, provisioning: provisioning, resolving: outcome,
+                instance, kind, identity: policy.identity, provisioning: provisioning,
+                resolving: outcome,
                 beforeBoot: { [weak self] in self?.applyMatchWindowBootResolution($0) },
                 afterBoot: { [weak self] permit, route in
                     try self?.retractDeliveredGuestAccount(permit, route: route)
@@ -115,7 +127,7 @@ extension VMCommandCore {
         }
         .reportingFailure { [weak self, weak instance] error in
             guard let self, let instance,
-                policy == .command || !Self.standingStartPassedOver(error)
+                policy != .standing || !Self.standingStartPassedOver(error)
             else { return }
             self.reportUnattendedFailure(
                 self.bringUpFailure(error, verb: .start, on: instance), on: instance)
@@ -501,10 +513,16 @@ extension VMCommandCore {
     /// message on screen; cancel and transient failures (the running-VM cap)
     /// return it to `.initialBoot` for a retry that resumes the download from
     /// the `.kernovadownload` bundle if present.
-    private func runGuestSetup(on instance: VMInstance) throws {
-        try lifecycle.launchGuestSetup(on: instance) { [weak self, weak instance] result in
+    ///
+    /// The chained boot carries a confirmed `identity` on, since the user
+    /// confirmed starting this VM beside one sharing its machine identity; it
+    /// asks nobody, so an unconfirmed one is refused.
+    private func runGuestSetup(on instance: VMInstance, identity: VMIdentityOverride) throws {
+        try lifecycle.launchGuestSetup(on: instance, identity: identity) {
+            [weak self, weak instance] result in
             guard let self, let instance else { return [] }
-            return self.setupEnded(result, on: instance)
+            return self.setupEnded(
+                result, on: instance, bootIdentity: identity.unattended)
         }
     }
 
@@ -512,7 +530,8 @@ extension VMCommandCore {
     /// boot a successful one owes — which that commit admits before any other
     /// request can be decided against the VM.
     private func setupEnded(
-        _ result: Result<Void, any Error>, on instance: VMInstance
+        _ result: Result<Void, any Error>, on instance: VMInstance,
+        bootIdentity: VMIdentityOverride
     ) -> [VMFollowUp] {
         switch result {
         case .failure(is CancellationError):
@@ -546,7 +565,7 @@ extension VMCommandCore {
                 on: instance)
             return []
         }
-        return [startFollowUp(instance, policy: .command)]
+        return [startFollowUp(instance, policy: .command(bootIdentity))]
     }
 
     /// Drops the account a VM owes when the guest a finished setup produced
@@ -574,10 +593,10 @@ extension VMCommandCore {
     ///
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
     /// bundle is preserved — this is the non-destructive cancel.
-    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
+    func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws {
         let instance = try resolve(selector)
         try require(.cancelGuestSetup, on: instance)
-        guard confirmed else {
+        guard consent.covers(.cancelGuestSetup) else {
             throw CommandError.confirmationRequired(Self.cancelGuestSetupPrompt(instance))
         }
         #log(Self.logger, .info, "Cancelling setup for '\(instance.name, privacy: .public)'")
@@ -640,12 +659,12 @@ extension VMCommandCore {
     // MARK: - Stop
 
     func stop(
-        _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+        _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval?
     ) async throws {
         try Self.requireUsable(timeout)
         try await stop(
-            try resolve(selector), disposition: disposition, confirmed: confirmed, timeout: timeout)
+            try resolve(selector), disposition: disposition, consent: consent, timeout: timeout)
     }
 
     /// Takes the guest down, waiting out the power-off only for a caller that
@@ -657,16 +676,16 @@ extension VMCommandCore {
     /// request refuses rather than escalating, because terminating it is a
     /// separate decision with separate consent.
     func stop(
-        _ instance: VMInstance, disposition: StopDisposition, confirmed: Bool,
+        _ instance: VMInstance, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval? = nil
     ) async throws {
-        try await requestStop(instance, disposition: disposition, confirmed: confirmed)
+        try await requestStop(instance, disposition: disposition, consent: consent)
         guard let timeout else { return }
         try await awaitPowerOff(instance, within: timeout, verb: .stop)
     }
 
     private func requestStop(
-        _ instance: VMInstance, disposition: StopDisposition, confirmed: Bool
+        _ instance: VMInstance, disposition: StopDisposition, consent: Consent
     ) async throws {
         switch disposition {
         case .graceful:
@@ -682,13 +701,14 @@ extension VMCommandCore {
             // machine state"), so a live-paused guest has to be resumed first
             // or terminated — which is a choice, not a detail.
             if instance.isLivePaused {
-                guard confirmed else {
+                guard consent.covers(.stopPaused) else {
                     throw CommandError.confirmationRequired(Self.stopPausedPrompt(instance))
                 }
-                try await resumeThenShutDown(instance)
+                try await resumeThenShutDown(
+                    instance, identity: VMIdentityOverride(consent).unattended)
                 return
             }
-            guard confirmed || !instance.holdsSuspendedSession else {
+            guard consent.covers(.forceStop) || !instance.holdsSuspendedSession else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
@@ -702,8 +722,14 @@ extension VMCommandCore {
                 throw failure(error, verb: .stop, on: instance)
             }
         case .resumeThenShutDown:
-            try require(.resume, on: instance)
-            try await resumeThenShutDown(instance)
+            // Decided with the identity the restore will claim under, which
+            // the `.resume` capability's gate would decide without.
+            let identity = VMIdentityOverride(consent).unattended
+            switch instance.activity.decide(.resume, posture: .commit, identity: identity) {
+            case .admit, .join: break
+            case .refuse(let reason): throw admissionRefusal(reason, on: instance, verb: .resume)
+            }
+            try await resumeThenShutDown(instance, identity: identity)
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -711,7 +737,7 @@ extension VMCommandCore {
             // machine Virtualization would refuse to stop is turned back
             // without first taking the user's agreement to terminate it.
             try require(anyOf: [.forceStop, .discardSavedState], on: instance)
-            guard confirmed else {
+            guard consent.covers(.forceStop) else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
             }
             if try await discardedSavedStateAsEphemeralRevert(instance) { return }
@@ -729,9 +755,14 @@ extension VMCommandCore {
 
     /// Resumes a paused VM, or restores a suspended one, then requests a
     /// graceful ACPI shutdown.
-    private func resumeThenShutDown(_ instance: VMInstance) async throws {
+    ///
+    /// A restore beside a VM sharing the machine identity is asked about by no
+    /// one — the caller asked for a stop — so `identity` is unattended.
+    private func resumeThenShutDown(
+        _ instance: VMInstance, identity: VMIdentityOverride
+    ) async throws {
         do {
-            try await resumeOrRestore(instance)
+            try await resumeOrRestore(instance, identity: identity)
             try await lifecycle.requestStop(instance)
         } catch {
             #log(
@@ -867,9 +898,10 @@ extension VMCommandCore {
 
     /// A hot resume of a live-paused VM, or the restore of the saved state one
     /// holds — joining a restore already in flight.
-    func resume(_ selector: VMSelector) async throws {
+    func resume(_ selector: VMSelector, consent: Consent) async throws {
         let instance = try resolve(selector)
-        switch instance.activity.decide(.resume, posture: .commit) {
+        let identity = VMIdentityOverride(consent)
+        switch instance.activity.decide(.resume, posture: .commit, identity: identity) {
         case .refuse(let reason):
             throw admissionRefusal(reason, on: instance, verb: .resume)
         case .join(let outcome):
@@ -887,7 +919,7 @@ extension VMCommandCore {
         // A restore readies the display as every start does.
         if VMAdmission.resumeWork(phase: instance.phase) == .hot { readyDisplay?(instance) }
         do {
-            try await resumeOrRestore(instance)
+            try await resumeOrRestore(instance, identity: identity)
         } catch {
             throw bringUpFailure(error, verb: .resume, on: instance)
         }
@@ -896,10 +928,12 @@ extension VMCommandCore {
     /// The Resume `instance`'s state names: the restore of the saved state it
     /// holds — which is what a start of that VM performs — or a hot resume
     /// from memory.
-    private func resumeOrRestore(_ instance: VMInstance) async throws {
+    private func resumeOrRestore(
+        _ instance: VMInstance, identity: VMIdentityOverride
+    ) async throws {
         switch VMAdmission.resumeWork(phase: instance.phase) {
         case .restore:
-            try await startNow(instance, policy: .command).value()
+            try await startNow(instance, policy: .command(identity)).value()
         case .hot:
             try await lifecycle.resume(instance)
         }
@@ -950,8 +984,13 @@ extension VMCommandCore {
     /// before the stop. Running is not evidence the window is spent — an
     /// install can finish and the guest be booted into Recovery, which reads no
     /// account — and finding that out after the guest is down would leave the
-    /// VM powered off half way through a restart.
-    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws {
+    /// VM powered off half way through a restart. Another active VM sharing
+    /// the machine identity the boot would claim is refused, or asked about,
+    /// before the stop for the same reason; `consent` answers it, and the boot
+    /// carries that answer.
+    func restart(
+        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
+    ) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try require(.restart, on: instance)
@@ -960,6 +999,12 @@ extension VMCommandCore {
         // down leaves it powered off mid-restart. Refused here it keeps
         // running, and the door that can ask answers and restarts again.
         try refuseOwedGuestAccount(instance)
+        let identity = VMIdentityOverride(consent)
+        if let conflict = instance.identityConflict(
+            for: .guestStart(.starting(recovery: false)), override: identity)
+        {
+            throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
+        }
         guard let sessionID = instance.activity.liveSessionID else {
             throw admissionRefusal(.invalidState, on: instance, verb: .restart)
         }
@@ -968,11 +1013,13 @@ extension VMCommandCore {
         let boot = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            try self.startNow(instance, policy: .command, resolving: outcome)
+            // Asks nobody: the boot runs once the guest is down, after the
+            // call that asked has moved on.
+            try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {
-            try await stop(instance, disposition: .graceful, confirmed: true)
+            try await stop(instance, disposition: .graceful, consent: .all)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has

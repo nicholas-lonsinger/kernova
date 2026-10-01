@@ -83,13 +83,17 @@ protocol VMCommanding: AnyObject {
     /// ``provideGuestAccountPassword(_:password:)`` or
     /// ``skipGuestAccount(_:)`` before starting again. A recovery boot asks
     /// nothing: it is not the boot macOS reads an account on.
-    func start(_ selector: VMSelector, recovery: Bool) async throws
+    ///
+    /// Another active VM sharing the machine identity refuses it, asking for
+    /// ``ConfirmationKind/startBesideSharedMachineIdentity`` instead where the
+    /// user allows starting one anyway; `consent` carries that answer.
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws
 
     /// Detaches the attachment a failed start named, leaving the file itself
     /// untouched — the removal half of the start-failed alert's offer.
     ///
     /// Starts nothing: a caller that wants the VM running follows this with
-    /// ``start(_:recovery:)``.
+    /// ``start(_:recovery:consent:)``.
     ///
     /// A VM that has left the library and an entry already gone are both quiet
     /// no-ops: what the removal was for is already true, so neither is a failure
@@ -126,7 +130,7 @@ protocol VMCommanding: AnyObject {
     ///
     /// The bundle is preserved and the VM returns to `.initialBoot`, so a later
     /// start resumes it. A VM with no setup in flight refuses.
-    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws
+    func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws
 
     /// Stops the VM the way `disposition` names.
     ///
@@ -139,26 +143,31 @@ protocol VMCommanding: AnyObject {
     /// nothing when it expires; `nil` returns as soon as the guest has been
     /// asked to go down.
     func stop(
-        _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+        _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval?
     ) async throws
 
     func pause(_ selector: VMSelector) async throws
 
-    /// Resumes the VM, presenting nothing as ``start(_:recovery:)`` does — and
-    /// joining a restore already in flight the same way.
-    func resume(_ selector: VMSelector) async throws
+    /// Resumes the VM, presenting nothing as ``start(_:recovery:consent:)``
+    /// does — and joining a restore already in flight, and asking about a
+    /// shared machine identity, the same way.
+    func resume(_ selector: VMSelector, consent: Consent) async throws
 
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
 
     /// Shuts the guest down and starts it again once it has powered off,
-    /// bringing it back up the way ``start(_:recovery:)`` would.
+    /// bringing it back up the way ``start(_:recovery:consent:)`` would.
     ///
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
     /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
     /// is not started again; `nil` waits as long as the guest takes.
-    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws
+    ///
+    /// Another active VM sharing the machine identity is asked about before
+    /// the guest goes down, as ``start(_:recovery:consent:)`` asks; `consent`
+    /// carries the answer to the boot.
+    func restart(_ selector: VMSelector, timeout: TimeInterval?, consent: Consent) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
@@ -186,10 +195,10 @@ protocol VMCommanding: AnyObject {
     /// Returns the VM to a snapshot, optionally capturing the current state
     /// first so the revert is reversible.
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool
+        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent
     ) async throws
 
-    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, confirmed: Bool) async throws
+    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws
 
     func renameSnapshot(_ selector: VMSelector, snapshot: UUID, to newName: String) throws
 
@@ -249,7 +258,7 @@ protocol VMCommanding: AnyObject {
     /// `permanently` bypasses the Trash. Files shared with another VM are never
     /// deleted even when their id is passed.
     func delete(
-        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
+        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws
 
     /// Copies a `.kernova` bundle into the library — answering the existing
@@ -275,7 +284,7 @@ protocol VMCommanding: AnyObject {
     /// Cancels a create, clone or import so it becomes no VM: what it wrote is
     /// removed, or, once it is publishing, its published bundle is moved to
     /// the Trash. Refuses a selector naming a VM.
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws
+    func cancelPreparing(_ selector: VMSelector, consent: Consent) throws
 
     // MARK: - Storage Disks
 
@@ -296,7 +305,7 @@ protocol VMCommanding: AnyObject {
     /// is set. A VM's only storage disk is refused, whichever file backs it: a
     /// VM keeps at least one. Any disk with a sibling goes, `Disk.asif` included.
     func removeStorageDisk(
-        _ selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, disk: UUID, trashFile: Bool, consent: Consent
     ) async throws
 
     /// Replaces a storage disk's user-facing label; an empty label is a no-op.
@@ -334,7 +343,7 @@ protocol VMCommanding: AnyObject {
     /// The bundled Guest Agent installer and files shared with another VM are
     /// never trashed.
     func removeRemovableMedia(
-        _ selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, item: UUID, trashFile: Bool, consent: Consent
     ) async throws
 
     /// Detaches a removable medium and keeps its file — what a running guest
@@ -421,7 +430,7 @@ protocol VMCommanding: AnyObject {
     /// The VM's values for `keys`, or for every key that applies to it when
     /// `keys` is `nil`.
     ///
-    /// Each value is written the way ``setConfiguration(_:assignments:confirmed:)``
+    /// Each value is written the way ``setConfiguration(_:assignments:consent:)``
     /// parses it back.
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry]
 
@@ -434,11 +443,11 @@ protocol VMCommanding: AnyObject {
     /// leaves its value where it is is taken in any state; a host-state key's
     /// gate is asked whether its value moves or not, so naming one is refused
     /// wherever that key is pinned, a snapshot capture among them.
-    /// `confirmed` supplies the consent the one assignment that asks for it
-    /// needs — turning automatic clipboard passthrough on.
+    /// `consent` supplies what the one assignment that asks for it needs —
+    /// turning automatic clipboard passthrough on.
     @discardableResult
     func setConfiguration(
-        _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
+        _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry]
 
     // MARK: - Guest Agent Disk
@@ -479,7 +488,7 @@ protocol VMCommanding: AnyObject {
 /// one: a user watching a window can see the guest is taking its time and stop
 /// it themselves.
 extension VMCommanding {
-    func stop(_ selector: VMSelector, disposition: StopDisposition, confirmed: Bool) async throws {
-        try await stop(selector, disposition: disposition, confirmed: confirmed, timeout: nil)
+    func stop(_ selector: VMSelector, disposition: StopDisposition, consent: Consent) async throws {
+        try await stop(selector, disposition: disposition, consent: consent, timeout: nil)
     }
 }

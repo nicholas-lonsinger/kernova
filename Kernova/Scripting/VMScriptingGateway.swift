@@ -226,38 +226,54 @@ final class VMScriptingGateway {
 
     // MARK: - Lifecycle
 
-    func start(_ selectors: [VMSelector], recoveryMode: Bool) async throws {
-        try await perform(.start, on: selectors) {
-            try await self.commands.start($0, recovery: recoveryMode)
+    func start(
+        _ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool
+    ) async throws {
+        try await perform(.start, on: selectors) { selector in
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.start(selector, recovery: recoveryMode, consent: consent)
+            }
         }
     }
 
-    /// Stops each VM the way `method` names, supplying `confirmed` as the
+    /// Stops each VM the way `method` names, with `confirmation` as the
     /// consent a destructive stop refuses without.
-    ///
-    /// The consent round trip is ``VMConsentPolicy``'s, with nothing to present:
-    /// a script has already said whether it consents, so the prompt the core
-    /// describes is either answered by the flag it was given or thrown back as
-    /// the refusal it is.
     func stop(
-        _ selectors: [VMSelector], method: StopDisposition, confirmed: Bool,
+        _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.stop, on: selectors) { selector in
-            try await VMConsentPolicy.run(
-                prompting: { prompt in
-                    guard confirmed else { throw CommandError.confirmationRequired(prompt) }
-                },
-                { consented in
-                    try await self.commands.stop(
-                        selector, disposition: method, confirmed: consented, timeout: timeout)
-                })
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.stop(
+                    selector, disposition: method, consent: consent, timeout: timeout)
+            }
         }
     }
 
-    func restart(_ selectors: [VMSelector], givingUpAfter timeout: TimeInterval?) async throws {
-        try await perform(.restart, on: selectors) {
-            try await self.commands.restart($0, timeout: timeout)
+    /// Runs `verb` with the consent a script's `with confirmation` gives:
+    /// every confirmation it asks for, or none.
+    ///
+    /// The round trip is ``VMConsentPolicy``'s, with nothing to present: a
+    /// script has already said whether it consents, so each prompt the core
+    /// describes is either answered by the flag or thrown back as the refusal
+    /// it is.
+    private static func consenting(
+        _ confirmation: Bool, _ verb: (Consent) async throws -> Void
+    ) async throws {
+        try await VMConsentPolicy.run(
+            prompting: { prompt in
+                guard confirmation else { throw CommandError.confirmationRequired(prompt) }
+            },
+            verb)
+    }
+
+    func restart(
+        _ selectors: [VMSelector], confirmation: Bool, givingUpAfter timeout: TimeInterval?
+    ) async throws {
+        try await perform(.restart, on: selectors) { selector in
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.restart(selector, timeout: timeout, consent: consent)
+            }
         }
     }
 
@@ -267,9 +283,11 @@ final class VMScriptingGateway {
         }
     }
 
-    func resume(_ selectors: [VMSelector]) async throws {
-        try await perform(.resume, on: selectors) {
-            try await self.commands.resume($0)
+    func resume(_ selectors: [VMSelector], confirmation: Bool) async throws {
+        try await perform(.resume, on: selectors) { selector in
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.resume(selector, consent: consent)
+            }
         }
     }
 

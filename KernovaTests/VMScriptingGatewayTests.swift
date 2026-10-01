@@ -244,11 +244,11 @@ struct VMScriptingGatewayTests {
         let gateway = makeGateway(commands)
         let alpha = VMSelector.name("Alpha")
 
-        try await gateway.start([alpha], recoveryMode: true)
-        try await gateway.stop([alpha], method: .force, confirmed: true, givingUpAfter: 30)
-        try await gateway.restart([alpha], givingUpAfter: nil)
+        try await gateway.start([alpha], recoveryMode: true, confirmation: false)
+        try await gateway.stop([alpha], method: .force, confirmation: true, givingUpAfter: 30)
+        try await gateway.restart([alpha], confirmation: false, givingUpAfter: nil)
         try await gateway.pause([alpha])
-        try await gateway.resume([alpha])
+        try await gateway.resume([alpha], confirmation: false)
         try await gateway.suspend([alpha])
         try await gateway.reveal([alpha])
 
@@ -294,7 +294,7 @@ struct VMScriptingGatewayTests {
         commands.startError = refusal
 
         await #expect(throws: refusal) {
-            try await makeGateway(commands).start([.name("Alpha")], recoveryMode: false)
+            try await makeGateway(commands).start([.name("Alpha")], recoveryMode: false, confirmation: false)
         }
     }
 
@@ -445,10 +445,10 @@ struct VMScriptingGatewayTests {
         let gateway = makeGateway(commands, prepareToSurface: { preparations.count += 1 })
         let alpha = VMSelector.name("Alpha")
 
-        try await gateway.start([alpha], recoveryMode: false)
-        try await gateway.resume([alpha])
-        try await gateway.restart([alpha], givingUpAfter: nil)
-        try await gateway.stop([alpha], method: .graceful, confirmed: false, givingUpAfter: nil)
+        try await gateway.start([alpha], recoveryMode: false, confirmation: false)
+        try await gateway.resume([alpha], confirmation: false)
+        try await gateway.restart([alpha], confirmation: false, givingUpAfter: nil)
+        try await gateway.stop([alpha], method: .graceful, confirmation: false, givingUpAfter: nil)
         try await gateway.pause([alpha])
         try await gateway.suspend([alpha])
         try await gateway.reveal([])
@@ -508,7 +508,7 @@ struct VMScriptingGatewayTests {
         let gateway = makeGateway(commands, awaitReady: { await awaits.increment() })
 
         try await gateway.pause([.name("Alpha")])
-        try await gateway.resume([.name("Alpha")])
+        try await gateway.resume([.name("Alpha")], confirmation: false)
 
         #expect(await awaits.value == 1)
     }
@@ -523,10 +523,10 @@ struct VMScriptingGatewayTests {
 
         await #expect(throws: CommandError.confirmationRequired(prompt)) {
             try await makeGateway(commands).stop(
-                [.name("Alpha")], method: .force, confirmed: false, givingUpAfter: nil)
+                [.name("Alpha")], method: .force, confirmation: false, givingUpAfter: nil)
         }
 
-        #expect(commands.stopCalls.map(\.confirmed) == [false])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
     }
 
     @Test("A stop with confirmation re-issues the verb, consented")
@@ -535,9 +535,9 @@ struct VMScriptingGatewayTests {
         commands.stopConsentPrompt = makePrompt(kind: .forceStop)
 
         try await makeGateway(commands).stop(
-            [.name("Alpha")], method: .force, confirmed: true, givingUpAfter: nil)
+            [.name("Alpha")], method: .force, confirmation: true, givingUpAfter: nil)
 
-        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
     @Test("A stop a paused guest cannot receive is refused even with confirmation")
@@ -550,9 +550,9 @@ struct VMScriptingGatewayTests {
         // script is told to name the method it means instead.
         await #expect(throws: CommandError.confirmationRequired(prompt)) {
             try await makeGateway(commands).stop(
-                [.name("Alpha")], method: .graceful, confirmed: true, givingUpAfter: nil)
+                [.name("Alpha")], method: .graceful, confirmation: true, givingUpAfter: nil)
         }
 
-        #expect(commands.stopCalls.map(\.confirmed) == [false])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
     }
 }

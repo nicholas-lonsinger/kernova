@@ -109,7 +109,7 @@ struct VMLifecycleScriptCommandsTests {
         // The consent is what answers the prompt the core describes, so the
         // verb is issued once to ask and once more, consented.
         #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
-        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
         #expect(commands.stopCalls.map(\.timeout) == [30, 30])
     }
 
@@ -121,7 +121,7 @@ struct VMLifecycleScriptCommandsTests {
         try await command.run(makeGateway(commands), on: [.name("Alpha")])
 
         #expect(commands.stopCalls.map(\.disposition) == [.graceful])
-        #expect(commands.stopCalls.map(\.confirmed) == [false])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
         #expect(commands.stopCalls.map(\.timeout) == [nil])
     }
 
@@ -149,6 +149,22 @@ struct VMLifecycleScriptCommandsTests {
         try await command.run(makeGateway(commands), on: [.name("Alpha")])
 
         #expect(commands.restartCalls.map(\.timeout) == [20])
+    }
+
+    @Test("restart with confirmation answers the consent it asks for")
+    func restartPassesItsConfirmation() async throws {
+        let commands = MockVMCommanding()
+        commands.restartConsentPrompt = ConfirmationPrompt(
+            kind: .startBesideSharedMachineIdentity, title: "Restart?", message: "Same machine ID.",
+            confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
+        let command = try makeCommand(
+            VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
+            arguments: ["Confirmation": true])
+
+        try await command.run(makeGateway(commands), on: [.name("Alpha")])
+
+        #expect(
+            commands.restartConsents == [.none, Consent([.startBesideSharedMachineIdentity])])
     }
 
     @Test("pause, resume, suspend and reveal each reach their verb")

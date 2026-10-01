@@ -25,9 +25,14 @@ struct StartVMIntent: AppIntent {
         }
     }
 
+    /// Asks, rather than taking a saved parameter, before starting beside a VM
+    /// sharing the machine identity: a shortcut's saved answer would start it
+    /// without the vendor's claim in front of the user.
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.start(vm.id, recovery: recovery)
+        try await runWithConsent { consent in
+            try await gateway.start(vm.id, recovery: recovery, consent: consent)
+        }
         return .result()
     }
 }
@@ -54,8 +59,8 @@ struct StopVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
-            try await gateway.stop(vm.id, disposition: method.disposition, confirmed: confirmed)
+        try await runWithConsent { consent in
+            try await gateway.stop(vm.id, disposition: method.disposition, consent: consent)
         }
         return .result()
     }
@@ -100,7 +105,9 @@ struct ResumeVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.resume(vm.id)
+        try await runWithConsent { consent in
+            try await gateway.resume(vm.id, consent: consent)
+        }
         return .result()
     }
 }
@@ -144,7 +151,9 @@ struct RestartVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.restart(vm.id)
+        try await runWithConsent { consent in
+            try await gateway.restart(vm.id, consent: consent)
+        }
         return .result()
     }
 }

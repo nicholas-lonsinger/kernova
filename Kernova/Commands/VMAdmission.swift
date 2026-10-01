@@ -64,7 +64,7 @@ enum VMAdmission {
                 (.heldByAnotherCopy, .heldByAnotherCopy):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
-                l.other === r.other && l.reason == r.reason
+                l.other === r.other && l.reason == r.reason && l.offersOverride == r.offersOverride
             case (.accessoryHeld(let l), .accessoryHeld(let r)):
                 l === r
             default: false
@@ -598,8 +598,10 @@ protocol VMAdmissionPeers: AnyObject {
     var accessoryHolders: VMAccessoryHolders { get }
 
     /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
-    /// bringing `instance` up under `configuration` would duplicate.
+    /// bringing `instance` up under `configuration` would duplicate, unless
+    /// `override` waives it.
     func identityConflict(
-        for instance: VMInstance, bringingUp configuration: VMConfiguration
+        for instance: VMInstance, bringingUp configuration: VMConfiguration,
+        override: VMIdentityOverride
     ) -> VMIdentityConflict?
 }

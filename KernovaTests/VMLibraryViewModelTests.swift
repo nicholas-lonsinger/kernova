@@ -1242,6 +1242,7 @@ struct VMLibraryViewModelTests {
         func makeTwin(_ name: String, identifier: Data) -> VMInstance {
             viewModel.library.admitFixture(name: name, guestOS: guestOS) {
                 $0.macAddress = exactCopies || name == "Starting" ? "02:4b:4e:56:02:01" : "02:4b:4e:56:02:02"
+                if exactCopies { $0.networkEnabled = true }
                 if guestOS == .macOS {
                     $0.machineIdentifierData = identifier
                 } else {
@@ -1270,34 +1271,75 @@ struct VMLibraryViewModelTests {
         #expect(starting.status == .stopped)
     }
 
-    @Test("start is refused as the pair while its exact copy is running")
+    @Test(
+        "start beside a running twin sharing its machine ID and MAC address is refused on the address, asking nothing")
     func startBlockedByRunningExactCopy() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel, exactCopies: true)
         other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
 
         await viewModel.start(starting)
 
         #expect(virtService.startCallCount == 0)
-        #expect(presenter.errorTitle == "Exact Copy In Use")
-        #expect(
-            presenter.errorMessage?.hasPrefix(
-                "\u{201C}Starting\u{201D} is an exact copy of \u{201C}Twin\u{201D}") == true)
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
     }
 
-    @Test("start proceeds past a machine ID twin when the guard preference is off")
-    func startProceedsWhenDuplicateMachineIDGuardDisabled() async {
+    @Test("start beside a machine ID twin asks when the override is on, and starts once confirmed")
+    func startAsksAndStartsWhenConfirmed() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
-        preferences.blockDuplicateMachineIDBoot = false
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .answered(true)
 
         await viewModel.start(starting)
 
+        #expect(
+            presenter.confirmationRequests.map(\.prompt.title)
+                == ["Start \u{201C}Starting\u{201D} Anyway?"])
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
+    }
+
+    @Test("start beside a machine ID twin it could not ask about shows the refusal as an error")
+    func startUnaskedShowsTheRefusal() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .unasked
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.count == 1)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(
+            presenter.errorMessage?.hasPrefix(
+                "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
+                == true)
+    }
+
+    @Test("start beside a machine ID twin that the user declines starts nothing and shows nothing more")
+    func startDeclinedStartsNothing() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .answered(false)
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.count == 1)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.showError == false)
+        #expect(starting.status == .stopped)
     }
 
     @Test("start proceeds when the machine ID twin is stopped")
@@ -1391,18 +1433,22 @@ struct VMLibraryViewModelTests {
         #expect(resuming.hasSaveFile)
     }
 
-    @Test("a cold resume proceeds past a machine ID twin when the guard preference is off")
-    func coldResumeProceedsWhenDuplicateMachineIDGuardDisabled() async throws {
+    @Test("a cold resume beside a machine ID twin asks, worded as a resume, and restores once confirmed")
+    func coldResumeAsksAndRestoresWhenConfirmed() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (resuming, other) = appendMachineIDPair(to: viewModel)
         resuming.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
-        preferences.blockDuplicateMachineIDBoot = false
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .answered(true)
 
         await viewModel.resume(resuming)
 
+        #expect(
+            presenter.confirmationRequests.map(\.prompt.title)
+                == ["Resume \u{201C}Starting\u{201D} Anyway?"])
         #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(presenter.showError == false)
     }
@@ -1761,7 +1807,7 @@ struct VMLibraryViewModelTests {
 
         let confirmed = viewModel.setConfiguration(
             [VMConfigurationKeyRegistry.clipboardPassthrough.assigning(true)], on: instance,
-            confirmed: true)
+            consent: .all)
         #expect(confirmed == .applied)
         #expect(instance.configuration.clipboardPassthroughEnabled)
     }
@@ -1926,33 +1972,31 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("macAddressPeers names the other holders, regardless of case")
-    func macAddressPeersNamesOtherHolders() {
+    @Test("vmNamesSharingMACAddress names the other holders, regardless of case")
+    func vmNamesSharingMACAddressNamesOtherHolders() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, mac: "aa:bb:cc:dd:ee:01", otherMAC: "AA:BB:CC:DD:EE:01")
 
-        #expect(viewModel.macAddressPeers(of: starting).faults == ["Twin"])
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
     }
 
-    @Test("macAddressPeers is empty when the address is the VM's alone")
-    func macAddressPeersIsEmptyWhenUnique() {
+    @Test("vmNamesSharingMACAddress is empty when the address is the VM's alone")
+    func vmNamesSharingMACAddressIsEmptyWhenUnique() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, otherMAC: "aa:bb:cc:dd:ee:02")
 
-        let peers = viewModel.macAddressPeers(of: starting)
-        #expect(peers.faults.isEmpty)
-        #expect(peers.exactCopies.isEmpty)
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting).isEmpty)
     }
 
-    @Test("macAddressPeers counts a holder whose networking is off")
-    func macAddressPeersCountsANetworkingOffHolder() {
+    @Test("vmNamesSharingMACAddress counts a holder whose networking is off")
+    func vmNamesSharingMACAddressCountsANetworkingOffHolder() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, mutateOther: { $0.networkEnabled = false })
 
-        #expect(viewModel.macAddressPeers(of: starting).faults == ["Twin"])
+        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
     }
 
     // MARK: - Match-Window Boot Resolution

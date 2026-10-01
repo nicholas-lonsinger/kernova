@@ -98,8 +98,8 @@ final class VMLibraryViewModel {
         library.moveEntries(fromOffsets: source, toOffset: destination)
     }
 
-    func macAddressPeers(of instance: VMInstance) -> (exactCopies: [String], faults: [String]) {
-        library.macAddresses.macAddressPeers(of: instance)
+    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
+        library.macAddresses.vmNamesSharingMACAddress(with: instance)
     }
 
     func guestAddress(for instance: VMInstance) -> GuestIPAddress {
@@ -115,7 +115,8 @@ final class VMLibraryViewModel {
         /// why.
         case refused
         /// The edit needs the user's consent first, which the caller gathers and
-        /// then repeats the edit with `confirmed: true`. Nothing is presented.
+        /// then repeats the edit with the prompt's kind in its consent. Nothing
+        /// is presented.
         case consentRequired(ConfirmationPrompt)
     }
 
@@ -123,11 +124,11 @@ final class VMLibraryViewModel {
     /// one path a surface's settings edit takes.
     @discardableResult
     func setConfiguration(
-        _ assignments: [ConfigurationEntry], on instance: VMInstance, confirmed: Bool = false
+        _ assignments: [ConfigurationEntry], on instance: VMInstance, consent: Consent = .none
     ) -> EditOutcome {
         runEdit(on: instance) {
             try self.commands.setConfiguration(
-                .id(instance.id), assignments: assignments, confirmed: confirmed)
+                .id(instance.id), assignments: assignments, consent: consent)
         }
     }
 
@@ -229,7 +230,8 @@ final class VMLibraryViewModel {
     func removeStorageDisk(_ disk: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
             try await self.commands.removeStorageDisk(
-                .id(instance.id), disk: disk, trashFile: trashFile, confirmed: true)
+                .id(instance.id), disk: disk, trashFile: trashFile,
+                consent: Consent([.removeAttachment]))
         }
     }
 
@@ -276,7 +278,8 @@ final class VMLibraryViewModel {
     func removeRemovableMedia(_ item: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
             try await self.commands.removeRemovableMedia(
-                .id(instance.id), item: item, trashFile: trashFile, confirmed: true)
+                .id(instance.id), item: item, trashFile: trashFile,
+                consent: Consent([.removeAttachment]))
         }
     }
 
@@ -335,7 +338,7 @@ final class VMLibraryViewModel {
     /// already gathered, so this always calls the facade pre-confirmed.
     func cancelGuestSetup(_ instance: VMInstance) {
         do {
-            try commands.cancelGuestSetup(.id(instance.id), confirmed: true)
+            try commands.cancelGuestSetup(.id(instance.id), consent: Consent([.cancelGuestSetup]))
         } catch let error as CommandError {
             // Setup finishing between the button appearing and the click is a
             // normal race, not something to alert the user about.
@@ -742,8 +745,9 @@ final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommanding`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await runGatheringGuestAccount(on: instance) {
-            try await self.commands.start(.id(instance.id), recovery: bootIntoRecovery)
+        await runAsking(on: instance) { consent in
+            try await self.commands.start(
+                .id(instance.id), recovery: bootIntoRecovery, consent: consent)
         }
     }
 
@@ -779,39 +783,66 @@ final class VMLibraryViewModel {
     /// that asked can tell it from a refusal worth an alert.
     private struct GuestAccountPromptDismissed: Error {}
 
-    /// Runs a start through ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``,
-    /// raising the sheet for the account it refuses without.
+    /// What a user declining a confirmation raises, for the same reason.
+    private struct ConfirmationDeclined: Error {}
+
+    /// Runs a bring-up through ``VMConsentPolicy/run(prompting:_:)`` and, inside
+    /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking on
+    /// screen for each consent and the account it refuses without.
     ///
     /// Asking is the door's job and deciding is the verb's: this presents the
-    /// sheet and hands the answer to the verb that holds it, writing nothing
-    /// itself. A VM with no account outstanding never sees the sheet, because the
-    /// verb never refuses.
+    /// questions and hands each answer to the verb, writing nothing itself. A
+    /// verb that refuses nothing never shows one.
     ///
-    /// A cancelled sheet ends the start with nothing on screen — the user just
-    /// said no to it — while every other refusal takes the ordinary error
-    /// surface, including the account refusal itself when no window exists to
-    /// ask in.
-    private func runGatheringGuestAccount(
-        on instance: VMInstance, _ verb: () async throws -> Void
-    ) async {
+    /// A declined question ends the verb with nothing on screen — the user just
+    /// said no to it. A question that could not be asked leaves its refusal
+    /// standing, and that refusal takes the ordinary error surface like every
+    /// other, queued behind whatever is on screen.
+    private func runAsking(on instance: VMInstance, _ verb: (Consent) async throws -> Void) async {
         do {
-            try await VMConsentPolicy.runGatheringGuestAccount(
-                prompting: { try await self.askForGuestAccount($0) }, verb)
+            try await VMConsentPolicy.run(prompting: { try await self.askToConfirm($0) }) {
+                consent in
+                try await VMConsentPolicy.runGatheringGuestAccount(
+                    prompting: { try await self.askForGuestAccount($0) },
+                    { try await verb(consent) })
+            }
         } catch is GuestAccountPromptDismissed {
             #log(
                 Self.logger, .notice,
                 "Start of '\(instance.name, privacy: .public)' cancelled at the account password"
+            )
+        } catch is ConfirmationDeclined {
+            #log(
+                Self.logger, .notice,
+                "'\(instance.name, privacy: .public)': the user declined the confirmation it asked for"
             )
         } catch {
             present(error, for: instance)
         }
     }
 
+    /// Puts a confirmation on screen and waits for the user's answer.
+    ///
+    /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
+    ///   refusal itself when it could not be asked.
+    private func askToConfirm(_ prompt: ConfirmationPrompt) async throws {
+        guard let presenter else { throw CommandError.confirmationRequired(prompt) }
+        let answer = await withCheckedContinuation { continuation in
+            presenter.presentConfirmationRequest(
+                ConfirmationRequest(
+                    prompt: prompt, answer: { continuation.resume(returning: $0) }))
+        }
+        switch answer {
+        case .answered(true): return
+        case .answered(false): throw ConfirmationDeclined()
+        case .unasked: throw CommandError.confirmationRequired(prompt)
+        }
+    }
+
     /// Puts the account question on screen and supplies the one answer it gives.
     ///
     /// - Throws: ``GuestAccountPromptDismissed`` when the user walked away, the
-    ///   refusal itself when there is no presenter to ask through — a door with
-    ///   nobody to ask says so by not answering — and whatever the verb that
+    ///   refusal itself when it could not be asked, and whatever the verb that
     ///   takes the answer refuses with.
     private func askForGuestAccount(_ prompt: GuestAccountPrompt) async throws {
         guard let presenter else { throw CommandError.guestAccountPasswordRequired(prompt) }
@@ -821,12 +852,14 @@ final class VMLibraryViewModel {
                     prompt: prompt, answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .password(let password):
+        case .answered(.password(let password)):
             try commands.provideGuestAccountPassword(.id(prompt.vm.id), password: password)
-        case .skip:
+        case .answered(.skip):
             try commands.skipGuestAccount(.id(prompt.vm.id))
-        case .cancelled:
+        case .answered(.cancelled):
             throw GuestAccountPromptDismissed()
+        case .unasked:
+            throw CommandError.guestAccountPasswordRequired(prompt)
         }
     }
 
@@ -835,7 +868,7 @@ final class VMLibraryViewModel {
         // the core says so by refusing — which is what raises the sheet.
         await run(on: instance) {
             try await self.commands.stop(
-                .id(instance.id), disposition: .graceful, confirmed: false)
+                .id(instance.id), disposition: .graceful, consent: .none)
         }
     }
 
@@ -844,13 +877,14 @@ final class VMLibraryViewModel {
     func resumeAndStop(_ instance: VMInstance) async {
         await run(on: instance) {
             try await self.commands.stop(
-                .id(instance.id), disposition: .resumeThenShutDown, confirmed: true)
+                .id(instance.id), disposition: .resumeThenShutDown, consent: .none)
         }
     }
 
     func forceStop(_ instance: VMInstance) async {
         await run(on: instance) {
-            try await self.commands.stop(.id(instance.id), disposition: .force, confirmed: true)
+            try await self.commands.stop(
+                .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
         }
     }
 
@@ -873,8 +907,8 @@ final class VMLibraryViewModel {
     /// surfaces for the same reason.
     func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
-        await run(on: instance) {
-            try await self.commands.resume(.id(instance.id))
+        await runAsking(on: instance) { consent in
+            try await self.commands.resume(.id(instance.id), consent: consent)
         }
     }
 
@@ -890,7 +924,8 @@ final class VMLibraryViewModel {
     /// Force-stops a VM, throwing on failure — the termination save pass's
     /// fallback for a save that failed and left the guest live.
     func tryForceStop(_ instance: VMInstance) async throws {
-        try await commands.stop(.id(instance.id), disposition: .force, confirmed: true)
+        try await commands.stop(
+            .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
     }
 
     // MARK: - Snapshots
@@ -947,14 +982,15 @@ final class VMLibraryViewModel {
     }
 
     /// Reverts to `snapshot`, optionally check-pointing the current state
-    /// first — the revert confirmation's two actions.
+    /// first — the revert confirmation's two actions, which already gave the
+    /// revert's own consent.
     func revert(
         _ instance: VMInstance, to snapshot: VMSnapshot, takingCheckpoint: Bool = false
     ) async {
-        await run(on: instance) {
+        await runAsking(on: instance) { consent in
             try await self.commands.revertToSnapshot(
                 .id(instance.id), snapshot: snapshot.id, takingCheckpoint: takingCheckpoint,
-                confirmed: true)
+                consent: consent.adding(.revertToSnapshot))
         }
     }
 
@@ -979,7 +1015,7 @@ final class VMLibraryViewModel {
             guard let self else { return }
             await self.run(on: instance) {
                 try await self.commands.deleteSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, confirmed: true)
+                    .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
             }
         }
     }
@@ -1019,7 +1055,7 @@ final class VMLibraryViewModel {
         do {
             try await commands.delete(
                 .id(instance.id), permanently: permanently, alsoRemoving: deletingExternalIDs,
-                confirmed: true)
+                consent: Consent([.deleteVM]))
         } catch let error as CommandError {
             // A second sheet for a VM the first already removed, or one whose
             // state moved while the sheet was up: refused rather than run, and
@@ -1119,7 +1155,7 @@ final class VMLibraryViewModel {
     /// Cancels an in-flight create, clone or import from that confirmation's confirm.
     func cancelArrival(_ arrival: VMArrival) {
         do {
-            try commands.cancelPreparing(.id(arrival.id), confirmed: true)
+            try commands.cancelPreparing(.id(arrival.id), consent: Consent([.cancelPreparing]))
         } catch let error as CommandError {
             // The arrival settled while the confirmation was up: a failed one
             // left no row, and an adopted one is a VM the cancel refuses.
@@ -1493,13 +1529,15 @@ final class VMLibraryViewModel {
 
     /// Opens the sheet that gathers the consent a refusal is asking for.
     ///
-    /// Two refusals reach here, both raised by a Stop the user asked for that
+    /// Two refusals open one, both raised by a Stop the user asked for that
     /// only the core can tell is destructive: a live-paused guest that cannot
     /// receive the request, and a suspended Ephemeral VM whose stop discards
-    /// its suspended session. Every other confirmation is raised by the
-    /// `request…` method that opens its own sheet and knows the arguments —
-    /// which VM, which snapshot, Trash or immediate — that the prompt alone
-    /// does not carry.
+    /// its suspended session. A start beside a VM sharing its machine identity
+    /// arrives here only when it could not be asked (``runAsking(on:_:)``),
+    /// and is shown as the refusal it stands for. Every other confirmation is
+    /// raised by the `request…` method that opens its own sheet and knows the
+    /// arguments — which VM, which snapshot, Trash or immediate — that the
+    /// prompt alone does not carry.
     private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
         guard let instance else { return }
         switch prompt.kind {
@@ -1507,6 +1545,9 @@ final class VMLibraryViewModel {
             presenter?.presentStopPaused(for: instance)
         case .forceStop:
             presenter?.presentForceStop(for: instance)
+        case .startBesideSharedMachineIdentity:
+            // Raised where it could not be asked: the refusal it stands for.
+            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title)
         default:
             #log(
                 Self.logger, .debug,

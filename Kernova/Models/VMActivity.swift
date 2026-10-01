@@ -13,7 +13,7 @@ import Virtualization
 /// to replace.
 ///
 /// Also the only holder of the VM's bundle run lock, which it holds exactly
-/// while the VM is neither at rest nor removed: ``admit(_:origin:outcome:)``
+/// while the VM is neither at rest nor removed: ``admit(_:origin:identity:outcome:)``
 /// takes it as an operation leaves rest, and the tail of every ending lets it
 /// go once the VM rests again, so no other copy of Kernova acts on a VM this
 /// one holds.
@@ -300,19 +300,25 @@ final class VMActivity {
     /// reading what the last lock attempt found, and records the answer, so a
     /// hold that has since ended refuses nothing and every offer after it
     /// reads what the commit found.
+    ///
+    /// `identity` is what the request can do about another active VM sharing
+    /// the machine identity a committed bring-up would claim; an offer checks
+    /// no identity.
     func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
-        posture: VMAdmission.Posture
+        posture: VMAdmission.Posture, identity: VMIdentityOverride = .unavailable
     ) -> VMAdmission.Decision {
-        decide(request, origin: origin, posture: posture, probingOtherCopies: posture == .commit)
+        decide(
+            request, origin: origin, posture: posture, identity: identity,
+            probingOtherCopies: posture == .commit)
     }
 
-    /// ``decide(_:origin:posture:)``, asking the bundle whether another copy
-    /// holds it — and recording the answer — when `probingOtherCopies`, and
-    /// reading the last recorded answer otherwise.
+    /// ``decide(_:origin:posture:identity:)``, asking the bundle whether
+    /// another copy holds it — and recording the answer — when
+    /// `probingOtherCopies`, and reading the last recorded answer otherwise.
     private func decide(
         _ request: VMAdmission.Request, origin: VMRequestOrigin, posture: VMAdmission.Posture,
-        probingOtherCopies: Bool
+        identity: VMIdentityOverride, probingOtherCopies: Bool
     ) -> VMAdmission.Decision {
         guard let owner else { return .refuse(.invalidState) }
         if probingOtherCopies, !hold.isThisCopy,
@@ -325,7 +331,7 @@ final class VMActivity {
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
             kind.checksIdentity
         {
-            facts.identityConflict = owner.identityConflict(for: kind)
+            facts.identityConflict = owner.identityConflict(for: kind, override: identity)
         }
         if case .operation(.attachingUSB(let registryID)) = request {
             facts.accessoryHolder = accessoryHolders?.holder(of: registryID)
@@ -352,11 +358,12 @@ final class VMActivity {
     @discardableResult
     private func requireAdmitted(
         _ request: VMAdmission.Request, origin: VMRequestOrigin = .newWork,
-        probingOtherCopies: Bool = true
+        identity: VMIdentityOverride = .unavailable, probingOtherCopies: Bool = true
     ) throws -> VMInstance {
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
         switch decide(
-            request, origin: origin, posture: .commit, probingOtherCopies: probingOtherCopies)
+            request, origin: origin, posture: .commit, identity: identity,
+            probingOtherCopies: probingOtherCopies)
         {
         case .admit:
             return owner
@@ -471,12 +478,13 @@ final class VMActivity {
     /// no guest — a guest setup.
     @discardableResult
     func launchBringUp(
-        _ kind: VMNonStartBringUpKind,
+        _ kind: VMNonStartBringUpKind, identity: VMIdentityOverride = .unavailable,
         whenEnded: WhenEnded? = nil,
         _ body: @escaping @MainActor (borrowing VMBringUpContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
-            .bringUp(kind.bringUpKind), outcome: VMOutcome(), whenEnded: whenEnded,
+            .bringUp(kind.bringUpKind), identity: identity, outcome: VMOutcome(),
+            whenEnded: whenEnded,
             { VMBringUpContext(operation: $0) }, body)
     }
 
@@ -484,11 +492,12 @@ final class VMActivity {
     /// body learns which start it was admitted as from its context.
     @discardableResult
     func launchStartGuest(
-        _ kind: VMGuestStartKind, resolving outcome: VMOutcome = VMOutcome(),
+        _ kind: VMGuestStartKind, identity: VMIdentityOverride = .unavailable,
+        resolving outcome: VMOutcome = VMOutcome(),
         _ body: @escaping @MainActor (borrowing VMGuestStartContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
-            .bringUp(.guestStart(kind)), outcome: outcome, whenEnded: nil,
+            .bringUp(.guestStart(kind)), identity: identity, outcome: outcome, whenEnded: nil,
             { VMGuestStartContext(bringUp: VMBringUpContext(operation: $0), kind: kind) }, body)
     }
 
@@ -497,12 +506,12 @@ final class VMActivity {
     @discardableResult
     func launchRevert(
         to snapshot: VMSnapshot, resumesAfter: Bool, origin: VMRequestOrigin = .newWork,
-        resolving outcome: VMOutcome = VMOutcome(),
+        identity: VMIdentityOverride = .unavailable, resolving outcome: VMOutcome = VMOutcome(),
         _ body: @escaping @MainActor (borrowing VMRevertContext) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
         try launchRun(
             .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: resumesAfter)),
-            origin: origin, outcome: outcome, whenEnded: nil,
+            origin: origin, identity: identity, outcome: outcome, whenEnded: nil,
             {
                 VMRevertContext(
                     bringUp: VMBringUpContext(operation: $0), snapshot: snapshot,
@@ -525,12 +534,13 @@ final class VMActivity {
 
     /// ``run(_:origin:_:_:)`` in a task the operation owns.
     private func launchRun<Context: ~Copyable>(
-        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork, outcome: VMOutcome,
+        _ kind: VMOperationKind, origin: VMRequestOrigin = .newWork,
+        identity: VMIdentityOverride = .unavailable, outcome: VMOutcome,
         whenEnded: WhenEnded?,
         _ makeContext: @escaping @MainActor (consuming VMOperationContext) -> Context,
         _ body: @escaping @MainActor (borrowing Context) async throws -> VMOperationEnding<Void>
     ) throws -> VMOutcome {
-        let owner = try admit(kind, origin: origin, outcome: outcome)
+        let owner = try admit(kind, origin: origin, identity: identity, outcome: outcome)
         outcome.task = Task { @MainActor in
             let context = makeContext(VMOperationContext(activity: self, kind: kind, owner: owner))
             let ending: VMOperationEnding<Void>
@@ -598,7 +608,8 @@ final class VMActivity {
     /// request is refused — as ``VMAdmission/Refusal/heldByAnotherCopy`` when
     /// another copy of Kernova holds the lock.
     private func admit(
-        _ kind: VMOperationKind, origin: VMRequestOrigin, outcome: VMOutcome
+        _ kind: VMOperationKind, origin: VMRequestOrigin,
+        identity: VMIdentityOverride = .unavailable, outcome: VMOutcome
     ) throws -> VMInstance {
         let request = VMAdmission.Request.operation(kind)
         guard let owner else { throw VMAdmissionRefusal(refusal: .invalidState) }
@@ -606,7 +617,8 @@ final class VMActivity {
         do {
             // The lock attempt just made is read rather than probed again: a
             // hold that ended since would admit a VM this copy does not hold.
-            try requireAdmitted(request, origin: origin, probingOtherCopies: false)
+            try requireAdmitted(
+                request, origin: origin, identity: identity, probingOtherCopies: false)
             try reserve(for: kind, on: owner)
         } catch {
             if tookLock { setHold(.none) }
@@ -642,7 +654,7 @@ final class VMActivity {
     }
 
     /// Lets go of the run lock once the VM rests or is removed — the other
-    /// half of the rule ``admit(_:origin:outcome:)`` keeps.
+    /// half of the rule ``admit(_:origin:identity:outcome:)`` keeps.
     private func releaseRunLockIfAtRest() {
         guard phase.isAtRest || phase == .removed, hold.isThisCopy else { return }
         setHold(.none)
@@ -1376,7 +1388,7 @@ struct VMBringUpContext: ~Copyable, Sendable {
 }
 
 /// The authority a guest start's body acts with: a bring-up admitted as
-/// `kind`, minted only by ``VMActivity/launchStartGuest(_:resolving:_:)``.
+/// `kind`, minted only by ``VMActivity/launchStartGuest(_:identity:resolving:_:)``.
 struct VMGuestStartContext: ~Copyable, Sendable {
     let bringUp: VMBringUpContext
     let kind: VMGuestStartKind
@@ -1417,7 +1429,7 @@ struct VMCaptureContext: ~Copyable, Sendable {
 }
 
 /// The authority a revert's body acts with: a bring-up admitted to revert to
-/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:resolving:_:)``.
+/// `snapshot`, minted only by ``VMActivity/launchRevert(to:resumesAfter:origin:identity:resolving:_:)``.
 struct VMRevertContext: ~Copyable, Sendable {
     let bringUp: VMBringUpContext
     let snapshot: VMSnapshot

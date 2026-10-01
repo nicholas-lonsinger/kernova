@@ -119,7 +119,7 @@ extension VMCommandCore {
     /// out of the start-failure removal offer. Any disk with a sibling goes,
     /// `Disk.asif` included.
     func removeStorageDisk(
-        _ selector: VMSelector, disk id: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, disk id: UUID, trashFile: Bool, consent: Consent
     ) async throws {
         let instance = try resolve(selector)
         try require(trashFile ? .trashStorageDisk : .editStorageDisks, on: instance)
@@ -138,7 +138,7 @@ extension VMCommandCore {
             await afterSharingResolveForTesting?()
             #endif
         }
-        guard confirmed else {
+        guard consent.covers(.removeAttachment) else {
             throw CommandError.confirmationRequired(
                 Self.attachmentDeletePrompt(
                     label: disk.label, isInternal: disk.isInternal, isGuestAgent: false,
@@ -354,7 +354,7 @@ extension VMCommandCore {
     /// The bundled Guest Agent installer and a file another VM still references
     /// are never trashed, however `trashFile` is set — only the entry goes.
     func removeRemovableMedia(
-        _ selector: VMSelector, item id: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, item id: UUID, trashFile: Bool, consent: Consent
     ) async throws {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
@@ -380,7 +380,7 @@ extension VMCommandCore {
                 throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
             }
         }
-        if trashFile, !confirmed {
+        if trashFile, !consent.covers(.removeAttachment) {
             throw CommandError.confirmationRequired(
                 Self.attachmentDeletePrompt(
                     label: item.label, isInternal: false,

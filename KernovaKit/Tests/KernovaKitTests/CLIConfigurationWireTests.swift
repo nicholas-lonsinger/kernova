@@ -59,7 +59,7 @@ struct CLIConfigurationWireTests {
         // not at all, which a second round trip would give up.
         #expect(
             exchanged.sent == [
-                .setConfiguration(.idOrName("Alpha"), assignments: settings, confirmed: false)
+                .setConfiguration(.idOrName("Alpha"), assignments: settings, consent: .none)
             ])
         #expect(try exchanged.answer.payload() == .configuration(settings))
     }
@@ -73,7 +73,7 @@ struct CLIConfigurationWireTests {
 
         #expect(
             exchanged.sent == [
-                .setConfiguration(.idOrName("Alpha"), assignments: passthrough, confirmed: true)
+                .setConfiguration(.idOrName("Alpha"), assignments: passthrough, consent: .all)
             ])
     }
 

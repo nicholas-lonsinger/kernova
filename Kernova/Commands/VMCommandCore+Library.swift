@@ -140,7 +140,7 @@ extension VMCommandCore {
         let autoStart: @MainActor (VMInstance) -> [VMFollowUp] = { [weak self] instance in
             guard let self else { return [] }
             #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
-            return [self.startFollowUp(instance, policy: .command)]
+            return [self.startFollowUp(instance, policy: .command(.unavailable))]
         }
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,
@@ -529,13 +529,13 @@ extension VMCommandCore {
     /// nothing following its outcome — a waiter, a create's auto-start — ever
     /// receives the VM. A VM is not something being prepared, so a cancel
     /// naming one is refused.
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
+    func cancelPreparing(_ selector: VMSelector, consent: Consent) throws {
         let arrival: VMArrival
         switch try resolveEntry(selector) {
         case .vm(let instance): throw invalidState(instance)
         case .arriving(let found): arrival = found
         }
-        guard confirmed else {
+        guard consent.covers(.cancelPreparing) else {
             guard !arrival.isCancelling else { return }
             throw CommandError.confirmationRequired(Self.cancelPreparingPrompt(arrival.kind))
         }
@@ -571,7 +571,7 @@ extension VMCommandCore {
     // MARK: - Delete
 
     func delete(
-        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
+        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws {
         // Resolution is the membership re-check: a delete sheet is window-modal
         // but doesn't disable the menu bar, so two sheets can be queued for the
@@ -582,7 +582,7 @@ extension VMCommandCore {
         // re-check catches — trashing the bundle then would pull the disk
         // image out from under a guest that is running or about to be.
         try require(.delete, on: instance)
-        guard confirmed else {
+        guard consent.covers(.deleteVM) else {
             throw CommandError.confirmationRequired(
                 Self.deletePrompt(
                     instance, permanently: permanently,

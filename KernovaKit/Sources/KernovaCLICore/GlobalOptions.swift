@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import KernovaKit
 
 /// How output is written.
 enum OutputFormat: String, ExpressibleByArgument, Sendable, CaseIterable {
@@ -33,6 +34,9 @@ struct GlobalOptions: ParsableArguments {
     /// Supply the consent a destructive verb refuses without.
     @Flag(name: [.customShort("y"), .long], help: "Answer yes to the confirmation a verb asks for.")
     var yes = false
+
+    /// What `--yes` gives a verb: every confirmation it could ask for, or none.
+    var consent: Consent { yes ? .all : .none }
 
     /// Refuse rather than starting Kernova to answer.
     @Flag(name: .long, help: "Fail instead of starting Kernova when it is not running.")

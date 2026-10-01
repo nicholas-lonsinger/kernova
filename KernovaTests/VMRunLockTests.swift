@@ -423,7 +423,7 @@ struct VMRunLockTests {
         harness.store.holdElsewhere(instance.bundleURL)
 
         let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false)
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
         // The summary names the VM as the refusal left it: held.
         #expect(refusal == .heldByAnotherCopy(vm: harness.core.summary(instance)))
@@ -530,7 +530,7 @@ struct VMRunLockTests {
         harness.store.holdElsewhere(instance.bundleURL)
 
         do {
-            try await harness.core.start(.id(instance.id), recovery: false)
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
             Issue.record("The start was not refused")
         } catch let refusal as CommandError {
             guard case .heldByAnotherCopy(let vm) = refusal else {
@@ -552,7 +552,7 @@ struct VMRunLockTests {
         let instance = harness.library.registerFixture()
         try VMInstanceFixture.writeSaveFile(for: instance)
 
-        try await harness.core.start(.id(instance.id), recovery: false)
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
 
         #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
         expectLockFollowsPhase(instance, harness.store)

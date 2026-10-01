@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 5
+    public static let currentProtocolVersion = 6
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -50,18 +50,18 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// ``CommandErrorDTO/guestAccountPasswordRequired(prompt:)``: the wire
         /// carries no way to answer that, so every out-of-process caller gets
         /// the refusal.
-        case start(VMSelector, recovery: Bool)
-        case cancelGuestSetup(VMSelector, confirmed: Bool)
+        case start(VMSelector, recovery: Bool, consent: Consent)
+        case cancelGuestSetup(VMSelector, consent: Consent)
         /// `timeout` bounds the wait for the guest to power off, in seconds;
         /// `nil` returns as soon as the guest has been asked to go down.
         case stop(
-            VMSelector, disposition: StopDisposition, confirmed: Bool, timeout: TimeInterval?)
+            VMSelector, disposition: StopDisposition, consent: Consent, timeout: TimeInterval?)
         case pause(VMSelector)
-        case resume(VMSelector)
+        case resume(VMSelector, consent: Consent)
         case suspend(VMSelector)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(VMSelector, timeout: TimeInterval?)
+        case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
         case open(VMSelector)
         case reveal(VMSelector)
         /// Selects the VM's bundle in the Finder, which is what comes forward.
@@ -69,8 +69,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         case takeSnapshot(VMSelector, name: String, notes: String)
         case revertToSnapshot(
-            VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool)
-        case deleteSnapshot(VMSelector, snapshot: UUID, confirmed: Bool)
+            VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent)
+        case deleteSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
         case setSnapshotNotes(VMSelector, snapshot: UUID, notes: String)
 
@@ -79,12 +79,12 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// failure; without it the row the copy fills is answered at once.
         case clone(VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool)
         case rename(VMSelector, newName: String)
-        case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], confirmed: Bool)
+        case delete(VMSelector, permanently: Bool, alsoRemoving: [UUID], consent: Consent)
         /// `path` is read as this Mac names it; the app obtains the authority to
         /// read it, which a sandboxed client cannot hand over. `waitForOutcome`
         /// is the clone's.
         case importVM(path: String, waitForOutcome: Bool)
-        case cancelPreparing(VMSelector, confirmed: Bool)
+        case cancelPreparing(VMSelector, consent: Consent)
 
         case editStorageDisk(VMSelector, StorageDiskEdit)
         case editRemovableMedia(VMSelector, RemovableMediaEdit)
@@ -101,7 +101,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// Applies every assignment or none, in the order given, answering the
         /// values the keys ended up holding.
         case setConfiguration(
-            VMSelector, assignments: [ConfigurationEntry], confirmed: Bool)
+            VMSelector, assignments: [ConfigurationEntry], consent: Consent)
 
         /// Quits Kernova the way the status item's Quit does, save-suspending
         /// running and paused VMs on the way out.

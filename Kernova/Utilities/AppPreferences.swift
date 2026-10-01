@@ -123,14 +123,11 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.mainToolbarNewVMCollapseIndex) }
     }
 
-    /// Whether starting a VM is refused while another VM with the same machine
-    /// identifier is live, defaulting to `true`.
-    ///
-    /// Two VMs sharing a machine identifier must never run at once — the
-    /// framework documents the result as undefined behavior.
-    var blockDuplicateMachineIDBoot: Bool {
-        get { invertedBool(forKey: Keys.allowDuplicateMachineIDBoot) }
-        nonmutating set { setInvertedBool(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
+    /// Whether a start refused because another active VM has the same machine
+    /// identifier asks the user whether to start anyway, defaulting to `false`.
+    var allowsDuplicateMachineIDOverride: Bool {
+        get { defaults.bool(forKey: Keys.allowDuplicateMachineIDBoot) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
     /// What Clone makes of a VM that offers both outcomes, defaulting to New

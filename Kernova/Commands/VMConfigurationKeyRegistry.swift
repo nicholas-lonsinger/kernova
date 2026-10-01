@@ -272,7 +272,7 @@ struct VMConfigurationKey: Sendable {
 /// value's name, spelling and gate are decided.
 ///
 /// Every automation surface and every settings pane writes through
-/// ``VMCommandCore/setConfiguration(_:assignments:confirmed:)`` with these keys,
+/// ``VMCommandCore/setConfiguration(_:assignments:consent:)`` with these keys,
 /// so a key added here becomes addressable everywhere at once. ``keys`` order
 /// is presentation order.
 enum VMConfigurationKeyRegistry {

@@ -189,9 +189,9 @@ final class VMOverviewResolver {
         resolved.warnings[.general] = Self.autoStartCapacityWarning(
             isMacOSGuest: config.guestOS == .macOS,
             markedMacOSVMCount: viewModel.macOSVMNamesMarkedForAutoStart.count)
-        let peers = macAddressPeers(config)
-        resolved.warnings[.network] = Self.duplicateMACWarning(faults: peers.faults)
-        resolved.exactCopyNote = Self.exactCopyNote(exactCopies: peers.exactCopies)
+        resolved.warnings[.network] = Self.duplicateMACWarning(
+            sharingWith: config.networkEnabled && config.macAddress != nil
+                ? viewModel.vmNamesSharingMACAddress(with: instance) : [])
         resolved.micWarning = micPermissionPresentation(
             micPermission, audioInputEnabled: config.audioInputEnabled)
         resolved.warnings[.system] =
@@ -216,30 +216,14 @@ final class VMOverviewResolver {
             + "so the ones after the first two won't start."
     }
 
-    /// The other VMs whose configuration carries this one's MAC address,
-    /// wherever the MAC row is: an address is held while networking is off,
-    /// but nothing shows it there to contradict.
-    private func macAddressPeers(
-        _ config: VMConfiguration
-    ) -> (exactCopies: [String], faults: [String]) {
-        guard config.networkEnabled, config.macAddress != nil else { return ([], []) }
-        return viewModel.macAddressPeers(of: instance)
-    }
-
-    /// Discloses that VMs of other machine identities carry this one's MAC
-    /// address — the fault docs/NETWORKING.md discloses.
-    static func duplicateMACWarning(faults: [String]) -> String? {
-        guard !faults.isEmpty else { return nil }
-        return "This MAC address is also used by \(DataFormatters.quotedList(faults)). "
-            + "Each virtual machine needs its own."
-    }
-
-    /// Names the VMs this one is an exact copy of. A note, not a warning: the
-    /// pair shares its address as one machine, and nothing records which came
-    /// first, so it reads true from either side.
-    static func exactCopyNote(exactCopies: [String]) -> String? {
-        guard !exactCopies.isEmpty else { return nil }
-        return "An exact copy of \(DataFormatters.quotedList(exactCopies))."
+    /// Names the other VMs carrying this one's MAC address, `nil` when none
+    /// does — shown wherever the MAC row is: an address is held while
+    /// networking is off, but nothing shows it there to contradict.
+    static func duplicateMACWarning(sharingWith names: [String]) -> String? {
+        guard !names.isEmpty else { return nil }
+        return "This MAC address is also used by \(DataFormatters.quotedList(names)). "
+            + "Virtual machines with the same MAC address can\u{2019}t run on the same network "
+            + "at once, but they can on separate networks."
     }
 
     private func refreshNetwork(_ config: VMConfiguration) {

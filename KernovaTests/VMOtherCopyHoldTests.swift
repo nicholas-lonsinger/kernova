@@ -149,7 +149,7 @@ struct VMOtherCopyHoldTests {
                     ConfigurationEntry(
                         key: "serial.socket", value: String(!before.serialSocketRelayEnabled))
                 ],
-                confirmed: true)
+                consent: .all)
             Issue.record("The set was not refused")
         } catch let error as CommandError {
             guard case .heldByAnotherCopy(let vm) = error else {
@@ -166,47 +166,62 @@ struct VMOtherCopyHoldTests {
 
     nonisolated private static let sharedMAC = "02:4b:4e:56:00:01"
 
-    /// The ways a twin collides: the MAC address on one network, the machine
-    /// identity while the preference blocks it, and both at once — an exact
-    /// copy.
-    nonisolated private static let twins: [(String, ConflictReason)] = [
-        ("MAC address", .macAddress),
-        ("machine identity", .machineIdentity),
-        ("exact copy", .exactCopy(bar: .runningAtOnce)),
-    ]
+    /// What two twins share.
+    enum Twinning: Sendable, CustomTestStringConvertible {
+        case macAddress
+        case machineIdentity
+        /// Both — refused on the MAC address, which no override waives.
+        case both
 
-    /// Makes the `index`th VM of a pair colliding on `reason`.
+        /// What the second twin's start is refused on.
+        var reason: ConflictReason {
+            self == .machineIdentity ? .machineIdentity : .macAddress
+        }
+
+        var testDescription: String {
+            switch self {
+            case .macAddress: "MAC address"
+            case .machineIdentity: "machine identity"
+            case .both: "machine identity and MAC address"
+            }
+        }
+    }
+
+    /// Makes the `index`th VM of a pair sharing what `twinning` names.
     nonisolated private static func twin(
-        _ reason: ConflictReason, index: UInt8, identity: Data
+        _ twinning: Twinning, index: UInt8, identity: Data
     ) -> (inout VMConfiguration) -> Void {
         { config in
             config.networkEnabled = true
-            switch reason {
+            switch twinning {
             case .macAddress:
                 config.macAddress = sharedMAC
             case .machineIdentity:
                 config.genericMachineIdentifierData = identity
                 config.macAddress = String(format: "02:4b:4e:56:01:%02x", index)
-            default:
+            case .both:
                 config.genericMachineIdentifierData = identity
                 config.macAddress = sharedMAC
             }
         }
     }
 
-    @Test("A twin of a VM another copy holds is refused, naming the source", arguments: twins)
-    func twinOfAHeldVMIsRefused(label: String, reason: ConflictReason) {
+    @Test(
+        "A twin of a VM another copy holds is refused, naming the source",
+        arguments: [Twinning.macAddress, .machineIdentity, .both])
+    func twinOfAHeldVMIsRefused(twinning: Twinning) {
+        let label = twinning.testDescription
+        let reason = twinning.reason
         let storage = MockVMStorageService()
         let preferences = makeTestPreferences()
-        preferences.blockDuplicateMachineIDBoot = true
         let library = makeWiredLibrary(storage: storage, preferences: preferences)
         let identity = Data([7, 7, 7])
         let source = library.registerFixture(
             name: "Source", preferences: preferences,
-            mutate: Self.twin(reason, index: 1, identity: identity))
+            mutate: Self.twin(twinning, index: 1, identity: identity))
         let copy = library.registerFixture(
             name: "Copy", preferences: preferences,
-            mutate: Self.twin(reason, index: 2, identity: identity))
+            mutate: Self.twin(twinning, index: 2, identity: identity))
         storage.files.holdElsewhere(source.bundleURL)
 
         let decision = copy.activity.decide(.start(recovery: false), posture: .commit)
@@ -227,18 +242,18 @@ struct VMOtherCopyHoldTests {
 
     @Test(
         "A twin's refusal names the other copy for a held source, and a stop step only for one live here",
-        arguments: twins)
-    func twinRefusalWordsWhoClaimsTheIdentity(label: String, reason: ConflictReason) throws {
+        arguments: [Twinning.macAddress, .machineIdentity, .both])
+    func twinRefusalWordsWhoClaimsTheIdentity(twinning: Twinning) throws {
+        let label = twinning.testDescription
         for held in [false, true] {
             let harness = makeCore()
             let preferences = harness.preferences
-            preferences.blockDuplicateMachineIDBoot = true
             let source = harness.library.registerFixture(
                 name: "Source", phase: held ? .stopped : .running(sessionID: UUID()),
-                preferences: preferences, mutate: Self.twin(reason, index: 1, identity: Data([4, 2])))
+                preferences: preferences, mutate: Self.twin(twinning, index: 1, identity: Data([4, 2])))
             let copy = harness.library.registerFixture(
                 name: "Copy", preferences: preferences,
-                mutate: Self.twin(reason, index: 2, identity: Data([4, 2])))
+                mutate: Self.twin(twinning, index: 2, identity: Data([4, 2])))
             if held { harness.store.holdElsewhere(source.bundleURL) }
 
             guard
@@ -482,7 +497,7 @@ struct VMOtherCopyHoldTests {
             try harness.core.setConfiguration(
                 .id(instance.id),
                 assignments: [ConfigurationEntry(key: "serial.socket", value: "true")],
-                confirmed: true)
+                consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -504,7 +519,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, confirmed: true)
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -524,7 +539,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -546,7 +561,7 @@ struct VMOtherCopyHoldTests {
         defer { capture.uninstall() }
 
         await #expect(throws: CommandError.self) {
-            try await harness.core.start(.id(copy.id), recovery: false)
+            try await harness.core.start(.id(copy.id), recovery: false, consent: .none)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")

@@ -275,8 +275,7 @@ struct VMLibraryViewModelSnapshotTests {
         await harness.viewModel.revert(ephemeral, to: baseline)
         #expect(ephemeral.configuration.macAddress == "aa:bb:cc:dd:ee:05")
         #expect(ephemeral.hostState.ephemeralModeEnabled)
-        let peers = harness.viewModel.macAddressPeers(of: ephemeral)
-        #expect(peers.faults.isEmpty && peers.exactCopies.isEmpty)
+        #expect(harness.viewModel.vmNamesSharingMACAddress(with: ephemeral).isEmpty)
     }
 
     @Test("Taking a snapshot captures it and lists it as current")

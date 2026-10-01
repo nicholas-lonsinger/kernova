@@ -280,7 +280,7 @@ struct VMIntentGatewayTests {
 
         _ = await gateway.vms()
         _ = await gateway.vms()
-        try await gateway.start(UUID(), recovery: false)
+        try await gateway.start(UUID(), recovery: false, consent: .none)
 
         #expect(await awaits.value == 1)
     }
@@ -294,12 +294,12 @@ struct VMIntentGatewayTests {
         commands.library = [makeSummary(name: "Twin", id: id)]
         let gateway = makeGateway(commands)
 
-        try await gateway.start(id, recovery: true)
-        try await gateway.stop(id, disposition: .force, confirmed: true)
+        try await gateway.start(id, recovery: true, consent: .none)
+        try await gateway.stop(id, disposition: .force, consent: .all)
         try await gateway.pause(id)
-        try await gateway.resume(id)
+        try await gateway.resume(id, consent: .none)
         try await gateway.suspend(id)
-        try await gateway.restart(id)
+        try await gateway.restart(id, consent: .none)
         try await gateway.open(id)
         try await gateway.reveal(id)
         _ = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
@@ -406,7 +406,7 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands)
 
         await #expect(throws: CommandError.self) {
-            try await gateway.start(UUID(), recovery: false)
+            try await gateway.start(UUID(), recovery: false, consent: .none)
         }
     }
 
@@ -425,12 +425,12 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
-            try await gateway.stop(id, disposition: .force, confirmed: confirmed)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.stop(id, disposition: .force, consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.forceStop])
-        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
     /// A running VM's force stop carries the gentler "Shut Down" alternative
@@ -451,12 +451,12 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands)
         var asked = 0
 
-        try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
-            try await gateway.stop(id, disposition: .force, confirmed: confirmed)
+        try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
+            try await gateway.stop(id, disposition: .force, consent: consent)
         }
 
         #expect(asked == 1)
-        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
         #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
     }
 
@@ -483,13 +483,13 @@ struct VMIntentGatewayTests {
         var asked = 0
 
         await #expect(throws: CommandError.self) {
-            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
-                try await gateway.stop(UUID(), disposition: .graceful, confirmed: confirmed)
+            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
+                try await gateway.stop(UUID(), disposition: .graceful, consent: consent)
             }
         }
 
         #expect(asked == 0)
-        #expect(commands.stopCalls.map(\.confirmed) == [false])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
     }
 
     @Test("A failure that is not a consent refusal is never turned into a question")
@@ -500,8 +500,8 @@ struct VMIntentGatewayTests {
         var asked = 0
 
         await #expect(throws: CommandError.self) {
-            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { confirmed in
-                try await gateway.stop(UUID(), disposition: .graceful, confirmed: confirmed)
+            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
+                try await gateway.stop(UUID(), disposition: .graceful, consent: consent)
             }
         }
 
