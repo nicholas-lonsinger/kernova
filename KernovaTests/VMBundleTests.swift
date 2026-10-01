@@ -507,7 +507,7 @@ struct VMBundleTests {
         FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
     }
 
-    @Test("A capture prepares the snapshot's directory, copies the disks, and counts toward its size")
+    @Test("A capture prepares the snapshot's directory, copies the disks, and has a size")
     func captureWritesTheSnapshotDirectory() async throws {
         let bundle = try makeOnDiskBundle()
         let snapshot = VMSnapshot(name: "Captured", macAddress: nil)
@@ -525,7 +525,7 @@ struct VMBundleTests {
         #expect(plan.relativePaths == ["Disk.asif"])
         #expect(exists(layout.configURL))
         #expect(text(at: layout.diskImageURL) == "live-disk")
-        #expect((sizes[snapshot.id] ?? 0) > 0)
+        #expect(sizes[snapshot.id] != nil)
     }
 
     @Test("A suspended capture clones the suspend slot and leaves it in place")

@@ -164,13 +164,13 @@ struct CLIRenderingTests {
     @Test("A snapshot listing names every column #309 asks for, and marks the current one")
     func snapshotListingCarriesEveryColumn() {
         let rows = [
-            SnapshotRow(snapshot(name: "Base", isCurrent: true), onDiskBytes: 1_500_000_000),
-            SnapshotRow(snapshot(name: "Before Upgrade", kind: "cold"), onDiskBytes: 0),
+            SnapshotRow(snapshot(name: "Base", isCurrent: true), reclaimableBytes: 1_500_000_000),
+            SnapshotRow(snapshot(name: "Before Upgrade", kind: "cold"), reclaimableBytes: 0),
         ]
         let lines = TableRenderer.render(rows, quiet: false).components(separatedBy: "\n")
 
         #expect(lines.count == 3)
-        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "ID"] {
+        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "FREES", "ID"] {
             #expect(lines[0].contains(heading), "missing \(heading)")
         }
         #expect(lines[1].contains("Base"))
@@ -192,7 +192,7 @@ struct CLIRenderingTests {
         #expect(fileStyle != memoryStyle)
 
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: 1_500_000_000)], quiet: false)
+            [SnapshotRow(snapshot(name: "Base"), reclaimableBytes: 1_500_000_000)], quiet: false)
         #expect(rendered.contains(fileStyle))
         #expect(!rendered.contains(memoryStyle))
     }
@@ -200,22 +200,22 @@ struct CLIRenderingTests {
     @Test("A size the app did not answer for reads as unknown, never as nothing at all")
     func anUnansweredSizeReadsAsUnknown() {
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: nil)], quiet: false)
+            [SnapshotRow(snapshot(name: "Base"), reclaimableBytes: nil)], quiet: false)
         #expect(rendered.contains("Unknown"))
     }
 
     @Test("A capture date reads in this Mac's own words, not the wire's")
     func snapshotDatesReadAsWords() {
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), onDiskBytes: 0)], quiet: false)
+            [SnapshotRow(snapshot(name: "Base"), reclaimableBytes: 0)], quiet: false)
         #expect(rendered.contains(taken.formatted(date: .abbreviated, time: .shortened)))
     }
 
     @Test("--quiet on a snapshot listing prints names alone, one per line")
     func quietSnapshotListingIsNamesOnly() {
         let rows = [
-            SnapshotRow(snapshot(name: "Base", isCurrent: true), onDiskBytes: 1),
-            SnapshotRow(snapshot(name: "Before Upgrade"), onDiskBytes: 2),
+            SnapshotRow(snapshot(name: "Base", isCurrent: true), reclaimableBytes: 1),
+            SnapshotRow(snapshot(name: "Before Upgrade"), reclaimableBytes: 2),
         ]
         #expect(TableRenderer.render(rows, quiet: true) == "Base\nBefore Upgrade")
     }
@@ -229,7 +229,7 @@ struct CLIRenderingTests {
     @Test("A snapshot's JSON is the wire DTO's own fields plus the size, decodable back")
     func snapshotJSONIsTheWireDTOPlusItsSize() throws {
         let summary = snapshot(name: "Base", isCurrent: true)
-        let rendered = try JSONRenderer.render([SnapshotRow(summary, onDiskBytes: 4_096)])
+        let rendered = try JSONRenderer.render([SnapshotRow(summary, reclaimableBytes: 4_096)])
 
         // The renderer writes dates ISO 8601, which is the form a script parses
         // and the one the decoder has to be told to read back.
@@ -242,19 +242,19 @@ struct CLIRenderingTests {
         let row = try #require(objects.first)
         for field in [
             "id", "name", "notes", "kind", "createdAt", "isCurrent", "isEphemeralBaseline",
-            "onDiskBytes",
+            "reclaimableBytes",
         ] {
             #expect(row[field] != nil, "missing \(field)")
         }
-        #expect(row["onDiskBytes"] as? Int == 4_096)
+        #expect(row["reclaimableBytes"] as? Int == 4_096)
     }
 
     @Test("A size the app did not answer for is absent from the JSON, never a zero")
     func anUnansweredSizeIsAbsentFromJSON() throws {
-        let rendered = try JSONRenderer.render(SnapshotRow(snapshot(name: "Base"), onDiskBytes: nil))
+        let rendered = try JSONRenderer.render(SnapshotRow(snapshot(name: "Base"), reclaimableBytes: nil))
         let row = try #require(
             try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
-        #expect(row["onDiskBytes"] == nil)
+        #expect(row["reclaimableBytes"] == nil)
         #expect(row["name"] as? String == "Base")
     }
 

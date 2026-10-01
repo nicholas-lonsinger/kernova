@@ -21,7 +21,7 @@ struct SnapshotInfoPopoverContentViewControllerTests {
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
-            snapshot: snapshot, onDiskText: "2 GB", canEditNotes: canEditNotes,
+            snapshot: snapshot, freedText: "2 GB", canEditNotes: canEditNotes,
             onCommitNotes: { recorder.committed.append($0) })
         controller.loadViewIfNeeded()
         return controller

@@ -44,9 +44,9 @@ protocol VMCommanding: AnyObject {
     /// The VM's named restore points, newest first.
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary]
 
-    /// Bytes each of this VM's snapshots occupies on disk, read off the main
-    /// actor — the copies live on the same volume and can be many gigabytes.
-    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64]
+    /// The space deleting each of this VM's snapshots would free, read off the
+    /// main actor — the read walks every file each snapshot holds.
+    func snapshotReclaimableBytes(of selector: VMSelector) async throws -> [UUID: UInt64]
 
     /// The folders the VM shares with its guest, in the order it carries them.
     func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary]

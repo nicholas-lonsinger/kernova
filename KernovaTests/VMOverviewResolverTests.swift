@@ -297,8 +297,8 @@ struct VMOverviewResolverTests {
 
     // MARK: - Async reads and rebinding
 
-    @Test("The snapshots' footprint lands from an off-main read, keyed to its set")
-    func snapshotFootprintFollowsItsSet() async throws {
+    @Test("The snapshots' sizes land from an off-main read, keyed to their set")
+    func snapshotSizesFollowTheirSet() async throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
@@ -308,14 +308,13 @@ struct VMOverviewResolverTests {
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
 
         resolver.refresh()
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        #expect(resolver.resolved.snapshotSizes.isEmpty)
         await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
         #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
 
         // A pass over the same set re-issues nothing.
         resolver.refresh()
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
+        #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
     }
 
     @Test("A size already read survives the re-read the next snapshot triggers")
@@ -338,13 +337,10 @@ struct VMOverviewResolverTests {
         resolver.refresh()
 
         #expect(resolver.resolved.snapshotSizes[first.id] == measured)
-        // The set is only part-measured, so no total is claimed — the same
-        // terms the panel's own readout falls back to the bare count on.
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        #expect(resolver.resolved.snapshotSizes[second.id] == nil)
 
         await resolver.snapshotSizeTaskForTesting?.value
         #expect(resolver.resolved.snapshotSizes.count == 2)
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
     }
 
     @Test("Deleting a snapshot drops its size and leaves the rest measured")
@@ -366,9 +362,6 @@ struct VMOverviewResolverTests {
 
         #expect(resolver.resolved.snapshotSizes[second.id] == nil)
         #expect(resolver.resolved.snapshotSizes[first.id] != nil)
-        // Everything left is measured, so the footprint stands without waiting
-        // for the re-read.
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
     }
 
     @Test("Binding to another VM drops what described the outgoing one")
@@ -383,13 +376,12 @@ struct VMOverviewResolverTests {
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         await resolver.bootDiskTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
+        #expect(!resolver.resolved.snapshotSizes.isEmpty)
 
         resolver.bind(instance: VMInstanceFixture.make(), viewModel: viewModel)
 
-        // Nothing of the previous VM's survives to be stated beside the new
-        // one's count.
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        // Nothing of the previous VM's survives to be stated on the new one's
+        // rows.
         #expect(resolver.resolved.snapshotSizes.isEmpty)
         #expect(resolver.resolved.bootDiskBytes == nil)
         #expect(resolver.resolved.networkModeTitle == nil)

@@ -32,7 +32,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case info
     case ipAddress
     case snapshots
-    case snapshotOnDiskBytes
+    case snapshotReclaimableBytes
     case sharedDirectories
     case usbAccessories
     case availableUSBAccessories
@@ -80,7 +80,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .info: "Get Info"
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
-        case .snapshotOnDiskBytes: "Get Snapshot Sizes"
+        case .snapshotReclaimableBytes: "Get Snapshot Sizes"
         case .sharedDirectories: "List Shared Directories"
         case .usbAccessories: "List USB Accessories"
         case .availableUSBAccessories: "List Available USB Accessories"
@@ -135,7 +135,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// is what answers that.
     public var isAdmittedInEveryState: Bool {
         switch self {
-        case .list, .info, .ipAddress, .snapshots, .snapshotOnDiskBytes, .sharedDirectories,
+        case .list, .info, .ipAddress, .snapshots, .snapshotReclaimableBytes, .sharedDirectories,
             .usbAccessories, .availableUSBAccessories, .usbPairings,
             .forgetUSBPairing, .events, .reveal,
             .showInFinder, .configurationKeys, .configuration, .setConfiguration,

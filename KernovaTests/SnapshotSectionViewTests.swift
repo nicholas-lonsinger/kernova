@@ -92,10 +92,7 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
 
         #expect(findLabel(withText: "No snapshots", in: view) != nil)
-        let readout = firstSubview(NSTextField.self, in: view) {
-            $0.stringValue.contains("snapshot") && $0.stringValue.contains("\u{00B7}")
-        }
-        #expect(readout == nil)
+        #expect(view.countReadout.isHidden)
     }
 
     // MARK: - Rows
@@ -132,8 +129,8 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(withText: "2 snapshots", in: view) != nil)
     }
 
-    @Test("The header and rows read on-disk sizes once they land")
-    func sizesReachTheHeaderAndRows() {
+    @Test("Rows read what deleting them would free once it lands, and the header stays a count")
+    func sizesReachTheRowsNotTheHeader() {
         let (view, _) = makeSection()
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
@@ -143,8 +140,11 @@ struct SnapshotSectionViewTests {
 
         view.applySizes([first.id: 1_000_000_000, second.id: 3_000_000_000])
 
-        #expect(findLabel(containing: "2 snapshots \u{00B7} 4 GB on disk", in: view) != nil)
-        #expect(findLabel(containing: "3 GB on disk", in: view) != nil)
+        #expect(findLabel(withText: "2 snapshots", in: view) != nil)
+        #expect(findLabel(containing: "3 GB freed if deleted", in: view) != nil)
+        #expect(findLabel(containing: "4 GB", in: view) == nil)
+        #expect(!view.countReadout.isHidden)
+        #expect(view.sizeInfoButton.paragraphs == [.body(SnapshotSectionView.sizeExplanation)])
     }
 
     @Test("Every row names its state between its date and its size")
@@ -163,7 +163,7 @@ struct SnapshotSectionViewTests {
             #expect(
                 view.subtitleText(for: snapshot)
                     == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
-                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB on disk")
+                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB freed if deleted")
         }
     }
 
@@ -177,7 +177,25 @@ struct SnapshotSectionViewTests {
             canRevert: true)
         view.applySizes([only.id: 2_000_000_000])
 
-        #expect(findLabel(containing: "1 snapshot \u{00B7}", in: view) != nil)
+        #expect(findLabel(withText: "1 snapshot", in: view) != nil)
+    }
+
+    @Test("A snapshot whose size is unknown shows no size part")
+    func unknownSizeShowsNoSizePart() {
+        let (view, _) = makeSection()
+        let measured = makeSnapshot("Measured")
+        let unknown = makeSnapshot("Unknown", offsetSeconds: 60)
+        render(
+            view, manifest: VMSnapshotManifest(snapshots: [measured, unknown]),
+            canTakeSnapshot: true, canRevert: true)
+
+        view.applySizes([measured.id: 2_000_000_000])
+
+        #expect(
+            view.subtitleText(for: unknown)
+                == "\(SnapshotDateFormat.string(from: unknown.createdAt)) \u{00B7} "
+                + "\(SnapshotKindCopy.stateLabel(unknown.kind))")
+        #expect(view.subtitleText(for: measured).hasSuffix("2 GB freed if deleted"))
     }
 
     @Test("Only the current snapshot's row shows the marker")

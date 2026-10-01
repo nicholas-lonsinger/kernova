@@ -267,8 +267,9 @@ final class VMOverviewResolver {
         }
     }
 
-    /// Reads what the snapshots occupy off the main actor — a directory walk
-    /// over gigabyte-scale copies — and only when the set of snapshots changed.
+    /// Reads what deleting each snapshot would free off the main actor — a walk
+    /// over every file each one holds — and only when the set of snapshots
+    /// changed.
     private func refreshSnapshotSizes() {
         let ids = instance.snapshotManifest.ordered.map(\.id)
         guard ids != snapshotSizeIDs else { return }
@@ -279,38 +280,24 @@ final class VMOverviewResolver {
         // every row and the readout for the length of the directory walk.
         let kept = Set(ids)
         resolved.snapshotSizes = resolved.snapshotSizes.filter { kept.contains($0.key) }
-        resolved.snapshotTotalBytes = Self.totalBytes(of: resolved.snapshotSizes, for: ids)
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
         guard !ids.isEmpty else { return }
         let issuedFor = instance
         let viewModel = self.viewModel
         snapshotSizeTask = Task { [weak self] in
-            let sizes = await viewModel.snapshotOnDiskBytes(for: issuedFor)
+            let sizes = await viewModel.snapshotReclaimableBytes(for: issuedFor)
             // The pane is reused across route and VM changes, so a read that
             // lands after the user moved on must not state the new VM's sizes.
             guard !Task.isCancelled, let self, self.instance.id == issuedFor.id else { return }
             self.resolved.snapshotSizes = sizes
-            self.resolved.snapshotTotalBytes = Self.totalBytes(of: sizes, for: ids)
             self.onCategoryResolved?(.snapshots)
         }
     }
 
-    /// What the snapshots in `ids` occupy together, `nil` until every one of
-    /// them has been measured.
-    ///
-    /// A partial sum would understate the footprint; the readout beside the
-    /// panel's own list falls back to the bare count on the same terms.
-    private static func totalBytes(of sizes: [UUID: UInt64], for ids: [UUID]) -> UInt64? {
-        guard !ids.isEmpty else { return nil }
-        let measured = ids.compactMap { sizes[$0] }
-        guard measured.count == ids.count else { return nil }
-        return measured.reduce(UInt64(0), &+)
-    }
-
     #if DEBUG
     /// The in-flight size read, so a test awaits it instead of polling the
-    /// total it fills in.
+    /// sizes it fills in.
     var snapshotSizeTaskForTesting: Task<Void, Never>? { snapshotSizeTask }
 
     /// The in-flight boot-disk capacity read, for event-driven test waits.

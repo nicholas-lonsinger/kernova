@@ -32,8 +32,19 @@ final class SnapshotSectionView: NSView {
 
     private let readoutLabel = NSTextField(labelWithString: "")
 
-    /// The header's size readout, exposed on the same terms as ``infoButton``.
-    var sizeReadout: NSView { readoutLabel }
+    /// Explains the per-row sizes, beside the count they replace a total in.
+    let sizeInfoButton = InfoButtonView()
+
+    /// The header's snapshot count and its ``sizeInfoButton``, exposed on the
+    /// same terms as ``infoButton``; hidden while there are no snapshots.
+    private(set) lazy var countReadout: NSStackView = {
+        let stack = NSStackView(views: [readoutLabel, sizeInfoButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = Spacing.small
+        stack.setContentHuggingPriority(.required, for: .horizontal)
+        return stack
+    }()
     private let listStack = NSStackView()
     private var takeSnapshotButton = NSButton()
 
@@ -66,12 +77,12 @@ final class SnapshotSectionView: NSView {
     /// name the snapshot a control belongs to.
     private var manifest = VMSnapshotManifest()
 
-    /// Per-snapshot on-disk sizes, filled in by ``applySizes(_:)`` once the
-    /// off-main read lands; a row with no entry yet shows its date alone.
+    /// What deleting each snapshot would free, filled in by ``applySizes(_:)``
+    /// once the off-main read lands; a row with no entry shows no size.
     private var sizesByID: [UUID: UInt64] = [:]
 
     /// Whether the section draws its own header, or hands ``infoButton`` and
-    /// ``sizeReadout`` to a panel header that states the category name instead.
+    /// ``countReadout`` to a panel header that states the category name instead.
     private let showsHeader: Bool
 
     init(showsHeader: Bool = true) {
@@ -146,17 +157,15 @@ final class SnapshotSectionView: NSView {
                 .body(
                     "Unlike Suspend, reverting keeps the snapshot, so the same restore point can be used again."
                 ),
-                .body(
-                    "A snapshot's copies share blocks with the disks they came from until either "
-                        + "side changes, so the listed sizes overlap with the virtual machine and with each "
-                        + "other rather than add up."
-                ),
             ])
+
+        sizeInfoButton.configure(label: "Snapshot Sizes", paragraphs: [.body(Self.sizeExplanation)])
 
         readoutLabel.font = .preferredFont(forTextStyle: .caption1)
         readoutLabel.textColor = .secondaryLabelColor
         readoutLabel.isSelectable = false
         readoutLabel.setContentHuggingPriority(.required, for: .horizontal)
+        countReadout.isHidden = true
     }
 
     private func makeHeader() -> NSView {
@@ -165,7 +174,7 @@ final class SnapshotSectionView: NSView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let header = NSStackView(views: [
-            makeGroupedFormSectionHeader("Snapshots"), infoButton, spacer, readoutLabel,
+            makeGroupedFormSectionHeader("Snapshots"), infoButton, spacer, countReadout,
         ])
         header.orientation = .horizontal
         header.alignment = .centerY
@@ -224,14 +233,13 @@ final class SnapshotSectionView: NSView {
         return offer
     }
 
-    /// Fills in the per-row and header size readouts.
+    /// Fills in each row's size; a snapshot with no entry shows none.
     func applySizes(_ bytes: [UUID: UInt64]) {
         sizesByID = bytes
         for model in list.rendered ?? [] {
             guard let row = list.row(model.id) else { continue }
             row.subtitleField.stringValue = subtitleText(for: model.snapshot)
         }
-        refreshReadout()
     }
 
     /// Begins inline editing of one snapshot's name.
@@ -369,35 +377,28 @@ final class SnapshotSectionView: NSView {
         return row
     }
 
-    /// "date · state · size on disk" — the size only once its read lands.
+    /// What the header's ⓘ beside the count says about the rows' sizes.
+    static let sizeExplanation =
+        "Each snapshot's size is the space deleting it would free. Space it shares with the "
+        + "virtual machine's disks or with another snapshot isn't counted, so deleting one can "
+        + "raise another's size."
+
+    /// "date · state · X freed if deleted" — the size only once it is known.
     func subtitleText(for snapshot: VMSnapshot) -> String {
         var parts = [
             SnapshotDateFormat.string(from: snapshot.createdAt),
             SnapshotKindCopy.stateLabel(snapshot.kind),
         ]
         if let bytes = sizesByID[snapshot.id] {
-            parts.append("\(DataFormatters.formatBytes(bytes)) on disk")
+            parts.append("\(DataFormatters.formatBytes(bytes)) freed if deleted")
         }
         return parts.joined(separator: " \u{00B7} ")
     }
 
     private func refreshReadout() {
         let count = manifest.snapshots.count
-        guard count > 0 else {
-            readoutLabel.stringValue = ""
-            readoutLabel.isHidden = true
-            return
-        }
-        readoutLabel.isHidden = false
-        let noun = count == 1 ? "snapshot" : "snapshots"
-        let listed = manifest.snapshots.compactMap { sizesByID[$0.id] }
-        guard listed.count == count else {
-            readoutLabel.stringValue = "\(count) \(noun)"
-            return
-        }
-        let total = listed.reduce(UInt64(0), &+)
-        readoutLabel.stringValue =
-            "\(count) \(noun) \u{00B7} \(DataFormatters.formatBytes(total)) on disk"
+        countReadout.isHidden = count == 0
+        readoutLabel.stringValue = count == 0 ? "" : "\(count) \(count == 1 ? "snapshot" : "snapshots")"
     }
 
     // MARK: - Actions

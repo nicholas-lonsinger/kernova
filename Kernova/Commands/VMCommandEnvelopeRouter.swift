@@ -124,8 +124,8 @@ struct VMCommandEnvelopeRouter {
             return .ipAddress(try commands.ipAddress(of: selector))
         case .snapshots(let selector):
             return .snapshots(try commands.snapshots(of: selector))
-        case .snapshotOnDiskBytes(let selector):
-            return .snapshotSizes(try await commands.snapshotOnDiskBytes(of: selector))
+        case .snapshotReclaimableBytes(let selector):
+            return .snapshotSizes(try await commands.snapshotReclaimableBytes(of: selector))
         case .sharedDirectories(let selector):
             return .sharedDirectories(try commands.sharedDirectories(of: selector))
         case .usbAccessories(let selector):

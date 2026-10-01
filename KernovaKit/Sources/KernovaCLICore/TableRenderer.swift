@@ -73,11 +73,11 @@ enum TableRenderer {
         guard !quiet else { return rows.map(\.snapshot.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
-            headings: ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "ID"],
+            headings: ["NAME", "CURRENT", "KIND", "TAKEN", "FREES", "ID"],
             rows: rows.map {
                 [
                     $0.snapshot.name, $0.snapshot.isCurrent ? "*" : "", $0.snapshot.kind,
-                    taken($0.snapshot.createdAt), size($0.onDiskBytes),
+                    taken($0.snapshot.createdAt), size($0.reclaimableBytes),
                     $0.snapshot.id.uuidString,
                 ]
             })
@@ -189,9 +189,9 @@ enum TableRenderer {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    /// What a snapshot's files occupy, in the unit Finder's Get Info would
-    /// state it in, or `Unknown` for a snapshot the size read did not answer
-    /// for.
+    /// What deleting a snapshot would free, in the unit Finder's Get Info
+    /// would state it in, or `Unknown` for a snapshot the size read did not
+    /// answer for.
     private static func size(_ bytes: UInt64?) -> String {
         guard let bytes else { return "Unknown" }
         return ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)

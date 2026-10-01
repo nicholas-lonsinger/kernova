@@ -56,10 +56,9 @@ struct VMOverviewResolved: Sendable {
     var ipAddress: GuestIPAddress = .unavailable
     /// The boot disk's capacity, once its off-main read lands.
     var bootDiskBytes: UInt64?
-    /// What each snapshot occupies, once the off-main size read lands.
+    /// What deleting each snapshot would free, once the off-main size read
+    /// lands; a snapshot whose size can't be read has no entry.
     var snapshotSizes: [UUID: UInt64] = [:]
-    /// What this VM's snapshots occupy together, from the same read.
-    var snapshotTotalBytes: UInt64?
     /// Whether a capture is offered right now — the view model's own gate.
     var canTakeSnapshot = false
     /// What the Audio section shows beneath its input toggle.
@@ -182,14 +181,10 @@ enum VMOverviewSummary {
     /// The small secondary line beside `category`'s title, `nil` where the
     /// category states none.
     @MainActor
-    static func headerSummary(
-        for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
-    ) -> String? {
+    static func headerSummary(for category: VMSettingsCategory, instance: VMInstance) -> String? {
         guard category == .snapshots else { return nil }
         let count = instance.snapshotManifest.ordered.count
-        guard count > 0 else { return nil }
-        guard let bytes = resolved.snapshotTotalBytes else { return "\(count)" }
-        return "\(count) \u{00B7} \(DataFormatters.formatBytes(bytes))"
+        return count > 0 ? "\(count)" : nil
     }
 
     /// The live switches `category`'s card carries for a `guestOS` guest, in

@@ -6,12 +6,12 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Sizes
 
-    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
-        await snapshotOnDiskBytes(for: try resolve(selector))
+    func snapshotReclaimableBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
+        await snapshotReclaimableBytes(for: try resolve(selector))
     }
 
-    /// Bytes each of this VM's snapshots occupies on disk.
-    func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
+    /// The space deleting each of this VM's snapshots would free.
+    func snapshotReclaimableBytes(for instance: VMInstance) async -> [UUID: UInt64] {
         await instance.bundle.snapshotSizes()
     }
 

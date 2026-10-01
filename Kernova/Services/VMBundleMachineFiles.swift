@@ -386,35 +386,13 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Sizes
 
-    func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
+    func reclaimableBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         var sizes: [UUID: UInt64] = [:]
         for id in snapshotIDs {
-            sizes[id] = Self.allocatedBytes(of: layout.snapshotDirectoryURL(id: id))
+            sizes[id] = ReclaimableBytes.of(directory: layout.snapshotDirectoryURL(id: id))
         }
         return sizes
-    }
-
-    /// Blocks allocated to everything under `directory`.
-    ///
-    /// A block a copy-on-write clone shares with the file it was cloned from is
-    /// counted in full, for the clone and for the original alike — the figure is
-    /// what the snapshot's files occupy, not what deleting the snapshot frees.
-    private static func allocatedBytes(of directory: URL) -> UInt64 {
-        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .isRegularFileKey]
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: directory, includingPropertiesForKeys: keys,
-                options: [.skipsHiddenFiles])
-        else { return 0 }
-        var total: UInt64 = 0
-        for case let url as URL in enumerator {
-            let values = try? url.resourceValues(forKeys: Set(keys))
-            guard values?.isRegularFile == true, let allocated = values?.totalFileAllocatedSize
-            else { continue }
-            total &+= UInt64(allocated)
-        }
-        return total
     }
 }
 

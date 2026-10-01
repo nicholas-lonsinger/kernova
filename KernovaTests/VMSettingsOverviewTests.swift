@@ -294,11 +294,11 @@ struct VMSettingsOverviewTests {
             // row's info and the header carries none.
             #expect((firstSubview(InfoButtonView.self, in: header) != nil) == (category == .snapshots))
         }
-        // The Snapshots readout follows its info affordance into the header
+        // The Snapshots count follows its info affordance into the header
         // rather than being orphaned with the section header.
         let snapshots = try #require(firstSubview(SnapshotSectionView.self, in: vc.view))
         let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
-        #expect(snapshots.sizeReadout.isDescendant(of: header))
+        #expect(snapshots.countReadout.isDescendant(of: header))
     }
 
     // MARK: - Mirrored toggles
@@ -490,46 +490,6 @@ struct VMSettingsOverviewTests {
         #expect(copy.frame.width > 0)
         #expect(label.frame.width < label.intrinsicContentSize.width)
         #expect(label.lineBreakMode == .byTruncatingTail)
-    }
-
-    @Test("The snapshots' footprint is never claimed for a set it doesn't cover")
-    func snapshotFootprintNeverOutlivesItsSnapshots() async throws {
-        let (vc, instance, viewModel) = makeController()
-        let first = VMSnapshot(name: "First", macAddress: nil)
-        let second = VMSnapshot(name: "Second", macAddress: nil)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [first, second], currentID: second.id))
-        reapply(vc, (instance, viewModel))
-
-        let resolver = vc.overviewResolverForTesting
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
-
-        // Capturing another leaves the set part-measured, so the card states the
-        // count alone until the fresh read covers the newcomer too.
-        let third = VMSnapshot(name: "Third", macAddress: nil)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [first, second, third], currentID: third.id))
-        reapply(vc, (instance, viewModel))
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
-
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
-
-        // A switch to another VM drops the footprint outright: its count must
-        // not land beside the previous VM's.
-        let other = viewModel.library.admitFixture(guestOS: .macOS) { $0.macAddress = nil }
-        let onlySnapshot = VMSnapshot(name: "Other", macAddress: nil)
-        other.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [onlySnapshot], currentID: onlySnapshot.id))
-        vc.reconfigure(instance: other, viewModel: viewModel, isReadOnly: false)
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
-        #expect(
-            VMOverviewSummary.headerSummary(
-                for: .snapshots, instance: other, resolved: VMOverviewResolved()) == "1")
     }
 
     @Test("The capture command dims when the VM is in no state to be captured")

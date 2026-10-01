@@ -117,11 +117,10 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         }
     }
 
-    /// Why a snapshot's listed size overstates the space it takes.
+    /// Why a snapshot takes little space when it is taken.
     static let sharedBlocksExplanation =
         "Disks are copied on the same volume, so the copies share their blocks with the virtual machine's "
-        + "disks and take almost no extra space until one side changes \u{2014} but the "
-        + "snapshot's listed size counts those shared blocks in full."
+        + "disks and take almost no extra space until one side changes."
 
     // MARK: - Header
 
