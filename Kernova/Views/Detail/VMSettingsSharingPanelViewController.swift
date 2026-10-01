@@ -254,8 +254,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     static let agentDependencyCaption =
         "Clipboard sharing, drag and drop, and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
 
-    /// Shown under the Guest Agent card while the app-wide preference turns the
-    /// install prompt off, so the greyed row reads as controlled elsewhere.
+    /// Shown under the "Show install reminder" row while the app-wide
+    /// preference turns the install prompt off, so the greyed row reads as
+    /// controlled elsewhere.
     static let installPromptDisabledCaption =
         "The install reminder is turned off for all virtual machines in Settings → Reminders."
 
