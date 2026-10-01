@@ -186,6 +186,13 @@ func visibleLabel(_ text: String, in view: NSView) -> Bool {
     } != nil
 }
 
+/// The info button whose popover is about `label` — a row's title, a section
+/// header, or a banner's subject.
+@MainActor
+func infoButton(about label: String, in view: NSView) -> InfoButtonView? {
+    firstSubview(InfoButtonView.self, in: view) { $0.button.toolTip == "About \(label)" }
+}
+
 /// The editable field in the grouped-form card row titled `label`, however
 /// deeply the row nests it (the MAC row pairs its field with a button).
 @MainActor

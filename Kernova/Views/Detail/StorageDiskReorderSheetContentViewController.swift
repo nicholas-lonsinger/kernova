@@ -132,7 +132,7 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
             "Boot Order",
             info: [
                 .body(
-                    "Drag rows to set the order in which the guest sees its storage. Position 1 boots first on EFI guests; on macOS and Linux Kernel boot, the order also determines guest device enumeration (for example, /dev/vda, /dev/vdb)."
+                    "Drag rows to set the order the guest sees its storage in. Position 1 boots first on EFI guests and is the main system disk on macOS guests. The order also sets device enumeration (/dev/vda, /dev/vdb, …); on Linux Kernel boot it does not change boot priority."
                 )
             ])
 

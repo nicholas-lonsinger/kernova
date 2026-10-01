@@ -324,7 +324,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(findLabel(withText: "Wi-Fi (en0)", in: card) != nil)
     }
 
-    @Test("Choosing None writes the mode, hides the MAC row, and says there's no device")
+    @Test("Choosing None writes the mode and hides the MAC row, leaving Mode to say so")
     func selectingNoneWritesConfigAndEmptiesTheCard() throws {
         let (vc, instance) = makeNetworkController()
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
@@ -335,33 +335,52 @@ struct VMSettingsNetworkPanelTests {
 
         #expect(instance.configuration.networkEnabled == false)
         #expect(!visibleLabel("MAC address", in: vc.view))
-        #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
+        #expect(findLabel(containing: "no network device", in: vc.view) == nil)
     }
 
-    @Test("A VM with no network device builds with the caption already showing")
-    func noneModeBuildsWithTheCaptionShowing() throws {
+    @Test("A VM with no network device builds with only the Mode row showing")
+    func noneModeBuildsWithOnlyTheModeRow() throws {
         let (vc, _) = makeNetworkController(networkEnabled: false)
         #expect(!visibleLabel("MAC address", in: vc.view))
-        #expect(visibleLabel("This virtual machine has no network device.", in: vc.view))
+        #expect(findLabel(containing: "no network device", in: vc.view) == nil)
         #expect(settingsNetworkModePopUp(in: vc.view)?.titleOfSelectedItem == "None")
     }
 
-    @Test("With no network device the caption sits in the Network card, a note's gap under Mode")
-    func noneModeCaptionSitsInTheCard() throws {
-        let (vc, _) = makeNetworkController(networkEnabled: false)
-        vc.view.layoutSubtreeIfNeeded()
+    @Test("The Mode row carries the network info, and the panel header carries none")
+    func modeRowCarriesTheNetworkInfo() {
+        let (vc, _) = makeNetworkController()
+        #expect(infoButton(about: "Mode", in: vc.view) != nil)
+        #expect(infoButton(about: "Network", in: vc.view) == nil)
+    }
 
-        let caption = try #require(
-            findLabel(withText: "This virtual machine has no network device.", in: vc.view))
-        let card = try #require(enclosingGroupedFormCard(of: caption))
-        let modeRow = try #require(findLabel(withText: "Mode", in: card)?.superview)
+    @Test(
+        "The Mode info describes only the modes the picker offers",
+        arguments: [[.shared], [.shared, .hostOnly], [.shared, .hostOnly, .bridged]] as [Set<VMNetworkMode>])
+    func modeInfoDescribesOnlyOfferedModes(offered: Set<VMNetworkMode>) {
+        let paragraphs = VMSettingsNetworkPanelViewController.modeInfoParagraphs(
+            offered: offered, observesGuestAddress: true, guestOS: .macOS)
+        let text = paragraphs.map {
+            switch $0 {
+            case .body(let body), .code(let body): body
+            }
+        }
+        #expect(text.contains { $0.hasPrefix("Shared Network:") })
+        #expect(text.contains { $0.hasPrefix("Host Only:") } == offered.contains(.hostOnly))
+        #expect(text.contains { $0.contains("Bridged") } == offered.contains(.bridged))
+    }
 
-        // The card's own view is not flipped: "below" is a smaller y. Mode is the
-        // only row showing, so the note's gap is measured from it.
-        let captionInCard = try alignmentRect(of: caption, in: card)
-        let modeRowInCard = modeRow.convert(modeRow.bounds, to: card)
-        #expect(captionInCard.height > 0)
-        #expect(modeRowInCard.minY - captionInCard.maxY == Spacing.small)
+    @Test("The Shared reach clause points at the IP address row only where it can show the address")
+    func modeInfoReachClauseFollowsAddressObservation() {
+        for observes in [true, false] {
+            let text = VMSettingsNetworkPanelViewController.modeInfoParagraphs(
+                offered: [.shared], observesGuestAddress: observes, guestOS: .macOS
+            ).map {
+                switch $0 {
+                case .body(let body), .code(let body): body
+                }
+            }
+            #expect(text.contains { $0.contains("the address in the IP address row") } == observes)
+        }
     }
 
     @Test("Choosing an interface sets the bridged mode and the interface in one gesture")
@@ -609,7 +628,7 @@ struct VMSettingsNetworkPanelTests {
     }
 
     private static let duplicateMACBanner =
-        "This MAC address is also used by \u{201C}Holder\u{201D}. Virtual machines with the same "
+        "\u{201C}Holder\u{201D} also uses this MAC address. Virtual machines with the same "
         + "MAC address can\u{2019}t run on the same network at once, but they can on separate networks."
 
     @Test("The Network section names another VM holding this VM's MAC address")

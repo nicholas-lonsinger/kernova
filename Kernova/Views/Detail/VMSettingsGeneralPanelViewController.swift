@@ -271,12 +271,18 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Startup
 
-    /// Caption under the Startup card: the launch pass walks the library in
-    /// sidebar order, so that is the order the marked VMs come up in.
-    static let autoStartOrderCaption =
-        "Virtual machines start in the order they appear in the sidebar."
+    /// The info paragraphs of the "Start when Kernova opens" row. The launch
+    /// pass walks the library in sidebar order, so that is the order the marked
+    /// VMs come up in.
+    static let autoStartInfo: [InfoPopoverParagraph] = [
+        .body(
+            "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
+        ),
+        .body("Virtual machines start in the order they appear in the sidebar."),
+        .body("Turn on Open at Login in Settings → General to have it running after you log in."),
+    ]
 
-    /// The Startup card's two toggles, their captions, and the capacity banner's
+    /// The Startup card's two toggles, their notes, and the capacity banner's
     /// container.
     ///
     /// Not `lockable`: the auto-start flag is read once at app launch, the
@@ -320,15 +326,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let card = makeGroupedFormCard(
             rows: [
                 makeGroupedFormCardRow(
-                    "Start when Kernova opens", control: autoStartSwitch,
-                    info: [
-                        .body(
-                            "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
-                        ),
-                        .body(
-                            "Turn on Open at Login in Settings → General to have it running after you log in."
-                        ),
-                    ]),
+                    "Start when Kernova opens", control: autoStartSwitch, info: Self.autoStartInfo),
                 ephemeralGroup,
             ])
 
@@ -339,10 +337,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Startup"), card,
-            GroupedFormStateNote.temporarilyStanding(Self.autoStartOrderCaption),
-            GroupedFormStateNote.temporarilyStanding(EphemeralModeCopy.settingsCaption),
-            autoStartWarningContainer,
+            lockRegistry.makeHeader("Startup"), card, autoStartWarningContainer,
         ])
     }
 

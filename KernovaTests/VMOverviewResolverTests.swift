@@ -222,7 +222,7 @@ struct VMOverviewResolverTests {
 
         #expect(
             resolver.resolved.warnings[.network]
-                == "This MAC address is also used by \u{201C}Twin\u{201D}. Virtual machines with "
+                == "\u{201C}Twin\u{201D} also uses this MAC address. Virtual machines with "
                 + "the same MAC address can\u{2019}t run on the same network at once, but they can "
                 + "on separate networks.")
     }
@@ -290,7 +290,7 @@ struct VMOverviewResolverTests {
 
         let promptResolver = makeResolver(instance: listening, micPermission: .notDetermined)
         promptResolver.refresh()
-        #expect(promptResolver.resolved.micWarning == .willPrompt)
+        #expect(promptResolver.resolved.micWarning == MicWarningState.none)
         // Only a refusal is worth a card's warning glyph.
         #expect(promptResolver.resolved.warnings[.system] == nil)
     }

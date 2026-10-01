@@ -95,8 +95,7 @@ final class VMOverviewResolver {
 
     /// What the Audio banner — and the System card's warning glyph — say about a
     /// refused microphone.
-    static let micPermissionDeniedWarning =
-        "Microphone permission is denied. Enable it in System Settings for Kernova to pass your microphone to VMs."
+    static let micPermissionDeniedWarning = "Microphone permission is denied."
 
     private(set) var resolved = VMOverviewResolved()
 
@@ -213,9 +212,8 @@ final class VMOverviewResolver {
         isMacOSGuest: Bool, markedMacOSVMCount: Int
     ) -> String? {
         guard isMacOSGuest, markedMacOSVMCount > concurrentMacOSGuestLimit else { return nil }
-        return "\(markedMacOSVMCount) macOS virtual machines are set to start when Kernova opens. "
-            + "macOS allows at most two macOS virtual machines to run at once, "
-            + "so the ones after the first two won't start."
+        return "\(markedMacOSVMCount) macOS VMs are set to start when Kernova opens, "
+            + "but macOS runs at most two at once — the rest won't start."
     }
 
     /// Names the other VMs carrying this one's MAC address, `nil` when none
@@ -223,9 +221,9 @@ final class VMOverviewResolver {
     /// networking is off, but nothing shows it there to contradict.
     static func duplicateMACWarning(sharingWith names: [String]) -> String? {
         guard !names.isEmpty else { return nil }
-        return "This MAC address is also used by \(DataFormatters.quotedList(names)). "
-            + "Virtual machines with the same MAC address can\u{2019}t run on the same network "
-            + "at once, but they can on separate networks."
+        return "\(DataFormatters.quotedList(names)) also \(names.count == 1 ? "uses" : "use") "
+            + "this MAC address. Virtual machines with the same MAC address can\u{2019}t run on "
+            + "the same network at once, but they can on separate networks."
     }
 
     /// Names the other VMs holding this one's machine ID, `nil` when none do.

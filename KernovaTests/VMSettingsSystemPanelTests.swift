@@ -327,21 +327,12 @@ struct VMSettingsSystemPanelTests {
         #expect(editableField("Height", in: vc.view)?.integerValue == 1200)
     }
 
-    @Test("The restart caption shows only while the guest holds a session")
-    func restartCaptionOnlyWhileTheGuestHoldsASession() {
-        let caption = "Takes effect on next start."
-
+    @Test("A running VM's Display card adds no next-start note to its lock hint")
+    func noNextStartNoteWhileRunning() {
         let (runningVC, _) = makeDisplayController(
             phase: .running(sessionID: UUID()), isReadOnly: true)
-        #expect(visibleLabel(caption, in: runningVC.view))
-
-        // A pane locked with no session to wait out — another copy of Kernova
-        // holding the VM — names no next start.
-        let (lockedVC, _) = makeDisplayController(isReadOnly: true)
-        #expect(!visibleLabel(caption, in: lockedVC.view))
-
-        let (editableVC, _) = makeDisplayController(isReadOnly: false)
-        #expect(!visibleLabel(caption, in: editableVC.view))
+        #expect(findLabel(containing: "Takes effect", in: runningVC.view) == nil)
+        #expect(settingsLockHints(in: runningVC.view).contains { !$0.isHidden })
     }
 
     // MARK: - Input section
@@ -420,12 +411,16 @@ struct VMSettingsSystemPanelTests {
         return vc
     }
 
-    @Test("Denied permission shows the warning banner with an Open System Settings button")
+    @Test("Denied permission shows the warning banner with an Open System Settings button and its info")
     func deniedMicShowsBannerAndButton() {
         let vc = makeMicController(.denied)
 
-        #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) != nil)
+        #expect(visibleLabel(VMOverviewResolver.micPermissionDeniedWarning, in: vc.view))
         #expect(findButton(titled: "Open System Settings", in: vc.view) != nil)
+        #expect(infoButton(about: "Microphone Permission", in: vc.view) != nil)
+        #expect(
+            VMSettingsSystemPanelViewController.micPermissionInfo.contains(
+                .body("In System Settings › Privacy & Security › Microphone, turn on Kernova.")))
     }
 
     @Test("The banner's Open System Settings button opens the Microphone privacy pane")
@@ -439,15 +434,13 @@ struct VMSettingsSystemPanelTests {
         #expect(recorder.opened == [SystemSettingsLink.microphonePrivacyURL])
     }
 
-    @Test("An undetermined permission explains the upcoming prompt instead of offering the link")
-    func undeterminedMicShowsCaptionOnly() {
+    @Test("An undetermined permission shows nothing on screen; the Audio input row's info names the prompt")
+    func undeterminedMicShowsNothing() {
         let vc = makeMicController(.notDetermined)
 
-        #expect(
-            findLabel(
-                withText: "macOS will ask for microphone permission the first time a VM uses it.",
-                in: vc.view) != nil)
+        #expect(findLabel(containing: "microphone permission", in: vc.view) == nil)
         #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
+        #expect(infoButton(about: "Audio input", in: vc.view) != nil)
     }
 
     @Test("Granted permission shows neither the banner nor the link")
@@ -902,28 +895,18 @@ struct VMSettingsSystemPanelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    // MARK: - Resolution caption
+    // MARK: - Sized-at-last-start note
 
-    private func resolutionCaption(in vc: VMSettingsViewController) -> String? {
-        allSubviews(NSTextField.self, in: vc.view) { $0.stringValue.hasPrefix("Boots at") }
-            .first?.stringValue
-    }
-
-    private func toggleHiDPI(_ isOn: Bool, in vc: VMSettingsViewController) throws {
-        let hiDPI = try #require(firstSwitch(action: "displayHiDPIToggled", in: vc.view))
-        hiDPI.state = isOn ? .on : .off
-        hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
-    }
+    private var sizedNote: String { VMSettingsSystemPanelViewController.displaySizedAtLastStartNote }
 
     @Test(
-        "The resolution caption sits inside the Display card, under its last row",
+        "The sized-at-last-start note sits inside the Display card, under its last row",
         arguments: [(VMGuestOS.macOS, "HiDPI (Retina)"), (.linux, "Height")])
-    func resolutionCaptionSitsInTheDisplayCard(guestOS: VMGuestOS, lastRowTitle: String) throws {
-        let (vc, _) = makeDisplayController(guestOS: guestOS)
+    func sizedNoteSitsInTheDisplayCard(guestOS: VMGuestOS, lastRowTitle: String) throws {
+        let (vc, _) = makeDisplayController(guestOS: guestOS, sizesToWindow: true)
         vc.view.layoutSubtreeIfNeeded()
 
-        let caption = try #require(
-            firstSubview(NSTextField.self, in: vc.view) { $0.stringValue.hasPrefix("Boots at") })
+        let caption = try #require(findLabel(withText: sizedNote, in: vc.view))
         let card = try #require(enclosingGroupedFormCard(of: caption))
         let lastRowTitleLabel = try #require(findLabel(withText: lastRowTitle, in: card))
 
@@ -934,61 +917,31 @@ struct VMSettingsSystemPanelTests {
         #expect(captionInCard.maxY <= titleInCard.minY)
     }
 
-    @Test("The resolution caption follows HiDPI off, then on")
-    func resolutionCaptionFollowsHiDPI() throws {
-        let (vc, _) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
+    @Test("The sized-at-last-start note shows only while the display is sized to the window")
+    func sizedNoteOnlyInMatchMode() {
+        let (manualVC, _) = makeDisplayController(sizesToWindow: false)
+        #expect(!visibleLabel(sizedNote, in: manualVC.view))
+        // The manual size is the fields' own, so nothing restates it.
+        #expect(findLabel(containing: "Boots at", in: manualVC.view) == nil)
 
-        try toggleHiDPI(false, in: vc)
-        #expect(resolutionCaption(in: vc) == "Boots at 800 × 900 pixels.")
-
-        try toggleHiDPI(true, in: vc)
-        #expect(resolutionCaption(in: vc) == "Boots at 1600 × 1800 pixels (looks like 800 × 900).")
+        let (matchVC, _) = makeDisplayController(sizesToWindow: true)
+        #expect(visibleLabel(sizedNote, in: matchVC.view))
     }
 
-    @Test("In match mode the caption names the HiDPI change the next start applies")
-    func matchModeCaptionNamesThePendingDensity() throws {
-        let (vc, _) = makeDisplayController(
-            sizesToWindow: true, width: 1600, height: 1800, ppi: 220)
-
-        try toggleHiDPI(false, in: vc)
-        #expect(
-            resolutionCaption(in: vc)
-                == "Boots at 1600 × 1800 pixels (looks like 800 × 900), until the next start "
-                + "resizes it to the window without HiDPI.")
-
-        try toggleHiDPI(true, in: vc)
-        #expect(
-            resolutionCaption(in: vc)
-                == "Boots at 1600 × 1800 pixels (looks like 800 × 900), until the next start "
-                + "resizes it to the window.")
-    }
-
-    @Test("In match mode the caption promises HiDPI only on a Retina display")
-    func matchModeCaptionQualifiesThePendingHiDPI() throws {
-        let (vc, _) = makeDisplayController(
-            sizesToWindow: true, width: 1600, height: 1800, ppi: 144)
-
-        try toggleHiDPI(true, in: vc)
-        #expect(
-            resolutionCaption(in: vc)
-                == "Boots at 1600 × 1800 pixels, until the next start resizes it to the window, "
-                + "with HiDPI on a Retina display.")
-    }
-
-    @Test("The resolution caption follows a HiDPI write made through the verb")
-    func resolutionCaptionFollowsAVerbWrite() throws {
-        let (vc, instance) = makeDisplayController(width: 1600, height: 1800, ppi: 220)
+    @Test("The sized-at-last-start note follows a write made through the verb")
+    func sizedNoteFollowsAVerbWrite() throws {
+        let (vc, instance) = makeDisplayController(sizesToWindow: false)
         let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
 
-        // Not the pane's own write: the caption hears of it only through the
+        // Not the pane's own write: the note hears of it only through the
         // model, as it does a CLI `set`.
         let outcome = viewModel.setConfiguration(
-            [VMConfigurationKeyRegistry.displayHiDPI.assigning(false)], on: instance)
+            [VMConfigurationKeyRegistry.displaySizeToWindow.assigning(true)], on: instance)
         #expect(outcome == .applied)
 
         // Stands in for the observation pass the write drives.
         vc.viewDidAppear()
-        #expect(resolutionCaption(in: vc) == "Boots at 800 × 900 pixels.")
+        #expect(visibleLabel(sizedNote, in: vc.view))
     }
 
     @Test("A refused end-edit puts the model's value back in a field whose editor is still attached")

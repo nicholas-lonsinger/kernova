@@ -109,12 +109,6 @@ final class SnapshotSectionView: NSView {
         var rows: [NSView] = []
         if showsHeader { rows.append(makeHeader()) }
         rows.append(makeGroupedFormCard(rows: [listStack, footer]))
-        rows.append(
-            GroupedFormStateNote.temporarilyStanding(
-                "Reverting returns the VM to the state and settings it had when the snapshot was "
-                    + "taken. Snapshots stay until you delete them. A snapshot's size counts "
-                    + "the blocks it shares with the VM's disks, so the listed sizes overlap "
-                    + "rather than add up."))
 
         let section = NSStackView(views: rows)
         section.orientation = .vertical
@@ -153,19 +147,15 @@ final class SnapshotSectionView: NSView {
                     "Unlike Suspend, reverting keeps the snapshot, so the same restore point can be used again."
                 ),
                 .body(
-                    "A new snapshot's copies share their blocks with the disks they were copied "
-                        + "from, and keep sharing them until one side changes. Its listed size is "
-                        + "what those files hold, which is space the VM \u{2014} and any other "
-                        + "snapshot of the same disks \u{2014} is counted for too."
+                    "A snapshot's copies share blocks with the disks they came from until either "
+                        + "side changes, so the listed sizes overlap with the VM and with each "
+                        + "other rather than add up."
                 ),
             ])
 
         readoutLabel.font = .preferredFont(forTextStyle: .caption1)
         readoutLabel.textColor = .secondaryLabelColor
         readoutLabel.isSelectable = false
-        readoutLabel.toolTip =
-            "The space the snapshots' files hold. Their copies share blocks with the "
-            + "VM's disks, so this overlaps with the VM rather than adding to it."
         readoutLabel.setContentHuggingPriority(.required, for: .horizontal)
     }
 

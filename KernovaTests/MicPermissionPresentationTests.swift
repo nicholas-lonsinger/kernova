@@ -20,7 +20,7 @@ struct MicPermissionPresentationTests {
 
     @Test("Enabled audio input maps each status to the expected warning state")
     func enabledAudioInputMapping() {
-        #expect(micPermissionPresentation(.notDetermined, audioInputEnabled: true) == .willPrompt)
+        #expect(micPermissionPresentation(.notDetermined, audioInputEnabled: true) == .none)
         #expect(micPermissionPresentation(.denied, audioInputEnabled: true) == .denied)
         #expect(micPermissionPresentation(.restricted, audioInputEnabled: true) == .denied)
         #expect(micPermissionPresentation(.authorized, audioInputEnabled: true) == .none)

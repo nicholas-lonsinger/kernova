@@ -91,15 +91,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         viewModel.capabilities.isAvailable(.editStorageDisks, on: instance)
     }
 
-    /// What the Removable Media header says while its rows are locked.
-    ///
-    /// Its own wording rather than the shared "Editable when stopped": a
-    /// running guest takes a hot-plug, so the shared claim is one the user can
-    /// disprove in a second. What is left out is a VM mid-save, mid-capture,
-    /// mid-restore, or paused to disk — each pins the device set its saved
-    /// state or its capture will be read back into.
-    static let removableMediaLockHintText = "Editable when stopped or running"
-
     /// Whether this VM's removable-media list takes an edit right now.
     ///
     /// Wider than ``canEditStorageDisks``: the media are hot-pluggable, so a
@@ -206,23 +197,19 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let paragraphs: [InfoPopoverParagraph] =
             instance.configuration.guestOS == .linux
             ? [
-                .body(
-                    "Position 1 boots first on EFI guests; on Linux Kernel boot, position affects device enumeration but not boot priority."
-                ),
                 .body("Permanent disks attach as virtio block devices (`/dev/vda`, `/dev/vdb`, …)."),
                 .body(
                     "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media — so reordering an installer doesn't change your main disk's `/dev/vda` letter."
                 ),
             ]
             : [
-                .body("Position 1 is the main system disk; subsequent positions follow in order."),
                 .body("Permanent disks attach as virtio block devices."),
                 .body(
                     "Installer images (.iso, .dmg) attach as USB Mass Storage entries on this list — still bootable, separate from hot-pluggable Removable Media."
                 ),
             ]
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Storage Disks", lockable: true, paragraphs: paragraphs), card,
+            lockRegistry.makeHeader("Storage Disks", editableWhen: .stopped, paragraphs: paragraphs), card,
         ])
     }
 
@@ -231,7 +218,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private func buildRemovableMediaSection() -> NSView {
         removableListStack = makeGroupedFormListStack()
         removableList = AttachmentList(
-            listStack: removableListStack, emptyMessage: "No removable media attached")
+            listStack: removableListStack, emptyMessage: "No removable media")
         let attach = makeGroupedFormPushButton("Attach Disk…", target: self, action: #selector(attachRemovableTapped))
         let create = makeGroupedFormPushButton(
             "Create New Disk…", target: self, action: #selector(createRemovableTapped))
@@ -248,14 +235,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         return makeGroupedFormSection([
             removableLockRegistry.makeHeader(
                 "Removable Media",
-                lockable: true,
-                lockHintText: Self.removableMediaLockHintText,
-                paragraphs: [
-                    firstParagraph,
-                    .body(
-                        "Hot-pluggable — changes take effect immediately while the VM is running. For boot media, use Storage Disks instead."
-                    ),
-                ]), card,
+                editableWhen: .stoppedOrRunning,
+                paragraphs: [firstParagraph, .body("For boot media, use Storage Disks instead.")]), card,
         ])
     }
 

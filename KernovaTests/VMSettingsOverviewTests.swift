@@ -290,7 +290,9 @@ struct VMSettingsOverviewTests {
 
             #expect(findLabel(withText: category.title, in: panel) == nil)
             #expect(findLabel(withText: category.title, in: header) != nil)
-            #expect(firstSubview(InfoButtonView.self, in: header) != nil)
+            // Network's facts are all about its Mode row, so they sit on that
+            // row's info and the header carries none.
+            #expect((firstSubview(InfoButtonView.self, in: header) != nil) == (category == .snapshots))
         }
         // The Snapshots readout follows its info affordance into the header
         // rather than being orphaned with the section header.

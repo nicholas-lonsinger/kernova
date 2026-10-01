@@ -55,16 +55,18 @@ struct VMSettingsSharingPanelTests {
         #expect(containsLabel("Clipboard", in: linuxVC.view))
     }
 
-    @Test("Agent-dependency caption appears for macOS but not Linux")
-    func agentDependencyCaptionMacOSOnly() {
-        let caption = VMSettingsSharingPanelViewController.agentDependencyCaption
-
+    @Test("The agent dependency is the macOS Guest Agent header's info, never on screen")
+    func agentDependencyInfoMacOSOnly() {
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(containsLabel(caption, in: macVC.view))
+        #expect(infoButton(about: "Guest Agent", in: macVC.view) != nil)
+        #expect(findLabel(containing: "need the Kernova guest agent", in: macVC.view) == nil)
 
-        // Linux clipboard is SPICE-based, so the agent-dependency cue must not appear.
+        // Linux clipboard is SPICE-based, so the agent-dependency cue must not
+        // appear; its clipboard row carries its own info instead.
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(!containsLabel(caption, in: linuxVC.view))
+        #expect(infoButton(about: "Guest Agent", in: linuxVC.view) == nil)
+        #expect(infoButton(about: "Clipboard sharing", in: linuxVC.view) != nil)
+        #expect(infoButton(about: "Clipboard", in: linuxVC.view) == nil)
     }
 
     // MARK: - Clipboard passthrough

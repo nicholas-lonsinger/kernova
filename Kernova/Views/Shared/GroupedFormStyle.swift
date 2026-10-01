@@ -756,12 +756,15 @@ func makeGroupedFormBox(
     return container
 }
 
+/// A tinted banner: a symbol, `message`, then `trailingButtons` and, when
+/// `info` is given, an info button labeled `info.label` opening its paragraphs.
 @MainActor
 func makeGroupedFormBanner(
     symbolName: String,
     tint: NSColor,
     message: String,
-    trailingButtons: [NSButton] = []
+    trailingButtons: [NSButton] = [],
+    info: (label: String, paragraphs: [InfoPopoverParagraph])? = nil
 ) -> NSView {
     let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = tint
@@ -782,6 +785,9 @@ func makeGroupedFormBanner(
         button.controlSize = .small
         button.setContentHuggingPriority(.required, for: .horizontal)
         views.append(button)
+    }
+    if let info {
+        views.append(makeGroupedFormInfoButton(label: info.label, paragraphs: info.paragraphs))
     }
 
     let row = NSStackView(views: views)

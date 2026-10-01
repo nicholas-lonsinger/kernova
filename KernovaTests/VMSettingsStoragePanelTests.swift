@@ -83,7 +83,7 @@ struct VMSettingsStoragePanelTests {
 
     @Test("Each section's lock hint names the states that section is editable in")
     func sectionLockHintsNameTheirOwnCondition() throws {
-        let hintText = VMSettingsStoragePanelViewController.removableMediaLockHintText
+        let hintText = VMSettingsEditableStates.stoppedOrRunning.lockHint
         // Removable media is hot-pluggable, so the shared "Editable when
         // stopped" would be a claim the user disproves the moment a guest boots.
         #expect(hintText != groupedFormLockHintText)
@@ -111,7 +111,7 @@ struct VMSettingsStoragePanelTests {
             !$0.isHidden && $0.toolTip != nil
                 && [
                     groupedFormLockHintText,
-                    VMSettingsStoragePanelViewController.removableMediaLockHintText,
+                    VMSettingsEditableStates.stoppedOrRunning.lockHint,
                 ].contains($0.toolTip ?? "")
         }
         .compactMap(\.toolTip)

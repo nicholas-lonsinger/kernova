@@ -5,7 +5,7 @@ import KernovaKit
 /// it.
 ///
 /// A single-section category, so the section draws no header of its own and
-/// hands its info affordance and lock hint to the panel header.
+/// hands its lock hint to the panel header.
 @MainActor
 final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPanel {
     let context: VMSettingsPanelContext
@@ -35,8 +35,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: CopyValueButton?
-    /// Stands in for the card's rows while the mode is None.
-    private var networkNoDeviceCaption: GroupedFormStateNote?
     /// Holds the banner naming the other VMs sharing this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
@@ -57,71 +55,78 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Network
 
-    /// The Network section and the info popover carrying the panel's whole
-    /// claim about what networking does.
+    /// The Mode row's info: one paragraph per mode in `offered` — the modes
+    /// the picker offers — and nothing about a mode it cannot offer.
     ///
-    /// "UI copy states only what is known": every paragraph is built from what
-    /// this build and this host can actually deliver — the Shared reach clause
-    /// points at the IP address row only where that row can show an address,
-    /// and the Wi-Fi limitation is stated at the standard's strength, on the
-    /// surface the user picks a mode from.
+    /// "UI copy states only what is known": the Shared reach clause points at
+    /// the IP address row only where that row can show a Shared guest's address
+    /// (`observesGuestAddress`), and the Wi-Fi limitation is stated at the
+    /// standard's strength, on the surface the user picks a mode from.
+    static func modeInfoParagraphs(
+        offered: Set<VMNetworkMode>, observesGuestAddress: Bool, guestOS: VMGuestOS
+    ) -> [InfoPopoverParagraph] {
+        let sharedReachClause =
+            observesGuestAddress
+            ? "this Mac reaches it at the address in the IP address row"
+            : "this Mac reaches it at its address on that subnet"
+        var paragraphs: [InfoPopoverParagraph] = []
+        if offered.contains(.shared) {
+            paragraphs.append(
+                .body(
+                    "Shared Network: outbound access through this Mac. The guest gets a DHCP address on a private subnet that other machines on your network can't reach; \(sharedReachClause)."
+                ))
+        }
+        if offered.contains(.hostOnly) {
+            paragraphs.append(
+                .body(
+                    "Host Only: a private network shared with this Mac and other Host Only guests, with no access to your network or the internet."
+                ))
+        }
+        if offered.contains(.bridged) {
+            paragraphs += [
+                .body(
+                    "Bridged: joins your network through the chosen interface and requests its own address, like a separate machine."
+                ),
+                .body(
+                    "Bridged traffic bypasses a VPN running on this Mac. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations — so prefer a wired interface."
+                ),
+            ]
+        }
+        if guestOS == .linux {
+            paragraphs.append(
+                .body(
+                    "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
+                ))
+        }
+        return paragraphs
+    }
+
     private func buildNetworkSection() -> NSView {
         // Outside `lockableRows`: the picker is the live-switch surface while
         // the VM runs, so `refreshNetwork()` owns its enablement and its row's
         // dimming (and the section lock hint it makes moot).
         networkModePopUp = makeNetworkModePopUp()
-        let modeRow = makeGroupedFormCardRow("Mode", control: networkModePopUp)
+        let modeRow = makeGroupedFormCardRow(
+            "Mode", control: networkModePopUp,
+            info: Self.modeInfoParagraphs(
+                offered: offeredModes,
+                observesGuestAddress: sharedRidesVmnet && entitlements.supportsGuestAddressObservation,
+                guestOS: instance.configuration.guestOS))
 
-        var rows: [NSView] = [modeRow]
-        rows.append(makeIsolationRow())
-        rows.append(makeIPAddressRow())
-        rows.append(makeMACAddressRow())
-        // None leaves no device to describe, so the card's remaining rows give
-        // way to a caption saying so.
-        let noDevice = GroupedFormStateNote(
-            "This virtual machine has no network device.",
-            shownWhen: { [weak self] in self?.instance.configuration.networkEnabled == false })
-        networkNoDeviceCaption = noDevice
+        let rows: [NSView] = [
+            modeRow, makeIsolationRow(), makeIPAddressRow(), makeMACAddressRow(),
+        ]
         networkWarningContainer = NSStackView()
         networkWarningContainer.orientation = .vertical
         networkWarningContainer.alignment = .leading
         networkWarningContainer.spacing = Spacing.small
         networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        // The IP address row shows a running Shared guest's address only where
-        // the guest rides an app-managed network and the host's table can be
-        // read, so only there does the copy point at it.
-        let sharedRidesVmnet =
-            entitlements.realization(of: .vmnet(.common(.shared))) != .systemNAT
-        let sharedReachClause =
-            sharedRidesVmnet && entitlements.supportsGuestAddressObservation
-            ? "this Mac reaches it at the address in the IP address row"
-            : "this Mac reaches it at its address on that subnet"
-        var paragraphs: [InfoPopoverParagraph] = [
-            .body(
-                "The mode sets how the guest reaches the network. Shared Network gives it outbound access through the host: the guest gets a DHCP address on a private subnet, other machines on your network cannot reach it, and \(sharedReachClause). Host Only puts the guest on a private network reachable only from this Mac: it can talk to the host and to other Host Only guests, with no access to your network or the internet. Bridged puts the guest on your network through the chosen host interface, where it requests its own address like a separate machine."
-            ),
-            .body(
-                "Bridged traffic bypasses a VPN running on the host. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations and there is no client-side fix, so prefer a wired interface."
-            ),
-        ]
-        if instance.configuration.guestOS == .linux {
-            paragraphs.append(
-                .body(
-                    "The interface usually appears as `enp0s1`. If networking doesn't come up, make sure your distro's DHCP client or NetworkManager is running."
-                ))
-        }
-        // The Network panel's only section, so its header moves to the panel
-        // header: the info affordance and the lock hint go there rather than
-        // repeating the category name inside the form.
+        // The Network panel's only section, so its lock hint moves to the panel
+        // header rather than repeating the category name inside the form.
         let hint = lockRegistry.makeLockHint { self.networkLockHint = $0 }
-        chrome = VMSettingsPanelChrome(
-            leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
-            trailing: [hint])
-        return makeGroupedFormSection([
-            makeGroupedFormCard(rows: rows, notes: [noDevice]),
-            networkWarningContainer,
-        ])
+        chrome = VMSettingsPanelChrome(trailing: [hint])
+        return makeGroupedFormSection([makeGroupedFormCard(rows: rows), networkWarningContainer])
     }
 
     /// The isolation row: a switch putting a Shared or Host Only VM on a
@@ -134,7 +139,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
                 "Isolate from other VMs", control: isolationSwitch,
                 info: [
                     .body(
-                        "Runs the guest on a network of its own instead of the one every other VM in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
+                        "Runs the guest on a network of its own instead of the one every other virtual machine in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
                     )
                 ]))
         isolationRow = row
@@ -321,6 +326,18 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         selectNetworkModeItem()
     }
 
+    /// The modes the picker offers: Shared Network always, and each other mode
+    /// whose network this build can attach.
+    private var offeredModes: Set<VMNetworkMode> {
+        Set(VMNetworkMode.allCases.filter { $0 == .shared || offers($0) })
+    }
+
+    /// Whether a Shared guest rides an app-managed network, where the host's
+    /// table can show its address, rather than the system NAT.
+    private var sharedRidesVmnet: Bool {
+        entitlements.realization(of: .vmnet(.common(.shared))) != .systemNAT
+    }
+
     /// Whether the picker offers `mode`: the network choosing it puts the VM
     /// on is one this build can attach — what the mode key's write checks.
     private func offers(_ mode: VMNetworkMode) -> Bool {
@@ -380,7 +397,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshIsolationRow(editable: modeEditable)
         refreshMACAddressRow()
         refreshMACAddressWarning()
-        networkNoDeviceCaption?.refresh()
         refreshIPAddressRow()
     }
 

@@ -416,10 +416,14 @@ struct VMSettingsGeneralPanelTests {
         #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.isEnabled == true)
     }
 
-    @Test("The Startup section says which order the marked VMs start in")
-    func startupSectionStatesTheStartOrder() {
+    @Test("The start order is the auto-start row's info, not a caption")
+    func startupRowInfoStatesTheStartOrder() {
+        let order = "Virtual machines start in the order they appear in the sidebar."
+        #expect(VMSettingsGeneralPanelViewController.autoStartInfo.contains(.body(order)))
+
         let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)
-        #expect(visibleLabel(VMSettingsGeneralPanelViewController.autoStartOrderCaption, in: vc.view))
+        #expect(infoButton(about: "Start when Kernova opens", in: vc.view) != nil)
+        #expect(findLabel(withText: order, in: vc.view) == nil)
     }
 
     // MARK: - Ephemeral Mode
@@ -650,10 +654,11 @@ struct VMSettingsGeneralPanelTests {
         #expect(firstSwitch(action: "ephemeralModeToggled", in: vc.view)?.isEnabled == true)
     }
 
-    @Test("The Startup card explains what an ephemeral VM does")
-    func ephemeralCaptionIsShown() {
+    @Test("What an ephemeral VM does is the Ephemeral Mode row's info, not a caption")
+    func ephemeralExplanationLivesInTheRowInfo() {
         let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
-        #expect(visibleLabel(EphemeralModeCopy.settingsCaption, in: vc.view))
+        #expect(infoButton(about: "Ephemeral Mode", in: vc.view) != nil)
+        #expect(findLabel(containing: "An ephemeral virtual machine", in: vc.view) == nil)
     }
 
     @Test("Each baseline entry is its snapshot's name")
@@ -790,7 +795,7 @@ struct VMSettingsGeneralPanelTests {
     /// expected — and the absence assertions are exactly where it is not.
     private func showsMacOSCapacityWarning(in view: NSView) -> Bool {
         firstSubview(NSTextField.self, in: view) {
-            $0.stringValue.contains("macOS allows at most two macOS virtual machines to run at once")
+            $0.stringValue.contains("but macOS runs at most two at once")
                 && isVisible($0, within: view)
         } != nil
     }
@@ -847,9 +852,8 @@ struct VMSettingsGeneralPanelTests {
         #expect((warning != nil) == testCase.warns)
         if let warning {
             // The vendor's claim, at the vendor's strength.
-            #expect(
-                warning.contains("macOS allows at most two macOS virtual machines to run at once"))
-            #expect(warning.contains("\(testCase.marked) macOS virtual machines"))
+            #expect(warning.contains("macOS runs at most two at once"))
+            #expect(warning.hasPrefix("\(testCase.marked) macOS VMs"))
         }
     }
 

@@ -184,7 +184,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 ),
             ]
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Shared Directories", lockable: true, paragraphs: paragraphs), card,
+            lockRegistry.makeHeader("Shared Directories", editableWhen: .stopped, paragraphs: paragraphs), card,
             caption,
         ])
     }
@@ -250,21 +250,32 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Guest Agent
 
-    /// Caption shown beneath the macOS Guest Agent card.
-    static let agentDependencyCaption =
-        "Clipboard sharing, drag and drop, and log forwarding require the Kernova guest agent. Kernova offers to install or update it from the clipboard window."
+    /// The macOS Guest Agent header's info: the prerequisite every row in the
+    /// section shares.
+    static let agentDependencyInfo: [InfoPopoverParagraph] = [
+        .body(
+            "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
+        )
+    ]
 
     /// Shown under the "Show install reminder" row while the app-wide
     /// preference turns the install prompt off, so the greyed row reads as
     /// controlled elsewhere.
-    static let installPromptDisabledCaption =
-        "The install reminder is turned off for all virtual machines in Settings → Reminders."
+    static let installPromptDisabledCaption = "Turned off for all VMs in Settings → Reminders."
+
+    /// Info-popover copy for the "Clipboard sharing" row on a Linux guest,
+    /// whose clipboard rides SPICE.
+    static let linuxClipboardInfoParagraphs: [InfoPopoverParagraph] = [
+        .body(
+            "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
+        )
+    ]
 
     /// Info-popover copy for the "Automatic clipboard passthrough" toggle, shared
     /// by the macOS and Linux clipboard sections.
     static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
-            "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — no clipboard window step in either direction. Requires clipboard sharing and can be toggled while the VM runs."
+            "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — no clipboard window step in either direction. Requires clipboard sharing."
         ),
         .body(
             "Because the guest then continuously reads whatever you copy (including passwords), turning it on asks for confirmation."
@@ -290,7 +301,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     "Forward guest logs", control: logForwardingSwitch,
                     info: [
                         .body(
-                            "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
+                            "Streams `os.Logger` records from the macOS guest agent to this Mac, where they appear in Console.app under `app.kernova.guest`."
                         )
                     ]),
                 // Passthrough rides on sharing — it goes inert when sharing is off —
@@ -308,7 +319,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     "Drag and drop files", control: dropFilesSwitch,
                     info: [
                         .body(
-                            "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
+                            "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder."
                         )
                     ]),
                 GroupedFormNotedRow(
@@ -322,8 +333,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     notes: [overrideCaption]),
             ])
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Guest Agent"), card,
-            GroupedFormStateNote.temporarilyStanding(Self.agentDependencyCaption),
+            lockRegistry.makeHeader("Guest Agent", paragraphs: Self.agentDependencyInfo), card,
         ])
     }
 
@@ -335,16 +345,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
         clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
 
-        let body: InfoPopoverParagraph = .body(
-            "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
-        )
         // Sharing adds the SPICE console device, so the header carries the
         // lock hint; passthrough is host-side and stays live.
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Clipboard", lockable: true, paragraphs: [body]),
+            lockRegistry.makeHeader("Clipboard", editableWhen: .stopped),
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
-                    primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
+                    primary: makeGroupedFormCardRow(
+                        "Clipboard sharing", control: clipboardSwitch,
+                        info: Self.linuxClipboardInfoParagraphs),
                     subOption: makeGroupedFormCardRow(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
                         info: Self.passthroughInfoParagraphs))
