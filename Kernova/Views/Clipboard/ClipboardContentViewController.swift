@@ -86,8 +86,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var lastShownFinish: ClipboardTransferFinish?
 
     private var serviceObservation: ObservationLoop?
-    /// Drives only the bottom transfer bar, separate from `serviceObservation`.
-    private var transferProgressObservation: ObservationLoop?
+    /// The one path the VM's transfer report reaches the window by.
+    private var transferReportObservation: ObservationLoop?
 
     /// Queue handed to `NSFilePromiseReceiver` for writing promised files.
     private let promiseQueue = OperationQueue()
@@ -280,6 +280,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
         updateUI()
+        applyTransferReport()
         observeServiceChanges()
     }
 
@@ -384,6 +385,17 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         updateUI()
     }
 
+    /// Renders the transfer report once, as its observer would.
+    func simulateTransferReportForTesting() {
+        applyTransferReport()
+    }
+
+    /// Fires after each render of the transfer report.
+    var onTransferReportAppliedForTesting: (@MainActor () -> Void)?
+
+    /// How many finished-operation messages the window has shown.
+    private(set) var finishMessagesShownForTesting = 0
+
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
 
     /// The status line's transient slot — empty unless a message is up.
@@ -435,7 +447,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
-                _ = self.instance.clipboardTransferReport
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
                 _ = self.instance.configuration.clipboardPassthroughEnabled
@@ -445,24 +456,45 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             }
         )
 
-        // The transfer bar updates at chunk-flush cadence — many times a second
-        // for a multi-GB transfer. Its own loop keeps a progress flush from
-        // running the full `updateUI()` (content re-diff, preview materialization).
-        transferProgressObservation = observeRecurring(
+        // The report changes at chunk-flush cadence — many times a second for a
+        // multi-GB transfer — so it has its own loop, and `updateUI()` never
+        // reads it.
+        transferReportObservation = observeRecurring(
             track: { [weak self] in _ = self?.instance.clipboardTransferReport },
-            apply: { [weak self] in self?.updateTransferProgress() }
+            apply: { [weak self] in self?.applyTransferReport() }
         )
     }
 
-    /// Shows the bottom transfer bar from this VM's transfer report; a report
-    /// with no bar collapses it, so the bar can never get stuck.
+    /// Renders this VM's transfer report: the bottom bar, and a finished
+    /// operation's message once.
+    private func applyTransferReport() {
+        let report = instance.clipboardTransferReport
+        updateTransferProgress(for: report)
+        if case .finished(let finish) = report, finish != lastShownFinish,
+            let wording = ClipboardTransferWording.wording(for: finish, vmName: instance.name)
+        {
+            lastShownFinish = finish
+            statusMessage.showTransientMessage(wording.message, style: .error)
+            #if DEBUG
+            finishMessagesShownForTesting += 1
+            #endif
+        }
+        #if DEBUG
+        onTransferReportAppliedForTesting?()
+        #endif
+    }
+
+    /// Shows the bottom transfer bar from `report`; a report with no bar
+    /// collapses it, so the bar can never get stuck.
     ///
     /// A drop's progress shows here too: the report is per VM, and both of its
     /// producers move files between the same two machines.
-    private func updateTransferProgress() {
-        guard let progress = Self.barSnapshot(of: instance.clipboardTransferReport) else {
-            // Hide first, then reset the value while hidden so the next transfer
-            // starts from 0 instead of animating down from a stale 100%.
+    private func updateTransferProgress(for report: ClipboardTransferReport) {
+        guard let progress = Self.barSnapshot(of: report) else {
+            // Zeroing while hidden starts the next transfer empty only if the
+            // bar stays hidden for one 0.5 s animation step (macOS 27.0.1:
+            // shown again after 0.31 s it swept down from ~21 %; after 0.56 s
+            // or 8.45 s it started at ~0).
             transferProgressBar.isHidden = true
             transferProgressBar.doubleValue = 0
             transferBarCollapsed.isActive = true
@@ -500,8 +532,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         textView.isEditable = service != nil
 
-        updateTransferProgress()
-
         if let service {
             let content = service.clipboardContent
             if content.digest != lastAppliedDigest {
@@ -512,13 +542,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 apply(content: content)
                 bufferCard.setContentType(ClipboardContentDescriber.indicatorText(for: content))
             }
-        }
-
-        if case .finished(let finish) = instance.clipboardTransferReport, finish != lastShownFinish,
-            let wording = ClipboardTransferWording.wording(for: finish, vmName: instance.name)
-        {
-            lastShownFinish = finish
-            statusMessage.showTransientMessage(wording.message, style: .error)
         }
 
         applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
