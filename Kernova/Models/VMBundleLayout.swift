@@ -19,9 +19,14 @@ struct VMBundleLayout: Sendable {
     static let snapshotManifestRelativePath = "Snapshots/manifest.json"
     static let usbPairingsRelativePath = "usb-accessories.json"
 
+    /// The directory holding one snapshot, relative to the bundle root.
+    static func snapshotRelativePath(id: UUID) -> String {
+        "Snapshots/\(id.uuidString)"
+    }
+
     /// A snapshot's own `config.json`, relative to the bundle root.
     static func snapshotConfigRelativePath(id: UUID) -> String {
-        "Snapshots/\(id.uuidString)/\(configRelativePath)"
+        "\(snapshotRelativePath(id: id))/\(configRelativePath)"
     }
 
     /// The serialized `VMConfiguration`.
@@ -38,20 +43,28 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("Disk.asif")
     }
 
+    // MARK: - Platform files
+
+    /// The platform files, relative to the bundle root.
+    static let auxiliaryStorageRelativePath = "AuxiliaryStorage"
+    static let hardwareModelRelativePath = "HardwareModel"
+    static let machineIdentifierRelativePath = "MachineIdentifier"
+    static let efiVariableStoreRelativePath = "EFIVariableStore"
+
     var auxiliaryStorageURL: URL {
-        bundleURL.appendingPathComponent("AuxiliaryStorage")
+        bundleURL.appendingPathComponent(Self.auxiliaryStorageRelativePath)
     }
 
     var hardwareModelURL: URL {
-        bundleURL.appendingPathComponent("HardwareModel")
+        bundleURL.appendingPathComponent(Self.hardwareModelRelativePath)
     }
 
     var machineIdentifierURL: URL {
-        bundleURL.appendingPathComponent("MachineIdentifier")
+        bundleURL.appendingPathComponent(Self.machineIdentifierRelativePath)
     }
 
     var efiVariableStoreURL: URL {
-        bundleURL.appendingPathComponent("EFIVariableStore")
+        bundleURL.appendingPathComponent(Self.efiVariableStoreRelativePath)
     }
 
     var saveFileURL: URL {

@@ -166,22 +166,16 @@ struct VMStorageService: Sendable {
     }
 
     /// Creates `destinationBundleURL`, a path ``makeStagedBundleURL()`` minted,
-    /// as ``createVMBundle(at:)`` does, and copies `filesToCopy` into it from
-    /// the source bundle, skipping any the source lacks; the clone writes its
-    /// own configuration.
+    /// as ``createVMBundle(at:)`` does, and copies each file or directory
+    /// `relativePaths` names into it from the source bundle, skipping any the
+    /// source lacks; the clone writes its own configuration.
     func cloneVMBundle(
-        from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String]
+        from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String]
     ) throws {
         try stagingRoot.createDirectory(at: destinationBundleURL)
 
-        let fm = FileManager.default
-        for fileName in filesToCopy {
-            let sourceFile = sourceBundleURL.appendingPathComponent(fileName)
-            let destinationFile = destinationBundleURL.appendingPathComponent(fileName)
-            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
-                try fm.copyItem(at: sourceFile, to: destinationFile)
-            }
-        }
+        try VMBundleMachineFiles.copyItems(
+            relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
 
         #log(
             Self.logger, .notice,

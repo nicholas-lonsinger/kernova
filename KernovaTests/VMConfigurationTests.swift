@@ -562,24 +562,6 @@ struct VMConfigurationTests {
         #expect(decoded.storageDisks?[0].notes == "")
     }
 
-    @Test("Clone regenerates storageDisk IDs")
-    func cloneRegeneratesStorageDiskIDs() {
-        let originalDisk = StorageDisk(path: "/tmp/data.asif", label: "Data")
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            storageDisks: [originalDisk]
-        )
-
-        let clone = config.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.storageDisks?.count == 1)
-        #expect(clone.storageDisks?[0].id != originalDisk.id)
-        #expect(clone.storageDisks?[0].path == originalDisk.path)
-        #expect(clone.storageDisks?[0].label == originalDisk.label)
-    }
-
     @Test("StorageDisk.uniqueLabel returns base when there's no collision")
     func uniqueLabelNoCollision() {
         #expect(StorageDisk.uniqueLabel(base: "100 GB Disk", existingLabels: []) == "100 GB Disk")

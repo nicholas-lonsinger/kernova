@@ -396,12 +396,33 @@ struct VMStorageServiceTests {
         }
 
         try service.cloneVMBundle(
-            from: sourceURL, to: cloneURL, filesToCopy: ["Disk.asif", "EFIVariableStore"])
+            from: sourceURL, to: cloneURL, relativePaths: ["Disk.asif", "EFIVariableStore"])
 
         // The omission is silent by construction — nothing lists the file — so
         // it is asserted here: two VMs expecting one device would race for it.
         // A change that moves nothing answers what the file holds.
         #expect(try writer(cloneURL).update(.usbPairings) { _ in }.isEmpty)
         #expect(try !writer(sourceURL).update(.usbPairings) { _ in }.isEmpty)
+    }
+
+    @Test("A clone copies a snapshot directory whole, under the same relative path")
+    func cloneCopiesASnapshotDirectory() throws {
+        let sourceURL = try makeBundle(
+            VMConfiguration(name: "Snapshot Source", guestOS: .linux, bootMode: .efi))
+        let cloneURL = try service.makeStagedBundleURL()
+        let id = UUID()
+        let snapshot = VMBundleLayout(bundleURL: sourceURL).snapshotLayout(id: id)
+        try FileManager.default.createDirectory(
+            at: snapshot.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+        try Data("saved".utf8).write(to: snapshot.saveFileURL)
+        try Data("disk".utf8).write(to: snapshot.additionalDiskURL(id: id))
+
+        try service.cloneVMBundle(
+            from: sourceURL, to: cloneURL,
+            relativePaths: [VMBundleLayout.snapshotRelativePath(id: id)])
+
+        let copied = VMBundleLayout(bundleURL: cloneURL).snapshotLayout(id: id)
+        #expect(try Data(contentsOf: copied.saveFileURL) == Data("saved".utf8))
+        #expect(try Data(contentsOf: copied.additionalDiskURL(id: id)) == Data("disk".utf8))
     }
 }

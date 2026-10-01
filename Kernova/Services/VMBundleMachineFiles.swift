@@ -42,13 +42,56 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     ) -> [String] {
         let disks = configuration.effectiveStorageDisks(layout: layout)
         var paths = disks.filter(\.isInternal).map(\.path)
-        for firmware in ["AuxiliaryStorage", "EFIVariableStore"] {
+        for firmware in [
+            VMBundleLayout.auxiliaryStorageRelativePath, VMBundleLayout.efiVariableStoreRelativePath,
+        ] {
             let url = layout.bundleURL.appendingPathComponent(firmware)
             if FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
                 paths.append(firmware)
             }
         }
         return paths
+    }
+
+    // MARK: - Copying between bundles
+
+    /// What ``copyItems(_:from:to:ifMissing:)`` does about a path the source
+    /// lacks.
+    enum MissingItem {
+        /// Leaves it out of the copy.
+        case skip
+        /// Throws what the closure makes of the relative path.
+        case fail((String) -> any Error)
+        /// Copies without looking first, for a caller that already checked —
+        /// the copy's own error reports a path gone since.
+        case unchecked
+    }
+
+    /// Copies each file or directory `relativePaths` names from the root at
+    /// `source` to the same relative path under `destination`, creating the
+    /// parent directories it needs.
+    static func copyItems(
+        _ relativePaths: [String], from source: URL, to destination: URL, ifMissing: MissingItem
+    ) throws {
+        let manager = FileManager.default
+        for relativePath in relativePaths {
+            let item = source.appendingPathComponent(relativePath)
+            switch ifMissing {
+            case .unchecked:
+                break
+            case .skip, .fail:
+                guard !manager.fileExists(atPath: item.path(percentEncoded: false)) else { break }
+                if case .fail(let error) = ifMissing { throw error(relativePath) }
+                continue
+            }
+            let copy = destination.appendingPathComponent(relativePath)
+            try manager.createDirectory(
+                at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Same volume, so APFS clones each file rather than duplicating its
+            // blocks — the copy shares them with the original until either
+            // side writes.
+            try manager.copyItem(at: item, to: copy)
+        }
     }
 
     // MARK: - Capture
@@ -69,21 +112,10 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        let destinationLayout = layout.snapshotLayout(id: snapshotID)
-        let manager = FileManager.default
-        for relativePath in relativePaths {
-            let source = layout.bundleURL.appendingPathComponent(relativePath)
-            guard manager.fileExists(atPath: source.path(percentEncoded: false)) else {
-                throw VMSnapshotError.captureSourceMissing(relativePath)
-            }
-            let destination = destinationLayout.bundleURL.appendingPathComponent(relativePath)
-            try manager.createDirectory(
-                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Same volume, so APFS clones the file rather than duplicating its
-            // blocks — the copy shares them with the VM's disk until either
-            // side writes.
-            try manager.copyItem(at: source, to: destination)
-        }
+        try Self.copyItems(
+            relativePaths, from: layout.bundleURL,
+            to: layout.snapshotDirectoryURL(id: snapshotID),
+            ifMissing: .fail { VMSnapshotError.captureSourceMissing($0) })
     }
 
     func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
@@ -154,15 +186,9 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         try? manager.removeItem(at: staging)
         do {
             try manager.createDirectory(at: staging, withIntermediateDirectories: true)
-            // Same volume, so APFS clones each file rather than duplicating its
-            // blocks — the staged copy shares them with the snapshot's own.
-            for relativePath in plan.relativePaths {
-                let source = sourceLayout.bundleURL.appendingPathComponent(relativePath)
-                let staged = staging.appendingPathComponent(relativePath)
-                try manager.createDirectory(
-                    at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try manager.copyItem(at: source, to: staged)
-            }
+            try Self.copyItems(
+                plan.relativePaths, from: sourceLayout.bundleURL, to: staging,
+                ifMissing: .unchecked)
             if plan.kind == .warm {
                 try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
             }

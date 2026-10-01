@@ -95,8 +95,8 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     /// since each is minted fresh rather than derived from a configuration.
     var stagedBundleURLs: [URL] = []
 
-    /// The `filesToCopy` argument from the most recent `cloneVMBundle` call.
-    var lastCloneFilesToCopy: [String]?
+    /// The `relativePaths` argument from the most recent `cloneVMBundle` call.
+    var lastCloneRelativePaths: [String]?
 
     // MARK: - Error Injection
 
@@ -212,21 +212,23 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL)
     }
 
-    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String])
+    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String])
         throws
     {
         cloneVMBundleCallCount += 1
-        lastCloneFilesToCopy = filesToCopy
+        lastCloneRelativePaths = relativePaths
         if let cloneHold {
             cloneEntered.notify()
             cloneHold.wait()
         }
         if let error = cloneVMBundleError { throw error }
-        // Mirrors the real service actually creating the bundle directory on disk:
-        // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
-        // straight into this URL afterward, which needs the directory to exist.
+        // Mirrors the real service on disk: a macOS clone's `copyOut` writes
+        // its MachineIdentifier file straight into this URL afterward, and a
+        // test that lays real files into the source reads them in the clone.
         try FileManager.default.createDirectory(
             at: destinationBundleURL, withIntermediateDirectories: true)
+        try VMBundleMachineFiles.copyItems(
+            relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: destinationBundleURL)
     }
 

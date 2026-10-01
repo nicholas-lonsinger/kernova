@@ -165,11 +165,13 @@ public enum StopDisposition: String, Codable, Sendable, Hashable, CaseIterable {
 /// What a clone is of its source.
 public enum CloneOutcome: String, Codable, Sendable, Hashable, CaseIterable {
     /// A machine of its own: a fresh machine identity and MAC address, so it
-    /// runs beside its source.
+    /// runs beside its source, with no snapshots and Ephemeral Mode off.
     case newMachine
     /// The source's machine identity and MAC address, so it is the same machine
     /// to its guest and its network. The two never run on the same network at
-    /// once, and run at once only when one is started anyway.
+    /// once, and run at once only when one is started anyway. It carries its
+    /// source's snapshots, Ephemeral Mode and display preferences, but not
+    /// start at launch.
     case exactCopy
 }
 

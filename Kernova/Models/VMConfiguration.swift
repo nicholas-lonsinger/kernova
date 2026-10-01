@@ -598,44 +598,17 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Cloning
 
-    /// Returns a new configuration suitable for a cloned VM instance.
+    /// Returns a new configuration suitable for a cloned VM instance: a new
+    /// `id`, creation date and name, with every device id kept.
     ///
     /// Platform identity fields (`macAddress`, `machineIdentifierData`,
-    /// `genericMachineIdentifierData`) are **not** regenerated here — the caller
-    /// always replaces `macAddress`, and replaces the machine identifiers or
-    /// keeps them per the clone machine-ID preference.
+    /// `genericMachineIdentifierData`) are left as the source's — the caller
+    /// replaces them for a ``CloneOutcome/newMachine`` clone.
     func clonedForNewInstance(existingNames: [String]) -> VMConfiguration {
         var clone = self
         clone.id = UUID()
         clone.createdAt = Date()
         clone.name = Self.generateCloneName(baseName: name, existingNames: existingNames)
-
-        // A save file restores only under the removable-media `uuid`s it was
-        // saved with; a `.usbMassStorage` disk's `uuid` and virtio block
-        // identifiers are free to change
-        // (docs/research/2026-09-28-vz-restore-matches-usb-mass-storage-uuids.md,
-        // docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md).
-        // The clone carries no save file, so these new ids cost no restore.
-        // Everything else, including the note, carries through — the clone
-        // references the same external files.
-        clone.storageDisks = storageDisks?.map { disk in
-            var copy = disk
-            copy.id = UUID()
-            return copy
-        }
-
-        clone.removableMedia = removableMedia?.map { item in
-            var copy = item
-            copy.id = UUID()
-            return copy
-        }
-
-        // Regenerate shared directory IDs to avoid VirtioFS collisions
-        clone.sharedDirectories = sharedDirectories?.map { dir in
-            SharedDirectory(
-                id: UUID(), path: dir.path, readOnly: dir.readOnly, bookmark: dir.bookmark,
-                mountName: dir.mountName)
-        }
 
         // The clone copies the source bundle's post-install artifacts, so
         // preserving either install context would falsely mark it as awaiting
