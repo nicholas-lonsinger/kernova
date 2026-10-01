@@ -378,6 +378,19 @@ struct SidebarViewControllerTests {
 
     // MARK: - Context menu
 
+    @Test("Context menu for a guest running macOS 12 offers only Clone as Exact Copy")
+    func contextMenuMontereyGuestOffersOnlyAnExactCopy() {
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .stopped) {
+            $0.lastSeenGuestOSVersion = "12.7.6"
+        }
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menuTitles = titles(of: controller.buildContextMenu(for: instance))
+
+        #expect(menuTitles.filter { $0.hasPrefix("Clone") } == ["Clone as Exact Copy"])
+    }
+
     @Test("Context menu for a stopped VM offers Start and enables management")
     func contextMenuStopped() {
         let viewModel = makeViewModel()
@@ -391,7 +404,7 @@ struct SidebarViewControllerTests {
         #expect(!menuTitles.contains("Pause"))
         #expect(!menuTitles.contains("Stop"))
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
-        #expect(menuItem("Clone", in: menu)?.isEnabled == true)
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == true)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
         // A cold capture is offered while stopped; Suspend is not.
         #expect(menuItem("Take Snapshot…", in: menu)?.isEnabled == true)
@@ -411,7 +424,7 @@ struct SidebarViewControllerTests {
         #expect(menuTitles.contains("Stop"))
         #expect(menuTitles.contains("Suspend"))
         #expect(!menuTitles.contains("Start"))
-        #expect(menuItem("Clone", in: menu)?.isEnabled == false)
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == false)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == false)
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
     }
@@ -430,7 +443,7 @@ struct SidebarViewControllerTests {
         // Overlapping clones and imports are a supported case — the copy in
         // flight belongs to another VM and says nothing about this one.
         #expect(viewModel.arrivals.map(\.id) == [copying.id])
-        #expect(menuItem("Clone", in: menu)?.isEnabled == true)
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == true)
 
         gate.release()
         await copying.settle()
@@ -513,7 +526,7 @@ struct SidebarViewControllerTests {
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
         #expect(menuItem("Delete Immediately…", in: menu)?.isEnabled == true)
         // A clone carries no suspend slot, so the saved state pins it out.
-        #expect(menuItem("Clone", in: menu)?.isEnabled == false)
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == false)
     }
 
     @Test("Context menu disables delete for a live-paused VM")

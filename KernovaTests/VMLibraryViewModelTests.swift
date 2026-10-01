@@ -1227,7 +1227,8 @@ struct VMLibraryViewModelTests {
     }
 
     /// Two VMs carrying the given machine identifiers in whichever identity
-    /// field `guestOS` uses, both appended to `viewModel`.
+    /// field `guestOS` uses, and MAC addresses of their own unless
+    /// `exactCopies`, both appended to `viewModel`.
     ///
     /// `other` is the one the tests park in a live status; `starting` is the one
     /// they try to boot.
@@ -1235,10 +1236,12 @@ struct VMLibraryViewModelTests {
         to viewModel: VMLibraryViewModel,
         guestOS: VMGuestOS = .macOS,
         startingID: Data = Data([1, 2, 3]),
-        otherID: Data = Data([1, 2, 3])
+        otherID: Data = Data([1, 2, 3]),
+        exactCopies: Bool = false
     ) -> (starting: VMInstance, other: VMInstance) {
         func makeTwin(_ name: String, identifier: Data) -> VMInstance {
             viewModel.library.admitFixture(name: name, guestOS: guestOS) {
+                $0.macAddress = exactCopies || name == "Starting" ? "02:4b:4e:56:02:01" : "02:4b:4e:56:02:02"
                 if guestOS == .macOS {
                     $0.machineIdentifierData = identifier
                 } else {
@@ -1265,6 +1268,22 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(starting.status == .stopped)
+    }
+
+    @Test("start is refused as the pair while its exact copy is running")
+    func startBlockedByRunningExactCopy() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel, exactCopies: true)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+
+        await viewModel.start(starting)
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Exact Copy In Use")
+        #expect(
+            presenter.errorMessage?.hasPrefix(
+                "\u{201C}Starting\u{201D} is an exact copy of \u{201C}Twin\u{201D}") == true)
     }
 
     @Test("start proceeds past a machine ID twin when the guard preference is off")
@@ -1327,8 +1346,12 @@ struct VMLibraryViewModelTests {
     func startBlockedByFileOnlyMachineIDTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
-        let starting = viewModel.library.admitFixture(name: "Starting", guestOS: .macOS)
-        let other = viewModel.library.admitFixture(name: "Twin", guestOS: .macOS)
+        let starting = viewModel.library.admitFixture(name: "Starting", guestOS: .macOS) {
+            $0.macAddress = "02:4b:4e:56:02:01"
+        }
+        let other = viewModel.library.admitFixture(name: "Twin", guestOS: .macOS) {
+            $0.macAddress = "02:4b:4e:56:02:02"
+        }
         // The identifier lives only on disk, exactly as it does in a bundle
         // written before the configuration carried the field.
         for instance in [starting, other] {
@@ -1903,31 +1926,33 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
-    @Test("vmNamesSharingMACAddress names the other holders, regardless of case")
-    func vmNamesSharingMACAddressNamesOtherHolders() {
+    @Test("macAddressPeers names the other holders, regardless of case")
+    func macAddressPeersNamesOtherHolders() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, mac: "aa:bb:cc:dd:ee:01", otherMAC: "AA:BB:CC:DD:EE:01")
 
-        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
+        #expect(viewModel.macAddressPeers(of: starting).faults == ["Twin"])
     }
 
-    @Test("vmNamesSharingMACAddress is empty when the address is the VM's alone")
-    func vmNamesSharingMACAddressIsEmptyWhenUnique() {
+    @Test("macAddressPeers is empty when the address is the VM's alone")
+    func macAddressPeersIsEmptyWhenUnique() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, otherMAC: "aa:bb:cc:dd:ee:02")
 
-        #expect(viewModel.vmNamesSharingMACAddress(with: starting).isEmpty)
+        let peers = viewModel.macAddressPeers(of: starting)
+        #expect(peers.faults.isEmpty)
+        #expect(peers.exactCopies.isEmpty)
     }
 
-    @Test("vmNamesSharingMACAddress counts a holder whose networking is off")
-    func vmNamesSharingMACAddressCountsANetworkingOffHolder() {
+    @Test("macAddressPeers counts a holder whose networking is off")
+    func macAddressPeersCountsANetworkingOffHolder() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (starting, _) = appendMACAddressPair(
             to: viewModel, mutateOther: { $0.networkEnabled = false })
 
-        #expect(viewModel.vmNamesSharingMACAddress(with: starting) == ["Twin"])
+        #expect(viewModel.macAddressPeers(of: starting).faults == ["Twin"])
     }
 
     // MARK: - Match-Window Boot Resolution
@@ -4993,9 +5018,10 @@ struct VMLibraryViewModelTests {
     /// never created, so the source has no identifier file to fall back on either.
     private func appendCloneSource(
         to viewModel: VMLibraryViewModel, storage: MockVMStorageService, guestOS: VMGuestOS,
-        machineID: Data? = sourceMachineID
+        machineID: Data? = sourceMachineID, guestVersion: String? = nil
     ) -> VMInstance {
         let instance = viewModel.library.admitFixture(name: "Original", guestOS: guestOS) {
+            $0.lastSeenGuestOSVersion = guestVersion
             if guestOS == .macOS {
                 $0.machineIdentifierData = machineID
             } else {
@@ -5019,7 +5045,7 @@ struct VMLibraryViewModelTests {
             : clone?.configuration.genericMachineIdentifierData
     }
 
-    @Test("cloneVM gives a macOS clone a fresh machine ID by default")
+    @Test("cloneVM makes a macOS clone a New Machine by default")
     func cloneVMGeneratesNewMachineIDByDefault() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
@@ -5032,10 +5058,10 @@ struct VMLibraryViewModelTests {
         #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == false)
     }
 
-    @Test("cloneVM keeps the source machine ID when the preference is off")
+    @Test("cloneVM makes an Exact Copy when the preference asks for one")
     func cloneVMKeepsMachineIDWhenPreferenceOff() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
 
         viewModel.cloneVM(source)
@@ -5046,44 +5072,69 @@ struct VMLibraryViewModelTests {
         #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
     }
 
-    @Test("cloneVM's explicit generateNewMachineID beats the preference")
+    @Test("cloneVM's explicit outcome beats the preference")
     func cloneVMExplicitFlagOverridesPreference() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
 
         // Preference left at its `true` default — the argument decides.
-        viewModel.cloneVM(source, generateNewMachineID: false)
+        viewModel.cloneVM(source, as: .exactCopy)
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID == Self.sourceMachineID)
         #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
     }
 
-    @Test("cloneVMWithOppositeMachineIdentity keeps the ID under the default preference")
-    func cloneVMWithOppositeMachineIdentityKeepsIDByDefault() async {
+    @Test("The alternate Clone makes an Exact Copy under the default preference")
+    func cloneVMAsAlternateMakesAnExactCopyByDefault() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
 
-        viewModel.cloneVMWithOppositeMachineIdentity(source)
+        viewModel.cloneVMAsAlternate(source)
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID == Self.sourceMachineID)
     }
 
-    @Test("cloneVMWithOppositeMachineIdentity generates a new ID when the preference keeps it")
-    func cloneVMWithOppositeMachineIdentityGeneratesIDWhenPreferenceOff() async {
+    @Test("The alternate Clone makes a New Machine when the preference is Exact Copy")
+    func cloneVMAsAlternateMakesANewMachineWhenPreferenceIsExactCopy() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
 
-        viewModel.cloneVMWithOppositeMachineIdentity(source)
+        viewModel.cloneVMAsAlternate(source)
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID != nil)
         #expect(clonedID != Self.sourceMachineID)
     }
 
-    @Test("cloneVM regenerates an EFI clone's generic machine ID by default")
+    @Test("A guest running macOS 12 follows a New Machine preference as an Exact Copy")
+    func cloneVMOfAMontereyGuestFollowsPreferenceAsAnExactCopy() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .macOS, guestVersion: "12.7.6")
+
+        viewModel.cloneVM(source)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(clonedID == Self.sourceMachineID)
+        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+    }
+
+    @Test("A guest running macOS 12 offers no alternate Clone")
+    func cloneVMAsAlternateOfAMontereyGuestDoesNothing() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .macOS, guestVersion: "12.0.1")
+
+        viewModel.cloneVMAsAlternate(source)
+        await viewModel.awaitArrivalsForTesting()
+
+        #expect(viewModel.instances.map(\.id) == [source.id])
+    }
+
+    @Test("cloneVM gives an EFI clone a new generic machine ID by default")
     func cloneVMGeneratesNewGenericMachineIDByDefault() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .linux)
@@ -5095,10 +5146,10 @@ struct VMLibraryViewModelTests {
         #expect(clonedID != Self.sourceMachineID)
     }
 
-    @Test("cloneVM keeps an EFI clone's generic machine ID when the preference is off")
+    @Test("cloneVM keeps an EFI clone's generic machine ID when the preference is Exact Copy")
     func cloneVMKeepsGenericMachineIDWhenPreferenceOff() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .linux)
 
         viewModel.cloneVM(source)
@@ -5107,10 +5158,10 @@ struct VMLibraryViewModelTests {
         #expect(clonedID == Self.sourceMachineID)
     }
 
-    @Test("a keep-mode clone of a macOS VM with no identity at all mints one")
+    @Test("An Exact Copy of a macOS VM with no identity at all mints one")
     func cloneVMKeepModeMintsMissingMachineID() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(
             to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
 
@@ -5121,10 +5172,10 @@ struct VMLibraryViewModelTests {
         #expect(clonedID != nil)
     }
 
-    @Test("a keep-mode clone of an EFI VM with no generic identity mints one")
+    @Test("An Exact Copy of an EFI VM with no generic identity mints one")
     func cloneVMKeepModeMintsMissingGenericMachineID() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(
             to: viewModel, storage: storage, guestOS: .linux, machineID: nil)
 
@@ -5135,10 +5186,10 @@ struct VMLibraryViewModelTests {
         #expect(clonedID != nil)
     }
 
-    @Test("a keep-mode clone leaves a file-only macOS identity to the bundle copy")
+    @Test("An Exact Copy leaves a file-only macOS identity to the bundle copy")
     func cloneVMKeepModeLeavesFileOnlyMachineIDToTheCopy() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-        preferences.cloneGeneratesNewMachineID = false
+        preferences.cloneOutcome = .exactCopy
         let source = appendCloneSource(
             to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
         try FileManager.default.createDirectory(

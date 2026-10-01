@@ -172,18 +172,18 @@ extension VMCommandCore {
 
     @discardableResult
     func clone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity, waitForOutcome: Bool
+        _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
     ) async throws -> VMSummary {
-        guard waitForOutcome else { return try beginClone(selector, machineIdentity: machineIdentity) }
+        guard waitForOutcome else { return try beginClone(selector, outcome: outcome) }
         return summary(
-            try await awaitOutcome(of: registerClone(selector, machineIdentity: machineIdentity)))
+            try await awaitOutcome(of: registerClone(selector, outcome: outcome)))
     }
 
     @discardableResult
     func beginClone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+        _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMSummary {
-        let arrival = try registerClone(selector, machineIdentity: machineIdentity)
+        let arrival = try registerClone(selector, outcome: outcome)
         followUnwaited(arrival)
         return summary(arrival)
     }
@@ -195,16 +195,15 @@ extension VMCommandCore {
     /// cloned into the staged bundle; the arrival's write then lays down the
     /// clone's configuration.
     private func registerClone(
-        _ selector: VMSelector, machineIdentity: CloneMachineIdentity
+        _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMArrival {
         let instance = try resolve(selector)
 
-        let generateNewID: Bool
-        switch machineIdentity {
-        case .followPreference: generateNewID = preferences.cloneGeneratesNewMachineID
-        case .new: generateNewID = true
-        case .keep: generateNewID = false
+        let resolved = outcome ?? preferences.cloneOutcome(for: instance.configuration)
+        guard resolved == .exactCopy || instance.configuration.offersNewMachineClone else {
+            throw CommandError.unsupported(capability: "cloning as a New Machine")
         }
+        let generateNewID = resolved == .newMachine
 
         // Arrivals included, so two clones taken in quick succession never pick
         // the same name.

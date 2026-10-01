@@ -93,8 +93,9 @@ struct VMCommandEnvelopeTests {
             .deleteSnapshot(selector, snapshot: snapshotID, confirmed: true),
             .renameSnapshot(selector, snapshot: snapshotID, newName: "Renamed"),
             .setSnapshotNotes(selector, snapshot: snapshotID, notes: "annotated"),
-            .clone(selector, machineIdentity: .keep, waitForOutcome: true),
-            .clone(selector, machineIdentity: .new, waitForOutcome: false),
+            .clone(selector, outcome: .exactCopy, waitForOutcome: true),
+            .clone(selector, outcome: .newMachine, waitForOutcome: false),
+            .clone(selector, outcome: nil, waitForOutcome: false),
             .rename(selector, newName: "Beta"),
             .delete(selector, permanently: true, alsoRemoving: [snapshotID], confirmed: true),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova", waitForOutcome: true),
@@ -282,6 +283,8 @@ struct VMCommandEnvelopeTests {
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),
+            .conflict(vm: summary, with: summary, reason: .exactCopy(bar: .runningAtOnce)),
+            .conflict(vm: summary, with: summary, reason: .exactCopy(bar: .oneNetwork)),
             .conflict(
                 vm: summary, with: summary,
                 reason: .macAddressInUse(
@@ -411,6 +414,46 @@ struct VMCommandEnvelopeTests {
                 == "\u{201C}Holder\u{201D} already uses aa:bb:cc:dd:ee:0f. "
                 + "\u{201C}Other\u{201D} has a snapshot, \u{201C}Before\u{201D}, taken with aa:bb:cc:dd:ee:0f. "
                 + "Each virtual machine needs its own MAC address.")
+    }
+
+    private func exactCopy(_ bar: ExactCopyBar, otherHeldByAnotherCopy: Bool) -> CommandErrorDTO {
+        let copy = VMSummary(
+            id: vmID, name: "Alpha Copy", status: "running", ipAddress: .unavailable,
+            heldByAnotherCopy: otherHeldByAnotherCopy)
+        return .conflict(vm: summary, with: copy, reason: .exactCopy(bar: bar))
+    }
+
+    @Test("An exact copy's refusal names the pair from the refused VM's side, with no lineage")
+    func exactCopyCopyNamesThePair() {
+        let running = exactCopy(.runningAtOnce, otherHeldByAnotherCopy: false)
+        #expect(running.title == "Exact Copy In Use")
+        #expect(
+            running.message
+                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Exact copies share a machine ID, so they must not run at once. "
+                + "Stop \u{201C}Alpha Copy\u{201D} first, or allow this in Settings \u{2192} Advanced.")
+
+        let network = exactCopy(.oneNetwork, otherHeldByAnotherCopy: false)
+        #expect(network.title == "Exact Copy In Use")
+        #expect(
+            network.message
+                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Exact copies share a MAC address, so they must not run on the same network at once. "
+                + "Stop \u{201C}Alpha Copy\u{201D} first, or give one of them a new address in Network settings.")
+    }
+
+    @Test("An exact copy another Kernova holds is named as that copy's, and no stop is offered")
+    func exactCopyCopyNamesAnotherKernovasHold() {
+        #expect(
+            exactCopy(.runningAtOnce, otherHeldByAnotherCopy: true).message
+                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
+                + "Exact copies share a machine ID, so they must not run at once. "
+                + "To start it anyway, allow this in Settings \u{2192} Advanced.")
+        #expect(
+            exactCopy(.oneNetwork, otherHeldByAnotherCopy: true).message
+                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
+                + "Exact copies share a MAC address, so they must not run on the same network at once. "
+                + "Give \u{201C}Alpha\u{201D} a new address in Network settings.")
     }
 
     @Test("A holding answers nil for neither, and its snapshots keep their order")

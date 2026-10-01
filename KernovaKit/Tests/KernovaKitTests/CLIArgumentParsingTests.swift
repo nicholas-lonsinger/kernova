@@ -81,32 +81,32 @@ struct CLIArgumentParsingTests {
         }
     }
 
-    @Test("clone follows the app's preference unless an identity flag says otherwise")
-    func cloneParsesItsIdentityFlags() throws {
+    @Test("clone follows the app's preference unless an outcome flag says otherwise")
+    func cloneParsesItsOutcomeFlags() throws {
         let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)
-        #expect(byDefault.identity == nil)
+        #expect(byDefault.outcome == nil)
         #expect(!byDefault.noWait)
 
         let fresh = try #require(
-            try parse(["clone", "Alpha", "--new-identity"]) as? KernovaCommand.Clone)
-        #expect(fresh.identity?.machineIdentity == .new)
+            try parse(["clone", "Alpha", "--new-machine"]) as? KernovaCommand.Clone)
+        #expect(fresh.outcome?.outcome == .newMachine)
 
         let kept = try #require(
-            try parse(["clone", "Alpha", "--keep-identity"]) as? KernovaCommand.Clone)
-        #expect(kept.identity?.machineIdentity == .keep)
+            try parse(["clone", "Alpha", "--exact-copy"]) as? KernovaCommand.Clone)
+        #expect(kept.outcome?.outcome == .exactCopy)
     }
 
-    @Test("Two clone identities at once is a usage error, not a silent winner")
-    func cloneIdentitiesAreExclusive() {
+    @Test("Two clone outcomes at once is a usage error, not a silent winner")
+    func cloneOutcomesAreExclusive() {
         #expect(throws: (any Error).self) {
-            try parse(["clone", "Alpha", "--new-identity", "--keep-identity"])
+            try parse(["clone", "Alpha", "--new-machine", "--exact-copy"])
         }
     }
 
-    @Test("Every clone identity flag maps onto a wire choice, and neither means the preference")
-    func everyCloneIdentityMaps() {
-        let mapped = Set(KernovaCommand.CloneIdentity.allCases.map(\.machineIdentity))
-        #expect(mapped == Set(CloneMachineIdentity.allCases).subtracting([.followPreference]))
+    @Test("Every clone outcome flag maps onto a wire outcome, and each outcome has a flag")
+    func everyCloneOutcomeMaps() {
+        let mapped = Set(KernovaCommand.CloneOutcomeFlag.allCases.map(\.outcome))
+        #expect(mapped == Set(CloneOutcome.allCases))
     }
 
     @Test("clone and import take --no-wait, and wait for the copy without it")

@@ -122,7 +122,7 @@ struct VMCommandCoreArrivalTests {
         storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
 
         let row = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
         #expect(row.status == VMStatus.preparingWireName)
         let arrival = try #require(harness.library.arrivals.first)
         await arrival.settle()
@@ -143,7 +143,7 @@ struct VMCommandCoreArrivalTests {
         storage.cloneHold = hold
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), machineIdentity: .new, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
@@ -162,7 +162,7 @@ struct VMCommandCoreArrivalTests {
         storage.cloneHold = hold
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), machineIdentity: .new, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
@@ -198,7 +198,7 @@ struct VMCommandCoreArrivalTests {
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
         let savesBefore = storage.saveConfigurationCallCount
 
         #expect(harness.library.instances.map(\.id) == [source.id])
@@ -230,7 +230,7 @@ struct VMCommandCoreArrivalTests {
         defer { hold.signal() }
 
         let row = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
 
         let addressRefusal = #expect(throws: CommandError.self) {
             try harness.core.ipAddress(of: .id(row.id))
@@ -322,7 +322,7 @@ struct VMCommandCoreArrivalTests {
         // against the new VM — a clone here — finds it busy.
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         let clone = #expect(throws: CommandError.self) {
-            try core.beginClone(.id(instance.id), machineIdentity: .keep)
+            try core.beginClone(.id(instance.id), outcome: .exactCopy)
         }
         #expect(isBusy(clone))
 
@@ -340,7 +340,7 @@ struct VMCommandCoreArrivalTests {
         storage.publishHold = hold
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), machineIdentity: .new, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
         }
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
@@ -369,7 +369,7 @@ struct VMCommandCoreArrivalTests {
         storage.deleteVMBundleError = CocoaError(.fileWriteNoPermission)
 
         let row = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: false)
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
 
@@ -390,7 +390,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let source = makeSource(in: harness)
         let clone = try await harness.core.clone(
-            .id(source.id), machineIdentity: .new, waitForOutcome: true)
+            .id(source.id), outcome: .newMachine, waitForOutcome: true)
         #expect(clone.status == VMStatus.stopped.rawValue)
 
         do {
@@ -409,9 +409,9 @@ struct VMCommandCoreArrivalTests {
     // MARK: - The MAC Address Follows the Machine Identity
 
     /// The configuration of the clone of a source carrying `mac`, with its
-    /// device on or off, taken under `identity`.
+    /// device on or off, taken as `outcome`.
     private func clonedConfiguration(
-        ofSourceWith mac: String?, networkEnabled: Bool, identity: CloneMachineIdentity
+        ofSourceWith mac: String?, networkEnabled: Bool, outcome: CloneOutcome?
     ) async throws -> VMConfiguration {
         let harness = makeHarness()
         let source = RegisteredVMInstanceFixture.register(
@@ -422,45 +422,61 @@ struct VMCommandCoreArrivalTests {
             $0.macAddress = mac
         }
         let row = try await harness.core.clone(
-            .id(source.id), machineIdentity: identity, waitForOutcome: true)
+            .id(source.id), outcome: outcome, waitForOutcome: true)
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
         return clone.configuration
     }
 
-    @Test("A clone that keeps the machine identity keeps the source's MAC address")
-    func keepIdentityCloneKeepsMACAddress() async throws {
+    @Test("An Exact Copy keeps the source's MAC address")
+    func exactCopyKeepsMACAddress() async throws {
         let config = try await clonedConfiguration(
-            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, identity: .keep)
+            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, outcome: .exactCopy)
         #expect(config.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("A keep-identity clone of a source with no MAC address is given none")
-    func keepIdentityCloneOfAddresslessSourceStaysAddressless() async throws {
+    @Test("An Exact Copy of a source with no MAC address is given none")
+    func exactCopyOfAddresslessSourceStaysAddressless() async throws {
         let config = try await clonedConfiguration(
-            ofSourceWith: nil, networkEnabled: false, identity: .keep)
+            ofSourceWith: nil, networkEnabled: false, outcome: .exactCopy)
         #expect(config.macAddress == nil)
     }
 
-    @Test("A new-identity clone gets a fresh MAC address")
-    func newIdentityCloneGetsFreshMACAddress() async throws {
+    @Test("A New Machine gets a fresh MAC address")
+    func newMachineGetsFreshMACAddress() async throws {
         let config = try await clonedConfiguration(
-            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, identity: .new)
+            ofSourceWith: "aa:bb:cc:dd:ee:01", networkEnabled: true, outcome: .newMachine)
         let mac = try #require(config.macAddress)
         #expect(mac != "aa:bb:cc:dd:ee:01")
         #expect(GuestMACAddress.normalized(mac) == mac)
     }
 
-    @Test("A new-identity clone of a source with networking off and no address is given none")
-    func newIdentityCloneOfAddresslessSourceStaysAddressless() async throws {
+    @Test("A New Machine of a source with networking off and no address is given none")
+    func newMachineOfAddresslessSourceStaysAddressless() async throws {
         let config = try await clonedConfiguration(
-            ofSourceWith: nil, networkEnabled: false, identity: .new)
+            ofSourceWith: nil, networkEnabled: false, outcome: .newMachine)
         #expect(config.macAddress == nil)
     }
 
-    @Test("A new-identity clone of a networked source with no address gets one")
-    func newIdentityCloneOfNetworkedAddresslessSourceGetsOne() async throws {
+    @Test("A New Machine of a networked source with no address gets one")
+    func newMachineOfNetworkedAddresslessSourceGetsOne() async throws {
         let config = try await clonedConfiguration(
-            ofSourceWith: nil, networkEnabled: true, identity: .new)
+            ofSourceWith: nil, networkEnabled: true, outcome: .newMachine)
         #expect(config.macAddress != nil)
+    }
+
+    @Test("An explicit New Machine of a guest running macOS 12 is refused, and nothing is copied")
+    func newMachineOfAMontereyGuestIsRefused() throws {
+        let harness = makeHarness()
+        let source = RegisteredVMInstanceFixture.register(
+            name: "Monterey", phase: .stopped, guestOS: .macOS, library: harness.library,
+            preferences: preferences
+        ) {
+            $0.lastSeenGuestOSVersion = "12.7.6"
+        }
+
+        #expect(throws: CommandError.unsupported(capability: "cloning as a New Machine")) {
+            try harness.core.beginClone(.id(source.id), outcome: .newMachine)
+        }
+        #expect(harness.library.entries.map(\.id) == [source.id])
     }
 }

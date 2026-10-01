@@ -229,7 +229,7 @@ struct VMMACAddressRegistryTests {
     }
 
     @Test("The VMs named as sharing an address are those whose configuration carries it")
-    func vmNamesSharingMACAddressLeavesSnapshotsOut() {
+    func macAddressPeersLeavesSnapshotsOut() {
         let registry = makeRegistry()
         let snapshotHolder = makeVM(
             "Snapshotted", mac: "aa:bb:cc:dd:ee:02",
@@ -238,7 +238,7 @@ struct VMMACAddressRegistryTests {
         let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
         roster.instances = [snapshotHolder, twin, instance]
 
-        #expect(registry.vmNamesSharingMACAddress(with: instance) == ["Twin"])
+        #expect(registry.macAddressPeers(of: instance).faults == ["Twin"])
     }
 
     @Test("A live mode switch onto a network an active twin holds is refused")
@@ -258,6 +258,120 @@ struct VMMACAddressRegistryTests {
 
         #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("A live mode switch onto a network an active exact copy holds is refused as the pair")
+    func refuseMACAddressConflictNamesAnExactCopy() {
+        let registry = makeRegistry()
+        let identity = Data([1, 4, 1, 4])
+        let copy = makeVM("Copy", mac: "aa:bb:cc:dd:ee:01") {
+            $0.networkMode = .hostOnly
+            $0.genericMachineIdentifierData = identity
+        }
+        copy.activity.placeForTesting(.running(sessionID: UUID()))
+
+        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") {
+            $0.genericMachineIdentifierData = identity
+        }
+        let old = instance.configuration
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        roster.instances = [copy, instance]
+
+        var new = old
+        new.networkMode = .hostOnly
+
+        #expect(refuse(registry, on: instance, movingFrom: old, to: new)?.reason == .exactCopy(bar: .oneNetwork))
+        #expect(failures.errorTitle == "Exact Copy In Use")
+        #expect(
+            failures.errorMessage?.hasPrefix(
+                "\u{201C}Mine\u{201D} is an exact copy of \u{201C}Copy\u{201D}") == true)
+    }
+
+    // MARK: - Faults
+
+    @Test("Exact copies are no fault, though the address is held by both and by a snapshot")
+    func anExactCopyIsNoFault() {
+        let registry = makeRegistry()
+        let identity = Data([2, 7, 1, 8])
+        // The source's snapshot holds the address too, under the identity its
+        // VM keeps across a revert.
+        let source = makeVM(
+            "Source", mac: "aa:bb:cc:dd:ee:01",
+            snapshots: [VMSnapshot(name: "Snapshot", macAddress: "aa:bb:cc:dd:ee:01")]
+        ) { $0.genericMachineIdentifierData = identity }
+        let copy = makeVM("Source Copy", mac: "AA:BB:CC:DD:EE:01") {
+            $0.genericMachineIdentifierData = identity
+        }
+        roster.instances = [source, copy]
+
+        #expect(registry.macAddressFaults().isEmpty)
+        let peers = registry.macAddressPeers(of: copy)
+        #expect(peers.exactCopies == ["Source"])
+        #expect(peers.faults.isEmpty)
+    }
+
+    @Test("An address held under another machine identity is a fault, beside an exact copy")
+    func aDifferentlyIdentifiedHolderIsAFault() {
+        let registry = makeRegistry()
+        let identity = Data([2, 7, 1, 8])
+        let source = makeVM("Source", mac: "aa:bb:cc:dd:ee:01") {
+            $0.genericMachineIdentifierData = identity
+        }
+        let copy = makeVM("Source Copy", mac: "aa:bb:cc:dd:ee:01") {
+            $0.genericMachineIdentifierData = identity
+        }
+        let imported = makeVM("Imported", mac: "aa:bb:cc:dd:ee:01") {
+            $0.genericMachineIdentifierData = Data([3, 1, 4])
+        }
+        roster.instances = [source, copy, imported]
+
+        let faults = registry.macAddressFaults()
+        #expect(faults.map(\.address) == ["aa:bb:cc:dd:ee:01"])
+        #expect(faults.first?.holders.map(\.vm.name) == ["Source", "Source Copy", "Imported"])
+        let peers = registry.macAddressPeers(of: source)
+        #expect(peers.exactCopies == ["Source Copy"])
+        #expect(peers.faults == ["Imported"])
+    }
+
+    @Test("A lone holder with no machine identifier is no fault")
+    func aLoneUnidentifiedHolderIsNoFault() {
+        let registry = makeRegistry()
+        let lone = makeVM(
+            "Lone", mac: "aa:bb:cc:dd:ee:01",
+            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")])
+        roster.instances = [lone]
+
+        #expect(lone.configuration.genericMachineIdentifierData == nil)
+        #expect(lone.effectiveMachineIdentifierData == nil)
+        #expect(registry.macAddressFaults().isEmpty)
+    }
+
+    @Test("Two holders with no machine identifier are two identities, and a fault")
+    func twoUnidentifiedHoldersAreAFault() {
+        let registry = makeRegistry()
+        roster.instances = [
+            makeVM("One", mac: "aa:bb:cc:dd:ee:01"), makeVM("Two", mac: "aa:bb:cc:dd:ee:01"),
+        ]
+
+        #expect(registry.macAddressFaults().map(\.address) == ["aa:bb:cc:dd:ee:01"])
+    }
+
+    @Test("A snapshot's hold counts under its own VM's machine identity")
+    func aSnapshotHoldUnderAnotherIdentityIsAFault() {
+        let registry = makeRegistry()
+        let snapshotted = makeVM(
+            "Snapshotted", mac: "aa:bb:cc:dd:ee:02",
+            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")]
+        ) { $0.genericMachineIdentifierData = Data([5, 5]) }
+        let holder = makeVM("Holder", mac: "aa:bb:cc:dd:ee:01") {
+            $0.genericMachineIdentifierData = Data([6, 6])
+        }
+        roster.instances = [snapshotted, holder]
+
+        #expect(registry.macAddressFaults().map(\.address) == ["aa:bb:cc:dd:ee:01"])
+        // The Network section leaves the snapshot out: it puts the address on
+        // no network.
+        #expect(registry.macAddressPeers(of: holder).faults.isEmpty)
     }
 
     @Test("Holders on separate networks of one mode are no live conflict")

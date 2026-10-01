@@ -29,14 +29,14 @@ struct VMLibraryIntentTests {
         return summary
     }
 
-    // MARK: - Machine Identity
+    // MARK: - Clone Outcome
 
-    @Test("Every clone identity is offered, named, and maps back to itself")
-    func cloneIdentitiesMirrorEveryMachineIdentity() {
-        for identity in CloneMachineIdentity.allCases {
-            let offered = VMCloneIdentity(identity)
-            #expect(offered.identity == identity)
-            #expect(VMCloneIdentity.caseDisplayRepresentations[offered] != nil)
+    @Test("Every clone outcome, and following the preference, is offered, named, and maps back")
+    func cloneOutcomesMirrorEveryOutcome() {
+        for outcome in CloneOutcome.allCases.map(Optional.some) + [nil] {
+            let offered = VMCloneOutcome(outcome)
+            #expect(offered.outcome == outcome)
+            #expect(VMCloneOutcome.caseDisplayRepresentations[offered] != nil)
         }
     }
 
@@ -49,14 +49,14 @@ struct VMLibraryIntentTests {
         seed(commands, vm: vm)
         let gateway = makeGateway(commands)
 
-        _ = try await gateway.clone(vm, machineIdentity: .keep)
+        _ = try await gateway.clone(vm, outcome: .exactCopy)
         try await gateway.rename(vm, to: "Renamed")
         try await gateway.delete(vm, confirmed: true)
         try await gateway.cancelPreparing(vm, confirmed: true)
         try await gateway.cancelGuestSetup(vm, confirmed: true)
 
         #expect(commands.cloneCalls.map(\.selector) == [.id(vm)])
-        #expect(commands.cloneCalls.map(\.machineIdentity) == [.keep])
+        #expect(commands.cloneCalls.map(\.outcome) == [.exactCopy])
         // The clone intent answers the arrival rather than waiting for it.
         #expect(commands.cloneCalls.map(\.waitForOutcome) == [false])
         #expect(commands.renameCalls.map(\.selector) == [.id(vm)])
@@ -97,7 +97,7 @@ struct VMLibraryIntentTests {
         commands.cloneResult = VMSummary(
             id: UUID(), name: "Wired 2", status: "preparing", ipAddress: .unavailable, heldByAnotherCopy: false)
 
-        let copy = try await makeGateway(commands).clone(vm, machineIdentity: .followPreference)
+        let copy = try await makeGateway(commands).clone(vm, outcome: nil)
 
         #expect(copy.id == commands.cloneResult?.id)
         #expect(copy.name == "Wired 2")
@@ -222,7 +222,7 @@ struct VMLibraryIntentTests {
             vm: commands.library[0], current: .running, allowed: [.stop])
 
         await #expect(throws: CommandError.self) {
-            _ = try await makeGateway(commands).clone(vm, machineIdentity: .new)
+            _ = try await makeGateway(commands).clone(vm, outcome: .newMachine)
         }
     }
 }

@@ -33,7 +33,7 @@ struct VMLiveIdentitiesTests {
             return
         }
         #expect(conflict.other === first)
-        #expect(conflict.reason == .machineIdentity)
+        #expect(conflict.reason == .exactCopy(bar: .runningAtOnce))
         #expect(second.phase == .stopped)
         withExtendedLifetime(library) {}
     }

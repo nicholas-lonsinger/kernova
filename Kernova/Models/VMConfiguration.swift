@@ -854,6 +854,16 @@ extension VMConfiguration {
         }
         return nil
     }
+
+    /// Whether a clone of this VM can be a New Machine — `false` for a guest
+    /// known to run macOS 12 or earlier, which does not boot under a new
+    /// machine identifier: 12.7.6 stops at "Authentication is required to
+    /// verify startup disk" and 12.0.1 hangs on a black display, as observed
+    /// in #698.
+    var offersNewMachineClone: Bool {
+        guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return true }
+        return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
+    }
 }
 
 // MARK: - SharedDirectory

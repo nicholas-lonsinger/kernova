@@ -39,7 +39,8 @@ final class VMLiveIdentities {
     /// Kernova (``VMActivity/refreshFromBundle()``), so a VM that copy holds
     /// claims the identity its bundle carries now. The machine identity is
     /// checked only while ``AppPreferences/blockDuplicateMachineIDBoot`` asks
-    /// for it.
+    /// for it. Two VMs that are exact copies of each other
+    /// (``VMIdentityKinship/exactCopy``) are refused as the pair.
     func conflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration
     ) -> VMIdentityConflict? {
@@ -47,77 +48,43 @@ final class VMLiveIdentities {
             other.activity.refreshFromBundle()
         }
         if preferences.blockDuplicateMachineIDBoot,
-            let other = liveMachineIDConflict(for: instance)
+            let other = instances.first(where: {
+                $0 !== instance && $0.claimsIdentity && instance.sharesMachineIdentity(with: $0)
+            })
         {
-            return VMIdentityConflict(vm: instance, other: other, reason: .machineIdentity)
+            let reason: ConflictReason =
+                instance.kinship(with: other, bringingUp: configuration) == .exactCopy
+                ? .exactCopy(bar: .runningAtOnce) : .machineIdentity
+            return VMIdentityConflict(vm: instance, other: other, reason: reason)
         }
         if let other = macAddresses.liveMACAddressConflict(for: configuration, excluding: instance) {
-            return VMIdentityConflict(vm: instance, other: other, reason: .macAddress)
+            let reason: ConflictReason =
+                instance.kinship(with: other, bringingUp: configuration) == .exactCopy
+                ? .exactCopy(bar: .oneNetwork) : .macAddress
+            return VMIdentityConflict(vm: instance, other: other, reason: reason)
         }
         return nil
-    }
-
-    /// The first VM claiming a machine identity matching `instance`'s.
-    private func liveMachineIDConflict(for instance: VMInstance) -> VMInstance? {
-        instances.first { other in
-            other !== instance
-                && other.claimsIdentity
-                && Self.sharesMachineIdentifier(instance, other)
-        }
-    }
-
-    /// Whether two VMs would claim the same machine identity.
-    ///
-    /// macOS identifiers compare the *effective* value, which falls back to the
-    /// bundle's identifier file exactly as the boot path does; generic
-    /// identifiers have no such file, so they compare configuration fields.
-    private static func sharesMachineIdentifier(_ a: VMInstance, _ b: VMInstance) -> Bool {
-        if let lhs = a.effectiveMachineIdentifierData, let rhs = b.effectiveMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        if let lhs = a.configuration.genericMachineIdentifierData,
-            let rhs = b.configuration.genericMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        return false
     }
 }
 
 /// A bring-up refused because another VM already claims the identity it would
 /// put in front of VZ (``VMInstance/claimsIdentity``).
 struct VMIdentityConflict: LocalizedError {
-    /// What the two VMs would share.
-    enum Reason: Sendable {
-        case machineIdentity
-        case macAddress
-
-        /// The reason in the command vocabulary.
-        var conflictReason: ConflictReason {
-            switch self {
-            case .machineIdentity: .machineIdentity
-            case .macAddress: .macAddress
-            }
-        }
-    }
-
     /// The VM already claiming the identity.
     let other: VMInstance
-    let reason: Reason
+    /// What the two would share.
+    let reason: ConflictReason
     /// The sentence every surface words this refusal in, fixed at the refusal
     /// because the names it carries — and whether the claim is another copy of
     /// Kernova's hold — are read on the main actor.
     let errorDescription: String?
 
     @MainActor
-    init(vm: VMInstance, other: VMInstance, reason: Reason) {
+    init(vm: VMInstance, other: VMInstance, reason: ConflictReason) {
         self.other = other
         self.reason = reason
         self.errorDescription = CommandErrorDTO.conflictMessage(
             vm: vm.name, other: other.name, otherHeldByAnotherCopy: other.heldByAnotherCopy,
-            reason: reason.conflictReason)
+            reason: reason)
     }
 }

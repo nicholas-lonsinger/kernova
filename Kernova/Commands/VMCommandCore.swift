@@ -346,7 +346,7 @@ final class VMCommandCore: VMCommanding {
         case .identityConflict(let conflict):
             .conflict(
                 vm: summary(instance), with: summary(conflict.other),
-                reason: conflict.reason.conflictReason)
+                reason: conflict.reason)
         case .accessoryHeld(let holder):
             .operationFailed(
                 verb: .editUSBAccessory,

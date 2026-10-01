@@ -500,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func cloneVMAlternate(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        viewModel.cloneVMWithOppositeMachineIdentity(instance)
+        viewModel.cloneVMAsAlternate(instance)
     }
 
     @objc func deleteVM(_ sender: Any?) {

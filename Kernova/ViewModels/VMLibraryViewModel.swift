@@ -98,8 +98,8 @@ final class VMLibraryViewModel {
         library.moveEntries(fromOffsets: source, toOffset: destination)
     }
 
-    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
-        library.macAddresses.vmNamesSharingMACAddress(with: instance)
+    func macAddressPeers(of instance: VMInstance) -> (exactCopies: [String], faults: [String]) {
+        library.macAddresses.macAddressPeers(of: instance)
     }
 
     func guestAddress(for instance: VMInstance) -> GuestIPAddress {
@@ -1082,24 +1082,19 @@ final class VMLibraryViewModel {
 
     // MARK: - Clone
 
-    /// The Option-alternate Clone: performs the opposite of the
-    /// `cloneGeneratesNewMachineID` preference for this one clone.
-    func cloneVMWithOppositeMachineIdentity(_ instance: VMInstance) {
-        cloneVM(instance, generateNewMachineID: !preferences.cloneGeneratesNewMachineID)
+    /// The alternate Clone menu item: clones `instance` as the outcome the
+    /// primary item does not make (``AppPreferences/cloneMenuItems(for:)``),
+    /// and does nothing where only one is offered.
+    func cloneVMAsAlternate(_ instance: VMInstance) {
+        guard let alternate = preferences.cloneMenuItems(for: instance.configuration).alternate
+        else { return }
+        cloneVM(instance, as: alternate.outcome)
     }
 
-    /// Clones `instance`. `generateNewMachineID: nil` follows the
-    /// `cloneGeneratesNewMachineID` preference; the Option-alternate menu items
-    /// pass the opposite explicitly via `cloneVMWithOppositeMachineIdentity`.
-    func cloneVM(_ instance: VMInstance, generateNewMachineID: Bool? = nil) {
-        let identity: CloneMachineIdentity
-        switch generateNewMachineID {
-        case .none: identity = .followPreference
-        case .some(true): identity = .new
-        case .some(false): identity = .keep
-        }
+    /// Clones `instance` as `outcome`; `nil` follows the clone preference.
+    func cloneVM(_ instance: VMInstance, as outcome: CloneOutcome? = nil) {
         do {
-            try commands.beginClone(.id(instance.id), machineIdentity: identity)
+            try commands.beginClone(.id(instance.id), outcome: outcome)
         } catch let error as CommandError {
             if case .invalidState = error {
                 #log(

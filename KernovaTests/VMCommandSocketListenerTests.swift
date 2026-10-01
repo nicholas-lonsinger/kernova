@@ -276,7 +276,7 @@ struct VMCommandSocketListenerTests {
 
         try client.send(
             VMCommandRequest(
-                verb: .clone(.id(alpha.id), machineIdentity: .new, waitForOutcome: true)))
+                verb: .clone(.id(alpha.id), outcome: .newMachine, waitForOutcome: true)))
         // The verb has to be running before the hang-up, or the close would be
         // cancelling nothing and the test would prove nothing.
         try await harness.commands.outcomeEntered.wait {

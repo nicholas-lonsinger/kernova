@@ -55,20 +55,20 @@ struct CloneVMIntent: AppIntent {
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
-    @Parameter(title: "Machine Identity", default: .followPreference)
-    var identity: VMCloneIdentity
+    @Parameter(title: "As", default: .followPreference)
+    var outcome: VMCloneOutcome
 
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
         Summary("Clone \(\.$vm)") {
-            \.$identity
+            \.$outcome
         }
     }
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
-        .result(value: try await gateway.clone(vm.id, machineIdentity: identity.identity))
+        .result(value: try await gateway.clone(vm.id, outcome: outcome.outcome))
     }
 }
 

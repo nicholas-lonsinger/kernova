@@ -37,7 +37,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressCopyButton: CopyValueButton?
     /// Stands in for the card's rows while the mode is None.
     private var networkNoDeviceCaption = NSTextField()
-    /// Holds the banner naming the other VMs sharing this one's MAC address.
+    /// Names the VMs this one is an exact copy of, hidden while there are none.
+    private var exactCopyCaption = NSTextField()
+    /// Holds the banner naming the VMs of other machine identities sharing
+    /// this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
     /// The duplicate-MAC banner's rendered message, `nil` when no banner is
@@ -77,6 +80,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         rows.append(makeIPAddressRow())
         rows.append(makeMACAddressRow())
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
+        exactCopyCaption = makeGroupedFormCaption("")
         networkWarningContainer = NSStackView()
         networkWarningContainer.orientation = .vertical
         networkWarningContainer.alignment = .leading
@@ -114,7 +118,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
             trailing: [hint])
         return makeGroupedFormSection([
-            makeGroupedFormCard(rows: rows, notes: [networkNoDeviceCaption]),
+            makeGroupedFormCard(rows: rows, notes: [networkNoDeviceCaption, exactCopyCaption]),
             networkWarningContainer,
         ])
     }
@@ -378,16 +382,18 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshIsolationRow(editable: modeEditable)
         refreshMACAddressRow()
         refreshMACAddressWarning()
+        exactCopyCaption.stringValue = resolved.exactCopyNote ?? ""
+        exactCopyCaption.isHidden = resolved.exactCopyNote == nil
         networkNoDeviceCaption.isHidden = hasDevice
         refreshIPAddressRow()
     }
 
-    /// Discloses that another VM in the library carries this one's MAC address.
+    /// Discloses that a VM of another machine identity carries this one's MAC
+    /// address.
     ///
     /// Import, load and reconcile admit a bundle whatever address it arrives
-    /// with, so the pair is visible here rather than refused at the door — the
-    /// address stays editable, and Generate above the banner moves this VM off
-    /// it.
+    /// with, so the fault is visible here rather than refused at the door, with
+    /// the address still editable.
     private func refreshMACAddressWarning() {
         let message = resolved.warnings[.network]
         guard message != renderedNetworkMACWarning else { return }
