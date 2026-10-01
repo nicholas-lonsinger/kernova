@@ -283,7 +283,7 @@ enum VMConfigurationKeyRegistry {
     static let keys: [VMConfigurationKey] = [
         cpus, memory, displayWidth, displayHeight, displayHiDPI, displaySizeToWindow,
         displayAutoResize, displayPreference, audioInput, audioOutput, inputDevices,
-        inputSystemKeys, serialSocket, networkMode, networkBridgedInterface, networkIsolated,
+        inputSystemKeys, serialSocket, networkMode, networkBridgedInterface, networkMembership,
         networkMAC,
         autoStart, ephemeral, ephemeralBaseline, clipboardSharing, clipboardPassthrough,
         dropFiles, agentLogForwarding, agentInstallReminder,
@@ -481,16 +481,16 @@ enum VMConfigurationKeyRegistry {
             config.bridgedInterfaceIdentifier = trimmed.isEmpty ? nil : trimmed
         })
 
-    static let networkIsolated = VMConfigurationKey(
-        name: "network.isolated",
+    static let networkMembership = VMConfigurationKey(
+        name: "network.membership",
         summary:
-            "Whether a shared or hostOnly guest runs on a network of its own, which no other "
-            + "guest reaches: true or false.",
+            "Which network of its mode a shared or hostOnly guest joins: common, the one every "
+            + "other guest in the mode joins, or isolated, a network of its own.",
         gate: .networkDevice,
-        read: { String($0.isolatedNetwork) },
+        read: { $0.networkMembership.rawValue },
         write: { value, config, context in
             let before = config
-            config.isolatedNetwork = try ConfigurationValue.boolean(value, key: "network.isolated")
+            config.networkMembership = try ConfigurationValue.choice(value, key: "network.membership")
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         })
 

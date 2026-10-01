@@ -120,7 +120,3 @@ extension VmnetNetworkSelection {
     static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: false) }
     static func own(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: true) }
 }
-
-extension VmnetNetworkID {
-    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, owner: nil) }
-}

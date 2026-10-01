@@ -53,8 +53,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let diskSizeInGB: Int
     /// The network the VM joins, `nil` when networking is off.
     public let networkMode: String?
-    /// Whether that network is the VM's own, which no other guest joins.
-    public let isolatedNetwork: Bool
+    /// Which network of its mode the VM joins — `common` or `isolated` —
+    /// `nil` where it joins no app-managed network (networking off, or
+    /// bridged).
+    public let networkMembership: String?
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -83,7 +85,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         memoryBytes: UInt64,
         diskSizeInGB: Int,
         networkMode: String?,
-        isolatedNetwork: Bool,
+        networkMembership: String?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,
@@ -101,7 +103,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.memoryBytes = memoryBytes
         self.diskSizeInGB = diskSizeInGB
         self.networkMode = networkMode
-        self.isolatedNetwork = isolatedNetwork
+        self.networkMembership = networkMembership
         self.macAddress = macAddress
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus

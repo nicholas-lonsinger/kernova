@@ -1200,9 +1200,9 @@ struct ConfigurationBuilderTests {
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
         var shared = makeLinuxConfig()
-        shared.isolatedNetwork = true
+        shared.networkMembership = .isolated
         var hostOnly = makeHostOnlyConfig()
-        hostOnly.isolatedNetwork = true
+        hostOnly.networkMembership = .isolated
         for config in [shared, hostOnly] {
             let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
                 .configuration.networkDevices
@@ -1213,6 +1213,55 @@ struct ConfigurationBuilderTests {
         #expect(networks.openedOwners == [shared.id, hostOnly.id])
     }
 
+    @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
+    @MainActor
+    func everyPathFollowsJoinedNetwork() async throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        for (mode, kind) in [(VMNetworkMode.shared, VmnetNetworkKind.shared), (.hostOnly, .hostOnly)] {
+            let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+                $0.networkEnabled = true
+                $0.networkMode = mode
+                $0.networkMembership = .isolated
+                $0.macAddress = "aa:bb:cc:dd:ee:07"
+            }
+            let config = instance.configuration
+            let id = VmnetNetworkID(kind: kind, owner: config.id)
+            #expect(config.joinedNetwork == .vmnet(id))
+
+            // The build asks the VM's own session view for its own network.
+            let networks = MockVmnetNetworkProvider()
+            _ = try makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+                .assemble(from: config, bundleURL: bundleURL, validate: false)
+            #expect(networks.openedOwners == [config.id])
+            #expect(networks.requestedNetworks == [.own(kind)])
+
+            // Recovery attaches the same network.
+            let device = MockNetworkDeviceControl()
+            let coordinator = NetworkAttachmentCoordinator(
+                vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
+                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: networks,
+                entitlements: .entitled, choice: { config.networkChoice }, onPendingChange: { _ in })
+            coordinator.activate()
+            #expect(device.appliedPlans == [.vmnet(.own(kind))])
+            coordinator.stop()
+
+            // The observer reads that network's subnet and nothing else.
+            let observerNetworks = MockVmnetNetworkProvider()
+            observerNetworks.scriptedSubnets = [id: .scripted("192.168.70.0")]
+            let observer = GuestAddressObserver(
+                reader: ScriptedARPTable([
+                    .scripted("192.168.70.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
+                    .scripted("192.168.64.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
+                ]),
+                vmnetNetworks: observerNetworks, entitlements: .entitled)
+            let roster = StubVMInstanceRoster()
+            roster.instances = [instance]
+            observer.roster = roster
+            await observer.readForTesting()
+            #expect(observer.address(for: instance) == .observed("192.168.70.5"))
+        }
+    }
+
     @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
     func isolatedModeWithoutItsNetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
@@ -1220,7 +1269,7 @@ struct ConfigurationBuilderTests {
         networks.attachmentError = TestFailure("network limit reached")
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
         var config = makeLinuxConfig()
-        config.isolatedNetwork = true
+        config.networkMembership = .isolated
 
         let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
@@ -1233,7 +1282,7 @@ struct ConfigurationBuilderTests {
         let bundleURL = try makeBundle(withDisk: true)
         let builder = makeBuilder(entitlements: .unentitled)
         var config = makeLinuxConfig()
-        config.isolatedNetwork = true
+        config.networkMembership = .isolated
 
         #expect {
             try builder.assemble(from: config, bundleURL: bundleURL, validate: false)

@@ -176,7 +176,7 @@ struct VMCommandCoreConfigurationTests {
         for (key, value, capability) in [
             ("network.mode", "hostOnly", "host-only networking"),
             ("network.mode", "bridged", "bridged networking"),
-            ("network.isolated", "true", "isolating a virtual machine from other virtual machines"),
+            ("network.membership", "isolated", "isolating a virtual machine from other virtual machines"),
         ] {
             #expect(throws: CommandError.unsupportedByBuild(capability: capability)) {
                 try harness.core.setConfiguration(

@@ -400,23 +400,23 @@ struct VMConfigurationKeyRegistryTests {
         #expect(GuestMACAddress.normalized(minted) == minted)
     }
 
-    @Test("network.isolated round-trips, hot-swaps with the attachment, and refuses a non-boolean")
-    func isolationKeyRoundTrips() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "network.isolated"))
+    @Test("network.membership round-trips, hot-swaps with the attachment, and refuses another value")
+    func membershipKeyRoundTrips() throws {
+        let key = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
         var config = makeConfiguration()
-        #expect(read(key, config) == "false")
+        #expect(read(key, config) == "common")
 
-        try write(key, "true", to: &config)
-        #expect(config.isolatedNetwork)
-        #expect(read(key, config) == "true")
-        #expect(key.capability(writing: "false", for: .linux) == .switchNetworkMode)
-        #expect(throws: CommandError.self) { try write(key, "own", to: &config) }
+        try write(key, "isolated", to: &config)
+        #expect(config.networkMembership == .isolated)
+        #expect(read(key, config) == "isolated")
+        #expect(key.capability(writing: "common", for: .linux) == .switchNetworkMode)
+        #expect(throws: CommandError.self) { try write(key, "true", to: &config) }
     }
 
     @Test("A build without VM networking refuses a write onto a network it cannot attach, naming the build")
     func unattachableNetworksAreRefusedWhereEntered() throws {
         let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
-        let isolated = try #require(VMConfigurationKeyRegistry.key(named: "network.isolated"))
+        let membership = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
         let unentitled = context(entitlements: .unentitled)
         func refusal(_ key: VMConfigurationKey, _ value: String, on config: VMConfiguration) -> CommandError? {
             var settings = VMSettings(configuration: config, hostState: VMHostState())
@@ -435,10 +435,10 @@ struct VMConfigurationKeyRegistryTests {
         #expect(refusal(mode, "hostOnly", on: shared) == .unsupportedByBuild(capability: "host-only networking"))
         #expect(refusal(mode, "bridged", on: shared) == .unsupportedByBuild(capability: "bridged networking"))
         #expect(
-            refusal(isolated, "true", on: shared)
+            refusal(membership, "isolated", on: shared)
                 == .unsupportedByBuild(capability: "isolating a virtual machine from other virtual machines"))
         #expect(refusal(mode, "shared", on: shared) == nil)
-        #expect(refusal(isolated, "false", on: shared) == nil)
+        #expect(refusal(membership, "common", on: shared) == nil)
         #expect(
             !mode.accepts(
                 "hostOnly", settings: VMSettings(configuration: shared, hostState: VMHostState()), context: unentitled))
@@ -453,7 +453,7 @@ struct VMConfigurationKeyRegistryTests {
         // The same writes land in a build that can attach them.
         var settings = VMSettings(configuration: shared, hostState: VMHostState())
         try mode.apply("hostOnly", to: &settings, context: context())
-        try isolated.apply("true", to: &settings, context: context())
+        try membership.apply("isolated", to: &settings, context: context())
         #expect(settings.configuration.joinsOwnNetwork)
     }
 

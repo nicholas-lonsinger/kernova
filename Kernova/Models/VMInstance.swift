@@ -714,7 +714,7 @@ final class VMInstance {
             interfaces: HostBridgedInterfaceProvider(),
             linkObserver: HostNetworkLinkObserver(),
             vmnetNetworks: networks,
-            isVMNetworkingEntitled: entitlements.hasVMNetworking,
+            entitlements: entitlements,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
             onPendingChange: { [weak context] pending in

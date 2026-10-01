@@ -32,6 +32,9 @@ struct VmnetNetworkID: Hashable, Sendable {
     /// The VM whose network of its own this is, `nil` for the one network
     /// every VM of `kind` without one of its own joins.
     let owner: UUID?
+
+    /// The network every VM of `kind` with common membership joins.
+    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, owner: nil) }
 }
 
 /// A network as one VM's session names it: the common network of `kind`, or

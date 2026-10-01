@@ -84,10 +84,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // The IP address row shows a running Shared guest's address only where
-        // the guest rides the app-managed network and the host's table can be
+        // the guest rides an app-managed network and the host's table can be
         // read, so only there does the copy point at it.
+        let sharedRidesVmnet =
+            entitlements.realization(of: .vmnet(.common(.shared))) != .systemNAT
         let sharedReachClause =
-            entitlements.hasVMNetworking && entitlements.supportsGuestAddressObservation
+            sharedRidesVmnet && entitlements.supportsGuestAddressObservation
             ? "this Mac reaches it at the address in the IP address row"
             : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = [
@@ -136,21 +138,20 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     private func refreshIsolationRow(editable: Bool) {
         let config = instance.configuration
-        // Offered where the build can attach the VM's own network of its mode,
-        // and shown to a VM already isolated so it can be turned off.
-        if case .vmnet(let network) = config.joinedNetwork {
-            let own = VMJoinedNetwork.vmnet(VmnetNetworkID(kind: network.kind, owner: config.id))
-            isolationRow?.isHidden = !(entitlements.canAttach(own) || config.isolatedNetwork)
-        } else {
-            isolationRow?.isHidden = true
-        }
-        isolationSwitch.state = config.isolatedNetwork ? .on : .off
+        let isolated = config.networkMembership == .isolated
+        // Shown on an app-managed network where the build can attach the VM's
+        // own, and to a VM already isolated so it can be turned off.
+        var onAppManagedNetwork = false
+        if case .vmnet = config.joinedNetwork { onAppManagedNetwork = true }
+        isolationRow?.isHidden =
+            !onAppManagedNetwork || !(offers { $0.networkMembership = .isolated } || isolated)
+        isolationSwitch.state = isolated ? .on : .off
         applyGroupedFormRowEnabled(editable, control: isolationSwitch)
     }
 
     @objc private func isolationToggled() {
-        let isolated = isolationSwitch.state == .on
-        write(VMConfigurationKeyRegistry.networkIsolated.assigning(isolated))
+        let membership: VMNetworkMembership = isolationSwitch.state == .on ? .isolated : .common
+        write(VMConfigurationKeyRegistry.networkMembership.assigning(membership.rawValue))
         refreshResolved()
         refreshNetwork()
     }
@@ -318,8 +319,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// Whether the picker offers `mode`: the network choosing it puts the VM
     /// on is one this build can attach — what the mode key's write checks.
     private func offers(_ mode: VMNetworkMode) -> Bool {
+        offers { $0.applyNetworkMode(mode) }
+    }
+
+    /// Whether the network `change` puts the VM on is one this build can
+    /// attach — what the network keys' writes check.
+    private func offers(_ change: (inout VMConfiguration) -> Void) -> Bool {
         var candidate = instance.configuration
-        candidate.applyNetworkMode(mode)
+        change(&candidate)
         return candidate.joinedNetwork.map(entitlements.canAttach) ?? false
     }
 

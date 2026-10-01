@@ -62,7 +62,7 @@ struct VMSettingsNetworkPanelTests {
             $0.networkEnabled = networkEnabled
             $0.networkMode = mode
             $0.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
-            $0.isolatedNetwork = isolated
+            $0.networkMembership = isolated ? .isolated : .common
             $0.macAddress = macAddress
         }
         if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
@@ -240,7 +240,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(toggle.isEnabled)
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
-        #expect(instance.configuration.isolatedNetwork == false)
+        #expect(instance.configuration.networkMembership == .common)
         #expect(!visibleLabel("Isolate from other VMs", in: vc.view))
     }
 
@@ -253,7 +253,7 @@ struct VMSettingsNetworkPanelTests {
         toggle.state = .on
         toggle.sendAction(toggle.action, to: toggle.target)
 
-        #expect(instance.configuration.isolatedNetwork)
+        #expect(instance.configuration.networkMembership == .isolated)
         #expect(instance.configuration.joinsOwnNetwork)
     }
 

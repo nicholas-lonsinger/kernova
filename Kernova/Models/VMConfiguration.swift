@@ -30,6 +30,15 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
     case always
 }
 
+/// Which network of its mode a Shared or Host Only VM joins — membership,
+/// which is what expresses guest↔guest reach (docs/NETWORKING.md).
+enum VMNetworkMembership: String, Codable, Sendable, Equatable, CaseIterable {
+    /// The mode's common network, which every VM of the mode on it shares.
+    case common
+    /// A network of the VM's own, which no other guest joins.
+    case isolated
+}
+
 /// A network a VM's device can join.
 enum VMJoinedNetwork: Hashable, Sendable {
     /// The host's LAN through a bridged interface — any interface, since
@@ -117,10 +126,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// `nil` for Automatic — resolved against the host's default route at start.
     var bridgedInterfaceIdentifier: String?
 
-    /// When `true`, a Shared or Host Only VM runs on a network of its own,
-    /// which no other guest joins; when `false` it joins its mode's common
-    /// network. Bridged ignores it.
-    var isolatedNetwork: Bool
+    /// Which network of its mode a Shared or Host Only VM joins. Bridged
+    /// ignores it.
+    var networkMembership: VMNetworkMembership
 
     var macAddress: String?
 
@@ -338,7 +346,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled: Bool = true,
         networkMode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
-        isolatedNetwork: Bool = false,
+        networkMembership: VMNetworkMembership = .common,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
@@ -384,7 +392,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.networkMode = networkMode
         self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
-        self.isolatedNetwork = isolatedNetwork
+        self.networkMembership = networkMembership
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
@@ -441,7 +449,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
             String.self, forKey: .bridgedInterfaceIdentifier)
-        self.isolatedNetwork = try c.decodeIfPresent(Bool.self, forKey: .isolatedNetwork) ?? false
+        self.networkMembership =
+            try c.decodeIfPresent(VMNetworkMembership.self, forKey: .networkMembership) ?? .common
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =
@@ -539,12 +548,24 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var joinedNetwork: VMJoinedNetwork? {
         guard networkEnabled else { return nil }
         guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
-        return .vmnet(VmnetNetworkID(kind: kind, owner: isolatedNetwork ? id : nil))
+        let owner: UUID? =
+            switch networkMembership {
+            case .common: nil
+            case .isolated: id
+            }
+        return .vmnet(VmnetNetworkID(kind: kind, owner: owner))
     }
 
     /// Whether this VM's device joins a network of its own — what every
     /// surface reports as isolated.
     var joinsOwnNetwork: Bool { joinedNetwork?.isOwn ?? false }
+
+    /// The membership this VM's device joins its network with, `nil` where no
+    /// app-managed network is joined (no device, or Bridged).
+    var effectiveNetworkMembership: VMNetworkMembership? {
+        guard case .vmnet = joinedNetwork else { return nil }
+        return networkMembership
+    }
 
     /// Gives a VM with no address of its own one, for the reason
     /// ``applyNetworkMode(_:)`` states.

@@ -33,12 +33,9 @@ final class GuestAddressObserver {
 
     @ObservationIgnored private let reader: any ARPTableReading
     @ObservationIgnored private let vmnetNetworks: any VmnetNetworkProviding
-    /// Whether this process can read the table —
-    /// `EntitlementService.supportsGuestAddressObservation`.
-    @ObservationIgnored private let canObserve: Bool
-    /// Whether Shared rides the app-managed network rather than the system NAT
-    /// attachment, which no network here backs.
-    @ObservationIgnored private let isVMNetworkingEntitled: Bool
+    /// What this build authorizes: whether the table can be read at all, and
+    /// which networks an app-managed vmnet network realizes.
+    @ObservationIgnored private let entitlements: EntitlementService
     @ObservationIgnored private let clock: any EngineClock
     @ObservationIgnored private let pollInterval: TimeInterval
     /// The wall clock the table's expiries are measured against, in Unix
@@ -56,16 +53,14 @@ final class GuestAddressObserver {
     init(
         reader: any ARPTableReading,
         vmnetNetworks: any VmnetNetworkProviding,
-        canObserve: Bool,
-        isVMNetworkingEntitled: Bool,
+        entitlements: EntitlementService,
         clock: any EngineClock = makePlatformEngineClock(),
         pollInterval: TimeInterval = GuestAddressObserver.defaultPollInterval,
         now: @escaping @Sendable () -> Int = { Int(Date().timeIntervalSince1970) }
     ) {
         self.reader = reader
         self.vmnetNetworks = vmnetNetworks
-        self.canObserve = canObserve
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
+        self.entitlements = entitlements
         self.clock = clock
         self.pollInterval = pollInterval
         self.now = now
@@ -75,19 +70,18 @@ final class GuestAddressObserver {
     /// joins.
     func address(for instance: VMInstance) -> GuestIPAddress {
         let config = instance.configuration
-        guard config.networkEnabled, config.networkMode != .bridged,
-            instance.hasLiveVirtualMachine, let key = key(for: config)
-        else { return Self.address(withNoLiveGuest: config) }
+        guard instance.hasLiveVirtualMachine, let key = key(for: config) else {
+            return Self.address(withNoLiveGuest: config)
+        }
         return observedAddresses[key].map(GuestIPAddress.observed) ?? .notObserved
     }
 
     /// What a guest configured as `config` answers for an address while
     /// nothing of it is live — a VM at rest, or one still being written.
     static func address(withNoLiveGuest config: VMConfiguration) -> GuestIPAddress {
-        guard config.networkEnabled else { return .unavailable }
         // Answered before the capability: external DHCP owns a bridged guest's
         // address whether or not this process can read the table.
-        return config.networkMode == .bridged ? .externallyAssigned : .unavailable
+        config.joinedNetwork == .bridged ? .externallyAssigned : .unavailable
     }
 
     /// Starts reading the table if a VM is running on an app-managed network
@@ -174,11 +168,13 @@ final class GuestAddressObserver {
     }
 
     /// What `config` is watched under, `nil` where nothing here can see its
-    /// address: networking off, a mode no app-managed network realizes, a build
-    /// that attaches Shared to system NAT, a process that cannot read the
-    /// table, or a MAC address that does not parse.
+    /// address: a process that cannot read the table, a network this build
+    /// realizes other than as an app-managed vmnet network (none, Bridged,
+    /// system NAT), or a MAC address that does not parse.
     private func key(for config: VMConfiguration) -> Key? {
-        guard canObserve, isVMNetworkingEntitled, case .vmnet(let network) = config.joinedNetwork,
+        guard entitlements.supportsGuestAddressObservation,
+            let joined = config.joinedNetwork, case .vmnet(let network) = joined,
+            case .vmnet? = entitlements.realization(of: joined),
             let mac = config.macAddress, let hardwareAddress = EthernetAddress(mac)
         else { return nil }
         return Key(hardwareAddress: hardwareAddress, network: network)

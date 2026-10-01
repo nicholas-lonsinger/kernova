@@ -67,7 +67,7 @@ struct NetworkAttachmentCoordinatorTests {
             interfaces: provider,
             linkObserver: observer,
             vmnetNetworks: vmnet,
-            isVMNetworkingEntitled: entitled,
+            entitlements: entitled ? .entitled : .unentitled,
             retryDelays: retryDelays,
             clock: clock,
             isEligible: { eligibility.isEligible },
@@ -83,7 +83,7 @@ struct NetworkAttachmentCoordinatorTests {
 
     @Test("Activation reattaches a shared VM that came up detached")
     func activationReattachesDetachedSharedDevice() {
-        let h = makeHarness(choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false))
+        let h = makeHarness(choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil))
 
         h.coordinator.activate()
 
@@ -95,9 +95,10 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("Activation leaves a matching attachment alone")
     func activationLeavesMatchingAttachmentAlone() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             devicePlan: .bridged("en0"),
-            available: [Self.wiFi])
+            available: [Self.wiFi],
+            entitled: true)
 
         h.coordinator.activate()
 
@@ -107,7 +108,9 @@ struct NetworkAttachmentCoordinatorTests {
 
     @Test("Activation attaches the app-managed Host Only network")
     func activationAttachesHostOnlyNetwork() {
-        let h = makeHarness(choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false))
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true)
 
         h.coordinator.activate()
 
@@ -118,7 +121,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An entitled build realizes Shared over the app-managed vmnet network")
     func entitledSharedRealizesVmnetPlan() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             entitled: true)
 
         h.coordinator.activate()
@@ -130,7 +133,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An entitled build swaps a NAT attachment over to the vmnet shared network")
     func entitledSharedReplacesNATAttachment() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat,
             entitled: true)
 
@@ -142,7 +145,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An isolated choice attaches the VM's own network of its mode")
     func isolatedChoiceAttachesTheOwnNetwork() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: true),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, membership: .isolated),
             devicePlan: .vmnet(.common(.shared)),
             entitled: true)
 
@@ -155,7 +158,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A live switch to isolation never leaves the VM on its mode's common network")
     func liveSwitchToIsolationDetachesTheCommonNetwork() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: true),
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, membership: .isolated),
             devicePlan: .vmnet(.common(.hostOnly)),
             entitled: true)
         h.vmnet.materializedNetworks = [.common(.hostOnly)]
@@ -180,7 +183,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An isolated Shared choice in a build that attaches Shared to system NAT stays detached")
     func unentitledIsolatedSharedStaysDetached() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: true),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, membership: .isolated),
             devicePlan: .nat)
 
         h.coordinator.activate()
@@ -194,7 +197,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A live switch between vmnet-backed modes supersedes the in-flight materialization")
     func liveSwitchSupersedesInFlightMaterialization() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             entitled: true,
             retryDelays: [])
         h.vmnet.materializedNetworks = []
@@ -211,7 +214,7 @@ struct NetworkAttachmentCoordinatorTests {
         // refusals lift only after the switch, so the supersede path (not a
         // direct attach) is what recovers the session.
         h.vmnet.materializeFails = false
-        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
         h.device.refusedPlans = []
 
@@ -225,7 +228,8 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A Host Only network that won't materialize goes pending and retries on the ladder")
     func refusedHostOnlyAttachRetriesOnBackoff() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true,
             retryDelays: [1])
         h.device.refusedPlans = [.vmnet(.common(.hostOnly))]
 
@@ -247,7 +251,8 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An unmaterialized Host Only network materializes in the background and reconciles")
     func unmaterializedHostOnlyMaterializesAndReconciles() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
+            entitled: true,
             retryDelays: [])
         h.vmnet.materializedNetworks = []
         h.device.refusedPlans = [.vmnet(.common(.hostOnly))]
@@ -268,7 +273,9 @@ struct NetworkAttachmentCoordinatorTests {
 
     @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")
     func degradedBridgedStartRecoversOnLinkEvent() {
-        let h = makeHarness(choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false))
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
+            entitled: true)
 
         h.coordinator.activate()
         #expect(h.coordinator.isPending)
@@ -288,7 +295,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A shared-mode disconnect reattaches NAT immediately")
     func sharedDisconnectReattachesImmediately() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat)
         h.coordinator.activate()
 
@@ -304,7 +311,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A persistent attach-fail loop escalates the ladder and ends pending")
     func persistentAttachFailureEscalatesLadderThenRestsPending() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat,
             retryDelays: [1, 2])
         h.coordinator.activate()
@@ -343,7 +350,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("Disconnects outside the burst window each reattach immediately")
     func spacedDisconnectsReattachImmediately() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat)
         h.coordinator.activate()
 
@@ -363,10 +370,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A bridged disconnect with the persisted interface gone narrows to the primary")
     func bridgedDisconnectNarrowsToPrimary() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             devicePlan: .bridged("en1"),
             available: [Self.ethernet],
-            primary: "en1")
+            primary: "en1",
+            entitled: true)
         h.coordinator.activate()
 
         // en1 undocked: the host now offers only Wi-Fi.
@@ -382,10 +390,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("The persisted interface returning reclaims the bridge from its narrowed fallback")
     func persistedInterfaceReturningReclaimsBridge() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             devicePlan: .bridged("en0"),
             available: [Self.wiFi],
-            primary: "en0")
+            primary: "en0",
+            entitled: true)
         h.coordinator.activate()
         #expect(h.device.appliedPlans.isEmpty)
 
@@ -398,10 +407,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An Automatic bridge holds its interface across a default-route change")
     func automaticBridgeHoldsInterfaceAcrossPrimaryChange() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: nil),
             devicePlan: .bridged("en0"),
             available: [Self.wiFi, Self.ethernet],
-            primary: "en0")
+            primary: "en0",
+            entitled: true)
         h.coordinator.activate()
 
         h.provider.primary = "en1"
@@ -414,10 +424,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A vanished interface detaches the stale bridge, goes pending, and arms a retry")
     func vanishedInterfaceDetachesStaleBridge() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             devicePlan: .bridged("en1"),
             available: [Self.ethernet],
             primary: "en1",
+            entitled: true,
             retryDelays: [60])
         h.coordinator.activate()
         #expect(!h.coordinator.isPending)
@@ -438,10 +449,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A narrowed fallback holds while the default route flaps away")
     func narrowedFallbackHeldWhilePrimaryGone() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en5", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en5"),
             devicePlan: .bridged("en0"),
             available: [Self.wiFi],
-            primary: "en0")
+            primary: "en0",
+            entitled: true)
         h.coordinator.activate()
 
         h.provider.primary = nil
@@ -456,7 +468,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("An ineligible session drops triggers until re-activation")
     func ineligibleSessionDropsTriggers() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat)
         h.coordinator.activate()
 
@@ -480,49 +492,51 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A live mode change swaps the attachment")
     func liveModeChangeSwapsAttachment() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
-            devicePlan: .nat,
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .vmnet(.common(.shared)),
             available: [Self.wiFi],
-            primary: "en0")
+            primary: "en0",
+            entitled: true)
         h.coordinator.activate()
 
-        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0")
         h.coordinator.configurationChanged()
         #expect(h.device.appliedPlans == [.bridged("en0")])
 
-        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: "en0", isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: "en0")
         h.coordinator.configurationChanged()
-        #expect(h.device.appliedPlans == [.bridged("en0"), .nat])
+        #expect(h.device.appliedPlans == [.bridged("en0"), .vmnet(.common(.shared))])
         #expect(!h.coordinator.isPending)
     }
 
     @Test("A live switch to Host Only swaps the attachment, and back")
     func liveHostOnlySwitchSwapsAttachment() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
-            devicePlan: .nat)
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
+            devicePlan: .vmnet(.common(.shared)),
+            entitled: true)
         h.coordinator.activate()
 
-        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
         #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly))])
         #expect(!h.coordinator.isPending)
 
-        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
-        #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly)), .nat])
+        #expect(h.device.appliedPlans == [.vmnet(.common(.hostOnly)), .vmnet(.common(.shared))])
         #expect(!h.coordinator.isPending)
     }
 
     @Test("Switching to a Host Only network that won't materialize detaches rather than staying Shared")
     func refusedHostOnlySwitchDetaches() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat)
         h.coordinator.activate()
         h.device.refusedPlans = [.vmnet(.common(.hostOnly))]
 
-        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil)
         h.coordinator.configurationChanged()
 
         // The NAT attachment must not survive as a silent substitute for the
@@ -535,12 +549,13 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A live interface switch swaps the bridge")
     func liveInterfaceSwitchSwapsBridge() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             devicePlan: .bridged("en0"),
-            available: [Self.wiFi, Self.ethernet])
+            available: [Self.wiFi, Self.ethernet],
+            entitled: true)
         h.coordinator.activate()
 
-        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1", isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1")
         h.coordinator.configurationChanged()
 
         #expect(h.device.appliedPlans == [.bridged("en1")])
@@ -549,11 +564,11 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("Switching to an unresolvable bridge detaches rather than keeping the old mode")
     func unresolvableBridgeSwitchDetaches() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat)
         h.coordinator.activate()
 
-        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false)
+        h.choiceBox.choice = NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0")
         h.coordinator.configurationChanged()
 
         // The NAT attachment must not survive as a silent substitute for the
@@ -568,8 +583,9 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A refused attach retries on the backoff schedule until it lands")
     func refusedAttachRetriesOnBackoff() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             available: [Self.wiFi],
+            entitled: true,
             retryDelays: [1])
         // The interface is listed but the attach refuses — the VZ interface
         // list lagging the dynamic store.
@@ -592,8 +608,9 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("Exhausted retries leave recovery to the next link event")
     func exhaustedRetriesRecoverOnLinkEvent() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false),
-            available: [Self.wiFi])
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
+            available: [Self.wiFi],
+            entitled: true)
         h.device.refusedPlans = [.bridged("en0")]
 
         h.coordinator.activate()
@@ -610,7 +627,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("A ladder exhausted on a materialized vmnet network rests pending until the next link event")
     func exhaustedLadderOnMaterializedNetworkRestsPending() async {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false),
+            choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
             entitled: true,
             retryDelays: [1])
         h.coordinator.activate()
@@ -646,7 +663,7 @@ struct NetworkAttachmentCoordinatorTests {
 
     @Test("Events before activation are ignored")
     func eventsBeforeActivationAreIgnored() {
-        let h = makeHarness(choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil, isolated: false))
+        let h = makeHarness(choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil))
 
         // The disconnect that fires benignly during boot/restore, before the
         // session reaches `.running`.
@@ -660,7 +677,7 @@ struct NetworkAttachmentCoordinatorTests {
     @Test("Stop cancels the retry and the link observation")
     func stopCancelsRetryAndObservation() {
         let h = makeHarness(
-            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0", isolated: false),
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             retryDelays: [60])
         h.coordinator.activate()
         #expect(h.coordinator.isPending)

@@ -33,9 +33,13 @@ struct GuestAddressObserverTests {
         entitled: Bool = true,
         vmnet: MockVmnetNetworkProvider = Self.subnetted()
     ) -> GuestAddressObserver {
+        var granted: Set<String> = []
+        if canObserve { granted.insert("com.apple.developer.networking.topology-observation") }
+        if entitled { granted.insert("com.apple.vm.networking") }
         let observer = GuestAddressObserver(
-            reader: table, vmnetNetworks: vmnet, canObserve: canObserve,
-            isVMNetworkingEntitled: entitled, clock: clock, now: { Self.now })
+            reader: table, vmnetNetworks: vmnet,
+            entitlements: EntitlementService(reader: MockEntitlementReader(granted: granted)),
+            clock: clock, now: { Self.now })
         observer.roster = roster
         return observer
     }
@@ -49,7 +53,7 @@ struct GuestAddressObserverTests {
         VMInstanceFixture.make(phase: phase) {
             $0.networkEnabled = networkEnabled
             $0.networkMode = mode
-            $0.isolatedNetwork = isolated
+            $0.networkMembership = isolated ? .isolated : .common
             $0.macAddress = mac
         }
     }

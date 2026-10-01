@@ -236,9 +236,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         self.entitlements = entitlements
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
         let guestAddresses = GuestAddressObserver(
-            reader: arpTable, vmnetNetworks: vmnetNetworks,
-            canObserve: entitlements.supportsGuestAddressObservation,
-            isVMNetworkingEntitled: entitlements.hasVMNetworking)
+            reader: arpTable, vmnetNetworks: vmnetNetworks, entitlements: entitlements)
         self.guestAddresses = guestAddresses
         let macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
         self.macAddresses = macAddresses

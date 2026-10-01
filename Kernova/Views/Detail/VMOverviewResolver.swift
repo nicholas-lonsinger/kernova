@@ -31,19 +31,19 @@ enum NetworkModeChoice: Equatable {
     /// The Mode picker's title for this choice, which is what the Network card
     /// states beside the address.
     ///
-    /// A mode the signature does not authorize still names itself, marked
-    /// unavailable: the picker offers no entry for it, so this is what shows a
-    /// VM already on it what it is set to.
-    func title(entitled: Bool, interfaces: [BridgedInterface]) -> String {
+    /// A mode whose network this build cannot attach (`attachable` false)
+    /// still names itself, marked unavailable: the picker offers no entry for
+    /// it, so this is what shows a VM already on it what it is set to.
+    func title(attachable: Bool, interfaces: [BridgedInterface]) -> String {
         switch self {
         case .shared:
             return "Shared Network"
         case .hostOnly:
-            return entitled ? "Host Only" : "Host Only (unavailable)"
+            return attachable ? "Host Only" : "Host Only (unavailable)"
         case .none:
             return "None"
         case .bridged(let identifier):
-            guard entitled else { return "Bridged (unavailable)" }
+            guard attachable else { return "Bridged (unavailable)" }
             guard let identifier else { return "Automatic" }
             guard let interface = interfaces.first(where: { $0.identifier == identifier }) else {
                 return "\(identifier) (unavailable)"
@@ -231,7 +231,7 @@ final class VMOverviewResolver {
         if choice != titledNetworkChoice {
             titledNetworkChoice = choice
             resolved.networkModeTitle = choice.title(
-                entitled: viewModel.entitlements.hasVMNetworking,
+                attachable: config.joinedNetwork.map(viewModel.entitlements.canAttach) ?? true,
                 interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [])
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)

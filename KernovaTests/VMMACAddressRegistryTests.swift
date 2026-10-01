@@ -18,7 +18,7 @@ struct VMMACAddressRegistryTests {
         let registry = VMMACAddressRegistry(
             guestAddresses: GuestAddressObserver(
                 reader: ScriptedARPTable(), vmnetNetworks: MockVmnetNetworkProvider(),
-                canObserve: true, isVMNetworkingEntitled: true))
+                entitlements: .entitled))
         registry.roster = roster
         registry.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
@@ -263,10 +263,10 @@ struct VMMACAddressRegistryTests {
     @Test("Holders on separate networks of one mode are no live conflict")
     func separateNetworksOfOneModeAreNoLiveConflict() {
         let registry = makeRegistry()
-        let isolatedTwin = makeVM("Isolated Twin", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        let isolatedTwin = makeVM("Isolated Twin", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
         isolatedTwin.activity.placeForTesting(.running(sessionID: UUID()))
         let common = makeVM("Common", mac: "aa:bb:cc:dd:ee:01")
-        let isolated = makeVM("Isolated", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        let isolated = makeVM("Isolated", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
         roster.instances = [isolatedTwin, common, isolated]
 
         // A network of its own is one no other VM joins — whether the other
@@ -286,14 +286,14 @@ struct VMMACAddressRegistryTests {
         let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01")
         twin.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
         let old = instance.configuration
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         roster.instances = [twin, instance]
 
         // Same mode and address; only the network it joins moves.
         var new = old
-        new.isolatedNetwork = false
+        new.networkMembership = .common
 
         #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorTitle == "Duplicate MAC Address")

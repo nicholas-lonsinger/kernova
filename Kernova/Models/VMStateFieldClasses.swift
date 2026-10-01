@@ -123,7 +123,7 @@ extension VMConfiguration {
             enabled ? [.machineKeys, .networkAttachment] : .machineKeys
         },
         .field("networkMode", \.networkMode, [.machineKeys, .networkAttachment]),
-        .field("isolatedNetwork", \.isolatedNetwork, [.machineKeys, .networkAttachment]),
+        .field("networkMembership", \.networkMembership, [.machineKeys, .networkAttachment]),
         .field(
             "bridgedInterfaceIdentifier", \.bridgedInterfaceIdentifier,
             [.machineKeys, .networkAttachment]),

@@ -568,7 +568,7 @@ struct ConfigurationBuilder: Sendable {
         // A configuration that arrived on a network this build cannot attach —
         // an imported bundle, or one set in a build that could — is refused
         // here; every write path refuses moving onto one.
-        guard entitlements.canAttach(network) else {
+        guard let realization = entitlements.realization(of: network) else {
             #log(
                 Self.logger, .error,
                 "'\(config.name, privacy: .public)' is set to a network a build without com.apple.vm.networking cannot attach"
@@ -577,16 +577,13 @@ struct ConfigurationBuilder: Sendable {
         }
 
         let networkDevice = VZVirtioNetworkDeviceConfiguration()
-        switch config.networkMode {
-        case .shared:
-            networkDevice.attachment =
-                entitlements.hasVMNetworking
-                ? vmnetAttachment(.shared, config: config, vmnetNetworks: vmnetNetworks)
-                : VZNATNetworkDeviceAttachment()
+        switch realization {
+        case .systemNAT:
+            networkDevice.attachment = VZNATNetworkDeviceAttachment()
         case .bridged:
             networkDevice.attachment = bridgedAttachment(config: config)
-        case .hostOnly:
-            networkDevice.attachment = vmnetAttachment(.hostOnly, config: config, vmnetNetworks: vmnetNetworks)
+        case .vmnet(let selection):
+            networkDevice.attachment = vmnetAttachment(selection, config: config, vmnetNetworks: vmnetNetworks)
         }
 
         if let macString = config.macAddress,
@@ -635,7 +632,7 @@ struct ConfigurationBuilder: Sendable {
         return VZBridgedNetworkDeviceAttachment(interface: interface)
     }
 
-    /// The attachment joining `config`'s network of `kind` — the common one,
+    /// The attachment joining `selection`'s network — the mode's common one,
     /// or the VM's own.
     ///
     /// A network that cannot be materialized — a process holds a bounded
@@ -645,15 +642,15 @@ struct ConfigurationBuilder: Sendable {
     /// once the session runs, and never substitutes the common network for the
     /// VM's own (docs/NETWORKING.md).
     private func vmnetAttachment(
-        _ kind: VmnetNetworkKind, config: VMConfiguration, vmnetNetworks: any VmnetSessionNetworking
+        _ selection: VmnetNetworkSelection, config: VMConfiguration,
+        vmnetNetworks: any VmnetSessionNetworking
     ) -> VZNetworkDeviceAttachment? {
-        let selection = VmnetNetworkSelection(kind: kind, isOwn: config.isolatedNetwork)
         do {
             return try vmnetNetworks.attachment(for: selection)
         } catch {
             #log(
                 Self.logger, .error,
-                "The \(selection.isOwn ? "own " : "", privacy: .public)\(kind.rawValue, privacy: .public) network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
+                "The \(selection.isOwn ? "own " : "", privacy: .public)\(selection.kind.rawValue, privacy: .public) network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
             )
             return nil
         }

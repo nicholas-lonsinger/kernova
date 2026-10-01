@@ -14,15 +14,13 @@ enum NetworkAttachmentPlan: Equatable, Sendable {
     /// entitled build.
     case vmnet(VmnetNetworkSelection)
 
-    /// Whether this plan realizes `choice`. The bridged interface is ignored:
-    /// an attachment over any interface realizes Bridged. System NAT realizes
-    /// no network of the VM's own.
-    func matches(_ choice: NetworkChoice) -> Bool {
+    /// The realization this plan attaches by. The bridged interface is
+    /// ignored: an attachment over any interface realizes Bridged.
+    var realization: VMNetworkRealization {
         switch self {
-        case .nat: choice.mode == .shared && !choice.isolated
-        case .bridged: choice.mode == .bridged
-        case .vmnet(let selection):
-            VmnetNetworkKind(mode: choice.mode) == selection.kind && selection.isOwn == choice.isolated
+        case .nat: .systemNAT
+        case .bridged: .bridged
+        case .vmnet(let selection): .vmnet(selection)
         }
     }
 
@@ -36,21 +34,18 @@ enum NetworkAttachmentPlan: Equatable, Sendable {
 
 /// The network the user chose for a VM, as attachment recovery needs it.
 struct NetworkChoice: Equatable {
-    let mode: VMNetworkMode
+    let joinedNetwork: VMJoinedNetwork
     /// The persisted bridged interface, `nil` for Automatic.
     let bridgedInterfaceIdentifier: String?
-    /// Whether a Shared or Host Only VM runs on a network of its own.
-    let isolated: Bool
 }
 
 extension VMConfiguration {
     /// The network the user chose, as attachment recovery consumes it; `nil`
     /// when the VM has no network device.
     var networkChoice: NetworkChoice? {
-        guard networkEnabled else { return nil }
-        return NetworkChoice(
-            mode: networkMode, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier,
-            isolated: isolatedNetwork)
+        joinedNetwork.map {
+            NetworkChoice(joinedNetwork: $0, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier)
+        }
     }
 }
 
@@ -309,10 +304,9 @@ final class NetworkAttachmentCoordinator {
     private let interfaces: any BridgedInterfaceProviding
     private let linkObserver: any NetworkLinkObserving
     private let vmnetNetworks: any VmnetSessionNetworking
-    /// Whether this build realizes Shared over an app-managed vmnet network
-    /// or the system NAT attachment (`.nat`). A process-wide
-    /// constant, snapshotted at init.
-    private let isVMNetworkingEntitled: Bool
+    /// What this build authorizes, which decides how each network the user
+    /// chooses is attached (``EntitlementService/realization(of:)``).
+    private let entitlements: EntitlementService
     private let retryDelays: [TimeInterval]
     private let disconnectBurstWindow: TimeInterval
     private let vmnetRematerializeDelays: [TimeInterval]
@@ -344,7 +338,7 @@ final class NetworkAttachmentCoordinator {
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
         vmnetNetworks: any VmnetSessionNetworking,
-        isVMNetworkingEntitled: Bool,
+        entitlements: EntitlementService,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
         disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
         vmnetRematerializeDelays: [TimeInterval] =
@@ -359,7 +353,7 @@ final class NetworkAttachmentCoordinator {
         self.interfaces = interfaces
         self.linkObserver = linkObserver
         self.vmnetNetworks = vmnetNetworks
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
+        self.entitlements = entitlements
         self.retryDelays = retryDelays
         self.disconnectBurstWindow = disconnectBurstWindow
         self.vmnetRematerializeDelays = vmnetRematerializeDelays
@@ -476,7 +470,9 @@ final class NetworkAttachmentCoordinator {
         // stays on its mode's common network. A refused apply whose live
         // attachment does match the choice is kept — a working bridge beats
         // detaching, and the next trigger retries.
-        if let current = device.currentPlan, !current.matches(choice) {
+        if let current = device.currentPlan,
+            current.realization != entitlements.realization(of: choice.joinedNetwork)
+        {
             device.detach()
         }
 
@@ -536,16 +532,12 @@ final class NetworkAttachmentCoordinator {
     /// The plan the chosen network resolves to right now, `nil` when Bridged
     /// has no usable host interface or the build cannot realize the choice.
     private func resolvePlan(for choice: NetworkChoice) -> NetworkAttachmentPlan? {
-        switch choice.mode {
-        case .shared:
-            guard isVMNetworkingEntitled else {
-                // System NAT is one network every unentitled Shared guest
-                // joins, so it realizes no network of the VM's own.
-                return choice.isolated ? nil : .nat
-            }
-            return .vmnet(VmnetNetworkSelection(kind: .shared, isOwn: choice.isolated))
-        case .hostOnly:
-            return .vmnet(VmnetNetworkSelection(kind: .hostOnly, isOwn: choice.isolated))
+        guard let realization = entitlements.realization(of: choice.joinedNetwork) else { return nil }
+        switch realization {
+        case .systemNAT:
+            return .nat
+        case .vmnet(let selection):
+            return .vmnet(selection)
         case .bridged:
             let available = interfaces.interfaces().map(\.identifier)
             // The persisted interface is reclaimed the moment the host offers

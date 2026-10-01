@@ -89,13 +89,37 @@ struct EntitlementService: Sendable {
             "com.apple.developer.networking.topology-observation")
     }
 
-    /// Whether this build can attach a guest to `network` — the one answer
-    /// every surface that offers, writes or builds a network reads.
+    /// The attachment that realizes `network` in this build, `nil` when this
+    /// build cannot attach it — the one mapping every path that builds,
+    /// recovers, observes, refuses or offers a network reads.
     ///
     /// Without `com.apple.vm.networking` the only attachment is system NAT,
-    /// which every Shared guest joins, so Shared Network's common network is
-    /// the one that remains.
-    func canAttach(_ network: VMJoinedNetwork) -> Bool {
-        hasVMNetworking || network == .vmnet(VmnetNetworkID(kind: .shared, owner: nil))
+    /// which every Shared guest joins, so it realizes Shared Network's common
+    /// network and nothing else.
+    func realization(of network: VMJoinedNetwork) -> VMNetworkRealization? {
+        switch network {
+        case .bridged:
+            return hasVMNetworking ? .bridged : nil
+        case .vmnet(let id):
+            guard hasVMNetworking else {
+                return id == .common(.shared) ? .systemNAT : nil
+            }
+            return .vmnet(VmnetNetworkSelection(kind: id.kind, isOwn: id.owner != nil))
+        }
     }
+
+    /// Whether this build can attach a guest to `network`.
+    func canAttach(_ network: VMJoinedNetwork) -> Bool {
+        realization(of: network) != nil
+    }
+}
+
+/// How a build attaches a guest to the network it joins.
+enum VMNetworkRealization: Equatable, Sendable {
+    /// The system NAT attachment.
+    case systemNAT
+    /// A host interface, chosen when the attachment is made.
+    case bridged
+    /// An app-managed vmnet network, as the VM's own session names it.
+    case vmnet(VmnetNetworkSelection)
 }
