@@ -975,7 +975,9 @@ enum DownloadError: LocalizedError {
             case .checksumList:
                 "\(filename) doesn't match \(expected.source.phrase). Try downloading it again."
             case .enteredByUser:
-                "\(filename) doesn't match \(expected.source.phrase)."
+                // The wizard is the only place a checksum is entered, so
+                // creating the VM again is the one way to change it.
+                "\(filename) doesn't match \(expected.source.phrase). To use a different checksum, create the virtual machine again."
             }
         case .oversizedTransfer(let expectedBytes):
             "The download exceeded its expected size of \(DataFormatters.formatBytes(expectedBytes)) and was stopped."
