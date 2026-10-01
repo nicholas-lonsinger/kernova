@@ -293,10 +293,8 @@ private final class ScrollMoreHitTransparentView: NSView {
     nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// Builds the chevron disc: a `chevron.down` on a small adaptive grey disc.
-///
-/// The disc is an `NSBox` whose fill/border are dynamic `NSColor`s, so it
-/// follows light/dark. Returned hit-transparent.
+/// Builds the chevron disc: a `chevron.down` on a small adaptive grey disc,
+/// returned hit-transparent.
 @MainActor
 private func makeScrollMoreChevron() -> NSView {
     let diameter: CGFloat = 28

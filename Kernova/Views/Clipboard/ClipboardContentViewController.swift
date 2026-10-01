@@ -152,10 +152,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         scrollView.drawsBackground = false
         self.scrollView = scrollView
 
-        let circle = NSImageView(image: .systemSymbol("circle.fill", accessibilityDescription: ""))
-        circle.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
-        circle.setContentHuggingPriority(.required, for: .horizontal)
-        self.statusCircle = circle
+        self.statusCircle = makeStatusDot()
 
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)

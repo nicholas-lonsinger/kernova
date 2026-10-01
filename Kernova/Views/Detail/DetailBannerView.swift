@@ -18,8 +18,6 @@ final class DetailBannerView: NSView {
     }
 
     private func build(tint: NSColor, symbolName: String, title titleText: String, subtitle subtitleText: String) {
-        // Tint background + bottom hairline: NSBoxes filled with dynamic colors,
-        // so they follow light/dark.
         let background = NSBox()
         background.boxType = .custom
         background.titlePosition = .noTitle

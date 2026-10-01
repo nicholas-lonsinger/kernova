@@ -39,7 +39,7 @@ final class VMIdentityHeaderView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let titleRow = NSStackView()
     private let trailingSpacer = NSView()
-    private let statusDot = NSImageView()
+    private let statusDot = makeStatusDot()
     private let factsLabel = NSTextField(labelWithString: "")
 
     private var mode: Mode = .identity
@@ -148,7 +148,6 @@ final class VMIdentityHeaderView: NSView {
         iconView.isHidden = mode != .identity
         backButton.isHidden = mode == .identity
         statusDot.contentTintColor = instance.statusDisplayNSColor
-        statusDot.setAccessibilityLabel(instance.statusDisplayName)
         renderedFactsLine = Self.factsLine(
             status: instance.statusDisplayName,
             osVersion: instance.guestOSVersionDisplay,
@@ -204,10 +203,6 @@ final class VMIdentityHeaderView: NSView {
         nameLabel.maximumNumberOfLines = 1
         nameLabel.isSelectable = false
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        statusDot.image = .systemSymbol("circle.fill", accessibilityDescription: "")
-        statusDot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .regular)
-        statusDot.setContentHuggingPriority(.required, for: .horizontal)
 
         factsLabel.font = .preferredFont(forTextStyle: .caption1)
         factsLabel.textColor = .secondaryLabelColor

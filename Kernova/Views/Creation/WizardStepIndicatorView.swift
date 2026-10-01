@@ -36,7 +36,6 @@ final class WizardStepIndicatorView: NSView {
         }
     }
 
-    private static let dotPointSize: CGFloat = 8
     private static let connectorWidth: CGFloat = 24
 
     init() {
@@ -71,9 +70,7 @@ final class WizardStepIndicatorView: NSView {
     }
 
     private func makeStepGroup(for step: VMCreationStep) -> NSView {
-        let dot = NSImageView(image: .systemSymbol("circle.fill", accessibilityDescription: ""))
-        dot.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: Self.dotPointSize, weight: .regular)
-        dot.setContentHuggingPriority(.required, for: .horizontal)
+        let dot = makeStatusDot()
 
         let label = NSTextField(labelWithString: step.title)
         label.font = .preferredFont(forTextStyle: .caption1)
@@ -100,6 +97,8 @@ final class WizardStepIndicatorView: NSView {
         for (step, views) in stepViews {
             let isCurrent = step == currentStep
             views.dot.contentTintColor = isCurrent ? .controlAccentColor : .tertiaryLabelColor
+            views.dot.setAccessibilityElement(isCurrent)
+            views.dot.setAccessibilityLabel(isCurrent ? "Current step" : nil)
             views.label.textColor = isCurrent ? .labelColor : .secondaryLabelColor
         }
     }

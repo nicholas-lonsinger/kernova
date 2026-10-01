@@ -747,3 +747,14 @@ extension VMMemorySize {
         VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
     }
 }
+
+extension NSColor {
+    /// This color resolved to sRGB as drawn under the named appearance.
+    func resolvedSRGB(in appearance: NSAppearance.Name) throws -> NSColor {
+        var resolved: NSColor?
+        try #require(NSAppearance(named: appearance)).performAsCurrentDrawingAppearance {
+            resolved = usingColorSpace(.sRGB)
+        }
+        return try #require(resolved)
+    }
+}
