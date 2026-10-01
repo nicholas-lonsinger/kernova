@@ -48,18 +48,13 @@ func makeWizardTitle(_ text: String, info: [InfoPopoverParagraph] = []) -> NSVie
 
 // MARK: - Radio options
 
-/// Indent (radio circle + gap) so a radio option's description aligns under its
-/// title.
-let wizardRadioDescriptionIndent: CGFloat = 20
-
 /// Lays out a caller-supplied radio button as a native option row: a leading
-/// symbol icon, the radio (with its title), and, when there is one, a secondary
-/// description wrapped beneath the title.
+/// symbol icon and the radio (with its title).
 ///
 /// The caller creates the radio, so it owns target/action and can track it for
-/// selection state; this only arranges the icon/description around it.
+/// selection state; this only arranges the icon beside it.
 @MainActor
-func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String? = nil)
+func makeWizardRadioOption(radio: NSButton, iconSymbol: String)
     -> NSView
 {
     radio.font = Typography.body
@@ -82,25 +77,7 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
         radio.topAnchor.constraint(equalTo: option.topAnchor),
         radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
         radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
-    ])
-    guard let descriptionText else {
-        radio.bottomAnchor.constraint(equalTo: option.bottomAnchor).isActive = true
-        return option
-    }
-
-    let description = NSTextField(wrappingLabelWithString: descriptionText)
-    description.font = .preferredFont(forTextStyle: .subheadline)
-    description.textColor = .secondaryLabelColor
-    description.maximumNumberOfLines = 0
-    description.isSelectable = false
-    description.translatesAutoresizingMaskIntoConstraints = false
-    option.addSubview(description)
-    NSLayoutConstraint.activate([
-        description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
-        description.leadingAnchor.constraint(
-            equalTo: radio.leadingAnchor, constant: wizardRadioDescriptionIndent),
-        description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
-        description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
+        radio.bottomAnchor.constraint(equalTo: option.bottomAnchor),
     ])
     return option
 }

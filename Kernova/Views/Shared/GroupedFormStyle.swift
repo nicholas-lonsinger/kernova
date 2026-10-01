@@ -633,21 +633,6 @@ final class GroupedFormStateNote: NSTextField {
         stringValue = text
         isHidden = false
     }
-
-    /// TEMPORARY: a caption no state hides, for text that is on screen
-    /// unconditionally today. Every caller moves its text into an info button or
-    /// deletes it, and then this goes. Shown from the start; ``refresh()``
-    /// re-reads `text`.
-    static func temporarilyStanding(_ text: @escaping @MainActor () -> String) -> GroupedFormStateNote {
-        let note = GroupedFormStateNote(content: text)
-        note.refresh()
-        return note
-    }
-
-    /// TEMPORARY: the fixed-text form of the standing caption above.
-    static func temporarilyStanding(_ text: String) -> GroupedFormStateNote {
-        temporarilyStanding { text }
-    }
 }
 
 /// A borderless button drawn in a fixed tint.
