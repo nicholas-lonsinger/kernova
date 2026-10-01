@@ -136,9 +136,6 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // Scroll when the VM list grows past the cap; hug content when short.
         let scrollView = makeGroupedFormScrollView(
             documentView: content, topInset: Spacing.large, bottomInset: Spacing.large)
-        // Let the pane's size flow from its content (see the General/Advanced
-        // panes for why the root must not use autoresizing-mask constraints).
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Flash-only (no chevron/fade overlays): this scroll view *is* the pane's
         // root, so it has no superview of its own to host them until the tab view
@@ -164,26 +161,14 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             hugHeight,
             scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maxPaneHeight),
         ])
-        view = scrollView
+        view = SettingsPaneRootView(content: scrollView)
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        // Publishes the pane's size, clamped by the height cap — the scroll view
+        // otherwise masks the document's intrinsic height.
         refreshVMRows()
-        // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height (clamped by the height cap) — the scroll view otherwise
-        // masks the document's intrinsic height. Must happen here, before the
-        // tab transition sizes the window: NSTabViewController reads the pane's
-        // preferredContentSize when switching and does not react to a later
-        // change (e.g. from viewDidLayout).
-        //
-        // Lay out at the pane's fixed width before measuring: a wrapping
-        // caption's intrinsic height stays single-line until a layout pass
-        // resolves its wrap width, so an unlaid-out fittingSize under-counts
-        // every caption and the pane comes up short.
-        view.setFrameSize(NSSize(width: SettingsPaneMetrics.width, height: Self.maxPaneHeight))
-        view.layoutSubtreeIfNeeded()
-        preferredContentSize = view.fittingSize
         startVMObservation()
     }
 
@@ -226,6 +211,11 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         if previousRowCount != vmSwitches.count { rearmScrollFlash() }
     }
 
+    /// Publishes the pane's size for the window to follow.
+    private func publishSize() {
+        publishSettingsPaneSize(layoutHeight: Self.maxPaneHeight)
+    }
+
     /// Re-arms the flash for a fresh appearance, so arriving at an overflowing
     /// pane cues every visit rather than only the first.
     func rearmScrollMoreCue() {
@@ -235,10 +225,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// Re-arms the "more below" scroller flash after the pane's content height
     /// changes while it is on screen.
     ///
-    /// The window is sized once per tab selection, so content that grows
-    /// afterwards overflows in place with nothing to say so. Layout has to
-    /// settle first: overflow is measured against the document's real height,
-    /// and an un-laid-out subtree still reports the old one.
+    /// The window follows the content only up to the pane's height cap, so
+    /// content that grows past it overflows with nothing else to say so. Layout
+    /// has to settle first: overflow is measured against the document's real
+    /// height, and an un-laid-out subtree still reports the old one.
     ///
     /// Skipped before the pane has a height, which is where the first row build
     /// runs: every content height beats a zero-height viewport, so re-arming
@@ -303,6 +293,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
             applyGroupedFormRowEnabled(!overridden, control: toggle)
         }
+        publishSize()
 
         // The override caption is a note of the per-VM card, so it changes the
         // pane's height only while that card exists.

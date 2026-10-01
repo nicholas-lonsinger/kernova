@@ -83,8 +83,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var displayHeightField = ModelValueField()
     private var displayHiDPISwitch = NSSwitch()
     private var displayAutoResizeSwitch = NSSwitch()
-    /// Says the disabled size fields hold the last start's size, while the
-    /// display is sized to the window at startup.
+    /// Says the next cold start sizes the display, while the display is sized
+    /// to the window at startup and no save file stands in the way.
     private var displayResolutionCaption: GroupedFormStateNote?
     /// Set while the user has explicitly chosen Custom, so the popup doesn't
     /// snap back to a preset the current size happens to match.
@@ -229,9 +229,15 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                             ),
                         ]), displayHiDPISwitch))
         }
+        // A save file keeps the next start a resume at the saved size
+        // (`applyMatchWindowBootResolution` leaves it alone), so the note
+        // speaks only while the next start is a cold one.
         let resolution = GroupedFormStateNote(
-            Self.displaySizedAtLastStartNote,
-            shownWhen: { [weak self] in self?.instance.configuration.displaySizesToWindow ?? false })
+            Self.displayNextColdStartNote,
+            shownWhen: { [weak self] in
+                guard let instance = self?.instance else { return false }
+                return instance.configuration.displaySizesToWindow && !instance.hasSaveFile
+            })
         displayResolutionCaption = resolution
 
         return makeGroupedFormSection([
@@ -241,9 +247,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     /// The note under the Display card while the display is sized to the window
-    /// at startup, which leaves the disabled size fields holding what the last
-    /// start computed.
-    static let displaySizedAtLastStartNote = "Sized at the last start; the next start fits it to the window."
+    /// at startup and no save file stands in the way, saying why the size
+    /// fields are disabled.
+    static let displayNextColdStartNote = "The next cold start sizes the display to fit its window."
 
     /// Info copy for the auto-resize row, whose consequences differ by guest OS.
     private static func displayAutoResizeInfo(isMacOS: Bool) -> [InfoPopoverParagraph] {

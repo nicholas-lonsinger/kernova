@@ -87,9 +87,6 @@ final class ClipboardSettingsViewController: NSViewController {
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
-        // Let the root's size flow from its content — see the same note in
-        // `AdvancedSettingsViewController`.
-        root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(section)
         let pad = Spacing.large
         NSLayoutConstraint.activate([
@@ -100,15 +97,13 @@ final class ClipboardSettingsViewController: NSViewController {
             root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             card.widthAnchor.constraint(equalTo: section.widthAnchor),
         ])
-        view = root
+        view = SettingsPaneRootView(content: root)
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
         refresh()
-        // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height.
-        preferredContentSize = view.fittingSize
+        publishSettingsPaneSize()
     }
 
     /// Selects the stored ceiling and renders its estimate into the row's info.

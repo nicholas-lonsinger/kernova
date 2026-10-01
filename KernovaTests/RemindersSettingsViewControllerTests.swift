@@ -129,7 +129,7 @@ struct RemindersSettingsViewControllerTests {
         // The content must keep its natural height and overflow the capped
         // pane — a squeezed document exactly matching the pane's height is the
         // collapse bug, not scrolling.
-        let scrollView = try #require(controller.view as? NSScrollView)
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height > scrollView.frame.height)
     }
@@ -364,7 +364,7 @@ struct RemindersSettingsViewControllerTests {
         expectHeadersVisible(in: controller.view)
 
         // Hugged: everything fits, so nothing scrolls.
-        let scrollView = try #require(controller.view as? NSScrollView)
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height <= scrollView.frame.height)
     }

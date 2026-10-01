@@ -32,7 +32,8 @@ struct VMSettingsSystemPanelTests {
         width: Int = 1920,
         height: Int = 1200,
         ppi: Int = 144,
-        hiDPI: Bool? = nil
+        hiDPI: Bool? = nil,
+        holdsSavedState: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         let viewModel = makeViewModel()
         let instance = viewModel.library.registerFixture(guestOS: guestOS, phase: phase) {
@@ -42,6 +43,7 @@ struct VMSettingsSystemPanelTests {
             $0.displaySizesToWindow = sizesToWindow
             $0.displayHiDPI = hiDPI ?? DisplayBootSizing.isHiDPI(ppi: ppi)
         }
+        if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
         let vc = makeSettingsPane(
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly)
         vc.loadViewIfNeeded()
@@ -897,10 +899,10 @@ struct VMSettingsSystemPanelTests {
 
     // MARK: - Sized-at-last-start note
 
-    private var sizedNote: String { VMSettingsSystemPanelViewController.displaySizedAtLastStartNote }
+    private var sizedNote: String { VMSettingsSystemPanelViewController.displayNextColdStartNote }
 
     @Test(
-        "The sized-at-last-start note sits inside the Display card, under its last row",
+        "The next-cold-start note sits inside the Display card, under its last row",
         arguments: [(VMGuestOS.macOS, "HiDPI (Retina)"), (.linux, "Height")])
     func sizedNoteSitsInTheDisplayCard(guestOS: VMGuestOS, lastRowTitle: String) throws {
         let (vc, _) = makeDisplayController(guestOS: guestOS, sizesToWindow: true)
@@ -917,7 +919,7 @@ struct VMSettingsSystemPanelTests {
         #expect(captionInCard.maxY <= titleInCard.minY)
     }
 
-    @Test("The sized-at-last-start note shows only while the display is sized to the window")
+    @Test("The next-cold-start note shows only while the display is sized to the window")
     func sizedNoteOnlyInMatchMode() {
         let (manualVC, _) = makeDisplayController(sizesToWindow: false)
         #expect(!visibleLabel(sizedNote, in: manualVC.view))
@@ -928,7 +930,25 @@ struct VMSettingsSystemPanelTests {
         #expect(visibleLabel(sizedNote, in: matchVC.view))
     }
 
-    @Test("The sized-at-last-start note follows a write made through the verb")
+    /// A save file makes the next start a resume at the saved size, so the
+    /// note names a cold start only where the next start is one.
+    @Test("The next-cold-start note shows for a never-started or stopped VM, not a suspended one")
+    func sizedNoteOnlyWhileTheNextStartIsCold() throws {
+        let (neverStarted, fresh) = makeDisplayController(sizesToWindow: true)
+        #expect(!fresh.hasSaveFile)
+        #expect(visibleLabel(sizedNote, in: neverStarted.view))
+
+        let (stopped, _) = makeDisplayController(
+            sizesToWindow: true, width: 2560, height: 1600, ppi: 220)
+        #expect(visibleLabel(sizedNote, in: stopped.view))
+
+        let (suspended, saved) = makeDisplayController(
+            phase: .suspended, isReadOnly: true, sizesToWindow: true, holdsSavedState: true)
+        #expect(saved.hasSaveFile)
+        #expect(!visibleLabel(sizedNote, in: suspended.view))
+    }
+
+    @Test("The next-cold-start note follows a write made through the verb")
     func sizedNoteFollowsAVerbWrite() throws {
         let (vc, instance) = makeDisplayController(sizesToWindow: false)
         let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel

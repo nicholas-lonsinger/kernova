@@ -6,7 +6,7 @@ import Testing
 @testable import Kernova
 
 /// Behavior tests for the General settings pane's login-item approval note.
-@Suite("General Settings Tests", .serialized, .caseScoped)
+@Suite("General Settings Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct GeneralSettingsViewControllerTests {
     /// A registration whose status the test sets directly.
@@ -65,5 +65,33 @@ struct GeneralSettingsViewControllerTests {
         await drainMainQueue()
 
         #expect(approvalNote(in: controller) == nil)
+    }
+
+    /// The tab container resizes the window from the published size, so a note
+    /// appearing or going away while the pane is on screen has to move it.
+    @Test("The approval note coming and going changes the published size")
+    func approvalNoteRepublishesTheSize() async {
+        let registration = StubRegistration(status: .enabled)
+        let controller = makeController(registration: registration)
+        defer { controller.viewDidDisappear() }
+        // On screen, as the tab container shows it.
+        let window = showInTestWindow(controller.view, size: controller.preferredContentSize)
+        defer { window.close() }
+        let without = controller.preferredContentSize
+        #expect(without.height > 0)
+
+        registration.status = .requiresApproval
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await drainMainQueue()
+        let with = controller.preferredContentSize
+        #expect(approvalNote(in: controller) != nil)
+        #expect(with.height > without.height)
+        #expect(with.width == without.width)
+
+        registration.status = .enabled
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        await drainMainQueue()
+        #expect(approvalNote(in: controller) == nil)
+        #expect(controller.preferredContentSize == without)
     }
 }
