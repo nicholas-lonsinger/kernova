@@ -88,19 +88,19 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         snapshotSection.applySizes(resolved.snapshotSizes)
     }
 
-    /// Get Info popover for one snapshot, with its private bytes read off the
-    /// main actor first.
+    /// Get Info popover for one snapshot, with its size read off the main
+    /// actor first.
     private func presentSnapshotInfoPopover(_ snapshot: VMSnapshot, from anchor: NSView) {
         let instanceID = instance.id
         Task { [weak self] in
             guard let self else { return }
-            let sizes = await self.viewModel.snapshotPrivateBytes(for: self.instance)
+            let sizes = await self.viewModel.snapshotSizes(for: self.instance)
             // The pane is reused across route and VM changes, so a read that
             // lands after the user moved on must not name the new VM's sizes.
             guard !self.context.isDismissed, self.instance.id == instanceID else { return }
             let content = SnapshotInfoPopoverContentViewController(
                 snapshot: snapshot,
-                privateText: sizes[snapshot.id].map { DataFormatters.formatBytes($0) } ?? "\u{2014}",
+                size: sizes[snapshot.id],
                 canEditNotes: self.viewModel.capabilities.isAvailable(
                     .setSnapshotNotes, on: self.instance),
                 onCommitNotes: { [weak self] notes in

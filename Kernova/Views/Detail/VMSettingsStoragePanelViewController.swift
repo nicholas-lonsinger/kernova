@@ -743,7 +743,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 label: info.label,
                 fileName: url.lastPathComponent,
                 fullPath: url.path(percentEncoded: false),
-                onDiskText: sizes.onDiskBytes.map { DataFormatters.formatBytes($0) } ?? "—",
+                usedText: sizes.onDiskBytes.map { DataFormatters.formatBytes($0) } ?? "—",
                 allocatedText: sizes.capacityBytes.map { DataFormatters.formatBytes($0) } ?? "Unknown",
                 readOnly: info.readOnly,
                 busText: info.busText,

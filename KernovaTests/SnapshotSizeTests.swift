@@ -1,16 +1,17 @@
 import Darwin
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
 @testable import Kernova
 
-@Suite("PrivateBytes Tests", .caseScoped)
-struct PrivateBytesTests {
-    private let scratch = TestScratchDirectory(prefix: "PrivateBytesTests")
+@Suite("SnapshotSize Tests", .caseScoped)
+struct SnapshotSizeTests {
+    private let scratch = TestScratchDirectory(prefix: "SnapshotSizeTests")
 
-    @Test("A clone counts only the blocks written into it since it was cloned")
-    func cloneCountsOnlyItsPrivateBlocks() throws {
+    @Test("A clone's size counts everything it holds, and its private bytes only what was written since the clone")
+    func cloneCountsItsWholeSizeAndItsPrivateBlocks() throws {
         let original = scratch.url.appendingPathComponent("Original.img")
         let snapshot = scratch.url.appendingPathComponent("Snapshot", isDirectory: true)
         let clone = snapshot.appendingPathComponent("Disk.img")
@@ -20,8 +21,12 @@ struct PrivateBytesTests {
             try snapshot.resourceValues(forKeys: [.volumeSupportsFileCloningKey])
                 .volumeSupportsFileCloning == true)
         try #require(clonefile(original.path(percentEncoded: false), clone.path(percentEncoded: false), 0) == 0)
+        let allocated = try #require(
+            try clone.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize)
 
-        #expect(PrivateBytes.of(directory: snapshot) == 0)
+        #expect(
+            SnapshotSize.measure(directory: snapshot)
+                == SnapshotSize(bytes: UInt64(allocated), privateBytes: 0))
 
         let written = 1 << 20
         let handle = try FileHandle(forWritingTo: clone)
@@ -29,14 +34,15 @@ struct PrivateBytesTests {
         try handle.synchronize()
         try handle.close()
 
-        let privateBytes = try #require(PrivateBytes.of(file: clone))
+        let privateBytes = try #require(SnapshotSize.privateBytes(of: clone))
         #expect(privateBytes == UInt64(written))
-        #expect(PrivateBytes.of(directory: snapshot) == privateBytes)
+        #expect(SnapshotSize.measure(directory: snapshot)?.privateBytes == privateBytes)
+        #expect(SnapshotSize.measure(directory: snapshot)?.bytes == UInt64(allocated))
     }
 
-    @Test("A directory that isn't there holds no private bytes")
-    func missingDirectoryHoldsNoPrivateBytes() {
+    @Test("A directory that isn't there measures zero")
+    func missingDirectoryMeasuresZero() {
         let missing = scratch.url.appendingPathComponent("Missing", isDirectory: true)
-        #expect(PrivateBytes.of(directory: missing) == 0)
+        #expect(SnapshotSize.measure(directory: missing) == SnapshotSize(bytes: 0, privateBytes: nil))
     }
 }

@@ -5734,7 +5734,7 @@ struct VMLibraryViewModelTests {
 
         // Listed, the three reads answer — so the emptiness below is the
         // refusal rather than an empty subject.
-        #expect(await viewModel.snapshotPrivateBytes(for: departed).count == 1)
+        #expect(await viewModel.snapshotSizes(for: departed).count == 1)
         #expect(await viewModel.externalAttachments(for: departed).count == 1)
         #expect(
             await viewModel.sharingVMNames(
@@ -5743,7 +5743,7 @@ struct VMLibraryViewModelTests {
         // Where a sheet is left when its VM leaves the library while it is still
         // up: every read addresses the VM by id, and every one is refused.
         viewModel.library.evict(departed)
-        #expect(await viewModel.snapshotPrivateBytes(for: departed).isEmpty)
+        #expect(await viewModel.snapshotSizes(for: departed).isEmpty)
         #expect(await viewModel.externalAttachments(for: departed).isEmpty)
         #expect(
             await viewModel.sharingVMNames(

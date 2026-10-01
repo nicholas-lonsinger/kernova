@@ -29,8 +29,8 @@ struct StorageDiskSubtitleTests {
         try data.write(to: url)
     }
 
-    @Test("In-bundle ASIF disk shows on-disk and allocated read live from the file")
-    func asifDiskShowsOnDiskAndAllocated() throws {
+    @Test("In-bundle ASIF disk shows used and allocated read live from the file")
+    func asifDiskShowsUsedAndAllocated() throws {
         let instance = try makeInstanceWithBundle()
         let disk = StorageDisk(
             path: "AdditionalDisks/x.asif", label: "Scratch", isInternal: true, kind: .virtio)
@@ -40,12 +40,12 @@ struct StorageDiskSubtitleTests {
 
         let subtitle = diskSubtitle(for: disk, bundleLayout: instance.bundleLayout)
 
-        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("(used) / "))
         #expect(subtitle.contains("allocated"))
         #expect(subtitle.contains("50"))
     }
 
-    @Test("In-bundle non-ASIF disk shows on-disk and the logical size as allocated")
+    @Test("In-bundle non-ASIF disk shows used and the logical size as allocated")
     func nonASIFDiskShowsLogicalSizeAsAllocated() throws {
         let instance = try makeInstanceWithBundle()
         let disk = StorageDisk(
@@ -58,7 +58,7 @@ struct StorageDiskSubtitleTests {
 
         let subtitle = diskSubtitle(for: disk, bundleLayout: instance.bundleLayout)
 
-        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("(used) / "))
         #expect(subtitle.contains("allocated"))
     }
 
@@ -81,8 +81,8 @@ struct StorageDiskSubtitleTests {
         #expect(diskSubtitle(for: disk, bundleLayout: instance.bundleLayout) == "/tmp/data.asif")
     }
 
-    @Test("External raw disk shows on-disk and allocated read live from the file")
-    func externalRawDiskShowsOnDiskAndAllocated() throws {
+    @Test("External raw disk shows used and allocated read live from the file")
+    func externalRawDiskShowsUsedAndAllocated() throws {
         let instance = try makeInstanceWithBundle()
         // A real external file (absolute path, raw — no ASIF header): its
         // apparent size is the capacity, so the row shows both figures, exactly
@@ -95,7 +95,7 @@ struct StorageDiskSubtitleTests {
 
         let subtitle = diskSubtitle(for: disk, bundleLayout: instance.bundleLayout)
 
-        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("(used) / "))
         #expect(subtitle.contains("allocated"))
     }
 
@@ -109,8 +109,24 @@ struct StorageDiskSubtitleTests {
 
         let subtitle = diskSubtitle(for: main, bundleLayout: instance.bundleLayout)
 
-        #expect(subtitle.contains("on disk"))
+        #expect(subtitle.contains("(used) / "))
         #expect(subtitle.contains("allocated"))
         #expect(subtitle.contains("100"))
+    }
+
+    @Test("A disk's subtitle says what it uses and what it can hold")
+    func subtitleNamesUsedAndAllocated() {
+        let used = DataFormatters.formatBytes(3_000_000_000)
+        let allocated = DataFormatters.formatBytes(64_000_000_000)
+        #expect(
+            diskSubtitle(
+                sizes: VMBundleLayout.DiskSizes(onDiskBytes: 3_000_000_000, capacityBytes: 64_000_000_000),
+                path: "Disk.asif", isInternal: true)
+                == "\(used) (used) / \(allocated) (allocated)")
+        #expect(
+            diskSubtitle(
+                sizes: VMBundleLayout.DiskSizes(onDiskBytes: 3_000_000_000, capacityBytes: nil),
+                path: "Disk.asif", isInternal: true)
+                == "\(used) used")
     }
 }

@@ -1,19 +1,16 @@
 import Darwin
 import Foundation
+import KernovaKit
 
-/// The bytes a directory's files hold that nothing else shares — the space
-/// freed once they are deleted and the Trash is emptied.
-enum PrivateBytes {
-    /// The private bytes of everything under `directory` — zero when nothing
-    /// is there — or `nil` when they can't be read.
+extension SnapshotSize {
+    /// Measures everything under `directory`, or `nil` when an allocated size
+    /// can't be read; a directory that isn't there measures zero.
     ///
-    /// On a volume that clones, each file counts only its private blocks — the
-    /// ones no clone or volume snapshot shares — so a block a snapshot shares
-    /// with the VM's disks or another snapshot is not counted. Elsewhere
-    /// nothing can be shared and the allocated size is exact.
-    static func of(directory: URL) -> UInt64? {
+    /// Private bytes are read only where the volume clones files, and are
+    /// `nil` when any file's can't be read.
+    static func measure(directory: URL) -> SnapshotSize? {
         guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else {
-            return 0
+            return SnapshotSize(bytes: 0, privateBytes: nil)
         }
         guard
             let clones = try? directory.resourceValues(forKeys: [.volumeSupportsFileCloningKey])
@@ -29,25 +26,25 @@ enum PrivateBytes {
                     return false
                 })
         else { return nil }
-        var total: UInt64 = 0
+        var bytes: UInt64 = 0
+        var privateBytes: UInt64? = clones ? 0 : nil
         for case let url as URL in enumerator {
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
                 let isRegularFile = values.isRegularFile
             else { return nil }
             guard isRegularFile else { continue }
-            let bytes =
-                clones
-                ? of(file: url)
-                : values.totalFileAllocatedSize.map(UInt64.init)
-            guard let bytes else { return nil }
-            total &+= bytes
+            guard let allocated = values.totalFileAllocatedSize else { return nil }
+            bytes &+= UInt64(allocated)
+            if let total = privateBytes {
+                privateBytes = Self.privateBytes(of: url).map { total &+ $0 }
+            }
         }
-        return unreadable ? nil : total
+        return unreadable ? nil : SnapshotSize(bytes: bytes, privateBytes: privateBytes)
     }
 
     /// The bytes of `file` that no clone or volume snapshot shares
     /// (`getattrlist(2)`, `ATTR_CMNEXT_PRIVATESIZE`).
-    static func of(file: URL) -> UInt64? {
+    static func privateBytes(of file: URL) -> UInt64? {
         var request = attrlist()
         request.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
         request.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS)

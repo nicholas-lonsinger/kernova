@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 import Virtualization
 
@@ -386,11 +387,11 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Sizes
 
-    func privateBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
+    func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        var sizes: [UUID: UInt64] = [:]
+        var sizes: [UUID: SnapshotSize] = [:]
         for id in snapshotIDs {
-            sizes[id] = PrivateBytes.of(directory: layout.snapshotDirectoryURL(id: id))
+            sizes[id] = SnapshotSize.measure(directory: layout.snapshotDirectoryURL(id: id))
         }
         return sizes
     }

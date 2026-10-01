@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 
 /// One VM bundle on disk: its state files — `config.json`, `host-state.json`,
@@ -226,12 +227,12 @@ final class VMBundle {
         withMutation(keyPath: \.machineIdentifierFile) { machineIdentifierFileRead = .some(data) }
     }
 
-    /// The private bytes of each snapshot the manifest lists; one whose size
+    /// The size of each snapshot the manifest lists; one whose size
     /// can't be read has no entry.
-    func snapshotSizes() async -> [UUID: UInt64] {
+    func snapshotSizes() async -> [UUID: SnapshotSize] {
         let ids = snapshotManifest.snapshots.map(\.id)
         guard !ids.isEmpty else { return [:] }
-        return await offMainActorInfallibly { $0.privateBytes(bundleURL: $1, snapshotIDs: ids) }
+        return await offMainActorInfallibly { $0.snapshotSizes(bundleURL: $1, snapshotIDs: ids) }
     }
 }
 

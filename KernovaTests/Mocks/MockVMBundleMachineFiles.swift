@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 @testable import Kernova
 
@@ -28,7 +29,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
-        var sizes: [UUID: UInt64] = [:]
+        var sizes: [UUID: SnapshotSize] = [:]
         var captureError: (any Error)?
         var stageError: (any Error)?
         var discardError: (any Error)?
@@ -53,9 +54,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
 
     // MARK: - Seeding
 
-    /// Seeds the on-disk size one snapshot reports.
-    func setSize(_ bytes: UInt64, for snapshotID: UUID) {
-        lock.withLock { state.sizes[snapshotID] = bytes }
+    /// Seeds the size one snapshot reports.
+    func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
+        lock.withLock { state.sizes[snapshotID] = size }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
@@ -177,10 +178,10 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         }
     }
 
-    func privateBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
+    func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
         lock.withLock {
-            var sizes: [UUID: UInt64] = [:]
-            for id in snapshotIDs { sizes[id] = state.sizes[id] ?? 0 }
+            var sizes: [UUID: SnapshotSize] = [:]
+            for id in snapshotIDs { sizes[id] = state.sizes[id] ?? SnapshotSize(bytes: 0, privateBytes: nil) }
             return sizes
         }
     }

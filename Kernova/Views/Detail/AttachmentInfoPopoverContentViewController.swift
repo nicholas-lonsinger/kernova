@@ -11,7 +11,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
     private let label: String
     private let fileName: String
     private let fullPath: String
-    private let onDiskText: String
+    private let usedText: String
     private let allocatedText: String
     private let readOnly: Bool
     private let busText: String
@@ -29,7 +29,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         label: String,
         fileName: String,
         fullPath: String,
-        onDiskText: String,
+        usedText: String,
         allocatedText: String,
         readOnly: Bool,
         busText: String,
@@ -41,7 +41,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         self.label = label
         self.fileName = fileName
         self.fullPath = fullPath
-        self.onDiskText = onDiskText
+        self.usedText = usedText
         self.allocatedText = allocatedText
         self.readOnly = readOnly
         self.busText = busText
@@ -119,7 +119,7 @@ final class AttachmentInfoPopoverContentViewController: NSViewController {
         grid.rowSpacing = Spacing.hairline
         grid.columnSpacing = Spacing.standard
         grid.addRow(with: [keyLabel("File"), valueLabel(fileName)])
-        grid.addRow(with: [keyLabel("On disk"), valueLabel(onDiskText)])
+        grid.addRow(with: [keyLabel("Used"), valueLabel(usedText)])
         grid.addRow(with: [keyLabel("Allocated"), valueLabel(allocatedText)])
         grid.addRow(with: [keyLabel("Read only"), valueLabel(readOnly ? "Yes" : "No")])
         grid.addRow(with: [keyLabel("Bus"), valueLabel(busText)])

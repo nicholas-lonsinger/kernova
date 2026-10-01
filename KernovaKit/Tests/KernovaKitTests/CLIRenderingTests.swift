@@ -164,18 +164,27 @@ struct CLIRenderingTests {
     @Test("A snapshot listing names every column #309 asks for, and marks the current one")
     func snapshotListingCarriesEveryColumn() {
         let rows = [
-            SnapshotRow(snapshot(name: "Base", isCurrent: true), privateBytes: 1_500_000_000),
-            SnapshotRow(snapshot(name: "Before Upgrade", kind: "cold"), privateBytes: 0),
+            SnapshotRow(
+                snapshot(name: "Base", isCurrent: true),
+                size: SnapshotSize(bytes: 1_500_000_000, privateBytes: 200_000_000)),
+            SnapshotRow(
+                snapshot(name: "Before Upgrade", kind: "cold"),
+                size: SnapshotSize(bytes: 0, privateBytes: nil)),
         ]
         let lines = TableRenderer.render(rows, quiet: false).components(separatedBy: "\n")
 
         #expect(lines.count == 3)
-        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "PRIVATE", "ID"] {
+        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "PRIVATE", "ID"] {
             #expect(lines[0].contains(heading), "missing \(heading)")
         }
         #expect(lines[1].contains("Base"))
         #expect(lines[1].contains("warm"))
         #expect(lines[2].contains("cold"))
+        #expect(
+            lines[1].contains(
+                ByteCountFormatter.string(fromByteCount: 200_000_000, countStyle: .file)))
+        // No private bytes — a volume that can't clone — reads as a dash.
+        #expect(lines[2].contains("\u{2013}"))
         // The marker is on the current row and nowhere else.
         #expect(lines[1].contains("*"))
         #expect(!lines[2].contains("*"))
@@ -192,7 +201,10 @@ struct CLIRenderingTests {
         #expect(fileStyle != memoryStyle)
 
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), privateBytes: 1_500_000_000)], quiet: false)
+            [
+                SnapshotRow(
+                    snapshot(name: "Base"), size: SnapshotSize(bytes: 1_500_000_000, privateBytes: nil))
+            ], quiet: false)
         #expect(rendered.contains(fileStyle))
         #expect(!rendered.contains(memoryStyle))
     }
@@ -200,22 +212,23 @@ struct CLIRenderingTests {
     @Test("A size the app did not answer for reads as unknown, never as nothing at all")
     func anUnansweredSizeReadsAsUnknown() {
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), privateBytes: nil)], quiet: false)
+            [SnapshotRow(snapshot(name: "Base"), size: nil)], quiet: false)
         #expect(rendered.contains("Unknown"))
     }
 
     @Test("A capture date reads in this Mac's own words, not the wire's")
     func snapshotDatesReadAsWords() {
         let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), privateBytes: 0)], quiet: false)
+            [SnapshotRow(snapshot(name: "Base"), size: SnapshotSize(bytes: 0, privateBytes: nil))],
+            quiet: false)
         #expect(rendered.contains(taken.formatted(date: .abbreviated, time: .shortened)))
     }
 
     @Test("--quiet on a snapshot listing prints names alone, one per line")
     func quietSnapshotListingIsNamesOnly() {
         let rows = [
-            SnapshotRow(snapshot(name: "Base", isCurrent: true), privateBytes: 1),
-            SnapshotRow(snapshot(name: "Before Upgrade"), privateBytes: 2),
+            SnapshotRow(snapshot(name: "Base", isCurrent: true), size: SnapshotSize(bytes: 1, privateBytes: nil)),
+            SnapshotRow(snapshot(name: "Before Upgrade"), size: SnapshotSize(bytes: 2, privateBytes: nil)),
         ]
         #expect(TableRenderer.render(rows, quiet: true) == "Base\nBefore Upgrade")
     }
@@ -229,7 +242,9 @@ struct CLIRenderingTests {
     @Test("A snapshot's JSON is the wire DTO's own fields plus the size, decodable back")
     func snapshotJSONIsTheWireDTOPlusItsSize() throws {
         let summary = snapshot(name: "Base", isCurrent: true)
-        let rendered = try JSONRenderer.render([SnapshotRow(summary, privateBytes: 4_096)])
+        let rendered = try JSONRenderer.render([
+            SnapshotRow(summary, size: SnapshotSize(bytes: 8_192, privateBytes: 4_096))
+        ])
 
         // The renderer writes dates ISO 8601, which is the form a script parses
         // and the one the decoder has to be told to read back.
@@ -242,20 +257,32 @@ struct CLIRenderingTests {
         let row = try #require(objects.first)
         for field in [
             "id", "name", "notes", "kind", "createdAt", "isCurrent", "isEphemeralBaseline",
-            "privateBytes",
+            "sizeBytes", "privateBytes",
         ] {
             #expect(row[field] != nil, "missing \(field)")
         }
+        #expect(row["sizeBytes"] as? Int == 8_192)
         #expect(row["privateBytes"] as? Int == 4_096)
     }
 
     @Test("A size the app did not answer for is absent from the JSON, never a zero")
     func anUnansweredSizeIsAbsentFromJSON() throws {
-        let rendered = try JSONRenderer.render(SnapshotRow(snapshot(name: "Base"), privateBytes: nil))
+        let rendered = try JSONRenderer.render(SnapshotRow(snapshot(name: "Base"), size: nil))
         let row = try #require(
             try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
+        #expect(row["sizeBytes"] == nil)
         #expect(row["privateBytes"] == nil)
         #expect(row["name"] as? String == "Base")
+    }
+
+    @Test("Without private bytes the JSON carries the size alone")
+    func absentPrivateBytesLeaveTheSizeAlone() throws {
+        let rendered = try JSONRenderer.render(
+            SnapshotRow(snapshot(name: "Base"), size: SnapshotSize(bytes: 8_192, privateBytes: nil)))
+        let row = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
+        #expect(row["sizeBytes"] as? Int == 8_192)
+        #expect(row["privateBytes"] == nil)
     }
 
     // MARK: - Configuration

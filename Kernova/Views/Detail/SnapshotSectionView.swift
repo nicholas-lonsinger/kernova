@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// What a snapshot row's controls ask the settings pane to do.
 @MainActor
@@ -77,9 +78,9 @@ final class SnapshotSectionView: NSView {
     /// name the snapshot a control belongs to.
     private var manifest = VMSnapshotManifest()
 
-    /// Each snapshot's private bytes, filled in by ``applySizes(_:)``
+    /// Each snapshot's size, filled in by ``applySizes(_:)``
     /// once the off-main read lands; a row with no entry shows no size.
-    private var sizesByID: [UUID: UInt64] = [:]
+    private var sizesByID: [UUID: SnapshotSize] = [:]
 
     /// Whether the section draws its own header, or hands ``infoButton`` and
     /// ``countReadout`` to a panel header that states the category name instead.
@@ -234,8 +235,8 @@ final class SnapshotSectionView: NSView {
     }
 
     /// Fills in each row's size; a snapshot with no entry shows none.
-    func applySizes(_ bytes: [UUID: UInt64]) {
-        sizesByID = bytes
+    func applySizes(_ sizes: [UUID: SnapshotSize]) {
+        sizesByID = sizes
         for model in list.rendered ?? [] {
             guard let row = list.row(model.id) else { continue }
             row.subtitleField.stringValue = subtitleText(for: model.snapshot)
@@ -380,26 +381,30 @@ final class SnapshotSectionView: NSView {
     /// What the header's ⓘ beside the count says about the rows' sizes.
     static let sizeExplanation: [InfoPopoverParagraph] = [
         .body(
-            "Each snapshot's size is its \u{201C}private bytes\u{201D} (the space freed once it's "
-                + "deleted and the Trash is emptied)."),
+            "On a volume that can clone files, such as APFS, a snapshot shares space with the "
+                + "virtual machine's disks until either side changes. Its first size counts everything "
+                + "it holds; its \u{201C}private bytes\u{201D}, in parentheses, are the space freed once "
+                + "it's deleted and the Trash is emptied. Space shared with the virtual machine's disks "
+                + "or with another snapshot isn't private, so deleting one can raise another's private "
+                + "bytes."),
         .body(
-            "On a volume that can clone files, such as APFS, a snapshot's copies share space with "
-                + "the virtual machine's disks until either side changes. Space a snapshot shares with "
-                + "the virtual machine's disks or with another snapshot isn't counted, so deleting one "
-                + "can raise another's private bytes."),
-        .body(
-            "On a volume that can't clone files, each snapshot is a full copy, so its private bytes "
-                + "are its whole size."),
+            "On a volume that can't clone files, each snapshot is a full copy, so its size is the "
+                + "space freed once it's deleted and the Trash is emptied."),
     ]
 
-    /// "date · state · X private" — the size only once it is known.
+    /// "date · state · X (Y private)" — the private part only where the volume
+    /// clones and it was read, and no size at all until one is known.
     func subtitleText(for snapshot: VMSnapshot) -> String {
         var parts = [
             SnapshotDateFormat.string(from: snapshot.createdAt),
             SnapshotKindCopy.stateLabel(snapshot.kind),
         ]
-        if let bytes = sizesByID[snapshot.id] {
-            parts.append("\(DataFormatters.formatBytes(bytes)) private")
+        if let size = sizesByID[snapshot.id] {
+            var text = DataFormatters.formatBytes(size.bytes)
+            if let privateBytes = size.privateBytes {
+                text += " (\(DataFormatters.formatBytes(privateBytes)) private)"
+            }
+            parts.append(text)
         }
         return parts.joined(separator: " \u{00B7} ")
     }

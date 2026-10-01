@@ -128,16 +128,17 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     @Test("Snapshot sizes cross the wire keyed by snapshot")
-    func snapshotPrivateBytesCrossesTheWire() async throws {
+    func snapshotSizesCrossTheWire() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Measured")
         let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
+        let size = SnapshotSize(bytes: 12_884_901_888, privateBytes: 1_073_741_824)
+        harness.snapshots.setSize(size, for: snapshot.id)
 
-        let response = try await harness.transport.send(.snapshotPrivateBytes(.id(instance.id)))
+        let response = try await harness.transport.send(.snapshotSizes(.id(instance.id)))
 
-        #expect(response.result == .snapshotSizes([snapshot.id: 12_884_901_888]))
+        #expect(response.result == .snapshotSizes([snapshot.id: size]))
     }
 
     @Test("A VM's shares cross the wire as their own listing")

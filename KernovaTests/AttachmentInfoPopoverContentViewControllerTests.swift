@@ -20,7 +20,7 @@ struct AttachmentInfoPopoverContentViewControllerTests {
             label: "Data Disk",
             fileName: "data.asif",
             fullPath: "/Users/test/data.asif",
-            onDiskText: "2 GB",
+            usedText: "2 GB",
             allocatedText: "20 GB",
             readOnly: false,
             busText: "Virtio block",

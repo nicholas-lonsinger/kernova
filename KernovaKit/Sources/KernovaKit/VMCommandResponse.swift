@@ -32,8 +32,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case snapshots([SnapshotSummary])
         /// One restore point a capture produced.
         case snapshot(SnapshotSummary)
-        /// The private bytes of each of a VM's snapshots, by snapshot id; one whose size can't be read has no entry.
-        case snapshotSizes([UUID: UInt64])
+        /// The size of each of a VM's snapshots, by snapshot id; one whose size can't be read has no entry.
+        case snapshotSizes([UUID: SnapshotSize])
         /// The folders a VM shares with its guest.
         case sharedDirectories([SharedDirectorySummary])
         /// USB accessories — the ones a VM holds, or the ones available to

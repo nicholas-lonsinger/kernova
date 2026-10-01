@@ -28,8 +28,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case info(VMSelector)
         case ipAddress(VMSelector)
         case snapshots(VMSelector)
-        /// The private bytes of each of the VM's snapshots, by snapshot id; one whose size can't be read has no entry.
-        case snapshotPrivateBytes(VMSelector)
+        /// The size of each of the VM's snapshots, by snapshot id; one whose size can't be read has no entry.
+        case snapshotSizes(VMSelector)
         /// The folders the VM shares with its guest.
         case sharedDirectories(VMSelector)
         /// The USB accessories this VM's guest currently holds.
@@ -114,7 +114,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .info: .info
             case .ipAddress: .ipAddress
             case .snapshots: .snapshots
-            case .snapshotPrivateBytes: .snapshotPrivateBytes
+            case .snapshotSizes: .snapshotSizes
             case .sharedDirectories: .sharedDirectories
             case .usbAccessories: .usbAccessories
             case .availableUSBAccessories: .availableUSBAccessories

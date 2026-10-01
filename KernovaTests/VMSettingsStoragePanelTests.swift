@@ -106,7 +106,7 @@ struct VMSettingsStoragePanelTests {
         // file read with no Observable or `AsyncGate` signal to arm against.
         try await waitUntil {
             findLabel(withText: "In-bundle disk image", in: panel) != nil
-                && findLabel(containing: "(on disk) / ", in: panel) != nil
+                && findLabel(containing: "(used) / ", in: panel) != nil
         }
     }
 
