@@ -77,7 +77,7 @@ final class SnapshotSectionView: NSView {
     /// name the snapshot a control belongs to.
     private var manifest = VMSnapshotManifest()
 
-    /// What deleting each snapshot would free, filled in by ``applySizes(_:)``
+    /// Each snapshot's private bytes, filled in by ``applySizes(_:)``
     /// once the off-main read lands; a row with no entry shows no size.
     private var sizesByID: [UUID: UInt64] = [:]
 
@@ -159,7 +159,7 @@ final class SnapshotSectionView: NSView {
                 ),
             ])
 
-        sizeInfoButton.configure(label: "Snapshot Sizes", paragraphs: [.body(Self.sizeExplanation)])
+        sizeInfoButton.configure(label: "Snapshot Sizes", paragraphs: Self.sizeExplanation)
 
         readoutLabel.font = .preferredFont(forTextStyle: .caption1)
         readoutLabel.textColor = .secondaryLabelColor
@@ -378,19 +378,28 @@ final class SnapshotSectionView: NSView {
     }
 
     /// What the header's ⓘ beside the count says about the rows' sizes.
-    static let sizeExplanation =
-        "Each snapshot's size is the space deleting it would free. Space it shares with the "
-        + "virtual machine's disks or with another snapshot isn't counted, so deleting one can "
-        + "raise another's size."
+    static let sizeExplanation: [InfoPopoverParagraph] = [
+        .body(
+            "Each snapshot's size is its \u{201C}private bytes\u{201D} (the space freed once it's "
+                + "deleted and the Trash is emptied)."),
+        .body(
+            "On a volume that can clone files, such as APFS, a snapshot's copies share space with "
+                + "the virtual machine's disks until either side changes. Space a snapshot shares with "
+                + "the virtual machine's disks or with another snapshot isn't counted, so deleting one "
+                + "can raise another's private bytes."),
+        .body(
+            "On a volume that can't clone files, each snapshot is a full copy, so its private bytes "
+                + "are its whole size."),
+    ]
 
-    /// "date · state · X freed if deleted" — the size only once it is known.
+    /// "date · state · X private" — the size only once it is known.
     func subtitleText(for snapshot: VMSnapshot) -> String {
         var parts = [
             SnapshotDateFormat.string(from: snapshot.createdAt),
             SnapshotKindCopy.stateLabel(snapshot.kind),
         ]
         if let bytes = sizesByID[snapshot.id] {
-            parts.append("\(DataFormatters.formatBytes(bytes)) freed if deleted")
+            parts.append("\(DataFormatters.formatBytes(bytes)) private")
         }
         return parts.joined(separator: " \u{00B7} ")
     }

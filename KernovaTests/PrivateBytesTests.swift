@@ -5,9 +5,9 @@ import Testing
 
 @testable import Kernova
 
-@Suite("ReclaimableBytes Tests", .caseScoped)
-struct ReclaimableBytesTests {
-    private let scratch = TestScratchDirectory(prefix: "ReclaimableBytesTests")
+@Suite("PrivateBytes Tests", .caseScoped)
+struct PrivateBytesTests {
+    private let scratch = TestScratchDirectory(prefix: "PrivateBytesTests")
 
     @Test("A clone counts only the blocks written into it since it was cloned")
     func cloneCountsOnlyItsPrivateBlocks() throws {
@@ -21,7 +21,7 @@ struct ReclaimableBytesTests {
                 .volumeSupportsFileCloning == true)
         try #require(clonefile(original.path(percentEncoded: false), clone.path(percentEncoded: false), 0) == 0)
 
-        #expect(ReclaimableBytes.of(directory: snapshot) == 0)
+        #expect(PrivateBytes.of(directory: snapshot) == 0)
 
         let written = 1 << 20
         let handle = try FileHandle(forWritingTo: clone)
@@ -29,14 +29,14 @@ struct ReclaimableBytesTests {
         try handle.synchronize()
         try handle.close()
 
-        let privateBytes = try #require(ReclaimableBytes.privateBytes(of: clone))
+        let privateBytes = try #require(PrivateBytes.of(file: clone))
         #expect(privateBytes == UInt64(written))
-        #expect(ReclaimableBytes.of(directory: snapshot) == privateBytes)
+        #expect(PrivateBytes.of(directory: snapshot) == privateBytes)
     }
 
-    @Test("A directory that isn't there frees nothing")
-    func missingDirectoryFreesNothing() {
+    @Test("A directory that isn't there holds no private bytes")
+    func missingDirectoryHoldsNoPrivateBytes() {
         let missing = scratch.url.appendingPathComponent("Missing", isDirectory: true)
-        #expect(ReclaimableBytes.of(directory: missing) == 0)
+        #expect(PrivateBytes.of(directory: missing) == 0)
     }
 }

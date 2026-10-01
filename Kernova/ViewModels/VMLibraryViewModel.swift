@@ -177,9 +177,9 @@ final class VMLibraryViewModel {
         capabilities.canDeleteSnapshot(snapshot, on: instance)
     }
 
-    func snapshotReclaimableBytes(for instance: VMInstance) async -> [UUID: UInt64] {
+    func snapshotPrivateBytes(for instance: VMInstance) async -> [UUID: UInt64] {
         do {
-            return try await commands.snapshotReclaimableBytes(of: .id(instance.id))
+            return try await commands.snapshotPrivateBytes(of: .id(instance.id))
         } catch {
             #log(
                 Self.logger, .debug,

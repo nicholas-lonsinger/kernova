@@ -93,9 +93,9 @@ protocol VMBundleMachineFileWorking: Sendable {
     /// failed partway.
     func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID)
 
-    /// The space deleting each snapshot would free, keyed by snapshot id; a
-    /// snapshot whose size can't be read has no entry.
-    func reclaimableBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64]
+    /// The private bytes of each snapshot, keyed by snapshot id; a snapshot
+    /// whose size can't be read has no entry.
+    func privateBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64]
 
     // MARK: Suspend slot
 

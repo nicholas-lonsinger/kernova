@@ -12,24 +12,24 @@ import KernovaKit
 struct SnapshotRow: Encodable, Sendable, Hashable {
     /// The restore point itself, exactly as the app described it.
     let snapshot: SnapshotSummary
-    /// The space deleting the snapshot would free, `nil` when the size read
-    /// did not answer for it.
-    let reclaimableBytes: UInt64?
+    /// The snapshot's private bytes, `nil` when the size read did not answer
+    /// for it.
+    let privateBytes: UInt64?
 
     /// Pairs one restore point with its size.
-    init(_ snapshot: SnapshotSummary, reclaimableBytes: UInt64?) {
+    init(_ snapshot: SnapshotSummary, privateBytes: UInt64?) {
         self.snapshot = snapshot
-        self.reclaimableBytes = reclaimableBytes
+        self.privateBytes = privateBytes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case reclaimableBytes
+        case privateBytes
     }
 
     /// Writes the summary's fields and the size as one flat object.
     func encode(to encoder: any Encoder) throws {
         try snapshot.encode(to: encoder)
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encodeIfPresent(reclaimableBytes, forKey: .reclaimableBytes)
+        try container.encodeIfPresent(privateBytes, forKey: .privateBytes)
     }
 }

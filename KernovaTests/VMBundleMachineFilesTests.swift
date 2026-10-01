@@ -579,8 +579,8 @@ struct VMBundleMachineFilesTests {
         #expect(!FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)))
     }
 
-    @Test("Snapshot sizes answer for a captured snapshot, and a missing one frees nothing")
-    func reclaimableBytesAnswersForCapturedSnapshots() throws {
+    @Test("Snapshot sizes answer for a captured snapshot, and a missing one holds no private bytes")
+    func privateBytesAnswersForCapturedSnapshots() throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let captured = UUID()
@@ -592,7 +592,7 @@ struct VMBundleMachineFilesTests {
             bundleURL: fixture.bundleURL, snapshotID: captured,
             relativePaths: prepared.relativePaths)
 
-        let sizes = store.reclaimableBytes(
+        let sizes = store.privateBytes(
             bundleURL: fixture.bundleURL, snapshotIDs: [captured, empty])
 
         #expect(sizes[captured] != nil)

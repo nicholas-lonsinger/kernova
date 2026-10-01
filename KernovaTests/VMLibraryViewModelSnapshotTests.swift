@@ -757,7 +757,7 @@ struct VMLibraryViewModelSnapshotTests {
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setSize(4_200_000_000, for: snapshot.id)
 
-        let sizes = await harness.viewModel.snapshotReclaimableBytes(for: instance)
+        let sizes = await harness.viewModel.snapshotPrivateBytes(for: instance)
 
         #expect(sizes[snapshot.id] == 4_200_000_000)
     }
@@ -765,7 +765,7 @@ struct VMLibraryViewModelSnapshotTests {
     @Test("A VM with no snapshots reads no sizes")
     func onDiskSizesEmptyWithoutSnapshots() async {
         let harness = makeHarness()
-        let sizes = await harness.viewModel.snapshotReclaimableBytes(
+        let sizes = await harness.viewModel.snapshotPrivateBytes(
             for: makeInstance(in: harness.viewModel, files: harness.storage.files))
         #expect(sizes.isEmpty)
     }

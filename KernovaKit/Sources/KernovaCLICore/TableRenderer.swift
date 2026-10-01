@@ -73,11 +73,11 @@ enum TableRenderer {
         guard !quiet else { return rows.map(\.snapshot.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
         return columns(
-            headings: ["NAME", "CURRENT", "KIND", "TAKEN", "FREES", "ID"],
+            headings: ["NAME", "CURRENT", "KIND", "TAKEN", "PRIVATE", "ID"],
             rows: rows.map {
                 [
                     $0.snapshot.name, $0.snapshot.isCurrent ? "*" : "", $0.snapshot.kind,
-                    taken($0.snapshot.createdAt), size($0.reclaimableBytes),
+                    taken($0.snapshot.createdAt), size($0.privateBytes),
                     $0.snapshot.id.uuidString,
                 ]
             })
@@ -189,8 +189,8 @@ enum TableRenderer {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    /// What deleting a snapshot would free, in the unit Finder's Get Info
-    /// would state it in, or `Unknown` for a snapshot the size read did not
+    /// A snapshot's private bytes, in the unit Finder's Get Info would state
+    /// them in, or `Unknown` for a snapshot the size read did not
     /// answer for.
     private static func size(_ bytes: UInt64?) -> String {
         guard let bytes else { return "Unknown" }

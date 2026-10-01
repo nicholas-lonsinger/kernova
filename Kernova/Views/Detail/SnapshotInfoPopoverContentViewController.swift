@@ -13,18 +13,18 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     var onRequestClose: (() -> Void)?
 
     private let snapshot: VMSnapshot
-    /// The space deleting the snapshot would free, already formatted.
-    private let freedText: String
+    /// The snapshot's private bytes, already formatted.
+    private let privateText: String
     /// Whether the snapshot's note can be written right now.
     private let canEditNotes: Bool
     private var notesEditor: NotesEditorView?
 
     init(
-        snapshot: VMSnapshot, freedText: String, canEditNotes: Bool,
+        snapshot: VMSnapshot, privateText: String, canEditNotes: Bool,
         onCommitNotes: @escaping (String) -> Void
     ) {
         self.snapshot = snapshot
-        self.freedText = freedText
+        self.privateText = privateText
         self.canEditNotes = canEditNotes
         self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
@@ -79,7 +79,7 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         grid.addRow(with: [
             keyLabel("Captured"), valueLabel(SnapshotKindCopy.capturedContents(snapshot.kind)),
         ])
-        grid.addRow(with: [keyLabel("Freed if deleted"), valueLabel(freedText)])
+        grid.addRow(with: [keyLabel("Private"), valueLabel(privateText)])
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
         return grid

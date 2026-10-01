@@ -177,7 +177,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         }
     }
 
-    func reclaimableBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
+    func privateBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
         lock.withLock {
             var sizes: [UUID: UInt64] = [:]
             for id in snapshotIDs { sizes[id] = state.sizes[id] ?? 0 }

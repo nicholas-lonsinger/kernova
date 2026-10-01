@@ -1,10 +1,11 @@
 import Darwin
 import Foundation
 
-/// The space deleting a directory's files would free.
-enum ReclaimableBytes {
-    /// What deleting everything under `directory` frees — zero when nothing is
-    /// there — or `nil` when that can't be read.
+/// The bytes a directory's files hold that nothing else shares — the space
+/// freed once they are deleted and the Trash is emptied.
+enum PrivateBytes {
+    /// The private bytes of everything under `directory` — zero when nothing
+    /// is there — or `nil` when they can't be read.
     ///
     /// On a volume that clones, each file counts only its private blocks — the
     /// ones no clone or volume snapshot shares — so a block a snapshot shares
@@ -36,7 +37,7 @@ enum ReclaimableBytes {
             guard isRegularFile else { continue }
             let bytes =
                 clones
-                ? privateBytes(of: url)
+                ? of(file: url)
                 : values.totalFileAllocatedSize.map(UInt64.init)
             guard let bytes else { return nil }
             total &+= bytes
@@ -44,9 +45,9 @@ enum ReclaimableBytes {
         return unreadable ? nil : total
     }
 
-    /// The bytes of `file` that no clone or volume snapshot shares, which
-    /// deleting it frees immediately (`getattrlist(2)`, `ATTR_CMNEXT_PRIVATESIZE`).
-    static func privateBytes(of file: URL) -> UInt64? {
+    /// The bytes of `file` that no clone or volume snapshot shares
+    /// (`getattrlist(2)`, `ATTR_CMNEXT_PRIVATESIZE`).
+    static func of(file: URL) -> UInt64? {
         var request = attrlist()
         request.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
         request.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS)

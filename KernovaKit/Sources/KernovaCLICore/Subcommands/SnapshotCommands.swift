@@ -24,9 +24,10 @@ extension KernovaCommand.Snapshot {
         static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List a virtual machine's snapshots.",
-            discussion: "FREES is the space deleting that snapshot would free. Space it shares "
-                + "with the virtual machine's disks or with another snapshot isn't counted, so "
-                + "deleting one can raise another's.")
+            discussion: "PRIVATE is a snapshot's private bytes: the space freed once it's deleted "
+                + "and the Trash is emptied. Space a snapshot shares with the virtual machine's "
+                + "disks or with another snapshot isn't counted, so deleting one can raise "
+                + "another's private bytes.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -88,7 +89,7 @@ extension KernovaCommand.Snapshot {
             // The same size read `snapshot list` performs, so a script parsing
             // either verb's answer finds one shape.
             let sizes = try KernovaCommand.Snapshot.sizes(of: selector, from: client)
-            let row = SnapshotRow(taken, reclaimableBytes: sizes[taken.id])
+            let row = SnapshotRow(taken, privateBytes: sizes[taken.id])
             Console.out(
                 options.format == .json
                     ? try JSONRenderer.render(row)
@@ -215,7 +216,7 @@ extension KernovaCommand.Snapshot {
 }
 
 extension KernovaCommand.Snapshot {
-    /// The VM's restore points, each paired with what deleting it would free.
+    /// The VM's restore points, each paired with its private bytes.
     static func rows(
         of selector: VMSelector, from client: VMCommandClient
     ) throws -> [SnapshotRow] {
@@ -225,7 +226,7 @@ extension KernovaCommand.Snapshot {
         // anything.
         guard !listed.isEmpty else { return [] }
         let sizes = try sizes(of: selector, from: client)
-        return listed.map { SnapshotRow($0, reclaimableBytes: sizes[$0.id]) }
+        return listed.map { SnapshotRow($0, privateBytes: sizes[$0.id]) }
     }
 
     /// The VM's restore points, as the app lists them.
@@ -237,12 +238,11 @@ extension KernovaCommand.Snapshot {
         return listed
     }
 
-    /// The space deleting each of the VM's restore points would free, by
-    /// identifier.
+    /// The private bytes of each of the VM's restore points, by identifier.
     static func sizes(
         of selector: VMSelector, from client: VMCommandClient
     ) throws -> [UUID: UInt64] {
-        let answer = try client.send(.snapshotReclaimableBytes(selector)).payload()
+        let answer = try client.send(.snapshotPrivateBytes(selector)).payload()
         guard case .snapshotSizes(let sizes) = answer else { throw answer.unexpectedAnswer }
         return sizes
     }

@@ -226,12 +226,12 @@ final class VMBundle {
         withMutation(keyPath: \.machineIdentifierFile) { machineIdentifierFileRead = .some(data) }
     }
 
-    /// The space deleting each snapshot the manifest lists would free; one
-    /// whose size can't be read has no entry.
+    /// The private bytes of each snapshot the manifest lists; one whose size
+    /// can't be read has no entry.
     func snapshotSizes() async -> [UUID: UInt64] {
         let ids = snapshotManifest.snapshots.map(\.id)
         guard !ids.isEmpty else { return [:] }
-        return await offMainActorInfallibly { $0.reclaimableBytes(bundleURL: $1, snapshotIDs: ids) }
+        return await offMainActorInfallibly { $0.privateBytes(bundleURL: $1, snapshotIDs: ids) }
     }
 }
 

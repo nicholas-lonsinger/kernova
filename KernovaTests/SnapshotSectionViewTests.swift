@@ -129,7 +129,7 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(withText: "2 snapshots", in: view) != nil)
     }
 
-    @Test("Rows read what deleting them would free once it lands, and the header stays a count")
+    @Test("Rows read their private bytes once they land, and the header stays a count")
     func sizesReachTheRowsNotTheHeader() {
         let (view, _) = makeSection()
         let first = makeSnapshot("One")
@@ -141,10 +141,10 @@ struct SnapshotSectionViewTests {
         view.applySizes([first.id: 1_000_000_000, second.id: 3_000_000_000])
 
         #expect(findLabel(withText: "2 snapshots", in: view) != nil)
-        #expect(findLabel(containing: "3 GB freed if deleted", in: view) != nil)
+        #expect(findLabel(containing: "3 GB private", in: view) != nil)
         #expect(findLabel(containing: "4 GB", in: view) == nil)
         #expect(!view.countReadout.isHidden)
-        #expect(view.sizeInfoButton.paragraphs == [.body(SnapshotSectionView.sizeExplanation)])
+        #expect(view.sizeInfoButton.paragraphs == SnapshotSectionView.sizeExplanation)
     }
 
     @Test("Every row names its state between its date and its size")
@@ -163,7 +163,7 @@ struct SnapshotSectionViewTests {
             #expect(
                 view.subtitleText(for: snapshot)
                     == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
-                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB freed if deleted")
+                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB private")
         }
     }
 
@@ -195,7 +195,7 @@ struct SnapshotSectionViewTests {
             view.subtitleText(for: unknown)
                 == "\(SnapshotDateFormat.string(from: unknown.createdAt)) \u{00B7} "
                 + "\(SnapshotKindCopy.stateLabel(unknown.kind))")
-        #expect(view.subtitleText(for: measured).hasSuffix("2 GB freed if deleted"))
+        #expect(view.subtitleText(for: measured).hasSuffix("2 GB private"))
     }
 
     @Test("Only the current snapshot's row shows the marker")

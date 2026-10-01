@@ -386,11 +386,11 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     // MARK: - Sizes
 
-    func reclaimableBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
+    func privateBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         var sizes: [UUID: UInt64] = [:]
         for id in snapshotIDs {
-            sizes[id] = ReclaimableBytes.of(directory: layout.snapshotDirectoryURL(id: id))
+            sizes[id] = PrivateBytes.of(directory: layout.snapshotDirectoryURL(id: id))
         }
         return sizes
     }

@@ -56,7 +56,7 @@ struct VMOverviewResolved: Sendable {
     var ipAddress: GuestIPAddress = .unavailable
     /// The boot disk's capacity, once its off-main read lands.
     var bootDiskBytes: UInt64?
-    /// What deleting each snapshot would free, once the off-main size read
+    /// Each snapshot's private bytes, once the off-main size read
     /// lands; a snapshot whose size can't be read has no entry.
     var snapshotSizes: [UUID: UInt64] = [:]
     /// Whether a capture is offered right now — the view model's own gate.

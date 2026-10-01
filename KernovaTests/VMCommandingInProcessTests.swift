@@ -22,16 +22,16 @@ struct VMCommandingInProcessTests {
         return (mock, mock, vm)
     }
 
-    @Test("snapshotReclaimableBytes addresses its VM by selector and answers per snapshot")
-    func snapshotReclaimableBytesAnswersPerSnapshot() async throws {
+    @Test("snapshotPrivateBytes addresses its VM by selector and answers per snapshot")
+    func snapshotPrivateBytesAnswersPerSnapshot() async throws {
         let (commands, mock, vm) = makeFacade()
         let snapshot = UUID()
         mock.snapshotBytes = [snapshot: 4096]
 
-        let bytes = try await commands.snapshotReclaimableBytes(of: .id(vm.id))
+        let bytes = try await commands.snapshotPrivateBytes(of: .id(vm.id))
 
         #expect(bytes == [snapshot: 4096])
-        #expect(mock.snapshotReclaimableBytesSelectors == [.id(vm.id)])
+        #expect(mock.snapshotPrivateBytesSelectors == [.id(vm.id)])
     }
 
     @Test("externalAttachments addresses its VM by selector and answers the offered files")

@@ -267,7 +267,7 @@ final class VMOverviewResolver {
         }
     }
 
-    /// Reads what deleting each snapshot would free off the main actor — a walk
+    /// Reads each snapshot's private bytes off the main actor — a walk
     /// over every file each one holds — and only when the set of snapshots
     /// changed.
     private func refreshSnapshotSizes() {
@@ -286,7 +286,7 @@ final class VMOverviewResolver {
         let issuedFor = instance
         let viewModel = self.viewModel
         snapshotSizeTask = Task { [weak self] in
-            let sizes = await viewModel.snapshotReclaimableBytes(for: issuedFor)
+            let sizes = await viewModel.snapshotPrivateBytes(for: issuedFor)
             // The pane is reused across route and VM changes, so a read that
             // lands after the user moved on must not state the new VM's sizes.
             guard !Task.isCancelled, let self, self.instance.id == issuedFor.id else { return }

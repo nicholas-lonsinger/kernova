@@ -66,7 +66,7 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .ipAddress(selector),
             .snapshots(selector),
-            .snapshotReclaimableBytes(selector),
+            .snapshotPrivateBytes(selector),
             .sharedDirectories(selector),
             .usbAccessories(selector),
             .availableUSBAccessories,

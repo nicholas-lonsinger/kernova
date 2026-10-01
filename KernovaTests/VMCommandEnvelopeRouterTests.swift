@@ -128,14 +128,14 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     @Test("Snapshot sizes cross the wire keyed by snapshot")
-    func snapshotReclaimableBytesCrossesTheWire() async throws {
+    func snapshotPrivateBytesCrossesTheWire() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Measured")
         let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setSize(12_884_901_888, for: snapshot.id)
 
-        let response = try await harness.transport.send(.snapshotReclaimableBytes(.id(instance.id)))
+        let response = try await harness.transport.send(.snapshotPrivateBytes(.id(instance.id)))
 
         #expect(response.result == .snapshotSizes([snapshot.id: 12_884_901_888]))
     }
