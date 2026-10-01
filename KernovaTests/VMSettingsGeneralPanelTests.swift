@@ -712,6 +712,19 @@ struct VMSettingsGeneralPanelTests {
         #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
     }
 
+    @Test("The baseline caption starts at the Baseline snapshot title's edge")
+    func ephemeralBaselineCaptionAlignsWithItsRow() throws {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        vc.view.frame = NSRect(x: 0, y: 0, width: 700, height: 900)
+        vc.view.layoutSubtreeIfNeeded()
+
+        let caption = try #require(
+            findLabel(withText: EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
+        let title = try #require(findLabel(withText: "Baseline snapshot", in: vc.view))
+        let card = try #require(enclosingGroupedFormCard(of: caption))
+        #expect(try alignmentRect(of: caption, in: card).minX == alignmentRect(of: title, in: card).minX)
+    }
+
     /// The caption is the selected baseline's, so moving the choice to a
     /// different kind moves the caption with it.
     @Test("Choosing a cold baseline swaps the caption")

@@ -288,13 +288,6 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralSwitch = makeGroupedFormSwitch(target: self, action: #selector(ephemeralModeToggled))
         ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
         renderedEphemeralBaselines = nil
-        let ephemeralGroup = makeGroupedFormSubOptionGroup(
-            primary: makeGroupedFormRowWithInfo(
-                "Ephemeral Mode", control: ephemeralSwitch,
-                paragraphs: EphemeralModeCopy.popoverParagraphs),
-            subOption: makeGroupedFormCardRow(
-                "Baseline snapshot", control: ephemeralBaselinePopUp))
-        self.ephemeralGroup = ephemeralGroup
 
         let noSnapshots = makeGroupedFormCaption(EphemeralModeCopy.noSnapshotsCaption)
         noSnapshots.isHidden = true
@@ -305,6 +298,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let baselineCaption = makeGroupedFormCaption("")
         baselineCaption.isHidden = true
         ephemeralBaselineCaption = baselineCaption
+
+        let ephemeralGroup = makeGroupedFormSubOptionGroup(
+            primary: GroupedFormNotedRow(
+                makeGroupedFormRowWithInfo(
+                    "Ephemeral Mode", control: ephemeralSwitch,
+                    paragraphs: EphemeralModeCopy.popoverParagraphs),
+                notes: [noSnapshots]),
+            subOption: GroupedFormNotedRow(
+                makeGroupedFormCardRow("Baseline snapshot", control: ephemeralBaselinePopUp),
+                notes: [baselineCaption]))
+        self.ephemeralGroup = ephemeralGroup
 
         let card = makeGroupedFormCard(
             rows: [
@@ -319,7 +323,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                         ),
                     ]),
                 ephemeralGroup,
-            ], notes: [baselineCaption, noSnapshots])
+            ])
 
         autoStartWarningContainer = NSStackView()
         autoStartWarningContainer.orientation = .vertical

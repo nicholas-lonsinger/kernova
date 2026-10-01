@@ -114,19 +114,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         vmSubordinates.alignment = .leading
         vmSubordinates.spacing = Spacing.small
         vmSubordinates.translatesAutoresizingMaskIntoConstraints = false
-        // A plain container, not an arranged subview of `content` directly: the
-        // content stack pins its members' leading edges to its own, which an
-        // inset applied out there would fight. Holding the inset inside keeps
-        // the container full-width and the stack's alignment satisfied.
-        let vmGroup = NSView()
-        vmGroup.addSubview(vmSubordinates)
-        NSLayoutConstraint.activate([
-            vmSubordinates.topAnchor.constraint(equalTo: vmGroup.topAnchor),
-            vmSubordinates.bottomAnchor.constraint(equalTo: vmGroup.bottomAnchor),
-            vmSubordinates.leadingAnchor.constraint(
-                equalTo: vmGroup.leadingAnchor, constant: groupedFormSubOptionIndent),
-            vmSubordinates.trailingAnchor.constraint(equalTo: vmGroup.trailingAnchor),
-        ])
+        let vmGroup = makeGroupedFormIndented(vmSubordinates)
         for member in [vmSection, vmCaption] {
             member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
         }

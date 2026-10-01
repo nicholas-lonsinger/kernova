@@ -171,6 +171,82 @@ struct GroupedFormStyleTests {
         #expect(withHiddenNote.fittingSize.height == withoutNotes.fittingSize.height)
     }
 
+    /// A card holding a top-level row and a sub-option group whose sub-option
+    /// owns `subOptionNotes`, with `cardNotes` under it all, laid out at a
+    /// fixed width.
+    private func laidOutSubOptionCard(
+        subOptionNotes: [NSView], cardNotes: [NSView] = [], isSubOptionHidden: Bool = false
+    ) -> (card: NSView, subOption: NSView) {
+        let subOption = makeGroupedFormCardRow(
+            "Baseline snapshot", control: NSTextField(labelWithString: "Snapshot 0"))
+        let group = makeGroupedFormSubOptionGroup(
+            primary: makeGroupedFormCardRow("Ephemeral Mode", control: NSSwitch()),
+            subOption: subOptionNotes.isEmpty
+                ? subOption : GroupedFormNotedRow(subOption, notes: subOptionNotes))
+        group.isSubOptionHidden = isSubOptionHidden
+        let card = makeGroupedFormCard(
+            rows: [makeGroupedFormCardRow("Start", control: NSSwitch()), group],
+            notes: cardNotes)
+        card.frame = NSRect(x: 0, y: 0, width: 400, height: card.fittingSize.height)
+        card.layoutSubtreeIfNeeded()
+        return (card, subOption)
+    }
+
+    @Test("A sub-option's note sits a small gap under it, at its indent and across its width")
+    func subOptionNoteTakesTheSubOptionsEdges() throws {
+        let note = makeGroupedFormCaption("Comes back suspended.")
+        let (card, subOption) = laidOutSubOptionCard(subOptionNotes: [note])
+
+        // The card's own view is not flipped: "below" is a smaller y.
+        let noteInCard = try alignmentRect(of: note, in: card)
+        let rowInCard = subOption.convert(subOption.bounds, to: card)
+        #expect(noteInCard.height > 0)
+        #expect(rowInCard.minX == GroupedFormStyle.cardPadding + groupedFormSubOptionIndent)
+        #expect(noteInCard.minX == rowInCard.minX)
+        #expect(noteInCard.maxX == rowInCard.maxX)
+        #expect(rowInCard.minY - noteInCard.maxY == GroupedFormStyle.cardStackSpacing)
+    }
+
+    @Test("Hiding a sub-option hides its notes with it")
+    func hiddenSubOptionTakesItsNotes() {
+        let note = makeGroupedFormCaption("Comes back suspended.")
+        let (withNote, _) = laidOutSubOptionCard(subOptionNotes: [note], isSubOptionHidden: true)
+        let (withoutNote, _) = laidOutSubOptionCard(subOptionNotes: [], isSubOptionHidden: true)
+
+        #expect(withNote.fittingSize.height == withoutNote.fittingSize.height)
+    }
+
+    @Test("A card's own note beside a sub-option group sits at the rows' edge")
+    func cardNoteBesideAGroupSitsAtTheRowsEdge() throws {
+        let rowNote = makeGroupedFormCaption("Comes back suspended.")
+        let cardNote = makeGroupedFormCaption("Takes effect at the next power-off.")
+        let (card, _) = laidOutSubOptionCard(subOptionNotes: [rowNote], cardNotes: [cardNote])
+
+        let noteInCard = try alignmentRect(of: cardNote, in: card)
+        #expect(noteInCard.minX == GroupedFormStyle.cardPadding)
+        #expect(noteInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
+    }
+
+    @Test("A field row that owns a note still shares the card's label column")
+    func notedFieldRowSharesTheLabelColumn() throws {
+        let short = NSTextField(string: "")
+        let long = NSTextField(string: "")
+        let card = makeGroupedFormCard(rows: [
+            GroupedFormNotedRow(
+                GroupedFormFieldRow("Name", control: short),
+                notes: [makeGroupedFormCaption("Shown in the sidebar.")]),
+            GroupedFormFieldRow("Account name", control: long),
+        ])
+        card.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        card.layoutSubtreeIfNeeded()
+
+        let widest = try #require(findLabel(withText: "Account name", in: card))
+        let shortInCard = short.convert(short.bounds, to: card)
+        let longInCard = long.convert(long.bounds, to: card)
+        #expect(shortInCard.minX == longInCard.minX)
+        #expect(shortInCard.minX > widest.convert(widest.bounds, to: card).maxX)
+    }
+
     @Test(
         "A card's fill is a translucent overlay, darkening in light and lightening in dark",
         arguments: [NSAppearance.Name.aqua, .darkAqua])

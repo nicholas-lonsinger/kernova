@@ -147,6 +147,13 @@ func applyCappedColumn(_ content: NSView, in container: NSView, maxWidth: CGFloa
 @MainActor
 protocol GroupedFormFullBleedRow: NSView {}
 
+/// A card row built around another row, which ``makeGroupedFormCard(rows:notes:)``
+/// reads through to find a ``GroupedFormFieldRow`` for its label column.
+@MainActor
+protocol GroupedFormRowWrapper: NSView {
+    var wrappedRow: NSView { get }
+}
+
 @MainActor
 func makeGroupedFormHairline() -> NSView {
     let line = NSBox()
@@ -271,8 +278,11 @@ final class GroupedFormFieldRow: GroupedFormControlRow {
 /// separator. This carries that hairline instead, so `isHidden` takes both.
 /// Never a card's first row — the hairline would have nothing above it.
 @MainActor
-final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
+final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow, GroupedFormRowWrapper {
+    let wrappedRow: NSView
+
     init(row: NSView) {
+        wrappedRow = row
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -294,6 +304,59 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
     }
 }
 
+/// A row and the notes that describe it, stacked so each note sits
+/// ``GroupedFormStyle/cardStackSpacing`` under the row and takes its leading
+/// edge and width from it.
+///
+/// A note about one row is owned by that row, so it goes wherever the row goes:
+/// a card's top-level row, a ``GroupedFormSubOptionGroup``'s primary, or its
+/// sub-option, where it shares the indent and hides with the sub-option. A
+/// hidden note collapses, leaving no gap. ``makeGroupedFormCard(rows:notes:)``
+/// treats it as the row it wraps.
+@MainActor
+final class GroupedFormNotedRow: NSStackView, GroupedFormRowWrapper {
+    let wrappedRow: NSView
+
+    init(_ row: NSView, notes: [NSView]) {
+        wrappedRow = row
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GroupedFormStyle.cardStackSpacing
+        translatesAutoresizingMaskIntoConstraints = false
+        // A full-bleed row spans to the card's trailing edge and insets its own
+        // content; its notes take the inset a row's content has.
+        let noteInset = groupedFormRowBleeds(row) ? GroupedFormStyle.cardPadding : 0
+        for view in [row] + notes {
+            addArrangedSubview(view)
+            view.widthAnchor.constraint(
+                equalTo: widthAnchor, constant: view === row ? 0 : -noteInset
+            ).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormNotedRow does not support NSCoder")
+    }
+}
+
+/// Whether a card spans `row` to its trailing edge rather than insetting it.
+@MainActor
+private func groupedFormRowBleeds(_ row: NSView) -> Bool {
+    if let noted = row as? GroupedFormNotedRow { return groupedFormRowBleeds(noted.wrappedRow) }
+    return row is GroupedFormFullBleedRow
+}
+
+/// Whether `row` carries the hairline above it, so the card draws none.
+@MainActor
+private func groupedFormRowCarriesHairline(_ row: NSView) -> Bool {
+    if let noted = row as? GroupedFormNotedRow {
+        return groupedFormRowCarriesHairline(noted.wrappedRow)
+    }
+    return row is GroupedFormCollapsibleRow
+}
+
 /// Builds a card: hairline-separated rows on a rounded, filled background.
 ///
 /// Separators run from the label edge to the card's trailing edge — the
@@ -302,9 +365,10 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
 /// The ``GroupedFormFieldRow``s among `rows` share one label column, the width
 /// of their widest label, so their controls start at one edge.
 ///
-/// `notes` describe the card's current values and sit inside it under the
-/// rows, with no hairline, collapsing when hidden; text explaining the section
-/// as a whole stays a caption below the card.
+/// `notes` describe the card as a whole and sit inside it under the rows, at
+/// the rows' leading edge, with no hairline, collapsing when hidden; a note
+/// about one row is owned by that row as a ``GroupedFormNotedRow``, and text
+/// explaining the section as a whole stays a caption below the card.
 @MainActor
 func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     let content = NSStackView()
@@ -317,10 +381,10 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     for (index, row) in rows.enumerated() {
         // A collapsible row carries its own hairline, so that hiding it takes
         // the separator with it.
-        if index > 0, !(row is GroupedFormCollapsibleRow) {
+        if index > 0, !groupedFormRowCarriesHairline(row) {
             arranged.append((GroupedFormCardSeparator(), true))
         }
-        arranged.append((row, row is GroupedFormFullBleedRow))
+        arranged.append((row, groupedFormRowBleeds(row)))
     }
     arranged += notes.map { ($0, false) }
     arranged.forEach { content.addArrangedSubview($0.view) }
@@ -348,7 +412,11 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
             equalTo: content.widthAnchor, constant: entry.bleeds ? 0 : -pad
         ).isActive = true
     }
-    let fieldTitles = rows.compactMap { ($0 as? GroupedFormFieldRow)?.titleLabel }
+    let fieldTitles = rows.compactMap { row in
+        let innermost = sequence(first: row) { ($0 as? GroupedFormRowWrapper)?.wrappedRow }
+            .reduce(row) { $1 }
+        return (innermost as? GroupedFormFieldRow)?.titleLabel
+    }
     for title in fieldTitles.dropFirst() {
         title.widthAnchor.constraint(equalTo: fieldTitles[0].widthAnchor).isActive = true
     }
@@ -358,6 +426,24 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
 /// Leading indent applied to a sub-option nested beneath its parent row.
 let groupedFormSubOptionIndent: CGFloat = 20
 
+/// Wraps `view` so it sits at the sub-option indent while its container
+/// still spans its stack — which leaves the stack's leading alignment
+/// satisfied and lets the stack hide it as a row.
+@MainActor
+func makeGroupedFormIndented(_ view: NSView) -> NSView {
+    let container = NSView()
+    view.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(view)
+    NSLayoutConstraint.activate([
+        view.topAnchor.constraint(equalTo: container.topAnchor),
+        view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        view.leadingAnchor.constraint(
+            equalTo: container.leadingAnchor, constant: groupedFormSubOptionIndent),
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+    ])
+    return container
+}
+
 /// A primary row and a dependent sub-option as a single grouped-form "row": the
 /// sub-option (and the hairline separating it) are indented beneath the primary
 /// so the pair reads as a parent → child unit.
@@ -365,15 +451,16 @@ let groupedFormSubOptionIndent: CGFloat = 20
 /// Pass one to ``makeGroupedFormCard(rows:notes:)`` in place of two sibling rows, so
 /// the card's full-width separators land only *around* the pair.
 /// ``isSubOptionHidden`` collapses the sub-option and its hairline together,
-/// for a child that is meaningless until the parent is on.
+/// for a child that is meaningless until the parent is on. Either row may be a
+/// ``GroupedFormNotedRow``; a sub-option's notes are indented and hidden with it.
 @MainActor
 final class GroupedFormSubOptionGroup: NSStackView, GroupedFormFullBleedRow {
     private let hairlineRow: NSView
     private let subOptionRow: NSView
 
     init(primary: NSView, subOption: NSView) {
-        hairlineRow = Self.indented(makeGroupedFormHairline())
-        subOptionRow = Self.indented(subOption)
+        hairlineRow = makeGroupedFormIndented(makeGroupedFormHairline())
+        subOptionRow = makeGroupedFormIndented(subOption)
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -402,22 +489,6 @@ final class GroupedFormSubOptionGroup: NSStackView, GroupedFormFullBleedRow {
             hairlineRow.isHidden = newValue
             subOptionRow.isHidden = newValue
         }
-    }
-
-    /// Wraps `view` so it sits at the sub-option indent while its container
-    /// still spans the card, which is what lets the stack hide it as a row.
-    private static func indented(_ view: NSView) -> NSView {
-        let container = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: container.topAnchor),
-            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            view.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: groupedFormSubOptionIndent),
-            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        ])
-        return container
     }
 }
 

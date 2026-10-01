@@ -309,14 +309,16 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                             "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
                         )
                     ]),
-                makeGroupedFormRowWithInfo(
-                    "Show install reminder", control: installReminderSwitch,
-                    paragraphs: [
-                        .body(
-                            "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
-                        )
-                    ]),
-            ], notes: [overrideCaption])
+                GroupedFormNotedRow(
+                    makeGroupedFormRowWithInfo(
+                        "Show install reminder", control: installReminderSwitch,
+                        paragraphs: [
+                            .body(
+                                "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                            )
+                        ]),
+                    notes: [overrideCaption]),
+            ])
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
         ])
