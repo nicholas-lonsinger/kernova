@@ -225,16 +225,10 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         // Mirrors the real service on disk: a macOS clone's `copyOut` writes
         // its MachineIdentifier file straight into this URL afterward, and a
         // test that lays real files into the source reads them in the clone.
-        let fm = FileManager.default
-        try fm.createDirectory(at: destinationBundleURL, withIntermediateDirectories: true)
-        for relativePath in relativePaths {
-            let source = sourceBundleURL.appendingPathComponent(relativePath)
-            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
-            let destination = destinationBundleURL.appendingPathComponent(relativePath)
-            try fm.createDirectory(
-                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: source, to: destination)
-        }
+        try FileManager.default.createDirectory(
+            at: destinationBundleURL, withIntermediateDirectories: true)
+        try VMBundleMachineFiles.copyItems(
+            relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: destinationBundleURL)
     }
 

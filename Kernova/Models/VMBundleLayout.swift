@@ -43,20 +43,28 @@ struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("Disk.asif")
     }
 
+    // MARK: - Platform files
+
+    /// The platform files, relative to the bundle root.
+    static let auxiliaryStorageRelativePath = "AuxiliaryStorage"
+    static let hardwareModelRelativePath = "HardwareModel"
+    static let machineIdentifierRelativePath = "MachineIdentifier"
+    static let efiVariableStoreRelativePath = "EFIVariableStore"
+
     var auxiliaryStorageURL: URL {
-        bundleURL.appendingPathComponent("AuxiliaryStorage")
+        bundleURL.appendingPathComponent(Self.auxiliaryStorageRelativePath)
     }
 
     var hardwareModelURL: URL {
-        bundleURL.appendingPathComponent("HardwareModel")
+        bundleURL.appendingPathComponent(Self.hardwareModelRelativePath)
     }
 
     var machineIdentifierURL: URL {
-        bundleURL.appendingPathComponent("MachineIdentifier")
+        bundleURL.appendingPathComponent(Self.machineIdentifierRelativePath)
     }
 
     var efiVariableStoreURL: URL {
-        bundleURL.appendingPathComponent("EFIVariableStore")
+        bundleURL.appendingPathComponent(Self.efiVariableStoreRelativePath)
     }
 
     var saveFileURL: URL {

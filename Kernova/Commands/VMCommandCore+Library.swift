@@ -328,9 +328,9 @@ extension VMCommandCore {
         func relativePaths(in source: VMBundleLayout) -> [String] {
             var paths =
                 VMBundleMachineFiles.capturedRelativePaths(for: configuration, layout: source)
-                + ["HardwareModel"]
+                + [VMBundleLayout.hardwareModelRelativePath]
             if outcome == .exactCopy {
-                paths.append("MachineIdentifier")
+                paths.append(VMBundleLayout.machineIdentifierRelativePath)
                 paths += snapshotManifest.snapshots.map {
                     VMBundleLayout.snapshotRelativePath(id: $0.id)
                 }

@@ -174,17 +174,8 @@ struct VMStorageService: Sendable {
     ) throws {
         try stagingRoot.createDirectory(at: destinationBundleURL)
 
-        let fm = FileManager.default
-        for relativePath in relativePaths {
-            let source = sourceBundleURL.appendingPathComponent(relativePath)
-            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
-            let destination = destinationBundleURL.appendingPathComponent(relativePath)
-            try fm.createDirectory(
-                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Same volume, so APFS clones each file rather than duplicating its
-            // blocks.
-            try fm.copyItem(at: source, to: destination)
-        }
+        try VMBundleMachineFiles.copyItems(
+            relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
 
         #log(
             Self.logger, .notice,
