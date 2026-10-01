@@ -175,11 +175,7 @@ struct GroupedFormStyleTests {
         "A card's fill is a translucent overlay, darkening in light and lightening in dark",
         arguments: [NSAppearance.Name.aqua, .darkAqua])
     func cardFillOverlaysAnyBackground(appearance: NSAppearance.Name) throws {
-        var resolved: NSColor?
-        try #require(NSAppearance(named: appearance)).performAsCurrentDrawingAppearance {
-            resolved = GroupedFormStyle.cardFill.usingColorSpace(.sRGB)
-        }
-        let fill = try #require(resolved)
+        let fill = try GroupedFormStyle.cardFill.resolvedSRGB(in: appearance)
 
         #expect(fill.alphaComponent > 0 && fill.alphaComponent < 1)
         if appearance == .darkAqua {
@@ -187,5 +183,13 @@ struct GroupedFormStyleTests {
         } else {
             #expect(fill.brightnessComponent < 0.5)
         }
+    }
+
+    @Test("A banner's tinted fill follows light/dark")
+    func bannerFillFollowsAppearance() throws {
+        let banner = makeGroupedFormBanner(symbolName: "info.circle", tint: .systemOrange, message: "Message")
+        let fill = try #require(banner.subviews.lazy.compactMap { $0 as? NSBox }.first).fillColor
+
+        #expect(try fill.resolvedSRGB(in: .aqua) != fill.resolvedSRGB(in: .darkAqua))
     }
 }

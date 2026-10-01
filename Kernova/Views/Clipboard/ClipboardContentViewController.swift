@@ -48,7 +48,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             concealedPreview,
         ]
     }
-    private let statusCircle: NSView
+    private let statusCircle: NSImageView
     private let statusLabel: NSTextField
     private let actionButton: NSButton
 
@@ -152,15 +152,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         scrollView.drawsBackground = false
         self.scrollView = scrollView
 
-        let circle = NSView()
-        circle.wantsLayer = true
-        circle.layer?.cornerRadius = 4
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 8),
-            circle.heightAnchor.constraint(equalToConstant: 8),
-        ])
-        self.statusCircle = circle
+        self.statusCircle = makeStatusDot()
 
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -958,31 +950,31 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func applyStatus(_ status: AgentStatus, canInstallKernovaAgent: Bool) {
         switch status {
         case .waiting:
-            statusCircle.layer?.backgroundColor = StatusColor.inactive.cgColor
+            statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Waiting for guest agent"
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Install Guest Agent…"
         case .outdated(let installed, let bundled):
-            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Update Guest Agent…"
         case .connecting(let expected):
             // No install/reinstall affordance — the agent is expected to
             // reconnect; the watchdog surfaces `.expectedMissing` if it doesn't.
-            statusCircle.layer?.backgroundColor = StatusColor.inactive.cgColor
+            statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Connecting (was \(expected))"
             actionButton.isHidden = true
         case .current(let version):
-            statusCircle.layer?.backgroundColor = StatusColor.running.cgColor
+            statusCircle.contentTintColor = StatusColor.running
             statusLabel.stringValue = "Connected (\(version))"
             actionButton.isHidden = true
         case .unresponsive(let version):
-            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Unresponsive (\(version))"
             actionButton.isHidden = true
         case .expectedMissing(let expected):
-            statusCircle.layer?.backgroundColor = StatusColor.warning.cgColor
+            statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Didn't reconnect (was \(expected))"
             actionButton.isHidden = !canInstallKernovaAgent
             actionButton.title = "Reinstall Guest Agent…"

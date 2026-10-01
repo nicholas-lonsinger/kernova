@@ -23,6 +23,7 @@ final class GuestSetupProgressViewController: NSViewController {
     /// Line 2 (speed/ETA) refreshes at most once a second; line 1 (bytes/%) and
     /// the progress bar track the smoother's raw ~10 Hz feed.
     private static let line2RefreshInterval: TimeInterval = 1.0
+    private static let pendingConnectorColor = NSColor.secondaryLabelColor.withDynamicAlpha(0.3)
     private var lastLine2Refresh: TimeInterval = 0
 
     /// The views making up one row of the step indicator.
@@ -181,7 +182,7 @@ final class GuestSetupProgressViewController: NSViewController {
         let line = NSBox()
         line.boxType = .custom
         line.borderWidth = 0
-        line.fillColor = .secondaryLabelColor.withAlphaComponent(0.3)
+        line.fillColor = Self.pendingConnectorColor
         line.translatesAutoresizingMaskIntoConstraints = false
         line.widthAnchor.constraint(equalToConstant: 2).isActive = true
         line.heightAnchor.constraint(equalToConstant: 20).isActive = true
@@ -265,7 +266,7 @@ final class GuestSetupProgressViewController: NSViewController {
         for (index, connector) in connectors.enumerated() {
             connector.fillColor =
                 state.state(ofStepAt: index) == .completed
-                ? .controlAccentColor : .secondaryLabelColor.withAlphaComponent(0.3)
+                ? .controlAccentColor : Self.pendingConnectorColor
         }
     }
 

@@ -172,7 +172,7 @@ func makeWizardBadge(
 
     return makeGroupedFormBox(
         content: row,
-        fill: .secondaryLabelColor.withAlphaComponent(0.1),
+        fill: .secondaryLabelColor.withDynamicAlpha(0.1),
         border: .clear,
         borderWidth: 0,
         cornerRadius: 6,

@@ -663,8 +663,8 @@ func makeGroupedFormBanner(
 
     return makeGroupedFormBox(
         content: row,
-        fill: tint.withAlphaComponent(0.1),
-        border: tint.withAlphaComponent(0.3),
+        fill: tint.withDynamicAlpha(0.1),
+        border: tint.withDynamicAlpha(0.3),
         borderWidth: 1,
         cornerRadius: 8,
         padding: 10

@@ -18,14 +18,12 @@ final class DetailBannerView: NSView {
     }
 
     private func build(tint: NSColor, symbolName: String, title titleText: String, subtitle subtitleText: String) {
-        // Tint background + bottom hairline, drawn by NSBoxes so they adapt to
-        // light/dark automatically.
         let background = NSBox()
         background.boxType = .custom
         background.titlePosition = .noTitle
         background.borderWidth = 0
         background.cornerRadius = 0
-        background.fillColor = tint.withAlphaComponent(0.1)
+        background.fillColor = tint.withDynamicAlpha(0.1)
         addFullSizeSubview(background)
 
         let separator = NSBox()
