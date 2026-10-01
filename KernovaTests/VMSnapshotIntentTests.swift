@@ -127,8 +127,8 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: picked, takingCheckpoint: true, confirmed: true)
-        try await gateway.deleteSnapshot(vm, snapshot: picked, confirmed: true)
+            vm, snapshot: picked, takingCheckpoint: true, consent: .all)
+        try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .all)
         try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
         try await gateway.setSnapshotNotes(vm, snapshot: picked, notes: "a note")
 
@@ -158,10 +158,10 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                named, snapshot: stale, takingCheckpoint: false, confirmed: true)
+                named, snapshot: stale, takingCheckpoint: false, consent: .all)
         }
         await #expect(throws: CommandError.self) {
-            try await gateway.deleteSnapshot(named, snapshot: stale, confirmed: true)
+            try await gateway.deleteSnapshot(named, snapshot: stale, consent: .all)
         }
         await #expect(throws: CommandError.self) {
             try await gateway.renameSnapshot(named, snapshot: stale, to: "Renamed")
@@ -329,14 +329,14 @@ struct VMSnapshotIntentTests {
             let gateway = makeGateway(commands)
             var asked: [ConfirmationPrompt] = []
 
-            try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
+            try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
                 try await gateway.revertToSnapshot(
                     vm, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
-                    confirmed: confirmed)
+                    consent: consent)
             }
 
             #expect(asked.map(\.kind) == [.revertToSnapshot])
-            #expect(commands.revertCalls.map(\.confirmed) == [false, true])
+            #expect(commands.revertCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
             #expect(
                 commands.revertCalls.map(\.takingCheckpoint) == [takingCheckpoint, takingCheckpoint]
             )
@@ -360,7 +360,7 @@ struct VMSnapshotIntentTests {
         await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
                 vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), takingCheckpoint: true,
-                confirmed: true)
+                consent: .all)
         }
     }
 
@@ -379,13 +379,13 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
             try await gateway.deleteSnapshot(
-                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), confirmed: confirmed)
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.deleteSnapshot])
-        #expect(commands.deleteSnapshotCalls.map(\.confirmed) == [false, true])
+        #expect(commands.deleteSnapshotCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
     // MARK: - Error Surfacing

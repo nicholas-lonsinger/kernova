@@ -147,21 +147,21 @@ struct VMCommandEnvelopeRouter {
                     message: "This transport does not deliver event subscriptions.",
                     recovery: nil))
 
-        case .start(let selector, let recovery):
-            try await commands.start(selector, recovery: recovery)
+        case .start(let selector, let recovery, let consent):
+            try await commands.start(selector, recovery: recovery, consent: consent)
             return .ok
-        case .cancelGuestSetup(let selector, let confirmed):
-            try commands.cancelGuestSetup(selector, confirmed: confirmed)
+        case .cancelGuestSetup(let selector, let consent):
+            try commands.cancelGuestSetup(selector, consent: consent)
             return .ok
-        case .stop(let selector, let disposition, let confirmed, let timeout):
+        case .stop(let selector, let disposition, let consent, let timeout):
             try await commands.stop(
-                selector, disposition: disposition, confirmed: confirmed, timeout: timeout)
+                selector, disposition: disposition, consent: consent, timeout: timeout)
             return .ok
         case .pause(let selector):
             try await commands.pause(selector)
             return .ok
-        case .resume(let selector):
-            try await commands.resume(selector)
+        case .resume(let selector, let consent):
+            try await commands.resume(selector, consent: consent)
             return .ok
         case .suspend(let selector):
             try await commands.suspend(selector)
@@ -181,13 +181,13 @@ struct VMCommandEnvelopeRouter {
 
         case .takeSnapshot(let selector, let name, let notes):
             return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
-        case .revertToSnapshot(let selector, let snapshot, let takingCheckpoint, let confirmed):
+        case .revertToSnapshot(let selector, let snapshot, let takingCheckpoint, let consent):
             try await commands.revertToSnapshot(
                 selector, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
-                confirmed: confirmed)
+                consent: consent)
             return .ok
-        case .deleteSnapshot(let selector, let snapshot, let confirmed):
-            try await commands.deleteSnapshot(selector, snapshot: snapshot, confirmed: confirmed)
+        case .deleteSnapshot(let selector, let snapshot, let consent):
+            try await commands.deleteSnapshot(selector, snapshot: snapshot, consent: consent)
             return .ok
         case .renameSnapshot(let selector, let snapshot, let newName):
             try commands.renameSnapshot(selector, snapshot: snapshot, to: newName)
@@ -203,15 +203,15 @@ struct VMCommandEnvelopeRouter {
         case .rename(let selector, let newName):
             try commands.rename(selector, to: newName)
             return .ok
-        case .delete(let selector, let permanently, let alsoRemoving, let confirmed):
+        case .delete(let selector, let permanently, let alsoRemoving, let consent):
             try await commands.delete(
                 selector, permanently: permanently, alsoRemoving: Set(alsoRemoving),
-                confirmed: confirmed)
+                consent: consent)
             return .ok
         case .importVM(let path, let waitForOutcome):
             return .summary(try await commands.importVM(atPath: path, waitForOutcome: waitForOutcome))
-        case .cancelPreparing(let selector, let confirmed):
-            try commands.cancelPreparing(selector, confirmed: confirmed)
+        case .cancelPreparing(let selector, let consent):
+            try commands.cancelPreparing(selector, consent: consent)
             return .ok
 
         case .editStorageDisk(let selector, let edit):
@@ -238,10 +238,10 @@ struct VMCommandEnvelopeRouter {
             return .configurationKeys(commands.configurationKeys())
         case .configuration(let selector, let keys):
             return .configuration(try commands.configuration(selector, keys: keys))
-        case .setConfiguration(let selector, let assignments, let confirmed):
+        case .setConfiguration(let selector, let assignments, let consent):
             return .configuration(
                 try commands.setConfiguration(
-                    selector, assignments: assignments, confirmed: confirmed))
+                    selector, assignments: assignments, consent: consent))
 
         case .quit:
             commands.quit()
@@ -254,9 +254,9 @@ struct VMCommandEnvelopeRouter {
         switch edit {
         case .create(let sizeInGB):
             try await commands.createStorageDisk(selector, sizeInGB: sizeInGB)
-        case .remove(let disk, let trashFile, let confirmed):
+        case .remove(let disk, let trashFile, let consent):
             try await commands.removeStorageDisk(
-                selector, disk: disk, trashFile: trashFile, confirmed: confirmed)
+                selector, disk: disk, trashFile: trashFile, consent: consent)
         case .rename(let disk, let newLabel):
             try commands.renameStorageDisk(selector, disk: disk, to: newLabel)
         case .setNotes(let disk, let notes):
@@ -281,9 +281,9 @@ struct VMCommandEnvelopeRouter {
     /// One removable-media edit, dispatched on the payload the verb carries.
     private func apply(_ edit: RemovableMediaEdit, to selector: VMSelector) async throws {
         switch edit {
-        case .remove(let item, let trashFile, let confirmed):
+        case .remove(let item, let trashFile, let consent):
             try await commands.removeRemovableMedia(
-                selector, item: item, trashFile: trashFile, confirmed: confirmed)
+                selector, item: item, trashFile: trashFile, consent: consent)
         case .eject(let item):
             try commands.ejectRemovableMedia(selector, item: item)
         case .rename(let item, let newLabel):

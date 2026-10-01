@@ -14,30 +14,36 @@ import KernovaKit
 /// answer is about the VM, so the door supplies it with the verb that holds it
 /// and the re-issued call simply finds it there.
 enum VMConsentPolicy {
-    /// Runs a destructive verb, gathering the consent it refuses without.
+    /// Runs a verb, gathering each consent it refuses without.
     ///
-    /// `body` is called with `confirmed: false` first; a
+    /// `body` is called with ``Consent/none`` first; a
     /// ``CommandError/confirmationRequired(_:)`` back from it goes to
-    /// `prompting`, and returning from there re-runs `body` with
-    /// `confirmed: true`. Every other failure is rethrown untouched — as is a
-    /// refusal `prompting` itself declines to answer, which is how a door with
-    /// nobody to ask says the consent was never given.
+    /// `prompting`, and returning from there re-runs `body` with that prompt's
+    /// kind added — so a verb that needs two consents asks each with its own
+    /// words. Every other failure is rethrown untouched — as is a refusal
+    /// `prompting` itself declines to answer, which is how a door with nobody
+    /// to ask says the consent was never given, and a refusal for a kind
+    /// already given, which is the answer not having taken.
     ///
     /// A prompt confirming to something other than what was asked for is
     /// rethrown instead (``isAnsweredByConfirming(_:)``).
     @MainActor
     static func run(
         prompting: (ConfirmationPrompt) async throws -> Void,
-        _ body: (_ confirmed: Bool) async throws -> Void
+        _ body: (Consent) async throws -> Void
     ) async throws {
-        do {
-            try await body(false)
-        } catch let error as CommandError {
-            guard let prompt = error.confirmationPrompt, isAnsweredByConfirming(prompt) else {
-                throw error
+        var consent = Consent.none
+        while true {
+            do {
+                try await body(consent)
+                return
+            } catch let error as CommandError {
+                guard let prompt = error.confirmationPrompt, isAnsweredByConfirming(prompt),
+                    !consent.covers(prompt.kind)
+                else { throw error }
+                try await prompting(prompt)
+                consent = consent.adding(prompt.kind)
             }
-            try await prompting(prompt)
-            try await body(true)
         }
     }
 
@@ -86,7 +92,8 @@ enum VMConsentPolicy {
         case .stopPaused:
             false
         case .forceStop, .deleteVM, .deleteSnapshot, .revertToSnapshot, .cancelPreparing,
-            .cancelGuestSetup, .removeAttachment, .enableClipboardPassthrough:
+            .cancelGuestSetup, .removeAttachment, .enableClipboardPassthrough,
+            .startBesideSharedMachineIdentity:
             true
         }
     }

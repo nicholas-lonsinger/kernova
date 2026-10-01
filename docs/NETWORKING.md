@@ -26,15 +26,13 @@ its expiry — as the address.
 
 ### 4. A MAC address belongs to one virtual machine
 
-**The app gives a second VM an address only in an Exact Copy, which carries its source's
-machine identity with it** — the same machine to the network as to its guest — **and never
-rewrites or refuses one a bundle arrives with** — the guest may pin it, and a LAN's DHCP
-server may hold a reservation for it — so import, load and reconcile admit the duplicate,
-an edit onto an address another VM holds is refused, and two holders never run on one
-network at once: the second to start is refused. Two VMs sharing a machine identity and an
-address are exact copies of each other, however they arose, and hold the address as one
-machine; an address held under more than one machine identity is the fault, which the VM's
-Network section discloses by naming the other holder while the address stays editable.
+**The app gives a second VM an address only in an Exact Copy, which keeps its source's machine
+identity too, and never rewrites or refuses one a bundle arrives with** — the guest may pin it,
+and a LAN's DHCP server may hold a reservation for it — so import, load and reconcile admit the
+duplicate, an edit onto an address another VM holds is refused, and two holders never run on one
+network at once: the second to start is refused. The address is checked apart from the machine
+identity: whatever theirs, each holder's Network section names the others while the address stays
+editable, and holders on separate networks run at once.
 An address a VM's snapshot was taken with stays that VM's until the snapshot is deleted, because a revert puts the
 VM back on it ([VZ restore requires the saved MAC address](research/2026-09-23-vz-restore-requires-the-saved-mac-address.md)).
 

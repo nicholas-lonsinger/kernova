@@ -57,10 +57,10 @@ struct RevertToSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent(asking: checkpointAwareConfirmation) { confirmed in
+        try await runWithConsent(asking: checkpointAwareConfirmation) { consent in
             try await gateway.revertToSnapshot(
                 vm.id, snapshot: snapshot.id, takingCheckpoint: takeCheckpoint,
-                confirmed: confirmed)
+                consent: consent)
         }
         return .result()
     }
@@ -113,9 +113,9 @@ struct DeleteSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
+        try await runWithConsent { consent in
             try await gateway.deleteSnapshot(
-                vm.id, snapshot: snapshot.id, confirmed: confirmed)
+                vm.id, snapshot: snapshot.id, consent: consent)
         }
         return .result()
     }

@@ -193,11 +193,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var supportsUSBAccessories: Bool { lifecycle.usbAccessoryService != nil }
 
     /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
-    /// bringing `instance` up under `configuration` would duplicate.
+    /// bringing `instance` up under `configuration` would duplicate, unless
+    /// `override` waives it.
     func identityConflict(
-        for instance: VMInstance, bringingUp configuration: VMConfiguration
+        for instance: VMInstance, bringingUp configuration: VMConfiguration,
+        override: VMIdentityOverride
     ) -> VMIdentityConflict? {
-        liveIdentities.conflict(for: instance, bringingUp: configuration)
+        liveIdentities.conflict(for: instance, bringingUp: configuration, override: override)
     }
 
     var customOrder: [UUID] = []

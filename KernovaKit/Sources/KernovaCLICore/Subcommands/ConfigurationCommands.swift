@@ -101,7 +101,7 @@ extension KernovaCommand {
         func verb() throws -> VMCommandRequest.Verb {
             .setConfiguration(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                assignments: try Self.entries(from: assignments), confirmed: options.yes)
+                assignments: try Self.entries(from: assignments), consent: options.consent)
         }
 
         /// Applies the assignments and writes what the settings ended up

@@ -109,7 +109,7 @@ struct VMLifecycleScriptCommandsTests {
         // The consent is what answers the prompt the core describes, so the
         // verb is issued once to ask and once more, consented.
         #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
-        #expect(commands.stopCalls.map(\.confirmed) == [false, true])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
         #expect(commands.stopCalls.map(\.timeout) == [30, 30])
     }
 
@@ -121,7 +121,7 @@ struct VMLifecycleScriptCommandsTests {
         try await command.run(makeGateway(commands), on: [.name("Alpha")])
 
         #expect(commands.stopCalls.map(\.disposition) == [.graceful])
-        #expect(commands.stopCalls.map(\.confirmed) == [false])
+        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
         #expect(commands.stopCalls.map(\.timeout) == [nil])
     }
 

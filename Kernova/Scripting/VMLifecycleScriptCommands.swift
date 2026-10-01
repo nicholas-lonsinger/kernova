@@ -162,11 +162,12 @@ class VMScriptCommand: NSScriptCommand {
 
 // MARK: - Commands
 
-/// `start virtual machine …`
+/// `start virtual machine … [with recovery mode] [with confirmation]`
 @objc(VMStartScriptCommand)
 final class VMStartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.start(selectors, recoveryMode: flag("RecoveryMode"))
+        try await gateway.start(
+            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag("Confirmation"))
     }
 }
 
@@ -178,7 +179,7 @@ final class VMStopScriptCommand: VMScriptCommand {
             throw CommandError.invalidArgument("That is not a way Kernova can stop a guest.")
         }
         try await gateway.stop(
-            selectors, method: method, confirmed: flag("Confirmation"),
+            selectors, method: method, confirmation: flag("Confirmation"),
             givingUpAfter: seconds("GivingUpAfter"))
     }
 
@@ -206,11 +207,11 @@ final class VMPauseScriptCommand: VMScriptCommand {
     }
 }
 
-/// `resume virtual machine …`
+/// `resume virtual machine … [with confirmation]`
 @objc(VMResumeScriptCommand)
 final class VMResumeScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.resume(selectors)
+        try await gateway.resume(selectors, confirmation: flag("Confirmation"))
     }
 }
 

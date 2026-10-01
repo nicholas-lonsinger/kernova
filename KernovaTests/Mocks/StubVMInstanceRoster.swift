@@ -25,7 +25,8 @@ final class StubVMInstanceRoster: VMInstanceRoster, VMAdmissionPeers {
     }
 
     func identityConflict(
-        for instance: VMInstance, bringingUp configuration: VMConfiguration
+        for instance: VMInstance, bringingUp configuration: VMConfiguration,
+        override: VMIdentityOverride
     ) -> VMIdentityConflict? { nil }
 
     private func wirePeers() {

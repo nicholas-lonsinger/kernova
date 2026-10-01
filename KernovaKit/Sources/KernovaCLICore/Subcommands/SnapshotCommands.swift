@@ -136,7 +136,7 @@ extension KernovaCommand.Snapshot {
             _ = try client.send(
                 .revertToSnapshot(
                     selector, snapshot: target.id, takingCheckpoint: checkpoint,
-                    confirmed: options.yes)
+                    consent: options.consent)
             ).payload()
         }
     }
@@ -170,7 +170,7 @@ extension KernovaCommand.Snapshot {
             let target = try KernovaCommand.Snapshot.resolve(
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
             _ = try client.send(
-                .deleteSnapshot(selector, snapshot: target.id, confirmed: options.yes)
+                .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
             ).payload()
         }
     }

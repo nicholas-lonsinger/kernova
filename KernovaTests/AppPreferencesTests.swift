@@ -87,25 +87,23 @@ struct AppPreferencesTests {
         #expect(defaults.bool(forKey: "quitTerminatesApp") == false)
     }
 
-    @Test("blockDuplicateMachineIDBoot defaults to true")
-    func blockDuplicateMachineIDBootDefaultsToTrue() {
+    @Test("allowsDuplicateMachineIDOverride defaults to false")
+    func allowsDuplicateMachineIDOverrideDefaultsToFalse() {
         let (prefs, _) = makePreferences()
-        #expect(prefs.blockDuplicateMachineIDBoot == true)
+        #expect(prefs.allowsDuplicateMachineIDOverride == false)
     }
 
-    @Test("blockDuplicateMachineIDBoot round-trips through UserDefaults with inverted storage")
-    func blockDuplicateMachineIDBootRoundTrips() {
+    @Test("allowsDuplicateMachineIDOverride reads and writes the allowDuplicateMachineIDBoot key as stored")
+    func allowsDuplicateMachineIDOverrideRoundTrips() {
         let (prefs, defaults) = makePreferences()
-        // Stored inverted under `allowDuplicateMachineIDBoot`, so the
-        // false-default key yields the desired `true` default (see the
-        // property's doc comment).
-        prefs.blockDuplicateMachineIDBoot = false
-        #expect(prefs.blockDuplicateMachineIDBoot == false)
-        #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == true)
+        // A value an earlier build stored under the key carries over as it is.
+        defaults.set(true, forKey: "allowDuplicateMachineIDBoot")
+        #expect(prefs.allowsDuplicateMachineIDOverride == true)
 
-        prefs.blockDuplicateMachineIDBoot = true
-        #expect(prefs.blockDuplicateMachineIDBoot == true)
+        prefs.allowsDuplicateMachineIDOverride = false
         #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == false)
+        prefs.allowsDuplicateMachineIDOverride = true
+        #expect(defaults.bool(forKey: "allowDuplicateMachineIDBoot") == true)
     }
 
     @Test("cloneOutcome defaults to New Machine")

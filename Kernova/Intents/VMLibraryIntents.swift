@@ -119,8 +119,8 @@ struct DeleteVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
-            try await gateway.delete(vm.id, confirmed: confirmed)
+        try await runWithConsent { consent in
+            try await gateway.delete(vm.id, consent: consent)
         }
         return .result()
     }
@@ -143,8 +143,8 @@ struct CancelPreparingIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
-            try await gateway.cancelPreparing(vm.id, confirmed: confirmed)
+        try await runWithConsent { consent in
+            try await gateway.cancelPreparing(vm.id, consent: consent)
         }
         return .result()
     }
@@ -167,8 +167,8 @@ struct CancelGuestSetupIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent { confirmed in
-            try await gateway.cancelGuestSetup(vm.id, confirmed: confirmed)
+        try await runWithConsent { consent in
+            try await gateway.cancelGuestSetup(vm.id, consent: consent)
         }
         return .result()
     }

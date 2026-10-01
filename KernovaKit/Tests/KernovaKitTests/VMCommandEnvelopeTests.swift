@@ -71,16 +71,17 @@ struct VMCommandEnvelopeTests {
             .usbAccessories(selector),
             .availableUSBAccessories,
             .events,
-            .start(selector, recovery: true),
-            .start(selector, recovery: false),
-            .cancelGuestSetup(selector, confirmed: false),
-            .cancelGuestSetup(selector, confirmed: true),
-            .stop(selector, disposition: .graceful, confirmed: false, timeout: nil),
-            .stop(selector, disposition: .graceful, confirmed: false, timeout: 90),
-            .stop(selector, disposition: .resumeThenShutDown, confirmed: true, timeout: nil),
-            .stop(selector, disposition: .force, confirmed: true, timeout: 0.5),
+            .start(selector, recovery: true, consent: .none),
+            .start(selector, recovery: false, consent: Consent([.startBesideSharedMachineIdentity])),
+            .cancelGuestSetup(selector, consent: .none),
+            .cancelGuestSetup(selector, consent: .all),
+            .stop(selector, disposition: .graceful, consent: .none, timeout: nil),
+            .stop(selector, disposition: .graceful, consent: .none, timeout: 90),
+            .stop(selector, disposition: .resumeThenShutDown, consent: .all, timeout: nil),
+            .stop(selector, disposition: .force, consent: .all, timeout: 0.5),
             .pause(selector),
-            .resume(selector),
+            .resume(selector, consent: .none),
+            .resume(selector, consent: .all),
             .suspend(selector),
             .restart(selector, timeout: nil),
             .restart(selector, timeout: 120),
@@ -89,26 +90,26 @@ struct VMCommandEnvelopeTests {
             .showInFinder(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
-                selector, snapshot: snapshotID, takingCheckpoint: true, confirmed: true),
-            .deleteSnapshot(selector, snapshot: snapshotID, confirmed: true),
+                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .all),
+            .deleteSnapshot(selector, snapshot: snapshotID, consent: .all),
             .renameSnapshot(selector, snapshot: snapshotID, newName: "Renamed"),
             .setSnapshotNotes(selector, snapshot: snapshotID, notes: "annotated"),
             .clone(selector, outcome: .exactCopy, waitForOutcome: true),
             .clone(selector, outcome: .newMachine, waitForOutcome: false),
             .clone(selector, outcome: nil, waitForOutcome: false),
             .rename(selector, newName: "Beta"),
-            .delete(selector, permanently: true, alsoRemoving: [snapshotID], confirmed: true),
+            .delete(selector, permanently: true, alsoRemoving: [snapshotID], consent: .all),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova", waitForOutcome: true),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova", waitForOutcome: false),
-            .cancelPreparing(selector, confirmed: true),
+            .cancelPreparing(selector, consent: .all),
             .editStorageDisk(selector, .create(sizeInGB: 32)),
-            .editStorageDisk(selector, .remove(disk: diskID, trashFile: true, confirmed: false)),
+            .editStorageDisk(selector, .remove(disk: diskID, trashFile: true, consent: .none)),
             .editStorageDisk(selector, .rename(disk: diskID, newLabel: "Scratch")),
             .editStorageDisk(selector, .setNotes(disk: diskID, notes: "the build cache")),
             .editStorageDisk(selector, .setReadOnly(disk: diskID, readOnly: true)),
             .editStorageDisk(selector, .reorder(order: [diskID, snapshotID])),
             .editRemovableMedia(
-                selector, .remove(item: diskID, trashFile: false, confirmed: true)),
+                selector, .remove(item: diskID, trashFile: false, consent: .all)),
             .editRemovableMedia(selector, .eject(item: diskID)),
             .editRemovableMedia(selector, .rename(item: diskID, newLabel: "Installer")),
             .editRemovableMedia(selector, .setNotes(item: diskID, notes: "from the mirror")),
@@ -132,7 +133,7 @@ struct VMCommandEnvelopeTests {
             .configuration(selector, keys: ["cpus", "memory"]),
             .setConfiguration(
                 selector, assignments: [ConfigurationEntry(key: "cpus", value: "4")],
-                confirmed: true),
+                consent: .all),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
             .quit,
@@ -283,8 +284,6 @@ struct VMCommandEnvelopeTests {
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),
-            .conflict(vm: summary, with: summary, reason: .exactCopy(bar: .runningAtOnce)),
-            .conflict(vm: summary, with: summary, reason: .exactCopy(bar: .oneNetwork)),
             .conflict(
                 vm: summary, with: summary,
                 reason: .macAddressInUse(
@@ -416,44 +415,51 @@ struct VMCommandEnvelopeTests {
                 + "Each virtual machine needs its own MAC address.")
     }
 
-    private func exactCopy(_ bar: ExactCopyBar, otherHeldByAnotherCopy: Bool) -> CommandErrorDTO {
-        let copy = VMSummary(
+    private func sharing(
+        _ reason: ConflictReason, otherHeldByAnotherCopy: Bool
+    ) -> CommandErrorDTO {
+        let other = VMSummary(
             id: vmID, name: "Alpha Copy", status: "running", ipAddress: .unavailable,
             heldByAnotherCopy: otherHeldByAnotherCopy)
-        return .conflict(vm: summary, with: copy, reason: .exactCopy(bar: bar))
+        return .conflict(vm: summary, with: other, reason: reason)
     }
 
-    @Test("An exact copy's refusal names the pair from the refused VM's side, with no lineage")
-    func exactCopyCopyNamesThePair() {
-        let running = exactCopy(.runningAtOnce, otherHeldByAnotherCopy: false)
-        #expect(running.title == "Exact Copy In Use")
+    @Test("A shared machine ID is refused naming the active VM, with stopping it the only way out")
+    func machineIdentityCopyOffersNoSetting() {
+        let active = sharing(.machineIdentity, otherHeldByAnotherCopy: false)
+        #expect(active.title == "Duplicate Machine ID")
         #expect(
-            running.message
-                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which is active. "
-                + "Exact copies share a machine ID, so they must not run at once. "
-                + "Stop \u{201C}Alpha Copy\u{201D} first, or allow this in Settings \u{2192} Advanced.")
+            active.message
+                == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "Stop \u{201C}Alpha Copy\u{201D} first.")
+        #expect(
+            sharing(.machineIdentity, otherHeldByAnotherCopy: true).message
+                == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
+                + "Two virtual machines with the same machine ID must not run at once.")
+    }
 
-        let network = exactCopy(.oneNetwork, otherHeldByAnotherCopy: false)
-        #expect(network.title == "Exact Copy In Use")
+    @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")
+    func macAddressCopyNamesTheNetwork() {
+        let active = sharing(.macAddress, otherHeldByAnotherCopy: false)
+        #expect(active.title == "Duplicate MAC Address")
         #expect(
-            network.message
-                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which is active. "
-                + "Exact copies share a MAC address, so they must not run on the same network at once. "
+            active.message
+                == "\u{201C}Alpha\u{201D} has the same MAC address as \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Two virtual machines with the same MAC address must not run on the same network at once. "
                 + "Stop \u{201C}Alpha Copy\u{201D} first, or give one of them a new address in Network settings.")
     }
 
-    @Test("An exact copy another Kernova holds is named as that copy's, and no stop is offered")
-    func exactCopyCopyNamesAnotherKernovasHold() {
-        #expect(
-            exactCopy(.runningAtOnce, otherHeldByAnotherCopy: true).message
-                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
-                + "Exact copies share a machine ID, so they must not run at once. "
-                + "To start it anyway, allow this in Settings \u{2192} Advanced.")
-        #expect(
-            exactCopy(.oneNetwork, otherHeldByAnotherCopy: true).message
-                == "\u{201C}Alpha\u{201D} is an exact copy of \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
-                + "Exact copies share a MAC address, so they must not run on the same network at once. "
-                + "Give \u{201C}Alpha\u{201D} a new address in Network settings.")
+    @Test("A consent crosses as the set of confirmations given")
+    func consentCoversWhatItNames() throws {
+        let given = Consent([.revertToSnapshot])
+        #expect(given.covers(.revertToSnapshot))
+        #expect(!given.covers(.startBesideSharedMachineIdentity))
+        #expect(given.adding(.startBesideSharedMachineIdentity).covers(.startBesideSharedMachineIdentity))
+        #expect(ConfirmationKind.allCases.allSatisfy(Consent.all.covers))
+        #expect(!ConfirmationKind.allCases.contains(where: Consent.none.covers))
+        let decoded = try JSONDecoder().decode(Consent.self, from: JSONEncoder().encode(given))
+        #expect(decoded == given)
     }
 
     @Test("A holding answers nil for neither, and its snapshots keep their order")

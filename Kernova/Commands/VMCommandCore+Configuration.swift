@@ -57,7 +57,7 @@ extension VMCommandCore {
     /// given.
     @discardableResult
     func setConfiguration(
-        _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
+        _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
         let context = VMConfigurationWriteContext(instance, entitlements: library.entitlements)
@@ -105,7 +105,7 @@ extension VMCommandCore {
                     configuration: { config in
                         moved = try apply(
                             configurationWrites, to: &config, on: instance, within: permit.authority,
-                            admittedKeys: admittedKeys, context: context, confirmed: confirmed)
+                            admittedKeys: admittedKeys, context: context, consent: consent)
                     },
                     hostState: { hostState in
                         for change in hostStateChanges {
@@ -126,7 +126,7 @@ extension VMCommandCore {
         return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(written)) }
     }
 
-    /// One configuration assignment of a ``setConfiguration(_:assignments:confirmed:)`` batch.
+    /// One configuration assignment of a ``setConfiguration(_:assignments:consent:)`` batch.
     private struct ConfigurationWrite {
         let key: VMConfigurationKey
         let field: VMConfigurationKey.ConfigurationField
@@ -195,7 +195,7 @@ extension VMCommandCore {
     private func apply(
         _ writes: [ConfigurationWrite], to config: inout VMConfiguration, on instance: VMInstance,
         within authority: VMEditPermit.Authority, admittedKeys: Set<String>,
-        context: VMConfigurationWriteContext, confirmed: Bool
+        context: VMConfigurationWriteContext, consent: Consent
     ) throws -> [VMConfigurationKey] {
         let held = config
         let (moved, valueRefusal) = Self.moved(
@@ -217,7 +217,7 @@ extension VMCommandCore {
             throw CommandError.invalidArgument(message)
         }
         try requireClipboardPassthroughConsent(
-            on: instance, from: held, to: config, confirmed: confirmed)
+            on: instance, from: held, to: config, consent: consent)
         if let conflict = library.macAddresses.macAddressConflict(
             on: instance, movingFrom: held, to: config)
         {
@@ -268,10 +268,10 @@ extension VMCommandCore {
     /// pane gathers it in an alert.
     private func requireClipboardPassthroughConsent(
         on instance: VMInstance, from current: VMConfiguration, to candidate: VMConfiguration,
-        confirmed: Bool
+        consent: Consent
     ) throws {
         guard ClipboardPassthroughConsent.isNewlyEffective(from: current, to: candidate),
-            !confirmed
+            !consent.covers(.enableClipboardPassthrough)
         else { return }
         throw CommandError.confirmationRequired(
             ClipboardPassthroughConsent.prompt(vmName: instance.name))

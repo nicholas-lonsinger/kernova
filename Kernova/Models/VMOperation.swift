@@ -461,8 +461,8 @@ enum VMNonBringUpKind: Sendable, Equatable {
 }
 
 /// A bring-up that starts no guest from what the bundle holds — the kinds
-/// ``VMActivity/launchBringUp(_:whenEnded:_:)`` takes, so a guest start is
-/// admitted only through ``VMActivity/launchStartGuest(_:resolving:_:)``.
+/// ``VMActivity/launchBringUp(_:identity:whenEnded:_:)`` takes, so a guest start is
+/// admitted only through ``VMActivity/launchStartGuest(_:identity:resolving:_:)``.
 enum VMNonStartBringUpKind: Sendable, Equatable {
     case settingUp(GuestSetupKind)
     case reverting(snapshotID: UUID, resumesAfter: Bool)

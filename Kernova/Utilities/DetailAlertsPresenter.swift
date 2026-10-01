@@ -30,6 +30,26 @@ private final class OneShotGuestAccountAnswer {
     }
 }
 
+/// A ``ConfirmationRequest`` whose answer fires at most once — a button, or the
+/// window going away under the alert or the queue it waits in — for the reason
+/// ``OneShotGuestAccountAnswer`` exists.
+@MainActor
+private final class OneShotConfirmation {
+    let prompt: ConfirmationPrompt
+    private var answer: (@MainActor (Bool) -> Void)?
+
+    init(_ request: ConfirmationRequest) {
+        self.prompt = request.prompt
+        self.answer = request.answer
+    }
+
+    func callAsFunction(_ value: Bool) {
+        guard let answer else { return }
+        self.answer = nil
+        answer(value)
+    }
+}
+
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
 ///
@@ -101,6 +121,10 @@ final class DetailAlertsPresenter: NSObject {
     /// Held so ``stop()`` can answer it. Every other request here is one the
     /// user can raise again; this one has a start suspended behind it.
     private var outstandingGuestAccount: OneShotGuestAccountAnswer?
+    /// The confirmations this presenter owes an answer — on screen or queued —
+    /// each with a verb suspended behind it, held so ``stop()`` can decline
+    /// them.
+    private var outstandingConfirmations: [OneShotConfirmation] = []
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -143,6 +167,8 @@ final class DetailAlertsPresenter: NSObject {
         // both endings exactly one answer.
         outstandingGuestAccount?(.cancelled)
         outstandingGuestAccount = nil
+        for confirmation in outstandingConfirmations { confirmation(false) }
+        outstandingConfirmations.removeAll()
         // Reset, not close: `reset()` drops `isShown` *synchronously* rather than
         // via the async dismissal completion, so a sheet whose parent window is
         // torn down before that completion fires can't leave `isShown` stuck
@@ -367,6 +393,15 @@ final class DetailAlertsPresenter: NSObject {
         // on by the time the alert is drawn.
         let prompt = VMCommandCore.cancelPreparingPrompt(arrival.kind)
         enqueue { $0.present($0.cancelPreparingConfig(prompt, arrival)) }
+    }
+
+    /// Asks the user to confirm what a verb they started refused without,
+    /// queued like any alert they asked for; ``stop()`` declines it if the
+    /// window goes first.
+    func presentConfirmationRequest(_ request: ConfirmationRequest) {
+        let confirmation = OneShotConfirmation(request)
+        outstandingConfirmations.append(confirmation)
+        enqueue { $0.present($0.confirmationRequestConfig(confirmation)) }
     }
 
     func presentInstallerMounted(
@@ -608,6 +643,20 @@ final class DetailAlertsPresenter: NSObject {
             "No \(verb, privacy: .public) route for alternative '\(alternative.title, privacy: .public)'"
         )
         assertionFailure("No \(verb) route for alternative '\(alternative.title)'")
+    }
+
+    /// A confirmation a suspended verb waits on, answered by its buttons.
+    private func confirmationRequestConfig(
+        _ confirmation: OneShotConfirmation
+    ) -> AlertConfiguration {
+        let settle: (Bool) -> Void = { [weak self, weak confirmation] value in
+            guard let confirmation else { return }
+            self?.outstandingConfirmations.removeAll { $0 === confirmation }
+            confirmation(value)
+        }
+        return AlertConfiguration(
+            confirming: confirmation.prompt, confirm: { settle(true) },
+            dismiss: { settle(false) })
     }
 
     /// The cancel confirmation for a create, clone or import, drawn from the

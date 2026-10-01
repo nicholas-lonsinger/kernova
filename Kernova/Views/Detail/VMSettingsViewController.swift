@@ -240,10 +240,9 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the
-                // duplicate-MAC banner and the exact-copy note follow a change
-                // made on the *other* holder, and library membership changing
-                // under it.
-                _ = self.viewModel.macAddressPeers(of: self.instance)
+                // duplicate-MAC banner follows a change made on the *other*
+                // holder, and library membership changing under it.
+                _ = self.viewModel.vmNamesSharingMACAddress(with: self.instance)
                 // Same reach for the Startup capacity banner, which counts the
                 // marked macOS guests across the whole library. Registered on
                 // its own rather than riding the read above, which is free to

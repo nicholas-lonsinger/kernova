@@ -522,9 +522,34 @@ final class VMInstance {
     }
 
     /// The VM claiming the identity (``claimsIdentity``) that bringing this
-    /// one up by `kind` would duplicate, or `nil` when nothing collides.
-    func identityConflict(for kind: VMBringUpKind) -> VMIdentityConflict? {
-        peers?.identityConflict(for: self, bringingUp: configuration(broughtUpBy: kind))
+    /// one up by `kind` would duplicate, or `nil` when nothing collides or
+    /// `override` waives the collision.
+    func identityConflict(
+        for kind: VMBringUpKind, override: VMIdentityOverride
+    ) -> VMIdentityConflict? {
+        peers?.identityConflict(
+            for: self, bringingUp: configuration(broughtUpBy: kind), override: override)
+    }
+
+    /// Whether this VM and `other` claim the same machine identity.
+    ///
+    /// macOS identifiers compare the *effective* value, which falls back to the
+    /// bundle's identifier file exactly as the boot path does; generic
+    /// identifiers have no such file, so they compare configuration fields. A
+    /// VM with no identifier shares it with no one.
+    func sharesMachineIdentity(with other: VMInstance) -> Bool {
+        if let lhs = effectiveMachineIdentifierData, let rhs = other.effectiveMachineIdentifierData,
+            lhs == rhs
+        {
+            return true
+        }
+        if let lhs = configuration.genericMachineIdentifierData,
+            let rhs = other.configuration.genericMachineIdentifierData,
+            lhs == rhs
+        {
+            return true
+        }
+        return false
     }
 
     /// The configuration `kind` puts in front of VZ: this VM's own, except for

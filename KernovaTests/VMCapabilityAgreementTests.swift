@@ -85,29 +85,29 @@ struct VMCapabilityAgreementTests {
         case .info: _ = try core.info(vm)
         case .ipAddress: _ = try core.ipAddress(of: vm)
         case .snapshots: _ = try core.snapshots(of: vm)
-        case .start: try await core.start(vm, recovery: false)
-        case .cancelGuestSetup: try core.cancelGuestSetup(vm, confirmed: false)
+        case .start: try await core.start(vm, recovery: false, consent: .none)
+        case .cancelGuestSetup: try core.cancelGuestSetup(vm, consent: .none)
         case .stop, .discardSavedState:
-            try await core.stop(vm, disposition: .graceful, confirmed: false, timeout: nil)
+            try await core.stop(vm, disposition: .graceful, consent: .none, timeout: nil)
         case .forceStop:
-            try await core.stop(vm, disposition: .force, confirmed: false, timeout: nil)
+            try await core.stop(vm, disposition: .force, consent: .none, timeout: nil)
         case .restart: try await core.restart(vm, timeout: 1)
         case .pause: try await core.pause(vm)
-        case .resume: try await core.resume(vm)
+        case .resume: try await core.resume(vm, consent: .none)
         case .suspend: try await core.suspend(vm)
         case .open: try core.open(vm)
         case .reveal: try core.reveal(vm)
         case .takeSnapshot: _ = try await core.takeSnapshot(vm, name: "Agreement", notes: "")
         case .revertToSnapshot:
             try await core.revertToSnapshot(
-                vm, snapshot: snapshot.id, takingCheckpoint: false, confirmed: false)
-        case .deleteSnapshot: try await core.deleteSnapshot(vm, snapshot: snapshot.id, confirmed: false)
+                vm, snapshot: snapshot.id, takingCheckpoint: false, consent: .none)
+        case .deleteSnapshot: try await core.deleteSnapshot(vm, snapshot: snapshot.id, consent: .none)
         case .renameSnapshot: try core.renameSnapshot(vm, snapshot: snapshot.id, to: "Renamed")
         case .setSnapshotNotes: try core.setSnapshotNotes(vm, snapshot: snapshot.id, notes: "Noted")
         case .editStorageDisks: try core.renameStorageDisk(vm, disk: UUID(), to: "Label")
         case .createStorageDisk: try await core.createStorageDisk(vm, sizeInGB: 1)
         case .trashStorageDisk:
-            try await core.removeStorageDisk(vm, disk: UUID(), trashFile: true, confirmed: false)
+            try await core.removeStorageDisk(vm, disk: UUID(), trashFile: true, consent: .none)
         case .editRemovableMedia: try core.ejectRemovableMedia(vm, item: UUID())
         case .createRemovableMedia:
             try await core.createRemovableMedia(
@@ -120,7 +120,7 @@ struct VMCapabilityAgreementTests {
         case .editConfiguration:
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "cpus", value: String(instance.configuration.cpuCount + 1))],
-                confirmed: true)
+                consent: .all)
         case .editLiveConfiguration:
             try core.setConfiguration(
                 vm,
@@ -129,14 +129,14 @@ struct VMCapabilityAgreementTests {
                         key: "serial.socket",
                         value: String(!instance.configuration.serialSocketRelayEnabled))
                 ],
-                confirmed: true)
+                consent: .all)
         case .switchNetworkMode:
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
-                confirmed: true)
+                consent: .all)
         case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
-        case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], confirmed: false)
+        case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)
         case .showInFinder: try core.showInFinder(vm)
         case .toggleGuestAgentDisk: _ = try core.mountGuestAgentDisk(vm)
         case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleSettingsPane:

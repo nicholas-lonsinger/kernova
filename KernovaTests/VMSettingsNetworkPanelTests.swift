@@ -609,7 +609,8 @@ struct VMSettingsNetworkPanelTests {
     }
 
     private static let duplicateMACBanner =
-        "This MAC address is also used by “Holder”. Each virtual machine needs its own."
+        "This MAC address is also used by \u{201C}Holder\u{201D}. Virtual machines with the same "
+        + "MAC address can\u{2019}t run on the same network at once, but they can on separate networks."
 
     @Test("The Network section names another VM holding this VM's MAC address")
     func networkSectionDisclosesADuplicateMACAddress() {

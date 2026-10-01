@@ -190,14 +190,16 @@ struct VMCommandCoreAttachmentTests {
         let edit = await commandError {
             try harness.core.setConfiguration(
                 .id(instance.id), assignments: [ConfigurationEntry(key: "cpus", value: String(cpus + 1))],
-                confirmed: true)
+                consent: .all)
         }
         #expect(edit?.isBusy == true)
-        let start = await commandError { try await harness.core.start(.id(instance.id), recovery: false) }
+        let start = await commandError {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
         #expect(start?.isBusy == true)
         let delete = await commandError {
             try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], confirmed: true)
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
         #expect(delete?.isBusy == true)
 
@@ -328,7 +330,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness) { $0.storageDisks = [main, extra] }
 
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: extra.id, trashFile: false, confirmed: false)
+            .id(instance.id), disk: extra.id, trashFile: false, consent: .none)
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [main.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -344,7 +346,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: external.id, trashFile: true, confirmed: false)
+                .id(instance.id), disk: external.id, trashFile: true, consent: .none)
         }
         #expect(refusal?.confirmationPrompt?.kind == .removeAttachment)
         #expect(refusal?.confirmationPrompt?.confirmTitle == "Move to Trash")
@@ -352,7 +354,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.storageDisks?.count == 2)
 
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: external.id, trashFile: true, confirmed: true)
+            .id(instance.id), disk: external.id, trashFile: true, consent: .all)
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.fileSystem.trashedURLs == [URL(fileURLWithPath: path)])
@@ -367,7 +369,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness) { $0.storageDisks = [internalDisk, keeper] }
 
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: internalDisk.id, trashFile: true, confirmed: true)
+            .id(instance.id), disk: internalDisk.id, trashFile: true, consent: .all)
 
         #expect(
             harness.fileSystem.trashedURLs
@@ -389,13 +391,15 @@ struct VMCommandCoreAttachmentTests {
 
         let removal = Task { @MainActor in
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
         }
         try await harness.fileSystem.trashParked.wait { harness.fileSystem.isTrashParked }
         #expect(instance.phase.operation?.kind == .removingStorageDisk)
         // The entry went first; the file is what is still in flight.
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        let start = await commandError { try await harness.core.start(.id(instance.id), recovery: false) }
+        let start = await commandError {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
         #expect(start?.isBusy == true)
 
         harness.fileSystem.resumeTrash()
@@ -423,13 +427,13 @@ struct VMCommandCoreAttachmentTests {
         // A shared file is offered detach-only, so that is what confirming does.
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(target.id), disk: disk.id, trashFile: true, confirmed: false)
+                .id(target.id), disk: disk.id, trashFile: true, consent: .none)
         }
         #expect(refusal?.confirmationPrompt?.confirmTitle == "Remove from VM")
         #expect(refusal?.confirmationPrompt?.message.contains("Other") == true)
 
         try await harness.core.removeStorageDisk(
-            .id(target.id), disk: disk.id, trashFile: true, confirmed: true)
+            .id(target.id), disk: disk.id, trashFile: true, consent: .all)
 
         #expect(target.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -447,12 +451,12 @@ struct VMCommandCoreAttachmentTests {
 
         harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: ghost.id, trashFile: true, confirmed: true)
+            .id(instance.id), disk: ghost.id, trashFile: true, consent: .all)
         #expect(failures.isEmpty)
 
         harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: doomed.id, trashFile: true, confirmed: true)
+            .id(instance.id), disk: doomed.id, trashFile: true, consent: .all)
 
         // The entry goes either way; only the second failure is worth telling
         // the user about.
@@ -470,7 +474,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: synthetic.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: synthetic.id, trashFile: true, consent: .all)
         }
 
         #expect(refusal?.isOperationFailure == true)
@@ -487,7 +491,7 @@ struct VMCommandCoreAttachmentTests {
         harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [main, extra] }
 
         try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: main.id, trashFile: true, confirmed: true)
+            .id(instance.id), disk: main.id, trashFile: true, consent: .all)
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
         #expect(
@@ -503,7 +507,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: extra.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: extra.id, trashFile: true, consent: .all)
         }
 
         #expect(refusal?.isOperationFailure == true)
@@ -526,7 +530,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: external.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: external.id, trashFile: true, consent: .all)
         }
 
         #expect(refusal?.isOperationFailure == true)
@@ -549,7 +553,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
         }
 
         #expect(refusal?.isOperationFailure == true)
@@ -673,7 +677,7 @@ struct VMCommandCoreAttachmentTests {
         }
         try await diskImages.parked.wait { diskImages.isParked }
         try await harness.core.stop(
-            .id(instance.id), disposition: .force, confirmed: true, timeout: nil)
+            .id(instance.id), disposition: .force, consent: .all, timeout: nil)
         // The stop is tolerated; the creation still holds the VM.
         #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
 
@@ -752,12 +756,12 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeRemovableMedia(
-                .id(instance.id), item: item.id, trashFile: true, confirmed: false)
+                .id(instance.id), item: item.id, trashFile: true, consent: .none)
         }
         #expect(refusal?.confirmationPrompt?.kind == .removeAttachment)
 
         try await harness.core.removeRemovableMedia(
-            .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+            .id(instance.id), item: item.id, trashFile: true, consent: .all)
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.fileSystem.trashedURLs == [URL(fileURLWithPath: path)])
@@ -774,12 +778,12 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeRemovableMedia(
-                .id(instance.id), item: item.id, trashFile: true, confirmed: false)
+                .id(instance.id), item: item.id, trashFile: true, consent: .none)
         }
         #expect(refusal?.confirmationPrompt?.message.contains("isn't deleted") == true)
 
         try await harness.core.removeRemovableMedia(
-            .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+            .id(instance.id), item: item.id, trashFile: true, consent: .all)
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -1198,7 +1202,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: disk.id, trashFile: true, confirmed: true)
+                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
         }
 
         // The bring-up holds the VM, and the removal is what the VM takes
@@ -1224,7 +1228,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeRemovableMedia(
-                .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+                .id(instance.id), item: item.id, trashFile: true, consent: .all)
         }
 
         // The bring-up holds the VM, and the removal is what the VM takes
@@ -1248,7 +1252,7 @@ struct VMCommandCoreAttachmentTests {
 
         let refusal = await commandError {
             try await harness.core.removeRemovableMedia(
-                .id(instance.id), item: item.id, trashFile: true, confirmed: true)
+                .id(instance.id), item: item.id, trashFile: true, consent: .all)
         }
 
         #expect(refusal?.isOperationFailure == true)
@@ -1311,7 +1315,7 @@ struct VMCommandCoreAttachmentTests {
         let removeError = try #require(
             await commandError {
                 try await harness.core.removeStorageDisk(
-                    .id(source.id), disk: disk.id, trashFile: false, confirmed: true)
+                    .id(source.id), disk: disk.id, trashFile: false, consent: .all)
             })
         guard case .busy(let vm, let operation) = removeError else {
             Issue.record("expected a busy refusal, got \(removeError)")
@@ -1357,7 +1361,7 @@ struct VMCommandCoreAttachmentTests {
         }
         let removeRefusal = await commandError {
             try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: gone, trashFile: false, confirmed: true)
+                .id(instance.id), disk: gone, trashFile: false, consent: .all)
         }
 
         #expect(renameRefusal?.isOperationFailure == true)

@@ -66,8 +66,6 @@ struct VMOverviewResolved: Sendable {
     var micWarning: MicWarningState = .none
     /// The banner message a category's panel shows, by category.
     var warnings: [VMSettingsCategory: String] = [:]
-    /// The Network section's note naming the VMs this one is an exact copy of.
-    var exactCopyNote: String?
 }
 
 /// What each overview card states about a VM: the facts answering "what is this
@@ -238,12 +236,8 @@ enum VMOverviewSummary {
     /// full-width sentence rather than a key and a value, `nil` where the
     /// category states none.
     @MainActor
-    static func note(
-        for category: VMSettingsCategory, instance: VMInstance, resolved: VMOverviewResolved
-    ) -> String? {
+    static func note(for category: VMSettingsCategory, instance: VMInstance) -> String? {
         switch category {
-        case .network:
-            return resolved.exactCopyNote
         case .sharing:
             let config = instance.configuration
             let count = (config.sharedDirectories ?? []).count
@@ -257,7 +251,7 @@ enum VMOverviewSummary {
             // states what is running, as the panel dims the switch that isn't.
             let passthrough = config.clipboardPassthroughIsEffective ? "on" : "off"
             return "Passthrough \(passthrough) \u{00B7} \(folders)"
-        case .general, .system, .storage, .snapshots:
+        case .general, .system, .storage, .network, .snapshots:
             return nil
         }
     }

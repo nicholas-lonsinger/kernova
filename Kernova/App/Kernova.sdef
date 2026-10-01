@@ -101,6 +101,9 @@
 			<parameter name="recovery mode" code="Kprc" type="boolean" optional="yes" description="Cold-boot a stopped macOS guest into macOS Recovery.">
 				<cocoa key="RecoveryMode"/>
 			</parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
 		</command>
 
 		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
@@ -145,6 +148,9 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Resume it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
 		</command>
 
 		<command name="suspend" code="KrnvSusp" description="Save the guest's state to the bundle's suspend slot and stop running it.">

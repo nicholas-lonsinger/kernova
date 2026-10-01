@@ -51,9 +51,9 @@ struct VMLibraryIntentTests {
 
         _ = try await gateway.clone(vm, outcome: .exactCopy)
         try await gateway.rename(vm, to: "Renamed")
-        try await gateway.delete(vm, confirmed: true)
-        try await gateway.cancelPreparing(vm, confirmed: true)
-        try await gateway.cancelGuestSetup(vm, confirmed: true)
+        try await gateway.delete(vm, consent: .all)
+        try await gateway.cancelPreparing(vm, consent: .all)
+        try await gateway.cancelGuestSetup(vm, consent: .all)
 
         #expect(commands.cloneCalls.map(\.selector) == [.id(vm)])
         #expect(commands.cloneCalls.map(\.outcome) == [.exactCopy])
@@ -175,12 +175,12 @@ struct VMLibraryIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
-            try await gateway.delete(vm, confirmed: confirmed)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.delete(vm, consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.deleteVM])
-        #expect(commands.deleteCalls.map(\.confirmed) == [false, true])
+        #expect(commands.deleteCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
         #expect(commands.deleteCalls.allSatisfy { !$0.permanently })
         #expect(commands.deleteCalls.allSatisfy { $0.alsoRemoving.isEmpty })
     }
@@ -199,16 +199,16 @@ struct VMLibraryIntentTests {
         let gateway = makeGateway(commands)
         var asked: [ConfirmationPrompt] = []
 
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
-            try await gateway.cancelPreparing(vm, confirmed: confirmed)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.cancelPreparing(vm, consent: consent)
         }
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { confirmed in
-            try await gateway.cancelGuestSetup(vm, confirmed: confirmed)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.cancelGuestSetup(vm, consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.cancelPreparing, .cancelGuestSetup])
-        #expect(commands.cancelPreparingCalls.map(\.confirmed) == [false, true])
-        #expect(commands.cancelGuestSetupCalls.map(\.confirmed) == [false, true])
+        #expect(commands.cancelPreparingCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
+        #expect(commands.cancelGuestSetupCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
     // MARK: - Error Surfacing

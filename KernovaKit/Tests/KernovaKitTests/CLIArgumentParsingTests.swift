@@ -376,7 +376,7 @@ struct CLIArgumentParsingTests {
             try bare.verb()
                 == .setConfiguration(
                     .idOrName("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "4")],
-                    confirmed: false))
+                    consent: .none))
 
         let consented = try #require(
             try parse(["set", "Alpha", "clipboard.passthrough=true", "--yes"])
@@ -386,7 +386,7 @@ struct CLIArgumentParsingTests {
                 == .setConfiguration(
                     .idOrName("Alpha"),
                     assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                    confirmed: true))
+                    consent: .all))
     }
 
     @Test("A share is writable unless --read-only says otherwise, and its path is made absolute")

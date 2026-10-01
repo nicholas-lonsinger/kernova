@@ -12,7 +12,7 @@ public enum StorageDiskEdit: Codable, Sendable, Hashable {
     /// Writes a new sparse image inside the VM's bundle and appends it.
     case create(sizeInGB: Int)
     /// Drops the entry, and with `trashFile` the file behind it.
-    case remove(disk: UUID, trashFile: Bool, confirmed: Bool)
+    case remove(disk: UUID, trashFile: Bool, consent: Consent)
     /// Replaces the disk's user-facing label.
     case rename(disk: UUID, newLabel: String)
     /// Replaces the disk's free-form note.
@@ -31,7 +31,7 @@ public enum StorageDiskEdit: Codable, Sendable, Hashable {
 /// grant.
 public enum RemovableMediaEdit: Codable, Sendable, Hashable {
     /// Drops the entry, and with `trashFile` the file behind it.
-    case remove(item: UUID, trashFile: Bool, confirmed: Bool)
+    case remove(item: UUID, trashFile: Bool, consent: Consent)
     /// Drops the entry and keeps the file — what a running guest sees as an
     /// eject.
     case eject(item: UUID)

@@ -98,6 +98,15 @@ struct GuestAccountPasswordRequest {
     let answer: @MainActor (GuestAccountPasswordAnswer) -> Void
 }
 
+/// A confirmation a verb the user started refused without, put to the user
+/// while that verb waits for the answer.
+struct ConfirmationRequest {
+    /// What the core is asking, in its own words.
+    let prompt: ConfirmationPrompt
+    /// Answers the prompt: `true` to go ahead, `false` to walk away.
+    let answer: @MainActor (Bool) -> Void
+}
+
 /// Imperative presentation interface the view model calls to surface alerts,
 /// sheets, and the creation wizard.
 @MainActor
@@ -146,6 +155,12 @@ protocol VMLibraryPresenting: AnyObject {
     /// right now: only the user may decide to boot without the account, because
     /// that decision retracts it.
     func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest)
+    /// Ask the user to confirm what a verb they started refused without.
+    ///
+    /// The request's `answer` is called exactly once — the verb that raised it
+    /// is suspended until it arrives — with `false` when the window it would be
+    /// asked in goes away first.
+    func presentConfirmationRequest(_ request: ConfirmationRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

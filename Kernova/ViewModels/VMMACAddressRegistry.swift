@@ -7,10 +7,6 @@ import KernovaLogging
 /// holders on one network, and the trace of every fault (docs/NETWORKING.md,
 /// a MAC address belongs to one virtual machine).
 ///
-/// An address is one machine's: exact copies of each other
-/// (``VMIdentityKinship/exactCopy``) hold it as that one machine, and only an
-/// address held under more than one machine identity is a fault.
-///
 /// A VM holds the address its configuration carries and the one each of its
 /// snapshots was taken with, until that snapshot is deleted: a revert puts
 /// the VM back on the snapshot's address — a warm snapshot's saved state
@@ -99,10 +95,7 @@ final class VMMACAddressRegistry {
             let live = liveMACAddressConflict(for: new, excluding: instance),
             liveMACAddressConflict(for: old, excluding: instance) == nil
         else { return nil }
-        return MACAddressConflict(
-            other: live,
-            reason: instance.kinship(with: live, bringingUp: new) == .exactCopy
-                ? .exactCopy(bar: .oneNetwork) : .macAddress)
+        return MACAddressConflict(other: live, reason: .macAddress)
     }
 
     /// Whether `a` and `b` put the same address on the same network — what
@@ -162,68 +155,46 @@ final class VMMACAddressRegistry {
         }
     }
 
-    /// The other VMs in the library whose configuration carries `instance`'s
-    /// MAC address, by name in library order: those that are exact copies of
-    /// it, and those holding the address under another machine identity — the
-    /// fault. Both are empty when no other configuration carries the address.
+    /// Names of the other VMs in the library whose configuration carries
+    /// `instance`'s MAC address, in library order — empty when no other
+    /// configuration does.
     ///
     /// A snapshot's hold is left out: it puts the address on no network until
     /// a revert makes it the configuration's.
-    func macAddressPeers(of instance: VMInstance) -> (exactCopies: [String], faults: [String]) {
-        guard let mac = instance.configuration.macAddress else { return ([], []) }
-        var peers: (exactCopies: [String], faults: [String]) = ([], [])
-        for other in configurationHolders(of: mac, otherThan: instance) {
-            if instance.kinship(with: other) == .exactCopy {
-                peers.exactCopies.append(other.name)
-            } else {
-                peers.faults.append(other.name)
-            }
-        }
-        return peers
+    func vmNamesSharingMACAddress(with instance: VMInstance) -> [String] {
+        guard let mac = instance.configuration.macAddress else { return [] }
+        return configurationHolders(of: mac, otherThan: instance).map(\.name)
     }
 
-    /// Every MAC address the library holds under more than one machine
-    /// identity, in configurations or snapshots — a snapshot's hold under its
-    /// own VM's identity, which a revert keeps — with each holder, in library
-    /// order. Exact copies of each other hold their address as one machine and
-    /// are no fault.
-    func macAddressFaults() -> [(address: String, holders: [(vm: VMInstance, holding: MACAddressHolding)])] {
+    /// Every MAC address more than one VM in the library holds, in
+    /// configurations or snapshots, with each holder in library order.
+    func sharedMACAddresses() -> [(address: String, holders: [(vm: VMInstance, holding: MACAddressHolding)])] {
         let addresses = Set(
             instances.flatMap { vm in
                 [vm.configuration.macAddress] + vm.snapshotManifest.snapshots.map(\.macAddress)
             }.compactMap { $0?.lowercased() })
-        return addresses.sorted().compactMap { mac in
-            let holders = instances.compactMap { vm in
-                Self.holding(of: mac, by: vm).map { (vm: vm, holding: $0) }
+        return addresses.sorted().compactMap {
+            mac -> (address: String, holders: [(vm: VMInstance, holding: MACAddressHolding)])? in
+            let holders: [(vm: VMInstance, holding: MACAddressHolding)] = instances.compactMap {
+                vm in Self.holding(of: mac, by: vm).map { (vm: vm, holding: $0) }
             }
-            guard Self.machineIdentityCount(of: holders.map(\.vm)) > 1 else { return nil }
-            return (mac, holders)
+            guard holders.count > 1 else { return nil }
+            return (address: mac, holders: holders)
         }
     }
 
-    /// How many distinct machine identities `vms` carry. A VM with no
-    /// identifier is an identity of its own, so one VM is always one.
-    private static func machineIdentityCount(of vms: [VMInstance]) -> Int {
-        var representatives: [VMInstance] = []
-        for vm in vms where !representatives.contains(where: { vm === $0 || vm.sharesMachineIdentity(with: $0) }) {
-            representatives.append(vm)
-        }
-        return representatives.count
-    }
-
-    /// Records each of ``macAddressFaults()``.
+    /// Records each of ``sharedMACAddresses()``.
     ///
     /// Import, load and reconcile admit whatever address a bundle arrives
-    /// carrying, so this is where a fault becomes traceable. Runs once each of
-    /// those has taken in the bundle's snapshots.
+    /// carrying, so this is where a shared address becomes traceable. Runs
+    /// once each of those has taken in the bundle's snapshots.
     func logDuplicateMACAddressHolders() {
-        for fault in macAddressFaults() {
-            let names = fault.holders.map { "'\($0.vm.name)' (\(Self.describe($0.holding)))" }
+        for shared in sharedMACAddresses() {
+            let names = shared.holders.map { "'\($0.vm.name)' (\(Self.describe($0.holding)))" }
                 .joined(separator: ", ")
             #log(
                 Self.logger, .warning,
-                "MAC address \(fault.address, privacy: .public) is held under more than one machine identity, by \(names, privacy: .public)"
-            )
+                "MAC address \(shared.address, privacy: .public) is held by \(names, privacy: .public)")
         }
     }
 

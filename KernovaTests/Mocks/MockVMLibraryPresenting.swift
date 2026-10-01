@@ -48,6 +48,11 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// request would hang the call under test rather than fail it.
     var guestAccountPasswordAnswer: GuestAccountPasswordAnswer = .skip
     private(set) var focusGuestDisplayInstances: [VMInstance] = []
+    /// Confirmations a verb asked for, in order.
+    private(set) var confirmationRequests: [ConfirmationRequest] = []
+    /// What this mock answers a confirmation with, answered on the spot for the
+    /// reason ``guestAccountPasswordAnswer`` is.
+    var confirmationAnswer = false
 
     func presentError(_ message: String, title: String) {
         errors.append(message)
@@ -89,6 +94,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
         guestAccountPasswordRequests.append(request)
         request.answer(guestAccountPasswordAnswer)
+    }
+    func presentConfirmationRequest(_ request: ConfirmationRequest) {
+        confirmationRequests.append(request)
+        request.answer(confirmationAnswer)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {

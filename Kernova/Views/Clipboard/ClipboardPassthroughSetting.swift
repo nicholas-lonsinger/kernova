@@ -69,7 +69,7 @@ struct ClipboardPassthroughSetting {
     func confirm(_ change: Change) {
         guard
             case .applied = viewModel.setConfiguration(
-                [change.assignment], on: instance, confirmed: true)
+                [change.assignment], on: instance, consent: Consent([.enableClipboardPassthrough]))
         else {
             // Refused or unsaved, the configuration kept its old value, which
             // the controls go back to showing.

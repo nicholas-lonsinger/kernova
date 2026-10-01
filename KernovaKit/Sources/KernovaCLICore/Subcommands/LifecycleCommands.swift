@@ -44,7 +44,10 @@ extension KernovaCommand {
                 + "is what a script watches it with.\n\nA virtual machine that creates a macOS account on its "
                 + "first boot is started in Kernova, which asks for the account's password in a "
                 + "sheet. This tool takes no password, because it runs in the App Sandbox, which "
-                + "denies turning terminal echo off, and such a start exits 5.")
+                + "denies turning terminal echo off, and such a start exits 5.\n\nA virtual "
+                + "machine with the same machine ID as one that is active is refused. With Offer "
+                + "to start duplicate machine IDs anyway on in Kernova\u{2019}s Settings, --yes "
+                + "starts it anyway.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -61,7 +64,7 @@ extension KernovaCommand {
         func verb() throws -> VMCommandRequest.Verb {
             .start(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                recovery: recovery)
+                recovery: recovery, consent: options.consent)
         }
 
         /// Starts the VM.
@@ -105,7 +108,7 @@ extension KernovaCommand {
         func verb() throws -> VMCommandRequest.Verb {
             .stop(
                 try SelectorParsing.selector(from: vm, forcingID: options.id),
-                disposition: method.disposition, confirmed: options.yes, timeout: timeout)
+                disposition: method.disposition, consent: options.consent, timeout: timeout)
         }
 
         /// Stops the VM.
@@ -182,7 +185,9 @@ extension KernovaCommand {
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .resume(try SelectorParsing.selector(from: vm, forcingID: options.id))
+            .resume(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                consent: options.consent)
         }
 
         /// Resumes the VM.

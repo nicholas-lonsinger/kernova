@@ -3,8 +3,8 @@ import Foundation
 import KernovaKit
 
 extension AppIntent {
-    /// Runs a destructive verb, raising the framework's own confirmation for the
-    /// consent it refuses without (``VMConsentPolicy/run(prompting:_:)``).
+    /// Runs a verb, raising the framework's own confirmation for each consent
+    /// it refuses without (``VMConsentPolicy/run(prompting:_:)``).
     ///
     /// `asking` turns the refusal into the confirm action's label and whether
     /// taking it destroys anything; by default both are the ones the core named.
@@ -16,7 +16,7 @@ extension AppIntent {
         asking: (ConfirmationPrompt) throws -> (title: String, isDestructive: Bool) = {
             ($0.confirmTitle, $0.confirmIsDestructive)
         },
-        _ body: (_ confirmed: Bool) async throws -> Void
+        _ body: (Consent) async throws -> Void
     ) async throws {
         try await VMConsentPolicy.run(
             prompting: { prompt in

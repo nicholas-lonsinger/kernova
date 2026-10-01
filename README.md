@@ -52,7 +52,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Lifecycle** | Start, stop, pause, resume, suspend, and restore. Force Stop for a hung VM; one-shot Start in Recovery Mode for macOS. |
 | **Snapshots** | Named restore points with notes, taken running, suspended, or stopped — the first two capture memory too. Copy-on-write with the VM's own disks, so a snapshot is near-instant and adds little on disk. Revert is repeatable. |
 | **Ephemeral mode** | Per-VM: every shutdown reverts to a chosen baseline snapshot. Suspend keeps the session; a sidebar badge marks the throwaway VM. |
-| **Clone & import** | Clone as a New Machine, with its own machine identity and MAC address, or as an Exact Copy of its source — a setting picks the default, and the Virtual Machine menu's second Clone item does the other. A guest running macOS 12 or earlier is cloned as an Exact Copy only. Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
+| **Clone & import** | Clone as a New Machine, with its own machine identity and MAC address, or as an Exact Copy that keeps both, which never runs on the same network as its source at once and runs beside it only when you start it anyway — a setting picks the default, and the Virtual Machine menu's second Clone item does the other. A guest running macOS 12 or earlier is cloned as an Exact Copy only. Import `.kernova` bundles by double-click or drag-and-drop — an instant APFS clone on the same volume. |
 | **Headless** | A menu bar item keeps VMs running after the last window closes and lists each one with its status. Quit save-suspends; sleep pauses, wake resumes. |
 | **Auto-start** | Per-VM boot (or resume) whenever Kernova opens — with Open at Login, the Mac comes up with them running. |
 
@@ -122,7 +122,7 @@ Pure AppKit in the **Liquid Glass** design language — a source-list sidebar wi
 | **General** | Open at Login · keep running in the menu bar |
 | **Reminders** | Menu bar quit reminder · guest-agent install nudge, app-wide and per VM |
 | **Clipboard** | Maximum paste size |
-| **Advanced** | Always show the ⌥-revealed context-menu items · block duplicate machine IDs from booting · clone as New Machine or Exact Copy · install the CLI and shell completions |
+| **Advanced** | Always show the ⌥-revealed context-menu items · offer to start duplicate machine IDs anyway · clone as New Machine or Exact Copy · install the CLI and shell completions |
 
 ## Automation
 

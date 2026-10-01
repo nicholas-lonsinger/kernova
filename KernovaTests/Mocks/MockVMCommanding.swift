@@ -124,25 +124,28 @@ final class MockVMCommanding: VMCommanding {
     private(set) var sharingVMNamesCalls: [(selector: VMSelector, path: String, bookmark: Data?)] =
         []
     private(set) var removeStartFailedAttachmentCalls: [(selector: VMSelector, attachment: StartFailedAttachment)] = []
-    private(set) var startCalls: [(selector: VMSelector, recovery: Bool)] = []
+    private(set) var startCalls: [(selector: VMSelector, recovery: Bool, consent: Consent)] = []
     private(set) var provideGuestAccountPasswordCalls: [(selector: VMSelector, password: String)] = []
     private(set) var skipGuestAccountSelectors: [VMSelector] = []
     private(set) var stopCalls:
         [(
-            selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+            selector: VMSelector, disposition: StopDisposition, consent: Consent,
             timeout: TimeInterval?
         )] = []
     private(set) var pauseSelectors: [VMSelector] = []
     private(set) var resumeSelectors: [VMSelector] = []
+    /// Each resume's consent, in the order of ``resumeSelectors``.
+    private(set) var resumeConsents: [Consent] = []
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartCalls: [(selector: VMSelector, timeout: TimeInterval?)] = []
     private(set) var openSelectors: [VMSelector] = []
     private(set) var revealSelectors: [VMSelector] = []
     private(set) var showInFinderSelectors: [VMSelector] = []
-    private(set) var cancelGuestSetupCalls: [(selector: VMSelector, confirmed: Bool)] = []
+    private(set) var cancelGuestSetupCalls: [(selector: VMSelector, consent: Consent)] = []
     private(set) var takeSnapshotCalls: [(selector: VMSelector, name: String, notes: String)] = []
-    private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool)] = []
-    private(set) var deleteSnapshotCalls: [(selector: VMSelector, snapshot: UUID, confirmed: Bool)] =
+    private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent)] =
+        []
+    private(set) var deleteSnapshotCalls: [(selector: VMSelector, snapshot: UUID, consent: Consent)] =
         []
     private(set) var renameSnapshotCalls: [(selector: VMSelector, snapshot: UUID, newName: String)] =
         []
@@ -155,14 +158,15 @@ final class MockVMCommanding: VMCommanding {
         []
     private(set) var renameCalls: [(selector: VMSelector, newName: String)] = []
     private(set) var deleteCalls:
-        [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool)] = []
+        [(selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent)] = []
     private(set) var importURLs: [URL] = []
     /// Each import's `waitForOutcome`, in the order of ``importURLs``.
     private(set) var importWaits: [Bool] = []
-    private(set) var cancelPreparingCalls: [(selector: VMSelector, confirmed: Bool)] = []
+    private(set) var cancelPreparingCalls: [(selector: VMSelector, consent: Consent)] = []
     private(set) var attachStorageDiskCalls: [(selector: VMSelector, files: [PickedFile])] = []
     private(set) var createStorageDiskCalls: [(selector: VMSelector, sizeInGB: Int)] = []
-    private(set) var removeStorageDiskCalls: [(selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool)] = []
+    private(set) var removeStorageDiskCalls: [(selector: VMSelector, disk: UUID, trashFile: Bool, consent: Consent)] =
+        []
     private(set) var renameStorageDiskCalls: [(selector: VMSelector, disk: UUID, newLabel: String)] =
         []
     private(set) var setStorageDiskNotesCalls: [(selector: VMSelector, disk: UUID, notes: String)] =
@@ -171,8 +175,9 @@ final class MockVMCommanding: VMCommanding {
     private(set) var reorderStorageDisksCalls: [(selector: VMSelector, order: [UUID])] = []
     private(set) var attachRemovableMediaCalls: [(selector: VMSelector, files: [PickedFile])] = []
     private(set) var createRemovableMediaCalls: [(selector: VMSelector, sizeInGB: Int, destinationURL: URL)] = []
-    private(set) var removeRemovableMediaCalls: [(selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool)] =
-        []
+    private(set) var removeRemovableMediaCalls:
+        [(selector: VMSelector, item: UUID, trashFile: Bool, consent: Consent)] =
+            []
     private(set) var ejectRemovableMediaCalls: [(selector: VMSelector, item: UUID)] = []
     private(set) var renameRemovableMediaCalls: [(selector: VMSelector, item: UUID, newLabel: String)] = []
     private(set) var setRemovableMediaNotesCalls: [(selector: VMSelector, item: UUID, notes: String)] = []
@@ -185,7 +190,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var detachUSBAccessoryCalls: [(selector: VMSelector, device: UUID)] = []
     private(set) var configurationCalls: [(selector: VMSelector, keys: [String]?)] = []
     private(set) var setConfigurationCalls:
-        [(selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool)] = []
+        [(selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent)] = []
     private(set) var configurationKeysCallCount = 0
     private(set) var setSharedDirectoryReadOnlyCalls: [(selector: VMSelector, directory: UUID, readOnly: Bool)] = []
     private(set) var mountGuestAgentDiskSelectors: [VMSelector] = []
@@ -243,9 +248,14 @@ final class MockVMCommanding: VMCommanding {
     var sharedDirectoryEditError: (any Error)?
     var guestAgentDiskError: (any Error)?
 
-    /// Refuses `stop` until it is called with `confirmed: true`, then succeeds —
+    /// Refuses `stop` until its consent covers the prompt's kind, then succeeds —
     /// the consent round trip every destructive verb performs.
     var stopConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `start`, raised before the account question as
+    /// the core's admission is.
+    var startConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `resume`.
+    var resumeConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `revertToSnapshot`.
     var revertConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `deleteSnapshot`.
@@ -376,8 +386,11 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Lifecycle
 
-    func start(_ selector: VMSelector, recovery: Bool) async throws {
-        startCalls.append((selector, recovery))
+    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
+        startCalls.append((selector, recovery, consent))
+        if let startConsentPrompt, !consent.covers(startConsentPrompt.kind) {
+            throw CommandError.confirmationRequired(startConsentPrompt)
+        }
         if let guestAccountPrompt, !recovery {
             throw CommandError.guestAccountPasswordRequired(guestAccountPrompt)
         }
@@ -403,21 +416,21 @@ final class MockVMCommanding: VMCommanding {
         guestAccountPrompt = nil
     }
 
-    func cancelGuestSetup(_ selector: VMSelector, confirmed: Bool) throws {
-        cancelGuestSetupCalls.append((selector, confirmed))
+    func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws {
+        cancelGuestSetupCalls.append((selector, consent))
         if let cancelGuestSetupError { throw cancelGuestSetupError }
-        if let cancelGuestSetupConsentPrompt, !confirmed {
+        if let cancelGuestSetupConsentPrompt, !consent.covers(cancelGuestSetupConsentPrompt.kind) {
             throw CommandError.confirmationRequired(cancelGuestSetupConsentPrompt)
         }
     }
 
     func stop(
-        _ selector: VMSelector, disposition: StopDisposition, confirmed: Bool,
+        _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval?
     ) async throws {
-        stopCalls.append((selector, disposition, confirmed, timeout))
+        stopCalls.append((selector, disposition, consent, timeout))
         if let stopError { throw stopError }
-        if let stopConsentPrompt, !confirmed {
+        if let stopConsentPrompt, !consent.covers(stopConsentPrompt.kind) {
             throw CommandError.confirmationRequired(stopConsentPrompt)
         }
     }
@@ -427,8 +440,12 @@ final class MockVMCommanding: VMCommanding {
         if let pauseError { throw pauseError }
     }
 
-    func resume(_ selector: VMSelector) async throws {
+    func resume(_ selector: VMSelector, consent: Consent) async throws {
         resumeSelectors.append(selector)
+        resumeConsents.append(consent)
+        if let resumeConsentPrompt, !consent.covers(resumeConsentPrompt.kind) {
+            throw CommandError.confirmationRequired(resumeConsentPrompt)
+        }
         if let resumeError { throw resumeError }
     }
 
@@ -476,19 +493,19 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, confirmed: Bool
+        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent
     ) async throws {
-        revertCalls.append((selector, snapshot, takingCheckpoint, confirmed))
+        revertCalls.append((selector, snapshot, takingCheckpoint, consent))
         if let revertError { throw revertError }
-        if let revertConsentPrompt, !confirmed {
+        if let revertConsentPrompt, !consent.covers(revertConsentPrompt.kind) {
             throw CommandError.confirmationRequired(revertConsentPrompt)
         }
     }
 
-    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, confirmed: Bool) async throws {
-        deleteSnapshotCalls.append((selector, snapshot, confirmed))
+    func deleteSnapshot(_ selector: VMSelector, snapshot: UUID, consent: Consent) async throws {
+        deleteSnapshotCalls.append((selector, snapshot, consent))
         if let deleteSnapshotError { throw deleteSnapshotError }
-        if let deleteSnapshotConsentPrompt, !confirmed {
+        if let deleteSnapshotConsentPrompt, !consent.covers(deleteSnapshotConsentPrompt.kind) {
             throw CommandError.confirmationRequired(deleteSnapshotConsentPrompt)
         }
     }
@@ -565,11 +582,11 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func delete(
-        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, confirmed: Bool
+        _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws {
-        deleteCalls.append((selector, permanently, alsoRemoving, confirmed))
+        deleteCalls.append((selector, permanently, alsoRemoving, consent))
         if let deleteError { throw deleteError }
-        if let deleteConsentPrompt, !confirmed {
+        if let deleteConsentPrompt, !consent.covers(deleteConsentPrompt.kind) {
             throw CommandError.confirmationRequired(deleteConsentPrompt)
         }
     }
@@ -608,10 +625,10 @@ final class MockVMCommanding: VMCommanding {
         return imported
     }
 
-    func cancelPreparing(_ selector: VMSelector, confirmed: Bool) throws {
-        cancelPreparingCalls.append((selector, confirmed))
+    func cancelPreparing(_ selector: VMSelector, consent: Consent) throws {
+        cancelPreparingCalls.append((selector, consent))
         if let cancelPreparingError { throw cancelPreparingError }
-        if let cancelPreparingConsentPrompt, !confirmed {
+        if let cancelPreparingConsentPrompt, !consent.covers(cancelPreparingConsentPrompt.kind) {
             throw CommandError.confirmationRequired(cancelPreparingConsentPrompt)
         }
     }
@@ -629,11 +646,11 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func removeStorageDisk(
-        _ selector: VMSelector, disk: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, disk: UUID, trashFile: Bool, consent: Consent
     ) async throws {
-        removeStorageDiskCalls.append((selector, disk, trashFile, confirmed))
+        removeStorageDiskCalls.append((selector, disk, trashFile, consent))
         if let storageDiskEditError { throw storageDiskEditError }
-        if let removeAttachmentConsentPrompt, trashFile, !confirmed {
+        if let removeAttachmentConsentPrompt, trashFile, !consent.covers(removeAttachmentConsentPrompt.kind) {
             throw CommandError.confirmationRequired(removeAttachmentConsentPrompt)
         }
     }
@@ -671,11 +688,11 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func removeRemovableMedia(
-        _ selector: VMSelector, item: UUID, trashFile: Bool, confirmed: Bool
+        _ selector: VMSelector, item: UUID, trashFile: Bool, consent: Consent
     ) async throws {
-        removeRemovableMediaCalls.append((selector, item, trashFile, confirmed))
+        removeRemovableMediaCalls.append((selector, item, trashFile, consent))
         if let removableMediaEditError { throw removableMediaEditError }
-        if let removeAttachmentConsentPrompt, trashFile, !confirmed {
+        if let removeAttachmentConsentPrompt, trashFile, !consent.covers(removeAttachmentConsentPrompt.kind) {
             throw CommandError.confirmationRequired(removeAttachmentConsentPrompt)
         }
     }
@@ -754,9 +771,9 @@ final class MockVMCommanding: VMCommanding {
 
     @discardableResult
     func setConfiguration(
-        _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
+        _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
-        setConfigurationCalls.append((selector, assignments, confirmed))
+        setConfigurationCalls.append((selector, assignments, consent))
         if let setConfigurationError { throw setConfigurationError }
         return assignments
     }

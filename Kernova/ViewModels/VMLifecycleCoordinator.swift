@@ -76,6 +76,7 @@ final class VMLifecycleCoordinator {
     @discardableResult
     func launchStart(
         _ instance: VMInstance, _ kind: VMGuestStartKind,
+        identity: VMIdentityOverride = .unavailable,
         provisioning: GuestProvisioningCredentials? = nil,
         resolving outcome: VMOutcome = VMOutcome(),
         beforeBoot: @escaping @MainActor (borrowing VMEditPermit) -> Void = { _ in },
@@ -83,7 +84,7 @@ final class VMLifecycleCoordinator {
             _, _ in
         }
     ) throws -> VMOutcome {
-        try instance.activity.launchStartGuest(kind, resolving: outcome) {
+        try instance.activity.launchStartGuest(kind, identity: identity, resolving: outcome) {
             [virtualizationService] context in
             beforeBoot(context.bringUp.operation.permit)
             let ending = try await virtualizationService.start(
@@ -231,13 +232,15 @@ final class VMLifecycleCoordinator {
     @discardableResult
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, resumesAfter: Bool,
-        origin: VMRequestOrigin = .newWork, resolving outcome: VMOutcome = VMOutcome(),
+        origin: VMRequestOrigin = .newWork, identity: VMIdentityOverride = .unavailable,
+        resolving outcome: VMOutcome = VMOutcome(),
         commitConfiguration:
             @escaping @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void,
         landed: @escaping @MainActor (borrowing VMEditPermit) throws -> Void
     ) throws -> VMOutcome {
         try instance.activity.launchRevert(
-            to: snapshot, resumesAfter: resumesAfter, origin: origin, resolving: outcome
+            to: snapshot, resumesAfter: resumesAfter, origin: origin, identity: identity,
+            resolving: outcome
         ) {
             [virtualizationService] context in
             let ending = try await virtualizationService.revertToSnapshot(
@@ -344,10 +347,11 @@ final class VMLifecycleCoordinator {
     /// rests the VM at `.initialBoot` for a retry that resumes the download.
     ///
     /// `whenEnded` runs at the setup's ending commit — see
-    /// ``VMActivity/launchBringUp(_:whenEnded:_:)``.
+    /// ``VMActivity/launchBringUp(_:identity:whenEnded:_:)``.
     @discardableResult
     func launchGuestSetup(
-        on instance: VMInstance, whenEnded: VMActivity.WhenEnded? = nil
+        on instance: VMInstance, identity: VMIdentityOverride = .unavailable,
+        whenEnded: VMActivity.WhenEnded? = nil
     ) throws -> VMOutcome {
         guard let setup = instance.configuration.pendingGuestSetup else {
             throw VMAdmissionRefusal(refusal: .invalidState)
@@ -357,7 +361,9 @@ final class VMLifecycleCoordinator {
             case .macOSInstall: .macOSInstall
             case .linuxImageDownload: .linuxImageDownload
             }
-        return try instance.activity.launchBringUp(.settingUp(kind), whenEnded: whenEnded) {
+        return try instance.activity.launchBringUp(
+            .settingUp(kind), identity: identity, whenEnded: whenEnded
+        ) {
             operation in
             do {
                 switch setup {

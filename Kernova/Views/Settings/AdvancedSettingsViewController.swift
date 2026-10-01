@@ -21,7 +21,7 @@ import KernovaLogging
 final class AdvancedSettingsViewController: NSViewController {
     private let preferences: AppPreferences
     private let alwaysShowSwitch = NSSwitch()
-    private let blockDuplicateIDSwitch = NSSwitch()
+    private let duplicateIDOverrideSwitch = NSSwitch()
     private let cloneOutcomePopUp = NSPopUpButton()
 
     init(preferences: AppPreferences = .shared) {
@@ -40,9 +40,9 @@ final class AdvancedSettingsViewController: NSViewController {
         alwaysShowSwitch.target = self
         alwaysShowSwitch.action = #selector(alwaysShowToggled)
 
-        blockDuplicateIDSwitch.controlSize = .small
-        blockDuplicateIDSwitch.target = self
-        blockDuplicateIDSwitch.action = #selector(blockDuplicateIDToggled)
+        duplicateIDOverrideSwitch.controlSize = .small
+        duplicateIDOverrideSwitch.target = self
+        duplicateIDOverrideSwitch.action = #selector(duplicateIDOverrideToggled)
 
         cloneOutcomePopUp.controlSize = .small
         for outcome in CloneOutcome.allCases {
@@ -60,13 +60,15 @@ final class AdvancedSettingsViewController: NSViewController {
                 + "Option (⌥) key in a virtual machine's context menu. Turn this on to always show "
                 + "them.")
 
-        let blockCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Block duplicate machine IDs from booting", control: blockDuplicateIDSwitch)
+        let duplicateIDCard = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow(
+                "Offer to start duplicate machine IDs anyway", control: duplicateIDOverrideSwitch)
         ])
-        let blockCaption = makeGroupedFormCaption(
-            "Refuses to start a virtual machine while another VM with the same machine ID is "
-                + "active. Apple documents running two VMs with the same machine ID at once as "
-                + "undefined behavior.")
+        let duplicateIDCaption = makeGroupedFormCaption(
+            "Kernova never starts a virtual machine while another with the same machine ID is "
+                + "active. Turn this on to be asked each time whether to start it anyway. Apple "
+                + "documents running two virtual machines at once with the same identifier as "
+                + "undefined behavior in the guest operating system.")
 
         let cloneCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Clone as", control: cloneOutcomePopUp)
@@ -74,8 +76,9 @@ final class AdvancedSettingsViewController: NSViewController {
         let cloneCaption = makeGroupedFormCaption(
             "A New Machine gets its own machine ID and MAC address, so it can run alongside its "
                 + "source. An Exact Copy keeps both, so the two are the same machine to their "
-                + "guests and networks: they never run on the same network at once, and never run "
-                + "at once at all while duplicate machine IDs are blocked from booting. Where a "
+                + "guests and networks: each is marked as sharing the other\u{2019}s MAC address, "
+                + "they never run on the same network at once, and they run at once only when "
+                + "you start one anyway. Where a "
                 + "virtual machine offers both, the second Clone item in the Virtual Machine menu, "
                 + "or Option (⌥) over Clone in its context menu, makes the other for one clone.")
 
@@ -84,13 +87,13 @@ final class AdvancedSettingsViewController: NSViewController {
             card,
             caption,
             makeGroupedFormSectionHeader("Machine Identity"),
-            blockCard,
-            blockCaption,
+            duplicateIDCard,
+            duplicateIDCaption,
             cloneCard,
             cloneCaption,
         ]
         var fullWidthRows: [NSView] = [
-            card, caption, blockCard, blockCaption, cloneCard, cloneCaption,
+            card, caption, duplicateIDCard, duplicateIDCaption, cloneCard, cloneCaption,
         ]
         // Absent, not disabled, in a build with no group container: the tool
         // installed from there could reach no app.
@@ -138,7 +141,7 @@ final class AdvancedSettingsViewController: NSViewController {
         // Keep each caption tight to its card, but separate the groups so they
         // read as distinct settings.
         section.setCustomSpacing(Spacing.section, after: caption)
-        section.setCustomSpacing(Spacing.section, after: blockCaption)
+        section.setCustomSpacing(Spacing.section, after: duplicateIDCaption)
         if offersCommandLineTool {
             section.setCustomSpacing(Spacing.section, after: cloneCaption)
         }
@@ -179,7 +182,7 @@ final class AdvancedSettingsViewController: NSViewController {
         // section pin stretches the cards over the excess.
         preferredContentSize = view.fittingSize
         alwaysShowSwitch.state = preferences.alwaysShowAdvancedOptions ? .on : .off
-        blockDuplicateIDSwitch.state = preferences.blockDuplicateMachineIDBoot ? .on : .off
+        duplicateIDOverrideSwitch.state = preferences.allowsDuplicateMachineIDOverride ? .on : .off
         cloneOutcomePopUp.selectItem(at: CloneOutcome.allCases.firstIndex(of: preferences.cloneOutcome) ?? 0)
     }
 
@@ -187,8 +190,8 @@ final class AdvancedSettingsViewController: NSViewController {
         preferences.alwaysShowAdvancedOptions = (alwaysShowSwitch.state == .on)
     }
 
-    @objc private func blockDuplicateIDToggled() {
-        preferences.blockDuplicateMachineIDBoot = (blockDuplicateIDSwitch.state == .on)
+    @objc private func duplicateIDOverrideToggled() {
+        preferences.allowsDuplicateMachineIDOverride = (duplicateIDOverrideSwitch.state == .on)
     }
 
     @objc private func cloneOutcomeChosen() {

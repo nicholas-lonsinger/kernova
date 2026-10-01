@@ -201,8 +201,8 @@ struct VMOverviewResolverTests {
         #expect(warning.contains("MAC address"))
     }
 
-    @Test("An exact copy is named in a note, and raises no Network warning")
-    func exactCopyIsANoteNotAWarning() throws {
+    @Test("A VM sharing its machine identity and MAC address is warned like any other holder")
+    func duplicateMACWarningIgnoresTheMachineIdentity() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let identity = Data([2, 7, 1, 8])
         let instance = viewModel.library.admitFixture {
@@ -220,8 +220,11 @@ struct VMOverviewResolverTests {
 
         resolver.refresh()
 
-        #expect(resolver.resolved.warnings[.network] == nil)
-        #expect(resolver.resolved.exactCopyNote == "An exact copy of \u{201C}Twin\u{201D}.")
+        #expect(
+            resolver.resolved.warnings[.network]
+                == "This MAC address is also used by \u{201C}Twin\u{201D}. Virtual machines with "
+                + "the same MAC address can\u{2019}t run on the same network at once, but they can "
+                + "on separate networks.")
     }
 
     @Test("A VM alone on its address raises no Network warning")

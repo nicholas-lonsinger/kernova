@@ -156,7 +156,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "cpus", value: "3"),
                 ConfigurationEntry(key: "display.preference", value: "fullscreen"),
             ],
-            confirmed: false)
+            consent: .none)
 
         #expect(instance.configuration.cpuCount == 3)
         #expect(instance.hostState.displayPreference == .fullscreen)
@@ -181,7 +181,7 @@ struct VMCommandCoreConfigurationTests {
             #expect(throws: CommandError.unsupportedByBuild(capability: capability)) {
                 try harness.core.setConfiguration(
                     .name("Alpha"), assignments: [ConfigurationEntry(key: key, value: value)],
-                    confirmed: false)
+                    consent: .none)
             }
         }
         // The wire states the refusal as the build's.
@@ -208,7 +208,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "display.autoResize", value: "false")],
-            confirmed: false)
+            consent: .none)
 
         let configuration = try #require(harness.storage.bundles[instance.bundleURL])
         #expect(configuration.memorySizeInGB == onDisk.memorySizeInGB)
@@ -231,7 +231,7 @@ struct VMCommandCoreConfigurationTests {
         let answered = try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "cpus", value: String(held))],
-            confirmed: false)
+            consent: .none)
 
         #expect(try value(answered, "cpus") == String(held))
         #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held)
@@ -250,7 +250,7 @@ struct VMCommandCoreConfigurationTests {
 
         do {
             try harness.core.setConfiguration(
-                .name("Alpha"), assignments: [assignment], confirmed: false)
+                .name("Alpha"), assignments: [assignment], consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidState(_, _, _, let settings) = error else {
@@ -277,7 +277,7 @@ struct VMCommandCoreConfigurationTests {
         let read = try harness.core.configuration(
             .name("Alpha"), keys: ["display.width", "display.height"])
         #expect(read.map(\.value) == ["801", "601"])
-        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, consent: .none)
 
         #expect(instance.configuration == before)
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
@@ -297,7 +297,7 @@ struct VMCommandCoreConfigurationTests {
 
         let read = try harness.core.configuration(.name("Alpha"), keys: nil)
         #expect(read.contains(ConfigurationEntry(key: "display.width", value: String(smallest.width / 2))))
-        try harness.core.setConfiguration(.name("Alpha"), assignments: read, confirmed: false)
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, consent: .none)
 
         #expect(instance.configuration == before)
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
@@ -319,7 +319,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "display.width", value: "1"),
                 ConfigurationEntry(key: "display.height", value: "1"),
             ],
-            confirmed: false)
+            consent: .none)
 
         #expect(instance.configuration.displayWidth == 2)
         #expect(instance.configuration.displayHeight == 2)
@@ -339,7 +339,7 @@ struct VMCommandCoreConfigurationTests {
                     ConfigurationEntry(key: "cpus", value: "3"),
                     ConfigurationEntry(key: "memory", value: "999999"),
                 ],
-                confirmed: false)
+                consent: .none)
         }
 
         #expect(instance.configuration == before)
@@ -358,7 +358,7 @@ struct VMCommandCoreConfigurationTests {
                     ConfigurationEntry(key: "cpus", value: "3"),
                     ConfigurationEntry(key: "display.preference", value: "sideways"),
                 ],
-                confirmed: false)
+                consent: .none)
         }
 
         #expect(instance.settings == before)
@@ -378,7 +378,7 @@ struct VMCommandCoreConfigurationTests {
                     ConfigurationEntry(key: "clipboard.sharing", value: "true"),
                     ConfigurationEntry(key: "cpus", value: "3"),
                 ],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidState = error else {
@@ -403,7 +403,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "display.autoResize", value: "false"),
                 ConfigurationEntry(key: "input.systemKeys", value: "fullscreenOnly"),
             ],
-            confirmed: false)
+            consent: .none)
 
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.displayAutoResizes)
@@ -426,7 +426,7 @@ struct VMCommandCoreConfigurationTests {
 
         do {
             try harness.core.setConfiguration(
-                .name("Linux"), assignments: [assignment], confirmed: false)
+                .name("Linux"), assignments: [assignment], consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidState(_, _, _, let settings) = error else {
@@ -440,7 +440,7 @@ struct VMCommandCoreConfigurationTests {
             !harness.core.capabilities.isAvailable(
                 VMConfigurationKeyRegistry.clipboardSharing, writing: "true", on: linux))
 
-        try harness.core.setConfiguration(.name("Mac"), assignments: [assignment], confirmed: false)
+        try harness.core.setConfiguration(.name("Mac"), assignments: [assignment], consent: .none)
         #expect(macOS.configuration.clipboardSharingEnabled)
     }
 
@@ -462,7 +462,7 @@ struct VMCommandCoreConfigurationTests {
         for assignment in moved {
             do {
                 try harness.core.setConfiguration(
-                    .name("Alpha"), assignments: [assignment], confirmed: false)
+                    .name("Alpha"), assignments: [assignment], consent: .none)
                 Issue.record("expected a refusal of \(assignment.key)")
             } catch let error as CommandError {
                 guard case .invalidState(_, _, _, let settings) = error else {
@@ -478,7 +478,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: moved + [ConfigurationEntry(key: "serial.socket", value: "true")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidState(_, _, _, let settings) = error else {
@@ -520,7 +520,7 @@ struct VMCommandCoreConfigurationTests {
                     value: String(before.hostState.agentInstallNudgeDismissed)),
                 ConfigurationEntry(key: "ephemeral.baseline", value: "Clean"),
             ],
-            confirmed: false)
+            consent: .none)
 
         let after = instance.settings
         #expect(after.configuration.serialSocketRelayEnabled != before.configuration.serialSocketRelayEnabled)
@@ -551,7 +551,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "cpus", value: String(before.cpuCount)),
                 ConfigurationEntry(key: "memory", value: before.memorySizeInGB.gibibytesText),
             ],
-            confirmed: false)
+            consent: .none)
 
         #expect(try value(answered, "cpus") == String(before.cpuCount))
         #expect(instance.configuration == before)
@@ -570,7 +570,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             // Other modes hot-swap, so the copy says which value is refused.
@@ -592,14 +592,14 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "network.mode", value: "hostOnly")],
-            confirmed: false)
+            consent: .none)
         #expect(instance.configuration.networkMode == .hostOnly)
 
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
-                confirmed: false)
+                consent: .none)
         }
         #expect(instance.configuration.networkEnabled)
     }
@@ -614,7 +614,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
-                confirmed: false)
+                consent: .none)
         }
         #expect(!instance.configuration.networkEnabled)
     }
@@ -630,7 +630,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mac", value: "AA:BB:CC:DD:EE:FF")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .conflict(_, let other, let reason) = error else {
@@ -664,7 +664,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mac", value: "aa:bb:cc:dd:ee:ff")],
-                confirmed: false)
+                consent: .none)
         } throws: { error in
             guard case CommandError.conflict(_, let other, let reason) = error else { return false }
             return other.name == "Beta"
@@ -688,7 +688,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
@@ -698,7 +698,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-            confirmed: true)
+            consent: .all)
         #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
@@ -711,7 +711,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                confirmed: true)
+                consent: .all)
         }
         #expect(!instance.configuration.clipboardPassthroughEnabled)
 
@@ -721,7 +721,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "clipboard.passthrough", value: "true"),
                 ConfigurationEntry(key: "clipboard.sharing", value: "true"),
             ],
-            confirmed: true)
+            consent: .all)
         #expect(instance.configuration.clipboardPassthroughEnabled)
         #expect(instance.configuration.clipboardSharingEnabled)
     }
@@ -737,7 +737,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "false")],
-            confirmed: false)
+            consent: .none)
 
         #expect(!instance.configuration.clipboardSharingEnabled)
         #expect(instance.configuration.clipboardPassthroughEnabled)
@@ -753,7 +753,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "ephemeral", value: "on")],
-            confirmed: false)
+            consent: .none)
 
         #expect(instance.hostState.ephemeralModeEnabled)
         #expect(instance.hostState.ephemeralBaselineSnapshotID == snapshot.id)
@@ -768,7 +768,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "ephemeral", value: "true")],
-                confirmed: false)
+                consent: .none)
         }
         #expect(!instance.hostState.ephemeralModeEnabled)
     }
@@ -783,7 +783,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "cpu", value: "3")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidArgument = error else {
@@ -804,7 +804,7 @@ struct VMCommandCoreConfigurationTests {
         let entries = try harness.core.configuration(.name("Alpha"), keys: nil)
         #expect(entries.contains(ConfigurationEntry(key: "memory", value: "1.501")))
         let answered = try harness.core.setConfiguration(
-            .name("Alpha"), assignments: entries, confirmed: false)
+            .name("Alpha"), assignments: entries, consent: .none)
 
         #expect(instance.configuration == before)
         #expect(answered == entries)
@@ -821,7 +821,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
@@ -831,7 +831,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-            confirmed: true)
+            consent: .all)
         #expect(instance.configuration.clipboardPassthroughIsEffective)
     }
 
@@ -843,7 +843,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-            confirmed: false)
+            consent: .none)
 
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.clipboardPassthroughIsEffective)
@@ -870,7 +870,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "display.width", value: "1920"),
                 ConfigurationEntry(key: "display.height", value: "1200"),
             ],
-            confirmed: false)
+            consent: .none)
 
         // Doubled for the density, exactly as the settings pane's fields write.
         #expect(instance.configuration.displayWidth == 3840)
@@ -892,7 +892,7 @@ struct VMCommandCoreConfigurationTests {
             #expect(throws: CommandError.self) {
                 try harness.core.setConfiguration(
                     .name("Alpha"), assignments: [ConfigurationEntry(key: key, value: "0")],
-                    confirmed: false)
+                    consent: .none)
             }
         }
         #expect(instance.configuration == before)
@@ -908,7 +908,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "display.width", value: "1600")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .invalidArgument(let message) = error else {
@@ -927,7 +927,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(
                     key: "display.width", value: String(before.displayBaseSize.width))
             ],
-            confirmed: false)
+            consent: .none)
         #expect(instance.configuration == before)
     }
 
@@ -942,7 +942,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "display.width", value: "1600"),
                 ConfigurationEntry(key: "display.sizeToWindow", value: "false"),
             ],
-            confirmed: false)
+            consent: .none)
 
         #expect(!instance.configuration.displaySizesToWindow)
         #expect(instance.configuration.displayWidth == 1600)
@@ -967,7 +967,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "display.width", value: "6000"),
                 ConfigurationEntry(key: "display.hidpi", value: "true"),
             ],
-            confirmed: false)
+            consent: .none)
 
         let configuration = try #require(harness.storage.bundles[instance.bundleURL])
         #expect(configuration.displayHiDPI)
@@ -986,7 +986,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
-            confirmed: false)
+            consent: .none)
         let before = instance.configuration
         #expect(before.macAddress != nil)
 
@@ -994,7 +994,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "network.mac", value: "")],
-                confirmed: false)
+                consent: .none)
         }
         #expect(instance.configuration == before)
 
@@ -1006,7 +1006,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "network.mac", value: ""),
                 ConfigurationEntry(key: "network.mode", value: "none"),
             ],
-            confirmed: false)
+            consent: .none)
         #expect(instance.configuration.macAddress == nil)
         #expect(!instance.configuration.networkEnabled)
     }
@@ -1027,7 +1027,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "network.mac", value: ""),
                 ConfigurationEntry(key: "network.mode", value: "shared"),
             ],
-            confirmed: false)
+            consent: .none)
 
         let configuration = try #require(harness.storage.bundles[instance.bundleURL])
         #expect(configuration.networkEnabled)
@@ -1053,7 +1053,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "network.mode", value: "shared"),
                 ConfigurationEntry(key: "cpus", value: "3"),
             ],
-            confirmed: false)
+            consent: .none)
 
         let configuration = try #require(harness.storage.bundles[instance.bundleURL])
         #expect(configuration.networkEnabled)
@@ -1076,7 +1076,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "cpus", value: "3")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .operationFailed(let verb, _, _, _) = error else {
@@ -1099,7 +1099,7 @@ struct VMCommandCoreConfigurationTests {
             _ = try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-                confirmed: false)
+                consent: .none)
             Issue.record("expected a refusal")
         } catch let error as CommandError {
             guard case .busy = error else {

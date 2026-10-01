@@ -661,6 +661,52 @@ struct DetailAlertsPresenterTests {
         #expect(answers.answered == ["hold"])
     }
 
+    // MARK: - A confirmation a verb waits on
+
+    private func confirmationRequest(answers: Box<[Bool]>) -> ConfirmationRequest {
+        ConfirmationRequest(
+            prompt: ConfirmationPrompt(
+                kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
+                message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
+                confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+            answer: { answers.value.append($0) })
+    }
+
+    /// Holds what the requests under test are answered with.
+    private final class Box<Value> {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    @Test("A confirmation's buttons answer the verb waiting on it, once")
+    func aConfirmationIsAnsweredByItsButton() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let answers = Box<[Bool]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+        #expect(presenter.isShowingAlertForTesting)
+        #expect(presenter.dismissShownAlertForTesting(.alertFirstButtonReturn))
+        presenter.stop()
+
+        #expect(answers.value == [true])
+    }
+
+    @Test("A confirmation queued behind another alert is declined when the window goes")
+    func aQueuedConfirmationIsDeclinedOnTeardown() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        presenter.presentError("Something else", title: "Couldn't Start")
+        let answers = Box<[Bool]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+        #expect(presenter.pendingCountForTesting == 1)
+        presenter.stop()
+
+        // The verb is suspended on this answer; nothing else would resume it.
+        #expect(answers.value == [false])
+    }
+
     // MARK: - The guest account a VM still owes
 
     /// Collects the answers the account prompts under test are given.
