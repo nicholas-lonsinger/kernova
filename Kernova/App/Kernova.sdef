@@ -66,6 +66,9 @@
 			<property name="network mode" code="KvNm" type="text" access="r" description="The network it joins, or missing value when networking is off.">
 				<cocoa key="networkMode"/>
 			</property>
+			<property name="isolated network" code="KvIs" type="boolean" access="r" description="Whether it runs on a network of its own, which no other virtual machine joins.">
+				<cocoa key="isolatedNetwork"/>
+			</property>
 			<property name="MAC address" code="KvMA" type="text" access="r" description="The address the guest presents on that network.">
 				<cocoa key="macAddress"/>
 			</property>

@@ -524,7 +524,7 @@ struct VMLibraryTests {
     @Test("A running VM switched live onto Shared is watched until its address is seen")
     func liveSwitchOntoSharedWatchesTheGuest() async throws {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
         let table = ScriptedARPTable([
             .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
         ])

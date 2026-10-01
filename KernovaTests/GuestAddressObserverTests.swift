@@ -20,7 +20,9 @@ struct GuestAddressObserverTests {
     /// A provider whose Shared and Host Only networks stand on known subnets.
     private static func subnetted() -> MockVmnetNetworkProvider {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0"), .hostOnly: .scripted("192.168.128.0")]
+        vmnet.scriptedSubnets = [
+            .common(.shared): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
+        ]
         return vmnet
     }
 
@@ -28,10 +30,11 @@ struct GuestAddressObserverTests {
         _ table: ScriptedARPTable = ScriptedARPTable(),
         clock: any EngineClock = GatedEngineClock(),
         canObserve: Bool = true,
-        entitled: Bool = true
+        entitled: Bool = true,
+        vmnet: MockVmnetNetworkProvider = Self.subnetted()
     ) -> GuestAddressObserver {
         let observer = GuestAddressObserver(
-            reader: table, vmnetNetworks: Self.subnetted(), canObserve: canObserve,
+            reader: table, vmnetNetworks: vmnet, canObserve: canObserve,
             isVMNetworkingEntitled: entitled, clock: clock, now: { Self.now })
         observer.roster = roster
         return observer
@@ -40,11 +43,13 @@ struct GuestAddressObserverTests {
     /// A VM on `mode`, running unless `phase` says otherwise.
     private func vm(
         _ mode: VMNetworkMode = .shared, mac: String? = Self.mac,
-        phase: VMLifecyclePhase = .running(sessionID: UUID()), networkEnabled: Bool = true
+        phase: VMLifecyclePhase = .running(sessionID: UUID()), networkEnabled: Bool = true,
+        isolated: Bool = false
     ) -> VMInstance {
         VMInstanceFixture.make(phase: phase) {
             $0.networkEnabled = networkEnabled
             $0.networkMode = mode
+            $0.isolatedNetwork = isolated
             $0.macAddress = mac
         }
     }
@@ -124,6 +129,23 @@ struct GuestAddressObserverTests {
 
         #expect(observer.address(for: shared) == .observed("192.168.64.5"))
         #expect(observer.address(for: hostOnly) == .observed("192.168.128.9"))
+    }
+
+    @Test("One MAC on a mode's common network and on a VM's own network resolves to an address on each")
+    func oneMACOnTwoNetworksResolvesToTwoAddresses() async {
+        let common = vm(.shared)
+        let isolated = vm(.shared, isolated: true)
+        let vmnet = Self.subnetted()
+        vmnet.scriptedSubnets[VmnetNetworkID(kind: .shared, owner: isolated.configuration.id)] =
+            .scripted("192.168.65.0")
+        let observer = makeObserver(
+            ScriptedARPTable([Self.entry("192.168.64.5"), Self.entry("192.168.65.27")]), vmnet: vmnet)
+        roster.instances = [common, isolated]
+
+        await observer.readForTesting()
+
+        #expect(observer.address(for: common) == .observed("192.168.64.5"))
+        #expect(observer.address(for: isolated) == .observed("192.168.65.27"))
     }
 
     // MARK: - What states nothing

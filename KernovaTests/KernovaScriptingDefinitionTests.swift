@@ -143,7 +143,7 @@ struct KernovaScriptingDefinitionTests {
         let vm = try #require(classes.first as? XMLElement)
         let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
 
-        #expect(properties.count == 15, "One property per VMInfo field")
+        #expect(properties.count == 16, "One property per VMInfo field")
         for property in properties {
             let key = try #require(try values("cocoa", "key", in: property).first)
             #expect(

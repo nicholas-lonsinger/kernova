@@ -46,6 +46,9 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Network Mode")
     var networkMode: String?
 
+    @Property(title: "Isolated from Other VMs")
+    var isolatedNetwork: Bool
+
     @Property(title: "MAC Address")
     var macAddress: String?
 
@@ -81,6 +84,7 @@ struct VMEntity: IndexedEntity {
         self.memoryBytes = Int(clamping: info.memoryBytes)
         self.diskSizeInGB = info.diskSizeInGB
         self.networkMode = info.networkMode
+        self.isolatedNetwork = info.isolatedNetwork
         self.macAddress = info.macAddress
         self.ipAddress = info.ipAddress.address
         self.agentStatus = info.agentStatus

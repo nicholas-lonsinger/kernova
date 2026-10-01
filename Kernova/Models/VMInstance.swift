@@ -697,7 +697,7 @@ final class VMInstance {
     /// prior one.
     private func setupNetworkAttachmentCoordinator(
         for session: VMSession, in context: VMSessionContext,
-        vmnetNetworks networks: any VmnetNetworkProviding, entitlements: EntitlementService
+        vmnetNetworks networks: any VmnetSessionNetworking, entitlements: EntitlementService
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil
@@ -1147,10 +1147,7 @@ final class VMInstance {
 
         // Ahead of the live-VM guard: the coordinator exists exactly while the
         // session has a network device, which is the guard this hot swap needs.
-        if oldConfig.networkEnabled != newConfig.networkEnabled
-            || oldConfig.networkMode != newConfig.networkMode
-            || oldConfig.bridgedInterfaceIdentifier != newConfig.bridgedInterfaceIdentifier
-        {
+        if oldConfig.networkChoice != newConfig.networkChoice {
             networkAttachmentCoordinator?.configurationChanged()
         }
 

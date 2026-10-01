@@ -22,10 +22,10 @@ final class GuestAddressObserver {
     /// How often, in seconds, the table is read while anything is watched.
     nonisolated static let defaultPollInterval: TimeInterval = 2
 
-    /// A watched VM: its MAC address on the network its mode joins.
+    /// A watched VM: its MAC address on the network it joins.
     struct Key: Hashable, Sendable {
         let hardwareAddress: EthernetAddress
-        let kind: VmnetNetworkKind
+        let network: VmnetNetworkID
     }
 
     /// The address each watched VM was seen using at the last read.
@@ -71,8 +71,8 @@ final class GuestAddressObserver {
         self.now = now
     }
 
-    /// What `instance`'s guest is seen using for an address on the network its
-    /// mode joins.
+    /// What `instance`'s guest is seen using for an address on the network it
+    /// joins.
     func address(for instance: VMInstance) -> GuestIPAddress {
         let config = instance.configuration
         guard config.networkEnabled, config.networkMode != .bridged,
@@ -113,9 +113,9 @@ final class GuestAddressObserver {
 
     /// Reads the table once and publishes what it shows for `keys`.
     private func read(for keys: Set<Key>) async {
-        var subnets: [VmnetNetworkKind: IPv4Subnet] = [:]
-        for kind in VmnetNetworkKind.allCases {
-            subnets[kind] = vmnetNetworks.ipv4Subnet(for: kind)
+        var subnets: [VmnetNetworkID: IPv4Subnet] = [:]
+        for network in Set(keys.map(\.network)) {
+            subnets[network] = vmnetNetworks.ipv4Subnet(for: network)
         }
         let entries: [ARPEntry]
         do {
@@ -145,14 +145,18 @@ final class GuestAddressObserver {
     /// carrying its MAC inside its network's subnet and expiring after `now`,
     /// the one expiring last. A permanent entry (expiry `0`) never counts — the
     /// host's own addresses and multicast groups are the ones the table holds.
+    ///
+    /// One MAC address on two networks holds a lease on each
+    /// (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md),
+    /// so it resolves per network.
     nonisolated static func addresses(
-        in entries: [ARPEntry], for keys: Set<Key>, on subnets: [VmnetNetworkKind: IPv4Subnet],
+        in entries: [ARPEntry], for keys: Set<Key>, on subnets: [VmnetNetworkID: IPv4Subnet],
         at now: Int
     ) -> [Key: String] {
         var latest: [Key: ARPEntry] = [:]
         for entry in entries where entry.expiry > now {
-            for (kind, subnet) in subnets where subnet.contains(entry.ipv4) {
-                let key = Key(hardwareAddress: entry.hardwareAddress, kind: kind)
+            for (network, subnet) in subnets where subnet.contains(entry.ipv4) {
+                let key = Key(hardwareAddress: entry.hardwareAddress, network: network)
                 guard keys.contains(key), (latest[key]?.expiry ?? .min) < entry.expiry else { continue }
                 latest[key] = entry
             }
@@ -174,11 +178,10 @@ final class GuestAddressObserver {
     /// that attaches Shared to system NAT, a process that cannot read the
     /// table, or a MAC address that does not parse.
     private func key(for config: VMConfiguration) -> Key? {
-        guard canObserve, isVMNetworkingEntitled, config.networkEnabled,
-            let kind = VmnetNetworkKind(mode: config.networkMode),
+        guard canObserve, isVMNetworkingEntitled, case .vmnet(let network) = config.joinedNetwork,
             let mac = config.macAddress, let hardwareAddress = EthernetAddress(mac)
         else { return nil }
-        return Key(hardwareAddress: hardwareAddress, kind: kind)
+        return Key(hardwareAddress: hardwareAddress, network: network)
     }
 
     #if DEBUG

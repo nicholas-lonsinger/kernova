@@ -260,6 +260,45 @@ struct VMMACAddressRegistryTests {
         #expect(failures.errorTitle == "Duplicate MAC Address")
     }
 
+    @Test("Holders on separate networks of one mode are no live conflict")
+    func separateNetworksOfOneModeAreNoLiveConflict() {
+        let registry = makeRegistry()
+        let isolatedTwin = makeVM("Isolated Twin", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        isolatedTwin.activity.placeForTesting(.running(sessionID: UUID()))
+        let common = makeVM("Common", mac: "aa:bb:cc:dd:ee:01")
+        let isolated = makeVM("Isolated", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        roster.instances = [isolatedTwin, common, isolated]
+
+        // A network of its own is one no other VM joins — whether the other
+        // is on the mode's common network or on a network of its own.
+        #expect(registry.liveMACAddressConflict(for: common.configuration, excluding: common) == nil)
+        #expect(registry.liveMACAddressConflict(for: isolated.configuration, excluding: isolated) == nil)
+
+        common.activity.placeForTesting(.running(sessionID: UUID()))
+        let other = makeVM("Other", mac: "aa:bb:cc:dd:ee:01")
+        roster.instances = [isolatedTwin, common, isolated, other]
+        #expect(registry.liveMACAddressConflict(for: other.configuration, excluding: other) === common)
+    }
+
+    @Test("A live switch off a VM's own network onto the network an active twin holds is refused")
+    func refuseMACAddressConflictRefusesALiveSwitchOntoTheCommonNetwork() {
+        let registry = makeRegistry()
+        let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01")
+        twin.activity.placeForTesting(.running(sessionID: UUID()))
+
+        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") { $0.isolatedNetwork = true }
+        let old = instance.configuration
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        roster.instances = [twin, instance]
+
+        // Same mode and address; only the network it joins moves.
+        var new = old
+        new.isolatedNetwork = false
+
+        #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
+        #expect(failures.errorTitle == "Duplicate MAC Address")
+    }
+
     @Test("A VM already in a live conflict stays editable")
     func refuseMACAddressConflictLeavesAnExistingConflictEditable() {
         let registry = makeRegistry()

@@ -278,7 +278,7 @@ struct VMCommandCoreTests {
     @Test("A running VM's observed address answers info and the ip verb alike")
     func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
-        harness.vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        harness.vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
         let instance = makeInstance(
             in: harness, name: "Addressed", phase: .running(sessionID: UUID())
         ) {

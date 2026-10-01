@@ -126,7 +126,7 @@ struct VMOverviewResolverTests {
     @Test("The address is the observer's answer for a running VM, and displaying it materializes nothing")
     func addressComesFromTheObserver() async {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
         let model = makeSettingsViewModel(
             preferences: preferences, vmnetNetworks: vmnet,
             arpTable: ScriptedARPTable([

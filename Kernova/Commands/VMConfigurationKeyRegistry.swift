@@ -275,7 +275,8 @@ enum VMConfigurationKeyRegistry {
     static let keys: [VMConfigurationKey] = [
         cpus, memory, displayWidth, displayHeight, displayHiDPI, displaySizeToWindow,
         displayAutoResize, displayPreference, audioInput, audioOutput, inputDevices,
-        inputSystemKeys, serialSocket, networkMode, networkBridgedInterface, networkMAC,
+        inputSystemKeys, serialSocket, networkMode, networkBridgedInterface, networkIsolated,
+        networkMAC,
         autoStart, ephemeral, ephemeralBaseline, clipboardSharing, clipboardPassthrough,
         dropFiles, agentLogForwarding, agentInstallReminder,
     ]
@@ -468,6 +469,17 @@ enum VMConfigurationKeyRegistry {
         write: { value, config, _ in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             config.bridgedInterfaceIdentifier = trimmed.isEmpty ? nil : trimmed
+        })
+
+    static let networkIsolated = VMConfigurationKey(
+        name: "network.isolated",
+        summary:
+            "Whether a shared or hostOnly guest runs on a network of its own, which no other "
+            + "guest reaches: true or false.",
+        gate: .networkDevice,
+        read: { String($0.isolatedNetwork) },
+        write: { value, config, _ in
+            config.isolatedNetwork = try ConfigurationValue.boolean(value, key: "network.isolated")
         })
 
     static let networkMAC = VMConfigurationKey(

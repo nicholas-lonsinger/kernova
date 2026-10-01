@@ -1150,6 +1150,7 @@ final class VMActivity {
         sessionContext.clipboardOutputPipe = result.clipboardOutputPipe
         sessionContext.liveRemovableMedia = result.coldRemovableMedia
         sessionContext.directoryShare = result.directoryShare
+        sessionContext.vmnetNetworks = result.vmnetNetworks
     }
 
     /// Creates the VM on its own queue, stores the session, and binds it to the

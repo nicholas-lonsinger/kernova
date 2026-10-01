@@ -99,10 +99,10 @@ final class VMMACAddressRegistry {
         return MACAddressConflict(other: live, reason: .macAddress)
     }
 
-    /// Whether `a` and `b` put the same address on the same network — the
-    /// three fields ``liveMACAddressConflict(for:excluding:)`` reads.
+    /// Whether `a` and `b` put the same address on the same network — what
+    /// ``liveMACAddressConflict(for:excluding:)`` reads.
     private static func claimSameNetwork(_ a: VMConfiguration, _ b: VMConfiguration) -> Bool {
-        a.networkEnabled == b.networkEnabled && a.networkMode == b.networkMode
+        a.joinedNetwork == b.joinedNetwork
             && a.macAddress?.lowercased() == b.macAddress?.lowercased()
     }
 
@@ -204,20 +204,16 @@ final class VMMACAddressRegistry {
     /// The first VM claiming `config`'s MAC address
     /// (``VMInstance/claimsIdentity``) on the network `config` joins, if any.
     ///
-    /// The mode names the network, so two holders collide only where both
-    /// guests attach: networking off puts no address on a wire, and Shared,
-    /// Host Only and Bridged are separate networks. Two bridged VMs compare as
-    /// one network whatever interface each names — Automatic resolves at start,
-    /// so which link they land on is not knowable in advance. Only
+    /// Two holders collide only where both guests attach
+    /// (``VMConfiguration/joinedNetwork``): networking off puts no address on
+    /// a wire, and a VM on a network of its own shares it with no one. Only
     /// configurations count: a running guest is on its configuration's address.
     func liveMACAddressConflict(
         for config: VMConfiguration, excluding instance: VMInstance
     ) -> VMInstance? {
-        guard config.networkEnabled, let mac = config.macAddress else { return nil }
+        guard let network = config.joinedNetwork, let mac = config.macAddress else { return nil }
         return configurationHolders(of: mac, otherThan: instance).first { other in
-            other.claimsIdentity
-                && other.configuration.networkEnabled
-                && other.configuration.networkMode == config.networkMode
+            other.claimsIdentity && other.configuration.joinedNetwork == network
         }
     }
 }

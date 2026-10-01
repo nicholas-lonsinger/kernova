@@ -22,10 +22,11 @@ struct ConfigurationBuilder: Sendable {
         /// The share a one-device guest's automount device carries, `nil` when
         /// the configuration builds none.
         let directoryShare: MacOSDirectoryShare?
-        /// The provider whose network a vmnet attachment in `configuration`
-        /// joins — the one the session's attachment recovery must classify and
-        /// re-materialize through.
-        let vmnetNetworks: any VmnetNetworkProviding
+        /// The session's view of the vmnet networks an attachment in
+        /// `configuration` joins — the one the session's attachment recovery
+        /// must classify and re-materialize through, and whose life holds the
+        /// VM's own networks.
+        let vmnetNetworks: any VmnetSessionNetworking
         /// The answer `configuration`'s network attachment was chosen by — the
         /// one the session's attachment recovery must realize Shared by.
         let entitlements: EntitlementService
@@ -84,7 +85,8 @@ struct ConfigurationBuilder: Sendable {
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
         let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
-        try configureNetwork(vzConfig, config: config)
+        let sessionNetworks = vmnetNetworks.sessionNetworks(ownedBy: config.id)
+        try configureNetwork(vzConfig, config: config, vmnetNetworks: sessionNetworks)
         configureEntropy(vzConfig)
         configureAudio(vzConfig, config: config)
         let directoryShare = try configureDirectorySharing(vzConfig, config: config)
@@ -116,7 +118,7 @@ struct ConfigurationBuilder: Sendable {
             clipboardOutputPipe: clipboardPipes?.output,
             coldRemovableMedia: coldRemovableMedia,
             directoryShare: directoryShare,
-            vmnetNetworks: vmnetNetworks,
+            vmnetNetworks: sessionNetworks,
             entitlements: entitlements
         )
     }
@@ -558,19 +560,20 @@ struct ConfigurationBuilder: Sendable {
         StableID.uuid(seed: bundleURL.path + "\u{0}guest-agent")
     }
 
-    private func configureNetwork(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration)
-        throws
-    {
+    private func configureNetwork(
+        _ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration,
+        vmnetNetworks: any VmnetSessionNetworking
+    ) throws {
         guard config.networkEnabled else { return }
 
         let networkDevice = VZVirtioNetworkDeviceConfiguration()
         switch config.networkMode {
         case .shared:
-            networkDevice.attachment = sharedAttachment(config: config)
+            networkDevice.attachment = try sharedAttachment(config: config, vmnetNetworks: vmnetNetworks)
         case .bridged:
             networkDevice.attachment = try bridgedAttachment(config: config)
         case .hostOnly:
-            networkDevice.attachment = try hostOnlyAttachment(config: config)
+            networkDevice.attachment = try hostOnlyAttachment(config: config, vmnetNetworks: vmnetNetworks)
         }
 
         if let macString = config.macAddress,
@@ -629,32 +632,30 @@ struct ConfigurationBuilder: Sendable {
         return VZBridgedNetworkDeviceAttachment(interface: interface)
     }
 
-    /// The Shared Network attachment: the app-managed vmnet shared network in
-    /// an entitled build, and the system NAT attachment otherwise. A vmnet
-    /// network that cannot be
-    /// materialized builds the device detached (`nil`) like the Host Only
-    /// path, and attachment recovery retries once the session runs.
-    private func sharedAttachment(config: VMConfiguration) -> VZNetworkDeviceAttachment? {
-        guard entitlements.hasVMNetworking else { return VZNATNetworkDeviceAttachment() }
-        do {
-            return try vmnetNetworks.attachment(for: .shared)
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Shared network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
-            )
-            return nil
+    /// The Shared Network attachment: an app-managed vmnet shared network in
+    /// an entitled build, and the system NAT attachment otherwise — which
+    /// every unentitled Shared guest joins, so it cannot stand in for a
+    /// network of the VM's own.
+    private func sharedAttachment(
+        config: VMConfiguration, vmnetNetworks: any VmnetSessionNetworking
+    ) throws -> VZNetworkDeviceAttachment? {
+        guard entitlements.hasVMNetworking else {
+            guard !config.isolatedNetwork else {
+                #log(
+                    Self.logger, .error,
+                    "An isolated network requested for '\(config.name, privacy: .public)' in a build without com.apple.vm.networking"
+                )
+                throw ConfigurationBuilderError.isolatedNetworkingNotEntitled
+            }
+            return VZNATNetworkDeviceAttachment()
         }
+        return vmnetAttachment(.shared, config: config, vmnetNetworks: vmnetNetworks)
     }
 
-    /// The attachment joining the app-managed Host Only network.
-    ///
-    /// A network that cannot be materialized builds the device detached (`nil`)
-    /// rather than failing the build, for the same reason the bridged
-    /// no-interface path does: a throwing build fails a save-file restore,
-    /// which deletes the saved state and cold-boots. Attachment recovery
-    /// retries once the session runs.
-    private func hostOnlyAttachment(config: VMConfiguration) throws -> VZNetworkDeviceAttachment? {
+    /// The attachment joining an app-managed Host Only network.
+    private func hostOnlyAttachment(
+        config: VMConfiguration, vmnetNetworks: any VmnetSessionNetworking
+    ) throws -> VZNetworkDeviceAttachment? {
         guard entitlements.hasVMNetworking else {
             #log(
                 Self.logger, .error,
@@ -662,13 +663,28 @@ struct ConfigurationBuilder: Sendable {
             )
             throw ConfigurationBuilderError.hostOnlyNetworkingNotEntitled
         }
+        return vmnetAttachment(.hostOnly, config: config, vmnetNetworks: vmnetNetworks)
+    }
 
+    /// The attachment joining `config`'s network of `kind` — the common one,
+    /// or the VM's own.
+    ///
+    /// A network that cannot be materialized — a process holds a bounded
+    /// number — builds the device detached (`nil`) rather than failing the
+    /// build, for the same reason the bridged no-interface path does: a
+    /// throwing build fails a save-file restore. Attachment recovery retries
+    /// once the session runs, and never substitutes the common network for the
+    /// VM's own (docs/NETWORKING.md).
+    private func vmnetAttachment(
+        _ kind: VmnetNetworkKind, config: VMConfiguration, vmnetNetworks: any VmnetSessionNetworking
+    ) -> VZNetworkDeviceAttachment? {
+        let selection = VmnetNetworkSelection(kind: kind, isOwn: config.isolatedNetwork)
         do {
-            return try vmnetNetworks.attachment(for: .hostOnly)
+            return try vmnetNetworks.attachment(for: selection)
         } catch {
             #log(
                 Self.logger, .error,
-                "Host Only network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
+                "The \(selection.isOwn ? "own " : "", privacy: .public)\(kind.rawValue, privacy: .public) network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
             )
             return nil
         }
@@ -1022,6 +1038,9 @@ enum ConfigurationBuilderError: LocalizedError {
     /// Host Only counterpart of `bridgedNetworkingNotEntitled` — vmnet needs
     /// the same entitlement for all API use.
     case hostOnlyNetworkingNotEntitled
+    /// A Shared VM on a network of its own in a build that attaches Shared to
+    /// system NAT, which every Shared guest there joins.
+    case isolatedNetworkingNotEntitled
     case sharedDirectoryNotFound(String)
     case sharedDirectoryNotADirectory(String)
     case sharedDirectoryNotReadable(String)
@@ -1065,6 +1084,8 @@ enum ConfigurationBuilderError: LocalizedError {
             "This build of Kernova can't provide bridged networking. Switch the VM's network mode to Shared Network."
         case .hostOnlyNetworkingNotEntitled:
             "This build of Kernova can't provide host-only networking. Switch the VM's network mode to Shared Network."
+        case .isolatedNetworkingNotEntitled:
+            "This build of Kernova can't isolate a VM from other VMs. Turn off \u{201C}Isolate from other VMs\u{201D} in the VM's Network settings."
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):
@@ -1092,7 +1113,7 @@ enum ConfigurationBuilderError: LocalizedError {
             .missingKernelPath,
             .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,
             .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled,
-            .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
+            .isolatedNetworkingNotEntitled, .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
             .sharedDirectoryNotReadable, .sharedDirectoryNotWritable:
             nil
         }

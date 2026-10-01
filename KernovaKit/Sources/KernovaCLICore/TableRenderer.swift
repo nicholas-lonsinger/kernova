@@ -42,7 +42,7 @@ enum TableRenderer {
             ("CPUs", String(info.cpuCount)),
             ("Memory", memory(info.memoryBytes)),
             ("Disk", "\(info.diskSizeInGB) GB"),
-            ("Network", info.networkMode ?? "Off"),
+            ("Network", info.networkMode.map { info.isolatedNetwork ? "\($0), isolated" : $0 } ?? "Off"),
         ]
         if let mac = info.macAddress { fields.append(("MAC Address", mac)) }
         fields.append(("IP Address", render(info.ipAddress)))

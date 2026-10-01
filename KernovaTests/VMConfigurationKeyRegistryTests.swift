@@ -398,6 +398,19 @@ struct VMConfigurationKeyRegistryTests {
         #expect(GuestMACAddress.normalized(minted) == minted)
     }
 
+    @Test("network.isolated round-trips, hot-swaps with the attachment, and refuses a non-boolean")
+    func isolationKeyRoundTrips() throws {
+        let key = try #require(VMConfigurationKeyRegistry.key(named: "network.isolated"))
+        var config = makeConfiguration()
+        #expect(read(key, config) == "false")
+
+        try write(key, "true", to: &config)
+        #expect(config.isolatedNetwork)
+        #expect(read(key, config) == "true")
+        #expect(key.capability(writing: "false", for: .linux) == .switchNetworkMode)
+        #expect(throws: CommandError.self) { try write(key, "own", to: &config) }
+    }
+
     @Test("An empty bridged interface is automatic, and an empty MAC removes it")
     func emptyValuesClearTheirFields() throws {
         let bridged = try #require(

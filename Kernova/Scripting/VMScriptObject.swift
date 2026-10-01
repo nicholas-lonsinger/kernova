@@ -56,6 +56,8 @@ final class VMScriptObject: NSObject {
 
     @objc var networkMode: String? { info.networkMode }
 
+    @objc var isolatedNetwork: Bool { info.isolatedNetwork }
+
     @objc var macAddress: String? { info.macAddress }
 
     @objc var ipAddress: String? { info.ipAddress.address }

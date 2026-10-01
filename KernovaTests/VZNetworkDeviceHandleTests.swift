@@ -41,13 +41,13 @@ struct VZNetworkDeviceHandleTests {
     func staleBuildFailureLeavesNewerApply() async {
         let harness = makeHarness()
         #expect(harness.handle.apply(.nat))
-        #expect(harness.handle.apply(.hostOnly))
+        #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
         #expect(harness.install.applyCount == 2)
 
         harness.install.reportBuildFoundNothing(ofApplyAt: 0)
         await drainCorrection()
 
-        #expect(harness.handle.currentPlan == .hostOnly)
+        #expect(harness.handle.currentPlan == .vmnet(.common(.hostOnly)))
     }
 
     @Test("Detach clears the mirror and forwards to the session")

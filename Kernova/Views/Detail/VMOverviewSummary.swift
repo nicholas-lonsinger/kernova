@@ -156,7 +156,8 @@ enum VMOverviewSummary {
             // value beside it rather than a line of its own.
             return [
                 Row(
-                    label: mode, value: resolved.ipAddress.displayText ?? "",
+                    label: config.joinsOwnNetwork ? "\(mode), Isolated" : mode,
+                    value: resolved.ipAddress.displayText ?? "",
                     copy: resolved.ipAddress.address.map { RowCopy(value: $0, name: "Copy IP Address") })
             ]
         case .sharing:

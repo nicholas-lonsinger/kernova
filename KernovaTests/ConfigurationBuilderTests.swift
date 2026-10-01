@@ -55,7 +55,8 @@ struct ConfigurationBuilderTests {
             Issue.record("The fixture bundle holds no EFI variable store")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled:
+            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled,
+            .isolatedNetworkingNotEntitled:
             break
         }
     }
@@ -1075,7 +1076,7 @@ struct ConfigurationBuilderTests {
         #expect(devices.count == 1)
         let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
         #expect(device.attachment is VZNATNetworkDeviceAttachment)
-        #expect(networks.requestedKinds.isEmpty)
+        #expect(networks.requestedNetworks.isEmpty)
     }
 
     @Test("Shared Network with the entitlement attaches the app-managed shared network")
@@ -1090,7 +1091,7 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedKinds == [.shared])
+        #expect(networks.requestedNetworks == [.common(.shared)])
     }
 
     @Test("A shared network that cannot be materialized builds the device detached")
@@ -1171,7 +1172,7 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedKinds == [.hostOnly])
+        #expect(networks.requestedNetworks == [.common(.hostOnly)])
     }
 
     @Test("Host Only mode in a build without the entitlement names the entitlement")
@@ -1190,7 +1191,59 @@ struct ConfigurationBuilderTests {
             return true
         }
         // The entitlement is checked before the network is asked for.
-        #expect(networks.requestedKinds.isEmpty)
+        #expect(networks.requestedNetworks.isEmpty)
+    }
+
+    @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
+    func isolatedModesAttachTheVMsOwnNetwork() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let networks = MockVmnetNetworkProvider()
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+
+        var shared = makeLinuxConfig()
+        shared.isolatedNetwork = true
+        var hostOnly = makeHostOnlyConfig()
+        hostOnly.isolatedNetwork = true
+        for config in [shared, hostOnly] {
+            let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+                .configuration.networkDevices
+            #expect(devices[0].attachment === networks.scriptedAttachment)
+        }
+
+        #expect(networks.requestedNetworks == [.own(.shared), .own(.hostOnly)])
+        #expect(networks.openedOwners == [shared.id, hostOnly.id])
+    }
+
+    @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
+    func isolatedModeWithoutItsNetworkBuildsDetached() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let networks = MockVmnetNetworkProvider()
+        networks.attachmentError = TestFailure("network limit reached")
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        var config = makeLinuxConfig()
+        config.isolatedNetwork = true
+
+        let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.networkDevices
+        #expect(devices[0].attachment == nil)
+        #expect(networks.requestedNetworks == [.own(.shared)])
+    }
+
+    @Test("An isolated Shared VM in a build without the entitlement is refused, not put on system NAT")
+    func isolatedSharedWithoutTheEntitlementThrows() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let builder = makeBuilder(entitlements: .unentitled)
+        var config = makeLinuxConfig()
+        config.isolatedNetwork = true
+
+        #expect {
+            try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .isolatedNetworkingNotEntitled = e
+            else { return false }
+            return true
+        }
     }
 
     @Test("A Host Only network that cannot be materialized builds the device detached")

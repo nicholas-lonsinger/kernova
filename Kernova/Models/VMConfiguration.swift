@@ -30,6 +30,16 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
     case always
 }
 
+/// A network a VM's device can join.
+enum VMJoinedNetwork: Hashable, Sendable {
+    /// The host's LAN through a bridged interface — any interface, since
+    /// Automatic resolves at start and which link two VMs land on is not
+    /// knowable in advance.
+    case bridged
+    /// An app-managed vmnet network.
+    case vmnet(VmnetNetworkID)
+}
+
 /// Persistent configuration for a virtual machine, serialized to `config.json`
 /// inside each VM bundle directory — what a snapshot captures and a revert
 /// restores. Per-VM state a revert must leave alone is ``VMHostState``.
@@ -89,6 +99,11 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// BSD name of the host interface a bridged VM attaches to (e.g. `en0`), or
     /// `nil` for Automatic — resolved against the host's default route at start.
     var bridgedInterfaceIdentifier: String?
+
+    /// When `true`, a Shared or Host Only VM runs on a network of its own,
+    /// which no other guest joins; when `false` it joins its mode's common
+    /// network. Bridged ignores it.
+    var isolatedNetwork: Bool
 
     var macAddress: String?
 
@@ -306,6 +321,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled: Bool = true,
         networkMode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
+        isolatedNetwork: Bool = false,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
@@ -351,6 +367,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.networkMode = networkMode
         self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+        self.isolatedNetwork = isolatedNetwork
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
@@ -407,6 +424,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
             String.self, forKey: .bridgedInterfaceIdentifier)
+        self.isolatedNetwork = try c.decodeIfPresent(Bool.self, forKey: .isolatedNetwork) ?? false
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =
@@ -497,6 +515,21 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled = true
         networkMode = mode
         mintMACAddressIfNeeded()
+    }
+
+    /// The network this VM's device joins, `nil` when it carries none: two
+    /// devices share a link exactly when they join equal networks.
+    var joinedNetwork: VMJoinedNetwork? {
+        guard networkEnabled else { return nil }
+        guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
+        return .vmnet(VmnetNetworkID(kind: kind, owner: isolatedNetwork ? id : nil))
+    }
+
+    /// Whether this VM's device joins a network of its own — what every
+    /// surface reports as isolated.
+    var joinsOwnNetwork: Bool {
+        guard case .vmnet(let network) = joinedNetwork else { return false }
+        return network.owner != nil
     }
 
     /// Gives a VM with no address of its own one, for the reason
