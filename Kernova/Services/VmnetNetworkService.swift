@@ -70,11 +70,20 @@ enum IPv4Value {
     }
 }
 
+// A class, not a struct: Swift 6.4 at -Onone reads `dictionary[key]?.field`
+// from a class's stored dictionary as `.some(garbage)` for a missing key when
+// the value pairs a bare `OpaquePointer` with the field, and wrapping the
+// pointer in a class reference compiles correctly
+// (docs/research/2026-09-30-swift-6-4-onone-optional-chain-through-a-pointer-payload.md).
 /// A materialized app-managed vmnet network.
-struct VmnetNetworkHandle: @unchecked Sendable {
+final class VmnetNetworkHandle: @unchecked Sendable {
     /// Feed to `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross
     /// isolation domains: the ref is an immutable reservation handle.
     let network: vmnet_network_ref
+
+    init(network: vmnet_network_ref) {
+        self.network = network
+    }
 }
 
 /// The vmnet calls `VmnetNetworkService` makes, and every use of the refs they
