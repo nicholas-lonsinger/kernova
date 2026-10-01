@@ -295,8 +295,8 @@ private final class ScrollMoreHitTransparentView: NSView {
 
 /// Builds the chevron disc: a `chevron.down` on a small adaptive grey disc.
 ///
-/// The disc is an `NSBox`, so its fill/border are `NSColor`s that adapt to
-/// light/dark automatically. Returned hit-transparent.
+/// The disc is an `NSBox` whose fill/border are dynamic `NSColor`s, so it
+/// follows light/dark. Returned hit-transparent.
 @MainActor
 private func makeScrollMoreChevron() -> NSView {
     let diameter: CGFloat = 28
@@ -305,7 +305,7 @@ private func makeScrollMoreChevron() -> NSView {
     disc.boxType = .custom
     disc.titlePosition = .noTitle
     disc.cornerRadius = diameter / 2
-    disc.fillColor = .secondaryLabelColor.withAlphaComponent(0.2)
+    disc.fillColor = .secondaryLabelColor.withDynamicAlpha(0.2)
     disc.borderWidth = 1
     disc.borderColor = .separatorColor
 

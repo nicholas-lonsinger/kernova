@@ -181,7 +181,7 @@ final class GuestSetupProgressViewController: NSViewController {
         let line = NSBox()
         line.boxType = .custom
         line.borderWidth = 0
-        line.fillColor = .secondaryLabelColor.withAlphaComponent(0.3)
+        line.fillColor = .secondaryLabelColor.withDynamicAlpha(0.3)
         line.translatesAutoresizingMaskIntoConstraints = false
         line.widthAnchor.constraint(equalToConstant: 2).isActive = true
         line.heightAnchor.constraint(equalToConstant: 20).isActive = true
@@ -265,7 +265,7 @@ final class GuestSetupProgressViewController: NSViewController {
         for (index, connector) in connectors.enumerated() {
             connector.fillColor =
                 state.state(ofStepAt: index) == .completed
-                ? .controlAccentColor : .secondaryLabelColor.withAlphaComponent(0.3)
+                ? .controlAccentColor : .secondaryLabelColor.withDynamicAlpha(0.3)
         }
     }
 

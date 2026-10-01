@@ -188,4 +188,20 @@ struct GroupedFormStyleTests {
             #expect(fill.brightnessComponent < 0.5)
         }
     }
+
+    @Test("A banner's tinted fill follows light/dark")
+    func bannerFillFollowsAppearance() throws {
+        let banner = makeGroupedFormBanner(symbolName: "info.circle", tint: .systemOrange, message: "Message")
+        let fill = try #require(banner.subviews.lazy.compactMap { $0 as? NSBox }.first).fillColor
+        var light: NSColor?
+        var dark: NSColor?
+        try #require(NSAppearance(named: .aqua)).performAsCurrentDrawingAppearance {
+            light = fill.usingColorSpace(.sRGB)
+        }
+        try #require(NSAppearance(named: .darkAqua)).performAsCurrentDrawingAppearance {
+            dark = fill.usingColorSpace(.sRGB)
+        }
+
+        #expect(try #require(light) != (try #require(dark)))
+    }
 }
