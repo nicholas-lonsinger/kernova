@@ -16,11 +16,13 @@ func makeSettingsViewModel(
     storage: MockVMStorageService = MockVMStorageService(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
-    entitled: Bool = true
+    entitled: Bool = true,
+    machineFiles: (any VMBundleMachineFileWorking)? = nil
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: storage,
         diskImageService: MockDiskImageService(),
+        machineFiles: machineFiles,
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),

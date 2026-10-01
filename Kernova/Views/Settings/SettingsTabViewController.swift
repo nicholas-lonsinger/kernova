@@ -78,14 +78,25 @@ enum SettingsPaneMetrics {
     static let width: CGFloat = 520
 
     /// The tallest a pane can be while its window still fits the visible area
-    /// of the screen it is on — the main screen before it has one — or `nil`
-    /// with no screen at all.
+    /// below the window's top edge — the window grows downward from a fixed
+    /// top — or the main screen's whole visible height before the window is
+    /// on a screen; `nil` with no screen at all.
     ///
     /// A pane taller than this scrolls; below it, the window follows the pane.
     static func maxHeight(in window: NSWindow?) -> CGFloat? {
-        guard let screen = window?.screen ?? NSScreen.main else { return nil }
         let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
-        return screen.visibleFrame.height - chrome
+        if let window, let screen = window.screen {
+            return maxHeight(windowTop: window.frame.maxY, visibleFrame: screen.visibleFrame, chrome: chrome)
+        }
+        guard let screen = NSScreen.main else { return nil }
+        return maxHeight(windowTop: nil, visibleFrame: screen.visibleFrame, chrome: chrome)
+    }
+
+    /// The pane height that keeps a window whose top edge sits at `windowTop`
+    /// — or the top of `visibleFrame` when `nil` — inside `visibleFrame`.
+    static func maxHeight(windowTop: CGFloat?, visibleFrame: NSRect, chrome: CGFloat) -> CGFloat {
+        let top = min(windowTop ?? visibleFrame.maxY, visibleFrame.maxY)
+        return top - visibleFrame.minY - chrome
     }
 }
 

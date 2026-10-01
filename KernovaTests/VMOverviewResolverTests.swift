@@ -297,7 +297,7 @@ struct VMOverviewResolverTests {
 
     // MARK: - Async reads and rebinding
 
-    @Test("The snapshots' sizes land from an off-main read, keyed to their set")
+    @Test("The snapshots' sizes land from an off-main read, measured once per state")
     func snapshotSizesFollowTheirSet() async throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture()
@@ -315,6 +315,89 @@ struct VMOverviewResolverTests {
         // A pass over the same set re-issues nothing.
         resolver.refresh()
         #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
+    }
+
+    /// A resolver over a VM holding one snapshot whose size `files` reports.
+    private func makeMeasuredResolver(
+        _ files: MockVMBundleMachineFiles
+    ) -> (VMOverviewResolver, VMInstance, VMSnapshot) {
+        let viewModel = makeSettingsViewModel(preferences: preferences, machineFiles: files)
+        let instance = viewModel.library.admitFixture()
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
+        return (makeResolver(instance: instance, viewModel: viewModel), instance, snapshot)
+    }
+
+    @Test("A lifecycle change that keeps the same snapshots measures them again")
+    func aLifecycleChangeRemeasuresTheSameSnapshots() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, instance, snapshot) = makeMeasuredResolver(files)
+        let before = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
+        files.setSize(before, for: snapshot.id)
+        var repainted: [VMSettingsCategory] = []
+        resolver.onCategoryResolved = { repainted.append($0) }
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == before)
+
+        // A revert clones the snapshot back over the live disks, so its private
+        // bytes fall away while the manifest stays exactly as it was — and the
+        // VM rests where it started.
+        let after = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
+        files.setSize(after, for: snapshot.id)
+        instance.activity.placeForTesting(
+            .operating(
+                .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)), from: .stopped))
+        resolver.refresh()
+        instance.activity.placeForTesting(.stopped)
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == after)
+        #expect(repainted.filter { $0 == .snapshots }.count == 2)
+        #expect(files.sizeReads == 2)
+    }
+
+    @Test("Showing the sizes again measures them again, with nothing else changed")
+    func remeasuringReadsAgain() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, snapshot) = makeMeasuredResolver(files)
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        resolver.refresh()
+        #expect(files.sizeReads == 1)
+
+        let grown = SnapshotSize(bytes: 72_000_000_000, privateBytes: 9_000_000_000)
+        files.setSize(grown, for: snapshot.id)
+        resolver.remeasureSnapshotSizes()
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+
+        #expect(files.sizeReads == 2)
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == grown)
+    }
+
+    @Test("A measurement landing after a newer one never replaces it")
+    func aStaleMeasurementCannotOverwriteANewerOne() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, snapshot) = makeMeasuredResolver(files)
+        let stale = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
+        files.setSize(stale, for: snapshot.id)
+        let hold = files.holdNextSizeRead()
+        resolver.refresh()
+        let staleRead = resolver.snapshotSizeTaskForTesting
+        try await files.sizeReadEntered.wait { files.sizeReads == 1 }
+
+        let fresh = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
+        files.setSize(fresh, for: snapshot.id)
+        resolver.remeasureSnapshotSizes()
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
+
+        hold.signal()
+        await staleRead?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
     }
 
     @Test("A size already read survives the re-read the next snapshot triggers")

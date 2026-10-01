@@ -135,4 +135,19 @@ struct SettingsTabViewControllerTests {
 
         #expect(indicator.flashCountForTesting == before)
     }
+
+    @Test("A window sitting mid-screen caps its pane at the room below its top edge")
+    func midScreenWindowCapsAtTheRoomBelowIt() {
+        // A 1440×875 visible area above a 25-point Dock, the window's top
+        // edge halfway up it.
+        let visible = NSRect(x: 0, y: 25, width: 1_440, height: 875)
+        let chrome: CGFloat = 52
+        #expect(
+            SettingsPaneMetrics.maxHeight(windowTop: 462.5, visibleFrame: visible, chrome: chrome)
+                == 462.5 - 25 - chrome)
+        // A window not yet on a screen gets the whole visible height.
+        #expect(
+            SettingsPaneMetrics.maxHeight(windowTop: nil, visibleFrame: visible, chrome: chrome)
+                == 875 - chrome)
+    }
 }

@@ -82,7 +82,7 @@ extension GuestIPAddress {
 /// showing the same figure reads it here rather than resolving it a second time.
 ///
 /// Two reads land asynchronously — the boot disk's capacity and the snapshots'
-/// footprint. Each is keyed to the VM it was issued for and reported through
+/// sizes. Each is keyed to the VM it was issued for and reported through
 /// ``onCategoryResolved`` so one card, or one row, repaints.
 @MainActor
 final class VMOverviewResolver {
@@ -122,10 +122,20 @@ final class VMOverviewResolver {
     private var bootDiskKey: BootDiskKey?
     private var bootDiskTask: Task<Void, Never>?
 
-    /// The snapshot ids the size read was last issued for, so it re-runs when
-    /// the set changes rather than on every pass.
-    private var snapshotSizeIDs: [UUID]?
+    /// The VM state the snapshot sizes were last measured in. A size is a
+    /// measurement of shared blocks at one moment — a revert, a capture, a
+    /// delete, or the guest writing until it stops all move it without touching
+    /// the snapshot — so any change to the manifest or the lifecycle phase
+    /// measures again.
+    private var snapshotMeasureKey: SnapshotMeasureKey?
     private var snapshotSizeTask: Task<Void, Never>?
+    /// Counts measurements issued; only the newest one's result is applied.
+    private var snapshotMeasureGeneration = 0
+
+    private struct SnapshotMeasureKey: Equatable {
+        let manifest: VMSnapshotManifest
+        let phaseCommits: Int
+    }
 
     private struct BootDiskKey: Equatable {
         let instanceID: UUID
@@ -160,7 +170,8 @@ final class VMOverviewResolver {
         bootDiskKey = nil
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
-        snapshotSizeIDs = nil
+        snapshotMeasureKey = nil
+        snapshotMeasureGeneration += 1
         titledNetworkChoice = nil
         resolved = VMOverviewResolved()
     }
@@ -169,8 +180,14 @@ final class VMOverviewResolver {
     func prepareForDisappearance() {
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
-        // Re-read on the next pass: the sizes may have moved while away.
-        snapshotSizeIDs = nil
+        snapshotMeasureGeneration += 1
+        remeasureSnapshotSizes()
+    }
+
+    /// Measures the snapshot sizes again on the next pass, whatever changed
+    /// since the last measurement — for a surface stating them coming into view.
+    func remeasureSnapshotSizes() {
+        snapshotMeasureKey = nil
     }
 
     /// Re-reads the microphone permission, which System Settings — or macOS's
@@ -267,29 +284,32 @@ final class VMOverviewResolver {
         }
     }
 
-    /// Reads each snapshot's size off the main actor — a walk
-    /// over every file each one holds — and only when the set of snapshots
-    /// changed.
+    /// Measures each snapshot's size off the main actor whenever the VM state
+    /// they were measured in moved (``snapshotMeasureKey``), once the VM is
+    /// settled — an operation's own writes are still landing until then.
     private func refreshSnapshotSizes() {
-        let ids = instance.snapshotManifest.ordered.map(\.id)
-        guard ids != snapshotSizeIDs else { return }
-        snapshotSizeIDs = ids
-        // A size is keyed by its snapshot's id, so one for a snapshot the set
-        // still holds stays true until the fresh read replaces it — only what
-        // the set no longer holds is dropped. Clearing them all would blank
-        // every row and the readout for the length of the directory walk.
-        let kept = Set(ids)
+        let manifest = instance.snapshotManifest
+        // Only what the manifest no longer lists is dropped at once: the rest
+        // stay on screen until the new measurement replaces them, rather than
+        // blanking every row for the length of the walk.
+        let kept = Set(manifest.ordered.map(\.id))
         resolved.snapshotSizes = resolved.snapshotSizes.filter { kept.contains($0.key) }
+        guard instance.phase.isSettled else { return }
+        let key = SnapshotMeasureKey(manifest: manifest, phaseCommits: instance.activity.phaseCommits)
+        guard key != snapshotMeasureKey else { return }
+        snapshotMeasureKey = key
         snapshotSizeTask?.cancel()
         snapshotSizeTask = nil
-        guard !ids.isEmpty else { return }
+        snapshotMeasureGeneration += 1
+        guard !kept.isEmpty else { return }
+        let generation = snapshotMeasureGeneration
         let issuedFor = instance
         let viewModel = self.viewModel
         snapshotSizeTask = Task { [weak self] in
             let sizes = await viewModel.snapshotSizes(for: issuedFor)
-            // The pane is reused across route and VM changes, so a read that
-            // lands after the user moved on must not state the new VM's sizes.
-            guard !Task.isCancelled, let self, self.instance.id == issuedFor.id else { return }
+            // A measurement issued after this one, or a re-bind to another VM,
+            // owns what the rows state now.
+            guard let self, self.snapshotMeasureGeneration == generation else { return }
             self.resolved.snapshotSizes = sizes
             self.onCategoryResolved?(.snapshots)
         }
