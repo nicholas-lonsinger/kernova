@@ -1822,7 +1822,8 @@ struct VMLifecycleCoordinatorTests {
         #expect(expectedDigest.source == .enteredByUser)
         #expect(
             error?.localizedDescription
-                == "\(filename) doesn't match the checksum you entered.")
+                == "\(filename) doesn't match the checksum you entered. "
+                + "To use a different checksum, create the virtual machine again.")
 
         // Left in place it would satisfy the skip-existing fast path forever.
         let expected = fixture.downloads.appendingPathComponent(
