@@ -46,15 +46,29 @@ func makeWizardTitle(_ text: String, info: [InfoPopoverParagraph] = []) -> NSVie
     return row
 }
 
+/// A step's subtitle: what the step asks of the user, beneath its title.
+@MainActor
+func makeWizardSubtitle(_ text: String) -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: text)
+    label.font = .preferredFont(forTextStyle: .body)
+    label.textColor = .secondaryLabelColor
+    label.alignment = .left
+    label.lineBreakMode = .byWordWrapping
+    label.maximumNumberOfLines = 0
+    label.isSelectable = false
+    return label
+}
+
 // MARK: - Radio options
 
 /// Lays out a caller-supplied radio button as a native option row: a leading
-/// symbol icon and the radio (with its title).
+/// symbol icon, the radio (with its title), and a secondary description wrapped
+/// beneath the title.
 ///
 /// The caller creates the radio, so it owns target/action and can track it for
-/// selection state; this only arranges the icon beside it.
+/// selection state; this only arranges the icon and description around it.
 @MainActor
-func makeWizardRadioOption(radio: NSButton, iconSymbol: String)
+func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String)
     -> NSView
 {
     radio.font = Typography.body
@@ -66,9 +80,21 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String)
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.setContentHuggingPriority(.required, for: .horizontal)
 
+    let description = NSTextField(wrappingLabelWithString: descriptionText)
+    description.font = .preferredFont(forTextStyle: .subheadline)
+    description.textColor = .secondaryLabelColor
+    description.maximumNumberOfLines = 0
+    description.isSelectable = false
+    description.translatesAutoresizingMaskIntoConstraints = false
+
+    // The radio's circle and the gap after it, so the description starts under
+    // the radio's title.
+    let descriptionIndent: CGFloat = 20
+
     let option = NSView()
     option.addSubview(icon)
     option.addSubview(radio)
+    option.addSubview(description)
     NSLayoutConstraint.activate([
         icon.leadingAnchor.constraint(equalTo: option.leadingAnchor),
         icon.centerYAnchor.constraint(equalTo: radio.centerYAnchor),
@@ -77,7 +103,11 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String)
         radio.topAnchor.constraint(equalTo: option.topAnchor),
         radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
         radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
-        radio.bottomAnchor.constraint(equalTo: option.bottomAnchor),
+
+        description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
+        description.leadingAnchor.constraint(equalTo: radio.leadingAnchor, constant: descriptionIndent),
+        description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
+        description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
     ])
     return option
 }

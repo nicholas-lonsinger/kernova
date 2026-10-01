@@ -592,8 +592,9 @@ private func applyGroupedFormCaptionStyle(_ label: NSTextField) {
 }
 
 /// Caption-styled text that is the content of what holds it — an empty list's
-/// placeholder, an alert accessory's lead-in — rather than a note about a
-/// control, which is a ``GroupedFormStateNote``.
+/// placeholder, an alert accessory's lead-in, the lead-in of a choice's
+/// controls — rather than a note about a control, which is a
+/// ``GroupedFormStateNote``.
 @MainActor
 func makeGroupedFormContentText(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)

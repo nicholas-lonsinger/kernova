@@ -8,6 +8,20 @@ import Testing
 @Suite("OSSelectionContentViewController Tests", .caseScoped)
 @MainActor
 struct OSSelectionContentViewControllerTests {
+    @Test("The step shows its subtitle and each OS's description")
+    func showsSubtitleAndDescriptions() {
+        let vc = OSSelectionContentViewController(creationVM: VMCreationViewModel())
+        vc.loadViewIfNeeded()
+
+        for text in [
+            "Select the operating system you want to run in your virtual machine.",
+            "Run macOS in a virtual machine on Apple Silicon.",
+            "Run Linux distributions using EFI or direct kernel boot.",
+        ] {
+            #expect(findLabel(withText: text, in: vc.view) != nil, "\(text)")
+        }
+    }
+
     @Test("Initial selection reflects the model's selectedOS")
     func initialSelectionReflectsModel() {
         let vm = VMCreationViewModel()  // defaults to .macOS

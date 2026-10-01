@@ -400,15 +400,24 @@ struct GroupedFormStyleTests {
         #expect(titled.arrangedSubviews.last === info)
     }
 
-    @Test("A wizard radio option without a description ends at its radio")
-    func radioOptionWithoutDescription() {
+    @Test("A wizard radio option shows its description beneath the radio")
+    func radioOptionShowsDescriptionBeneathRadio() throws {
         let radio = NSButton(radioButtonWithTitle: "macOS", target: nil, action: nil)
-        let option = makeWizardRadioOption(radio: radio, iconSymbol: "apple.logo")
+        let option = makeWizardRadioOption(
+            radio: radio, iconSymbol: "apple.logo", description: "Run macOS.")
         option.frame = NSRect(x: 0, y: 0, width: 400, height: option.fittingSize.height)
         option.layoutSubtreeIfNeeded()
 
-        #expect(collectLabels(in: option).isEmpty)
-        #expect(option.fittingSize.height == radio.fittingSize.height)
+        let description = try #require(findLabel(withText: "Run macOS.", in: option))
+        let descriptionFrame = description.convert(description.bounds, to: option)
+        let radioFrame = radio.convert(radio.bounds, to: option)
+        // Flipped or not, the description lies wholly on the far side of the
+        // radio from the option's top.
+        let isBelow =
+            option.isFlipped
+            ? descriptionFrame.minY >= radioFrame.maxY : descriptionFrame.maxY <= radioFrame.minY
+        #expect(isBelow)
+        #expect(descriptionFrame.minX > radioFrame.minX)
     }
 
     @Test(

@@ -79,6 +79,37 @@ struct VMSettingsStoragePanelTests {
         try await waitUntil { !self.showsMissingBadge(in: vc) }
     }
 
+    @Test("Each disk row shows its subtitle: the in-bundle label while no size is readable, the sizes once they are")
+    func diskRowsShowTheirSubtitles() async throws {
+        let directory = scratch.url.appendingPathComponent(
+            "kernova-settings-storage-sizes", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("data.img").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: path, contents: Data(repeating: 1, count: 8192))
+
+        let viewModel = makeViewModel()
+        // The main disk's `Disk.asif` is never written, so its sizes stay
+        // unreadable; the external disk's file is real.
+        let instance = makeSettingsInstance(guestOS: .linux) {
+            let layout = VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: $0.id))
+            $0.storageDisks = [
+                StorageDisk.mainDisk(layout: layout), StorageDisk(path: path, label: "Data"),
+            ]
+        }
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+        let panel = try #require(vc.panelForTesting(.storage))
+
+        // Genuine no-signal predicate — the subtitles land from an off-main
+        // file read with no Observable or `AsyncGate` signal to arm against.
+        try await waitUntil {
+            findLabel(withText: "In-bundle disk image", in: panel) != nil
+                && findLabel(containing: "(on disk) / ", in: panel) != nil
+        }
+    }
+
     // MARK: - Section lock hints
 
     @Test("Each section's lock hint names the states that section is editable in")

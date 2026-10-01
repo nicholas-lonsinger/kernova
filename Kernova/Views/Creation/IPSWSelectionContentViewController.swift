@@ -66,22 +66,34 @@ final class IPSWSelectionContentViewController: NSViewController {
     }
 
     override func loadView() {
-        let title = makeWizardTitle(
-            "macOS Restore Image",
-            info: [
-                .body(
-                    "Download Latest fetches the newest macOS restore image this Mac can install, "
-                        + "from Apple. Choose a Version… lists every release Apple still hosts, "
-                        + "including older ones. Paste an IPSW URL… installs from a link you supply; "
-                        + "Choose Local File… uses an IPSW already on your Mac.")
-            ])
+        let title = makeWizardTitle("macOS Restore Image")
+        let subtitle = makeWizardSubtitle(
+            "Choose how to obtain the macOS restore image (IPSW) for installation.")
 
         let downloadOption = makeSourceRadio(
-            for: .downloadLatest, symbol: "arrow.down.circle", title: "Download Latest")
+            for: .downloadLatest,
+            symbol: "arrow.down.circle",
+            title: "Download Latest",
+            description: "Download the latest compatible macOS restore image from Apple."
+        )
         let catalogOption = makeSourceRadio(
-            for: .catalogVersion, symbol: "list.bullet", title: "Choose a Version…")
-        let urlOption = makeSourceRadio(for: .customURL, symbol: "link", title: "Paste an IPSW URL…")
-        let localOption = makeSourceRadio(for: .localFile, symbol: "folder", title: "Choose Local File…")
+            for: .catalogVersion,
+            symbol: "list.bullet",
+            title: "Choose a Version…",
+            description: "Browse every macOS release Apple still hosts, including older versions."
+        )
+        let urlOption = makeSourceRadio(
+            for: .customURL,
+            symbol: "link",
+            title: "Paste an IPSW URL…",
+            description: "Install from a restore image at a URL you supply."
+        )
+        let localOption = makeSourceRadio(
+            for: .localFile,
+            symbol: "folder",
+            title: "Choose Local File…",
+            description: "Select an IPSW file already on your Mac."
+        )
 
         let options = NSStackView(views: [downloadOption, catalogOption, urlOption, localOption])
         options.orientation = .vertical
@@ -92,16 +104,17 @@ final class IPSWSelectionContentViewController: NSViewController {
         conditionalContainer.alignment = .leading
         conditionalContainer.spacing = Spacing.medium
 
-        let stack = NSStackView(views: [title, options, conditionalContainer])
+        let stack = NSStackView(views: [title, subtitle, options, conditionalContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: title)
+        stack.setCustomSpacing(20, after: subtitle)
         stack.setCustomSpacing(20, after: options)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
         NSLayoutConstraint.activate([
+            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             options.widthAnchor.constraint(equalTo: stack.widthAnchor),
             conditionalContainer.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -172,11 +185,13 @@ final class IPSWSelectionContentViewController: NSViewController {
 
     // MARK: - Source radios
 
-    private func makeSourceRadio(for source: IPSWSource, symbol: String, title: String) -> NSView {
+    private func makeSourceRadio(
+        for source: IPSWSource, symbol: String, title: String, description: String
+    ) -> NSView {
         let radio = NSButton(
             radioButtonWithTitle: title, target: self, action: #selector(sourceRadioClicked(_:)))
         radios[source] = radio
-        return makeWizardRadioOption(radio: radio, iconSymbol: symbol)
+        return makeWizardRadioOption(radio: radio, iconSymbol: symbol, description: description)
     }
 
     @objc private func sourceRadioClicked(_ sender: NSButton) {
