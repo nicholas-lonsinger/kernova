@@ -692,18 +692,42 @@ struct DetailAlertsPresenterTests {
         #expect(answers.value == [true])
     }
 
-    @Test("A confirmation queued behind another alert is declined when the window goes")
-    func aQueuedConfirmationIsDeclinedOnTeardown() {
+    @Test("A confirmation with no window to ask in is declined at once")
+    func aConfirmationWithNoWindowIsDeclined() {
+        let (presenter, _) = makePresenter()
+        let answers = Box<[Bool]>([])
+
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+
+        // The verb is suspended on this answer; a queue would hold it until a
+        // window that may never come back.
+        #expect(answers.value == [false])
+        #expect(presenter.pendingCountForTesting == 0)
+    }
+
+    @Test("A confirmation raised while another alert is up is declined at once")
+    func aConfirmationBehindAnotherAlertIsDeclined() {
         let (presenter, _) = makePresenter()
         presenter.start(window: showTestWindow(styleMask: [.titled]))
         presenter.presentError("Something else", title: "Couldn't Start")
         let answers = Box<[Bool]>([])
 
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
-        #expect(presenter.pendingCountForTesting == 1)
+
+        #expect(answers.value == [false])
+        #expect(presenter.pendingCountForTesting == 0)
+    }
+
+    @Test("Tearing the window down declines the confirmation on screen")
+    func stoppingDeclinesTheShownConfirmation() {
+        let (presenter, _) = makePresenter()
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let answers = Box<[Bool]>([])
+        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+        #expect(presenter.isShowingAlertForTesting)
+
         presenter.stop()
 
-        // The verb is suspended on this answer; nothing else would resume it.
         #expect(answers.value == [false])
     }
 

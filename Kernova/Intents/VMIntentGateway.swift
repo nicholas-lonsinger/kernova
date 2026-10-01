@@ -157,8 +157,10 @@ final class VMIntentGateway {
         try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
     }
 
-    func restart(_ id: UUID) async throws {
-        try await perform(.restart, on: id) { try await self.commands.restart(.id(id), timeout: nil) }
+    func restart(_ id: UUID, consent: Consent) async throws {
+        try await perform(.restart, on: id) {
+            try await self.commands.restart(.id(id), timeout: nil, consent: consent)
+        }
     }
 
     func open(_ id: UUID) async throws {

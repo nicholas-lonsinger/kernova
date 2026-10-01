@@ -305,7 +305,8 @@ struct VMCommandCoreOperationTests {
         // And every selector verb, which no longer finds it.
         let selector = VMSelector.id(instance.id)
         #expect(await commandError { try await harness.core.resume(selector, consent: .none) } == notFound)
-        #expect(await commandError { try await harness.core.restart(selector, timeout: nil) } == notFound)
+        #expect(
+            await commandError { try await harness.core.restart(selector, timeout: nil, consent: .none) } == notFound)
         #expect(commandError { try harness.core.rename(selector, to: "Late") } == notFound)
         #expect(
             await commandError {
@@ -345,7 +346,7 @@ struct VMCommandCoreOperationTests {
         }
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60)
+            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
         }
         // The parked sleep is the power-off deadline: the restart is waiting.
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }

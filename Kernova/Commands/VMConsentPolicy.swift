@@ -108,10 +108,16 @@ enum VMConsentPolicy {
     /// already chosen between them shows the chosen one's words rather than
     /// inventing copy, and learns from the missing alternative that the choice
     /// cannot be honoured.
+    ///
+    /// Only the revert's own prompt carries that choice: any other consent a
+    /// revert asks for — resuming beside a VM sharing its machine identity —
+    /// is confirmed with its own words whatever was chosen.
     static func revertAction(
         _ prompt: ConfirmationPrompt, takingCheckpoint: Bool
     ) -> (title: String, isDestructive: Bool)? {
-        guard takingCheckpoint else { return (prompt.confirmTitle, prompt.confirmIsDestructive) }
+        guard takingCheckpoint, prompt.kind == .revertToSnapshot else {
+            return (prompt.confirmTitle, prompt.confirmIsDestructive)
+        }
         return prompt.alternatives.first { $0.takesCheckpoint }
             .map { ($0.title, $0.isDestructive) }
     }

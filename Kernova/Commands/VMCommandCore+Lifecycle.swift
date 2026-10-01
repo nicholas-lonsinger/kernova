@@ -522,7 +522,7 @@ extension VMCommandCore {
             [weak self, weak instance] result in
             guard let self, let instance else { return [] }
             return self.setupEnded(
-                result, on: instance, bootIdentity: identity == .confirmed ? .confirmed : .unavailable)
+                result, on: instance, bootIdentity: identity.unattended)
         }
     }
 
@@ -704,7 +704,8 @@ extension VMCommandCore {
                 guard consent.covers(.stopPaused) else {
                     throw CommandError.confirmationRequired(Self.stopPausedPrompt(instance))
                 }
-                try await resumeThenShutDown(instance, consent: consent)
+                try await resumeThenShutDown(
+                    instance, identity: VMIdentityOverride(consent).unattended)
                 return
             }
             guard consent.covers(.forceStop) || !instance.holdsSuspendedSession else {
@@ -721,8 +722,14 @@ extension VMCommandCore {
                 throw failure(error, verb: .stop, on: instance)
             }
         case .resumeThenShutDown:
-            try require(.resume, on: instance)
-            try await resumeThenShutDown(instance, consent: consent)
+            // Decided with the identity the restore will claim under, which
+            // the `.resume` capability's gate would decide without.
+            let identity = VMIdentityOverride(consent).unattended
+            switch instance.activity.decide(.resume, posture: .commit, identity: identity) {
+            case .admit, .join: break
+            case .refuse(let reason): throw admissionRefusal(reason, on: instance, verb: .resume)
+            }
+            try await resumeThenShutDown(instance, identity: identity)
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -750,14 +757,12 @@ extension VMCommandCore {
     /// graceful ACPI shutdown.
     ///
     /// A restore beside a VM sharing the machine identity is asked about by no
-    /// one — the caller asked for a stop — so only a stop whose `consent`
-    /// already covers it takes one.
-    private func resumeThenShutDown(_ instance: VMInstance, consent: Consent) async throws {
+    /// one — the caller asked for a stop — so `identity` is unattended.
+    private func resumeThenShutDown(
+        _ instance: VMInstance, identity: VMIdentityOverride
+    ) async throws {
         do {
-            try await resumeOrRestore(
-                instance,
-                identity: consent.covers(.startBesideSharedMachineIdentity)
-                    ? .confirmed : .unavailable)
+            try await resumeOrRestore(instance, identity: identity)
             try await lifecycle.requestStop(instance)
         } catch {
             #log(
@@ -979,8 +984,13 @@ extension VMCommandCore {
     /// before the stop. Running is not evidence the window is spent — an
     /// install can finish and the guest be booted into Recovery, which reads no
     /// account — and finding that out after the guest is down would leave the
-    /// VM powered off half way through a restart.
-    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws {
+    /// VM powered off half way through a restart. Another active VM sharing
+    /// the machine identity the boot would claim is refused, or asked about,
+    /// before the stop for the same reason; `consent` answers it, and the boot
+    /// carries that answer.
+    func restart(
+        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
+    ) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try require(.restart, on: instance)
@@ -989,6 +999,12 @@ extension VMCommandCore {
         // down leaves it powered off mid-restart. Refused here it keeps
         // running, and the door that can ask answers and restarts again.
         try refuseOwedGuestAccount(instance)
+        let identity = VMIdentityOverride(consent)
+        if let conflict = instance.identityConflict(
+            for: .guestStart(.starting(recovery: false)), override: identity)
+        {
+            throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
+        }
         guard let sessionID = instance.activity.liveSessionID else {
             throw admissionRefusal(.invalidState, on: instance, verb: .restart)
         }
@@ -998,8 +1014,8 @@ extension VMCommandCore {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             // Asks nobody: the boot runs once the guest is down, after the
-            // call that could have asked has moved on.
-            try self.startNow(instance, policy: .command(.unavailable), resolving: outcome)
+            // call that asked has moved on.
+            try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {

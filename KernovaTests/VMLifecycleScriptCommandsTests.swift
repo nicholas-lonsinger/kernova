@@ -151,6 +151,22 @@ struct VMLifecycleScriptCommandsTests {
         #expect(commands.restartCalls.map(\.timeout) == [20])
     }
 
+    @Test("restart with confirmation answers the consent it asks for")
+    func restartPassesItsConfirmation() async throws {
+        let commands = MockVMCommanding()
+        commands.restartConsentPrompt = ConfirmationPrompt(
+            kind: .startBesideSharedMachineIdentity, title: "Restart?", message: "Same machine ID.",
+            confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
+        let command = try makeCommand(
+            VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
+            arguments: ["Confirmation": true])
+
+        try await command.run(makeGateway(commands), on: [.name("Alpha")])
+
+        #expect(
+            commands.restartConsents == [.none, Consent([.startBesideSharedMachineIdentity])])
+    }
+
     @Test("pause, resume, suspend and reveal each reach their verb")
     func plainVerbsReachTheCore() async throws {
         let commands = MockVMCommanding()

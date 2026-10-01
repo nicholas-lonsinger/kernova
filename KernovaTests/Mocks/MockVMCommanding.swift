@@ -138,6 +138,8 @@ final class MockVMCommanding: VMCommanding {
     private(set) var resumeConsents: [Consent] = []
     private(set) var suspendSelectors: [VMSelector] = []
     private(set) var restartCalls: [(selector: VMSelector, timeout: TimeInterval?)] = []
+    /// Each restart's consent, in the order of ``restartCalls``.
+    private(set) var restartConsents: [Consent] = []
     private(set) var openSelectors: [VMSelector] = []
     private(set) var revealSelectors: [VMSelector] = []
     private(set) var showInFinderSelectors: [VMSelector] = []
@@ -256,6 +258,8 @@ final class MockVMCommanding: VMCommanding {
     var startConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `resume`.
     var resumeConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `restart`.
+    var restartConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `revertToSnapshot`.
     var revertConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `deleteSnapshot`.
@@ -454,8 +458,12 @@ final class MockVMCommanding: VMCommanding {
         if let suspendError { throw suspendError }
     }
 
-    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws {
+    func restart(_ selector: VMSelector, timeout: TimeInterval?, consent: Consent) async throws {
         restartCalls.append((selector, timeout))
+        restartConsents.append(consent)
+        if let restartConsentPrompt, !consent.covers(restartConsentPrompt.kind) {
+            throw CommandError.confirmationRequired(restartConsentPrompt)
+        }
         if let restartError { throw restartError }
     }
 

@@ -308,6 +308,20 @@ struct VMSnapshotIntentTests {
 
     // MARK: - Consent
 
+    @Test("A revert's other consent is confirmed with its own words, whatever the checkpoint choice")
+    func aRevertsOtherConsentIgnoresTheCheckpointChoice() {
+        let resumeBeside = ConfirmationPrompt(
+            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Alpha\u{201D} Anyway?",
+            message: "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Beta\u{201D}, which is active.",
+            confirmTitle: "Resume Anyway", dismissTitle: "Cancel")
+
+        for takingCheckpoint in [true, false] {
+            let action = VMConsentPolicy.revertAction(resumeBeside, takingCheckpoint: takingCheckpoint)
+            #expect(action?.title == "Resume Anyway")
+            #expect(action?.isDestructive == true)
+        }
+    }
+
     @Test("A revert asks once, then re-issues carrying the checkpoint that was chosen")
     func revertConsentCarriesTheCheckpointChoice() async throws {
         for takingCheckpoint in [true, false] {

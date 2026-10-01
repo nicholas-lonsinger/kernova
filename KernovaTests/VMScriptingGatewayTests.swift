@@ -246,7 +246,7 @@ struct VMScriptingGatewayTests {
 
         try await gateway.start([alpha], recoveryMode: true, confirmation: false)
         try await gateway.stop([alpha], method: .force, confirmation: true, givingUpAfter: 30)
-        try await gateway.restart([alpha], givingUpAfter: nil)
+        try await gateway.restart([alpha], confirmation: false, givingUpAfter: nil)
         try await gateway.pause([alpha])
         try await gateway.resume([alpha], confirmation: false)
         try await gateway.suspend([alpha])
@@ -447,7 +447,7 @@ struct VMScriptingGatewayTests {
 
         try await gateway.start([alpha], recoveryMode: false, confirmation: false)
         try await gateway.resume([alpha], confirmation: false)
-        try await gateway.restart([alpha], givingUpAfter: nil)
+        try await gateway.restart([alpha], confirmation: false, givingUpAfter: nil)
         try await gateway.stop([alpha], method: .graceful, confirmation: false, givingUpAfter: nil)
         try await gateway.pause([alpha])
         try await gateway.suspend([alpha])

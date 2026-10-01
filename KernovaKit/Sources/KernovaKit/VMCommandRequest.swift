@@ -61,7 +61,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case suspend(VMSelector)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(VMSelector, timeout: TimeInterval?)
+        case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
         case open(VMSelector)
         case reveal(VMSelector)
         /// Selects the VM's bundle in the Finder, which is what comes forward.

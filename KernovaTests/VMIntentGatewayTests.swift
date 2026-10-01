@@ -299,7 +299,7 @@ struct VMIntentGatewayTests {
         try await gateway.pause(id)
         try await gateway.resume(id, consent: .none)
         try await gateway.suspend(id)
-        try await gateway.restart(id)
+        try await gateway.restart(id, consent: .none)
         try await gateway.open(id)
         try await gateway.reveal(id)
         _ = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")

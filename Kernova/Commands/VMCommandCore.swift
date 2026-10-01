@@ -347,8 +347,7 @@ final class VMCommandCore: VMCommanding {
         case .identityConflict(let conflict) where conflict.offersOverride:
             .confirmationRequired(
                 Self.startBesideSharedMachineIdentityPrompt(
-                    instance, sharingWith: conflict.other,
-                    resuming: verb == .resume || verb == .revertToSnapshot))
+                    instance, sharingWith: conflict.other, verb: verb))
         case .identityConflict(let conflict):
             .conflict(
                 vm: summary(instance), with: summary(conflict.other),
@@ -367,11 +366,16 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// The confirmation that starts `instance` beside `other`, which shares its
-    /// machine identity — worded for a resume when `resuming`.
+    /// machine identity — worded for the bring-up `verb` performs.
     static func startBesideSharedMachineIdentityPrompt(
-        _ instance: VMInstance, sharingWith other: VMInstance, resuming: Bool
+        _ instance: VMInstance, sharingWith other: VMInstance, verb: VMVerb?
     ) -> ConfirmationPrompt {
-        let verb = resuming ? "Resume" : "Start"
+        let verb =
+            switch verb {
+            case .resume, .revertToSnapshot: "Resume"
+            case .restart: "Restart"
+            default: "Start"
+            }
         return ConfirmationPrompt(
             kind: .startBesideSharedMachineIdentity,
             title: "\(verb) \u{201C}\(instance.name)\u{201D} Anyway?",

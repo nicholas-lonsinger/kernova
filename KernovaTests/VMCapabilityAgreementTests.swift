@@ -91,7 +91,7 @@ struct VMCapabilityAgreementTests {
             try await core.stop(vm, disposition: .graceful, consent: .none, timeout: nil)
         case .forceStop:
             try await core.stop(vm, disposition: .force, consent: .none, timeout: nil)
-        case .restart: try await core.restart(vm, timeout: 1)
+        case .restart: try await core.restart(vm, timeout: 1, consent: .none)
         case .pause: try await core.pause(vm)
         case .resume: try await core.resume(vm, consent: .none)
         case .suspend: try await core.suspend(vm)

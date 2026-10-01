@@ -267,9 +267,13 @@ final class VMScriptingGateway {
             verb)
     }
 
-    func restart(_ selectors: [VMSelector], givingUpAfter timeout: TimeInterval?) async throws {
-        try await perform(.restart, on: selectors) {
-            try await self.commands.restart($0, timeout: timeout)
+    func restart(
+        _ selectors: [VMSelector], confirmation: Bool, givingUpAfter timeout: TimeInterval?
+    ) async throws {
+        try await perform(.restart, on: selectors) { selector in
+            try await Self.consenting(confirmation) { consent in
+                try await self.commands.restart(selector, timeout: timeout, consent: consent)
+            }
         }
     }
 

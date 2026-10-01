@@ -151,7 +151,9 @@ struct RestartVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.restart(vm.id)
+        try await runWithConsent { consent in
+            try await gateway.restart(vm.id, consent: consent)
+        }
         return .result()
     }
 }

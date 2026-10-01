@@ -91,6 +91,13 @@ enum VMIdentityOverride: Sendable, Equatable {
     init(_ consent: Consent) {
         self = consent.covers(.startBesideSharedMachineIdentity) ? .confirmed : .askable
     }
+
+    /// This override for a bring-up that runs with nobody to ask — a boot
+    /// chained after the call that asked: a confirmation carries over, and a
+    /// question becomes a refusal.
+    var unattended: VMIdentityOverride {
+        self == .confirmed ? .confirmed : .unavailable
+    }
 }
 
 /// A bring-up refused because another VM already claims the identity it would

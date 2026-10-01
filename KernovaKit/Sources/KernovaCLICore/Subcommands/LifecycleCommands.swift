@@ -204,7 +204,9 @@ extension KernovaCommand {
             abstract: "Shut a guest down and start it again.",
             discussion: "Nothing is brought in front of you, as with `start`; `kernova open` is "
                 + "the verb that puts a display there. --timeout bounds the shutdown half: a "
-                + "guest still up when it expires exits 7 and is not started again.")
+                + "guest still up when it expires exits 7 and is not started again. A virtual "
+                + "machine with the same machine ID as one that is active is refused before the "
+                + "guest goes down, unless --yes starts it anyway where Kernova's Settings allow.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -226,7 +228,8 @@ extension KernovaCommand {
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
             .restart(
-                try SelectorParsing.selector(from: vm, forcingID: options.id), timeout: timeout)
+                try SelectorParsing.selector(from: vm, forcingID: options.id), timeout: timeout,
+                consent: options.consent)
         }
 
         /// Restarts the VM.

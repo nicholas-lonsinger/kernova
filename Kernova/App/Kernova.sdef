@@ -129,6 +129,9 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>

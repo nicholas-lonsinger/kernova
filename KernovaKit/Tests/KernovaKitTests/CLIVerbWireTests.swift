@@ -129,11 +129,14 @@ struct CLIVerbWireTests {
     @Test("restart crosses with the deadline bounding its shutdown half")
     func restartSendsItsDeadline() throws {
         let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted)
-        #expect(bare.sent == [.restart(.idOrName("Alpha"), timeout: nil)])
+        #expect(bare.sent == [.restart(.idOrName("Alpha"), timeout: nil, consent: .none)])
 
         let bounded = try CLIWire.exchange(
             ["restart", "Alpha", "--timeout", "45"], answering: accepted)
-        #expect(bounded.sent == [.restart(.idOrName("Alpha"), timeout: 45)])
+        #expect(bounded.sent == [.restart(.idOrName("Alpha"), timeout: 45, consent: .none)])
+
+        let anyway = try CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
+        #expect(anyway.sent == [.restart(.idOrName("Alpha"), timeout: nil, consent: .all)])
     }
 
     @Test("open is the one verb that crosses asking for something to come forward")

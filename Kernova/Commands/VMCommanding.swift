@@ -163,7 +163,11 @@ protocol VMCommanding: AnyObject {
     /// `timeout` seconds bounds the shutdown half alone. A guest still up when
     /// it expires refuses with ``CommandError/timedOut(vm:verb:seconds:)`` and
     /// is not started again; `nil` waits as long as the guest takes.
-    func restart(_ selector: VMSelector, timeout: TimeInterval?) async throws
+    ///
+    /// Another active VM sharing the machine identity is asked about before
+    /// the guest goes down, as ``start(_:recovery:consent:)`` asks; `consent`
+    /// carries the answer to the boot.
+    func restart(_ selector: VMSelector, timeout: TimeInterval?, consent: Consent) async throws
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.

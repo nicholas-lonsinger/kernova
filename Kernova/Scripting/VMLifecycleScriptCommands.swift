@@ -191,11 +191,12 @@ final class VMStopScriptCommand: VMScriptCommand {
     }
 }
 
-/// `restart virtual machine … [giving up after <seconds>]`
+/// `restart virtual machine … [with confirmation] [giving up after <seconds>]`
 @objc(VMRestartScriptCommand)
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.restart(selectors, givingUpAfter: seconds("GivingUpAfter"))
+        try await gateway.restart(
+            selectors, confirmation: flag("Confirmation"), givingUpAfter: seconds("GivingUpAfter"))
     }
 }
 

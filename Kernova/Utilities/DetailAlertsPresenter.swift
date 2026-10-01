@@ -121,9 +121,8 @@ final class DetailAlertsPresenter: NSObject {
     /// Held so ``stop()`` can answer it. Every other request here is one the
     /// user can raise again; this one has a start suspended behind it.
     private var outstandingGuestAccount: OneShotGuestAccountAnswer?
-    /// The confirmations this presenter owes an answer — on screen or queued —
-    /// each with a verb suspended behind it, held so ``stop()`` can decline
-    /// them.
+    /// The confirmation on screen, with a verb suspended behind it, held so
+    /// ``stop()`` can decline it.
     private var outstandingConfirmations: [OneShotConfirmation] = []
 
     init(viewModel: VMLibraryViewModel) {
@@ -395,13 +394,26 @@ final class DetailAlertsPresenter: NSObject {
         enqueue { $0.present($0.cancelPreparingConfig(prompt, arrival)) }
     }
 
-    /// Asks the user to confirm what a verb they started refused without,
-    /// queued like any alert they asked for; ``stop()`` declines it if the
-    /// window goes first.
+    /// Asks the user to confirm what a verb they started refused without.
+    ///
+    /// Declined rather than queued when it cannot be shown right now — no
+    /// window, or something else on screen — for the reason
+    /// ``presentGuestAccountPassword(_:)`` is answered: the verb is suspended
+    /// on the answer, and a queue waits on a window that may not come back.
+    /// ``stop()`` declines the one on screen.
     func presentConfirmationRequest(_ request: ConfirmationRequest) {
         let confirmation = OneShotConfirmation(request)
+        guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, pending.isEmpty
+        else {
+            #log(
+                Self.logger, .notice,
+                "Nowhere to ask '\(request.prompt.title, privacy: .public)'; declining it")
+            confirmation(false)
+            return
+        }
         outstandingConfirmations.append(confirmation)
-        enqueue { $0.present($0.confirmationRequestConfig(confirmation)) }
+        show(confirmationRequestConfig(confirmation), in: window)
     }
 
     func presentInstallerMounted(
