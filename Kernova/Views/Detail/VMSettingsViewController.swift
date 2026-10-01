@@ -248,6 +248,10 @@ final class VMSettingsViewController: NSViewController {
                 // its own rather than riding the read above, which is free to
                 // stop enumerating every configuration.
                 _ = self.viewModel.macOSVMNamesMarkedForAutoStart
+                // The machine ID row, which an install writes, and the VMs
+                // sharing it, which a clone, delete or rename of another VM moves.
+                _ = self.instance.machineIdentity
+                _ = self.viewModel.vmNamesSharingMachineIdentity(with: self.instance)
                 // Registers the observed addresses, so the IP address row
                 // follows each read of the host's table.
                 _ = self.viewModel.guestAddress(for: self.instance)

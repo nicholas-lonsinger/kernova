@@ -641,6 +641,18 @@ func waitForChange(
     }
 }
 
+/// Records that a `withObservationTracking` `onChange` fired, from the
+/// `@Sendable` closure the API hands it — which no actor-isolated state can be
+/// written from.
+final class ObservationFireRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var didFire: Bool { lock.withLock { value } }
+
+    func record() { lock.withLock { value = true } }
+}
+
 // MARK: - View-tree search
 
 /// The first `T` that `matches` in the subtree rooted at `view`, depth-first.

@@ -389,6 +389,50 @@ struct VMInstanceTests {
         #expect(instance.effectiveMachineIdentifierData == nil)
     }
 
+    @Test("A file the install writes is the identifier, though the bundle was read before it existed")
+    func effectiveMachineIDFollowsThePlatformFilesWrite() async throws {
+        let machineFiles = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, bundleFactory: VMBundle.Factory(machineFiles: machineFiles))
+        try FileManager.default.createDirectory(at: instance.bundleURL, withIntermediateDirectories: true)
+        #expect(instance.machineIdentity == nil)
+
+        let changed = ObservationFireRecorder()
+        withObservationTracking {
+            _ = instance.machineIdentity
+        } onChange: {
+            changed.record()
+        }
+        machineFiles.platformMachineIdentifier = Data([7, 7, 7])
+        _ = try await withOperation(on: instance) { context in
+            try await context.bundle.createMacPlatformFiles(hardwareModel: Data())
+        }
+
+        #expect(changed.didFire)
+        #expect(instance.configuration.machineIdentifierData == nil)
+        #expect(instance.machineIdentity == .mac(Data([7, 7, 7])))
+    }
+
+    // MARK: - machineIdentity
+
+    @Test("A macOS guest's identity is its effective macOS identifier")
+    func machineIdentityOfAMacOSGuest() throws {
+        let configured = VMInstanceFixture.make(guestOS: .macOS) { $0.machineIdentifierData = Data([1]) }
+        #expect(configured.machineIdentity == .mac(Data([1])))
+
+        let fileOnly = VMInstanceFixture.make(guestOS: .macOS)
+        try FileManager.default.createDirectory(at: fileOnly.bundleURL, withIntermediateDirectories: true)
+        try Data([2]).write(to: fileOnly.machineIdentifierURL)
+        #expect(fileOnly.machineIdentity == .mac(Data([2])))
+    }
+
+    @Test("A Linux guest's identity is its generic identifier, and nil without one")
+    func machineIdentityOfALinuxGuest() {
+        let identified = VMInstanceFixture.make { $0.genericMachineIdentifierData = Data([3]) }
+        #expect(identified.machineIdentity == .generic(Data([3])))
+        #expect(VMInstanceFixture.make().machineIdentity == nil)
+    }
+
     // MARK: - isKeepingAppAlive
 
     @Test("isKeepingAppAlive is true for active statuses")

@@ -32,6 +32,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         var captureError: (any Error)?
         var stageError: (any Error)?
         var discardError: (any Error)?
+        var platformMachineIdentifier: Data?
     }
 
     private let lock = NSLock()
@@ -87,6 +88,14 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     var discardError: (any Error)? {
         get { lock.withLock { state.discardError } }
         set { lock.withLock { state.discardError = newValue } }
+    }
+
+    /// When set, `createMacPlatformFiles` writes this as the bundle's
+    /// `MachineIdentifier` and answers it, decoding no hardware model — which
+    /// only a restore image can supply.
+    var platformMachineIdentifier: Data? {
+        get { lock.withLock { state.platformMachineIdentifier } }
+        set { lock.withLock { state.platformMachineIdentifier = newValue } }
     }
 
     // MARK: - VMBundleMachineFileWorking
@@ -185,7 +194,11 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
     }
 
     func createMacPlatformFiles(bundleURL: URL, hardwareModel: Data) throws -> Data {
-        try real.createMacPlatformFiles(bundleURL: bundleURL, hardwareModel: hardwareModel)
+        guard let machineIdentifier = platformMachineIdentifier else {
+            return try real.createMacPlatformFiles(bundleURL: bundleURL, hardwareModel: hardwareModel)
+        }
+        try machineIdentifier.write(to: VMBundleLayout(bundleURL: bundleURL).machineIdentifierURL)
+        return machineIdentifier
     }
 
     func createInternalDisk(

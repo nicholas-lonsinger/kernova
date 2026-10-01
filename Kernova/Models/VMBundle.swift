@@ -203,6 +203,29 @@ final class VMBundle {
         return await Task.detached { work(fileWorker, url) }.value
     }
 
+    /// What the `MachineIdentifier` file held when first asked, or what
+    /// ``MachineFiles/createMacPlatformFiles(hardwareModel:)`` left in it since;
+    /// the outer optional separates "not read yet" from "read, and there is no
+    /// file".
+    @ObservationIgnored private var machineIdentifierFileRead: Data??
+
+    /// The bundle's `MachineIdentifier` file, `nil` while it holds none.
+    ///
+    /// Read off disk once; the write that creates the file publishes what it
+    /// wrote here, so a read made before an install never outlives it.
+    var machineIdentifierFile: Data? {
+        access(keyPath: \.machineIdentifierFile)
+        if let read = machineIdentifierFileRead { return read }
+        let fromFile = try? Data(contentsOf: VMBundleLayout(bundleURL: url).machineIdentifierURL)
+        machineIdentifierFileRead = .some(fromFile)
+        return fromFile
+    }
+
+    fileprivate func publishMachineIdentifierFile(_ data: Data) {
+        guard machineIdentifierFileRead != .some(data) else { return }
+        withMutation(keyPath: \.machineIdentifierFile) { machineIdentifierFileRead = .some(data) }
+    }
+
     /// Bytes each snapshot the manifest lists occupies on disk.
     func snapshotSizes() async -> [UUID: UInt64] {
         let ids = snapshotManifest.snapshots.map(\.id)
@@ -481,9 +504,12 @@ extension VMBundle {
         /// Writes the macOS platform files an install of `hardwareModel` boots
         /// from, answering the machine identifier the bundle now holds.
         func createMacPlatformFiles(hardwareModel: Data) async throws -> Data {
-            try await bundle.offMainActor {
+            let bundle = bundle
+            let machineIdentifier = try await bundle.offMainActor {
                 try $0.createMacPlatformFiles(bundleURL: $1, hardwareModel: hardwareModel)
             }
+            bundle.publishMachineIdentifierFile(machineIdentifier)
+            return machineIdentifier
         }
     }
 

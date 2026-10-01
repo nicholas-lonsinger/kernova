@@ -192,6 +192,8 @@ final class VMOverviewResolver {
         resolved.warnings[.network] = Self.duplicateMACWarning(
             sharingWith: config.networkEnabled && config.macAddress != nil
                 ? viewModel.vmNamesSharingMACAddress(with: instance) : [])
+        resolved.sharedMachineIDNote = Self.sharedMachineIDNote(
+            holders: viewModel.vmNamesSharingMachineIdentity(with: instance))
         resolved.micWarning = micPermissionPresentation(
             micPermission, audioInputEnabled: config.audioInputEnabled)
         resolved.warnings[.system] =
@@ -224,6 +226,12 @@ final class VMOverviewResolver {
         return "This MAC address is also used by \(DataFormatters.quotedList(names)). "
             + "Virtual machines with the same MAC address can\u{2019}t run on the same network "
             + "at once, but they can on separate networks."
+    }
+
+    /// Names the other VMs holding this one's machine ID, `nil` when none do.
+    static func sharedMachineIDNote(holders: [String]) -> String? {
+        guard !holders.isEmpty else { return nil }
+        return "Same machine ID as \(DataFormatters.quotedList(holders))."
     }
 
     private func refreshNetwork(_ config: VMConfiguration) {

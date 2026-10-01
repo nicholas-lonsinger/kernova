@@ -342,23 +342,22 @@ final class VMInstance {
 
     // MARK: - Machine Identity
 
-    /// Memoized `MachineIdentifier` file read: the outer optional separates "not
-    /// read yet" from "read, and there is no file".
-    @ObservationIgnored private var machineIdentifierFileData: Data??
-
     /// The macOS machine identifier this VM boots with — the configuration field
     /// when set, otherwise the bundle's identifier file.
     ///
     /// The fallback mirrors ``ConfigurationBuilder``, which reads the file when
     /// the configuration carries no identifier, so a bundle holding its identity
-    /// only on disk compares equal to one holding it in the configuration. The
-    /// file is read at most once per instance.
+    /// only on disk compares equal to one holding it in the configuration.
     var effectiveMachineIdentifierData: Data? {
-        if let fromConfiguration = configuration.machineIdentifierData { return fromConfiguration }
-        if let cached = machineIdentifierFileData { return cached }
-        let fromFile = try? Data(contentsOf: machineIdentifierURL)
-        machineIdentifierFileData = .some(fromFile)
-        return fromFile
+        configuration.machineIdentifierData ?? bundle.machineIdentifierFile
+    }
+
+    /// The machine identifier this VM boots with, `nil` while it has none.
+    var machineIdentity: MachineIdentity? {
+        switch configuration.guestOS {
+        case .macOS: effectiveMachineIdentifierData.map(MachineIdentity.mac)
+        case .linux: configuration.genericMachineIdentifierData.map(MachineIdentity.generic)
+        }
     }
 
     // MARK: - Runtime Removable Media
@@ -531,25 +530,10 @@ final class VMInstance {
             for: self, bringingUp: configuration(broughtUpBy: kind), override: override)
     }
 
-    /// Whether this VM and `other` claim the same machine identity.
-    ///
-    /// macOS identifiers compare the *effective* value, which falls back to the
-    /// bundle's identifier file exactly as the boot path does; generic
-    /// identifiers have no such file, so they compare configuration fields. A
-    /// VM with no identifier shares it with no one.
+    /// Whether this VM and `other` claim the same ``machineIdentity``. A VM
+    /// with no identifier shares it with no one.
     func sharesMachineIdentity(with other: VMInstance) -> Bool {
-        if let lhs = effectiveMachineIdentifierData, let rhs = other.effectiveMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        if let lhs = configuration.genericMachineIdentifierData,
-            let rhs = other.configuration.genericMachineIdentifierData,
-            lhs == rhs
-        {
-            return true
-        }
-        return false
+        machineIdentity != nil && machineIdentity == other.machineIdentity
     }
 
     /// The configuration `kind` puts in front of VZ: this VM's own, except for

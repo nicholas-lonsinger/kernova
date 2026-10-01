@@ -839,4 +839,54 @@ struct VMSettingsGeneralPanelTests {
             #expect(warning.contains("\(testCase.marked) macOS virtual machines"))
         }
     }
+
+    // MARK: - Machine ID
+
+    private static let sharedMachineIDCaption = "Same machine ID as \u{201C}Twin\u{201D}."
+
+    @Test("A VM with a machine ID shows its fingerprint, the whole digest in the tooltip")
+    func machineIDRowShowsTheFingerprint() throws {
+        let identity = Data([2, 7, 1, 8])
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.registerFixture { $0.genericMachineIdentifierData = identity }
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.general)
+
+        let fingerprint = MachineIdentity.generic(identity).fingerprint
+        #expect(visibleLabel("Machine ID", in: vc.view))
+        let value = try #require(panelLabel(fingerprint.short, in: vc))
+        #expect(isVisible(value, within: vc.view))
+        #expect(value.toolTip == fingerprint.digest)
+        #expect(value.font?.isFixedPitch == true)
+        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(separatesEveryRow(generalCardLayout(in: vc)))
+    }
+
+    @Test("A VM with no machine ID shows no Machine ID row")
+    func machineIDRowHiddenWithoutAnIdentifier() {
+        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
+
+        #expect(!visibleLabel("Machine ID", in: vc.view))
+        #expect(separatesEveryRow(generalCardLayout(in: vc)))
+    }
+
+    @Test("Another VM arriving with the same machine ID is named beneath the card")
+    func sharedMachineIDFollowsTheLibrary() async throws {
+        let identity = Data([2, 7, 1, 8])
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.registerFixture { $0.genericMachineIdentifierData = identity }
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.general)
+        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+
+        viewModel.library.registerFixture(name: "Twin") { $0.genericMachineIdentifierData = identity }
+        // The pane's repaint is the main-actor task the change enqueued.
+        await drainMainQueue()
+
+        #expect(visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+    }
 }
