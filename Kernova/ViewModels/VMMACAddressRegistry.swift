@@ -196,13 +196,19 @@ final class VMMACAddressRegistry {
             let holders = instances.compactMap { vm in
                 Self.holding(of: mac, by: vm).map { (vm: vm, holding: $0) }
             }
-            // Sharing a machine identity is equality of identifiers, so one
-            // holder outside the first's identity means two identities hold it.
-            guard let first = holders.first,
-                holders.contains(where: { !$0.vm.sharesMachineIdentity(with: first.vm) })
-            else { return nil }
+            guard Self.machineIdentityCount(of: holders.map(\.vm)) > 1 else { return nil }
             return (mac, holders)
         }
+    }
+
+    /// How many distinct machine identities `vms` carry. A VM with no
+    /// identifier is an identity of its own, so one VM is always one.
+    private static func machineIdentityCount(of vms: [VMInstance]) -> Int {
+        var representatives: [VMInstance] = []
+        for vm in vms where !representatives.contains(where: { vm === $0 || vm.sharesMachineIdentity(with: $0) }) {
+            representatives.append(vm)
+        }
+        return representatives.count
     }
 
     /// Records each of ``macAddressFaults()``.

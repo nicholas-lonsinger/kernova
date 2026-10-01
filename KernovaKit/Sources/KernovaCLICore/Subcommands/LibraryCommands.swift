@@ -28,7 +28,10 @@ extension KernovaCommand {
                     "Give the clone its own machine identity and MAC address, so both can run at once. "
                         + "Not offered for a guest running macOS 12 or earlier.")
             case .exactCopy:
-                "Keep the source's machine identity and MAC address; the two never run at once on one network."
+                ArgumentHelp(
+                    "Keep the source's machine identity and MAC address. The two never run on the same "
+                        + "network at once, and never run at once at all while Kernova blocks duplicate "
+                        + "machine IDs from booting.")
             }
         }
     }

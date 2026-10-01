@@ -230,7 +230,7 @@ final class VMOverviewResolver {
     /// address — the fault docs/NETWORKING.md discloses.
     static func duplicateMACWarning(faults: [String]) -> String? {
         guard !faults.isEmpty else { return nil }
-        return "This MAC address is also used by \(quotedList(faults)). "
+        return "This MAC address is also used by \(DataFormatters.quotedList(faults)). "
             + "Each virtual machine needs its own."
     }
 
@@ -239,14 +239,7 @@ final class VMOverviewResolver {
     /// first, so it reads true from either side.
     static func exactCopyNote(exactCopies: [String]) -> String? {
         guard !exactCopies.isEmpty else { return nil }
-        return "An exact copy of \(quotedList(exactCopies))."
-    }
-
-    /// "“A”", "“A” and “B”", "“A”, “B” and “C”".
-    private static func quotedList(_ names: [String]) -> String {
-        let quoted = names.map { "\u{201C}\($0)\u{201D}" }
-        guard let last = quoted.last, quoted.count > 1 else { return quoted.joined() }
-        return quoted.dropLast().joined(separator: ", ") + " and " + last
+        return "An exact copy of \(DataFormatters.quotedList(exactCopies))."
     }
 
     private func refreshNetwork(_ config: VMConfiguration) {

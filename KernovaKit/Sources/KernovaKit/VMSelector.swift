@@ -168,8 +168,9 @@ public enum CloneOutcome: String, Codable, Sendable, Hashable, CaseIterable {
     /// runs beside its source.
     case newMachine
     /// The source's machine identity and MAC address, so it is the same machine
-    /// to its guest and its network — and never runs beside its source on one
-    /// network.
+    /// to its guest and its network. It never runs beside its source on one
+    /// network, and never runs beside it at all while duplicate machine IDs are
+    /// blocked from booting.
     case exactCopy
 }
 

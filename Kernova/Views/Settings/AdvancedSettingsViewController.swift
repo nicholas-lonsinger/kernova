@@ -74,9 +74,10 @@ final class AdvancedSettingsViewController: NSViewController {
         let cloneCaption = makeGroupedFormCaption(
             "A New Machine gets its own machine ID and MAC address, so it can run alongside its "
                 + "source. An Exact Copy keeps both, so the two are the same machine to their "
-                + "guests and networks, and never run on the same network at once. For one clone "
-                + "of the other kind, use the second Clone item in the Virtual Machine menu, or "
-                + "hold Option (⌥) over Clone in the VM's context menu.")
+                + "guests and networks: they never run on the same network at once, and never run "
+                + "at once at all while duplicate machine IDs are blocked from booting. Where a "
+                + "virtual machine offers both, the second Clone item in the Virtual Machine menu, "
+                + "or Option (⌥) over Clone in its context menu, makes the other for one clone.")
 
         var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),

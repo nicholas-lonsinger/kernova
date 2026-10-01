@@ -333,6 +333,29 @@ struct VMMACAddressRegistryTests {
         #expect(peers.faults == ["Imported"])
     }
 
+    @Test("A lone holder with no machine identifier is no fault")
+    func aLoneUnidentifiedHolderIsNoFault() {
+        let registry = makeRegistry()
+        let lone = makeVM(
+            "Lone", mac: "aa:bb:cc:dd:ee:01",
+            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")])
+        roster.instances = [lone]
+
+        #expect(lone.configuration.genericMachineIdentifierData == nil)
+        #expect(lone.effectiveMachineIdentifierData == nil)
+        #expect(registry.macAddressFaults().isEmpty)
+    }
+
+    @Test("Two holders with no machine identifier are two identities, and a fault")
+    func twoUnidentifiedHoldersAreAFault() {
+        let registry = makeRegistry()
+        roster.instances = [
+            makeVM("One", mac: "aa:bb:cc:dd:ee:01"), makeVM("Two", mac: "aa:bb:cc:dd:ee:01"),
+        ]
+
+        #expect(registry.macAddressFaults().map(\.address) == ["aa:bb:cc:dd:ee:01"])
+    }
+
     @Test("A snapshot's hold counts under its own VM's machine identity")
     func aSnapshotHoldUnderAnotherIdentityIsAFault() {
         let registry = makeRegistry()
