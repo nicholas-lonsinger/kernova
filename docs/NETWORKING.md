@@ -40,5 +40,4 @@ VM back on it ([VZ restore requires the saved MAC address](research/2026-09-23-v
 
 **A guest reaches another guest exactly when the user placed both on the same
 app-managed network.** Isolation is expressed by membership — separate networks are
-mutually isolated — never by a per-VM flag; a stricter grouping is a new network, not a
-mode variant.
+mutually isolated; a stricter grouping is a new network, not a mode variant.
