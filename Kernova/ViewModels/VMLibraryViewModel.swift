@@ -795,9 +795,9 @@ final class VMLibraryViewModel {
     /// verb that refuses nothing never shows one.
     ///
     /// A declined question ends the verb with nothing on screen — the user just
-    /// said no to it — while every other refusal takes the ordinary error
-    /// surface, including the question's own refusal when no window exists to
-    /// ask in.
+    /// said no to it. A question that could not be asked leaves its refusal
+    /// standing, and that refusal takes the ordinary error surface like every
+    /// other, queued behind whatever is on screen.
     private func runAsking(on instance: VMInstance, _ verb: (Consent) async throws -> Void) async {
         do {
             try await VMConsentPolicy.run(prompting: { try await self.askToConfirm($0) }) {
@@ -824,22 +824,25 @@ final class VMLibraryViewModel {
     /// Puts a confirmation on screen and waits for the user's answer.
     ///
     /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
-    ///   refusal itself when there is no presenter to ask through.
+    ///   refusal itself when it could not be asked.
     private func askToConfirm(_ prompt: ConfirmationPrompt) async throws {
         guard let presenter else { throw CommandError.confirmationRequired(prompt) }
-        let confirmed = await withCheckedContinuation { continuation in
+        let answer = await withCheckedContinuation { continuation in
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
                     prompt: prompt, answer: { continuation.resume(returning: $0) }))
         }
-        guard confirmed else { throw ConfirmationDeclined() }
+        switch answer {
+        case .answered(true): return
+        case .answered(false): throw ConfirmationDeclined()
+        case .unasked: throw CommandError.confirmationRequired(prompt)
+        }
     }
 
     /// Puts the account question on screen and supplies the one answer it gives.
     ///
     /// - Throws: ``GuestAccountPromptDismissed`` when the user walked away, the
-    ///   refusal itself when there is no presenter to ask through — a door with
-    ///   nobody to ask says so by not answering — and whatever the verb that
+    ///   refusal itself when it could not be asked, and whatever the verb that
     ///   takes the answer refuses with.
     private func askForGuestAccount(_ prompt: GuestAccountPrompt) async throws {
         guard let presenter else { throw CommandError.guestAccountPasswordRequired(prompt) }
@@ -849,12 +852,14 @@ final class VMLibraryViewModel {
                     prompt: prompt, answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .password(let password):
+        case .answered(.password(let password)):
             try commands.provideGuestAccountPassword(.id(prompt.vm.id), password: password)
-        case .skip:
+        case .answered(.skip):
             try commands.skipGuestAccount(.id(prompt.vm.id))
-        case .cancelled:
+        case .answered(.cancelled):
             throw GuestAccountPromptDismissed()
+        case .unasked:
+            throw CommandError.guestAccountPasswordRequired(prompt)
         }
     }
 
@@ -1524,13 +1529,15 @@ final class VMLibraryViewModel {
 
     /// Opens the sheet that gathers the consent a refusal is asking for.
     ///
-    /// Two refusals reach here, both raised by a Stop the user asked for that
+    /// Two refusals open one, both raised by a Stop the user asked for that
     /// only the core can tell is destructive: a live-paused guest that cannot
     /// receive the request, and a suspended Ephemeral VM whose stop discards
-    /// its suspended session. Every other confirmation is raised by the
-    /// `request…` method that opens its own sheet and knows the arguments —
-    /// which VM, which snapshot, Trash or immediate — that the prompt alone
-    /// does not carry.
+    /// its suspended session. A start beside a VM sharing its machine identity
+    /// arrives here only when it could not be asked (``runAsking(on:_:)``),
+    /// and is shown as the refusal it stands for. Every other confirmation is
+    /// raised by the `request…` method that opens its own sheet and knows the
+    /// arguments — which VM, which snapshot, Trash or immediate — that the
+    /// prompt alone does not carry.
     private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
         guard let instance else { return }
         switch prompt.kind {
@@ -1538,6 +1545,9 @@ final class VMLibraryViewModel {
             presenter?.presentStopPaused(for: instance)
         case .forceStop:
             presenter?.presentForceStop(for: instance)
+        case .startBesideSharedMachineIdentity:
+            // Raised where it could not be asked: the refusal it stands for.
+            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title)
         default:
             #log(
                 Self.logger, .debug,

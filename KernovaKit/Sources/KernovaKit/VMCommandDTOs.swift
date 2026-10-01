@@ -477,6 +477,17 @@ public enum CommandRecoveryDTO: Codable, Sendable, Hashable {
     case removeStartFailedAttachment(id: UUID, label: String)
 }
 
+extension ConflictReason {
+    /// The heading a refusal over this reason is shown under.
+    public var title: String {
+        switch self {
+        case .machineIdentity: "Duplicate Machine ID"
+        case .macAddress: "Duplicate MAC Address"
+        case .macAddressInUse: "MAC Address In Use"
+        }
+    }
+}
+
 /// How every surface words a refusal.
 ///
 /// The copy lives on the wire type rather than on the app's own error, because
@@ -496,11 +507,7 @@ extension CommandErrorDTO {
         case .guestAccountPasswordRequired(let prompt):
             "Couldn\u{2019}t Start \u{201C}\(prompt.vm.name)\u{201D}"
         case .conflict(_, _, let reason):
-            switch reason {
-            case .machineIdentity: "Duplicate Machine ID"
-            case .macAddress: "Duplicate MAC Address"
-            case .macAddressInUse: "MAC Address In Use"
-            }
+            reason.title
         case .operationFailed(_, let title, _, _):
             title ?? "Error"
         }

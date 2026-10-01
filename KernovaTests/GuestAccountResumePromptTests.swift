@@ -118,7 +118,7 @@ struct GuestAccountResumePromptTests {
         let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false)
-        presenter.guestAccountPasswordAnswer = .password("analytical-engine")
+        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
 
         await viewModel.start(instance)
 
@@ -141,7 +141,7 @@ struct GuestAccountResumePromptTests {
         let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false)
-        presenter.guestAccountPasswordAnswer = .skip
+        presenter.guestAccountPasswordAnswer = .answered(.skip)
 
         await viewModel.start(instance)
 
@@ -160,7 +160,7 @@ struct GuestAccountResumePromptTests {
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false)
         virtualization.startError = VirtualizationError.noVirtualMachine
-        presenter.guestAccountPasswordAnswer = .skip
+        presenter.guestAccountPasswordAnswer = .answered(.skip)
 
         await viewModel.start(instance)
         #expect(instance.configuration.pendingGuestAccount == nil)
@@ -178,7 +178,7 @@ struct GuestAccountResumePromptTests {
     func cancellingStartsNothing() async {
         let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(in: viewModel, intent: makeIntent())
-        presenter.guestAccountPasswordAnswer = .cancelled
+        presenter.guestAccountPasswordAnswer = .answered(.cancelled)
 
         await viewModel.start(instance)
 
@@ -191,6 +191,20 @@ struct GuestAccountResumePromptTests {
         #expect(viewModel.capabilities.guestAccountState(of: instance).isOwed)
     }
 
+    @available(macOS 27.0, *)
+    @Test("A sheet that could not be shown leaves the account refusal standing, shown as an error")
+    func anUnaskedSheetShowsTheRefusal() async {
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
+        presenter.guestAccountPasswordAnswer = .unasked
+
+        await viewModel.start(instance)
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(presenter.errorTitles == ["Couldn\u{2019}t Start \u{201C}\(instance.name)\u{201D}"])
+        #expect(instance.configuration.pendingGuestAccount == makeIntent())
+    }
+
     /// The shown sheet turns a refused password down on the click and puts
     /// itself back up carrying the reason (`GuestAccountPasswordAlertTests`), so
     /// what reaches here is a door with no validator of its own: the verb refuses
@@ -201,7 +215,7 @@ struct GuestAccountResumePromptTests {
         let (viewModel, virtualization) = makeViewModel()
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false)
-        presenter.guestAccountPasswordAnswer = .password("a")
+        presenter.guestAccountPasswordAnswer = .answered(.password("a"))
 
         await viewModel.start(instance)
 
@@ -222,7 +236,7 @@ struct GuestAccountResumePromptTests {
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false)
         virtualization.startError = VirtualizationError.noVirtualMachine
-        presenter.guestAccountPasswordAnswer = .password("analytical-engine")
+        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
 
         await viewModel.start(instance)
 
@@ -250,7 +264,7 @@ struct GuestAccountResumePromptTests {
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false
         ) { $0.storageDisks = [disk, keeper] }
-        presenter.guestAccountPasswordAnswer = .password("analytical-engine")
+        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
 
         await viewModel.removeStartFailedAttachmentAndStart(
             StartFailedAttachment(
@@ -275,7 +289,7 @@ struct GuestAccountResumePromptTests {
         let instance = makeVM(
             in: viewModel, intent: makeIntent(), installPending: false
         ) { $0.storageDisks = [sole] }
-        presenter.guestAccountPasswordAnswer = .password("analytical-engine")
+        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
 
         // A VM keeps at least one storage disk, so the removal is refused.
         await viewModel.removeStartFailedAttachmentAndStart(

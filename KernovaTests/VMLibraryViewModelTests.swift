@@ -1294,7 +1294,7 @@ struct VMLibraryViewModelTests {
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = true
+        presenter.confirmationAnswer = .answered(true)
 
         await viewModel.start(starting)
 
@@ -1305,6 +1305,26 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == false)
     }
 
+    @Test("start beside a machine ID twin it could not ask about shows the refusal as an error")
+    func startUnaskedShowsTheRefusal() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .unasked
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.count == 1)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(
+            presenter.errorMessage?.hasPrefix(
+                "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
+                == true)
+    }
+
     @Test("start beside a machine ID twin that the user declines starts nothing and shows nothing more")
     func startDeclinedStartsNothing() async {
         let virtService = MockVirtualizationService()
@@ -1312,7 +1332,7 @@ struct VMLibraryViewModelTests {
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = false
+        presenter.confirmationAnswer = .answered(false)
 
         await viewModel.start(starting)
 
@@ -1422,7 +1442,7 @@ struct VMLibraryViewModelTests {
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = true
+        presenter.confirmationAnswer = .answered(true)
 
         await viewModel.resume(resuming)
 

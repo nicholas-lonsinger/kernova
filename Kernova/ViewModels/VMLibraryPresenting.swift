@@ -86,6 +86,18 @@ enum GuestAccountPasswordAnswer: Equatable, CustomStringConvertible {
     }
 }
 
+/// How a question the view model puts to the presenter comes back.
+enum PresenterAnswer<Answer> {
+    /// The user answered.
+    case answered(Answer)
+    /// The question was never answered — there was nowhere to show it, or the
+    /// window it was shown in went away — so the refusal that raised it stands.
+    case unasked
+}
+
+extension PresenterAnswer: Equatable where Answer: Equatable {}
+extension PresenterAnswer: Sendable where Answer: Sendable {}
+
 /// The one thing a macOS guest still needs to create the account its VM was set
 /// up with: the password no bundle carries.
 ///
@@ -95,7 +107,7 @@ struct GuestAccountPasswordRequest {
     /// What the core is asking about: the VM, the account, and the words.
     let prompt: GuestAccountPrompt
     /// Answers the prompt: a password, a boot without the account, or no start.
-    let answer: @MainActor (GuestAccountPasswordAnswer) -> Void
+    let answer: @MainActor (PresenterAnswer<GuestAccountPasswordAnswer>) -> Void
 }
 
 /// A confirmation a verb the user started refused without, put to the user
@@ -104,7 +116,7 @@ struct ConfirmationRequest {
     /// What the core is asking, in its own words.
     let prompt: ConfirmationPrompt
     /// Answers the prompt: `true` to go ahead, `false` to walk away.
-    let answer: @MainActor (Bool) -> Void
+    let answer: @MainActor (PresenterAnswer<Bool>) -> Void
 }
 
 /// Imperative presentation interface the view model calls to surface alerts,
@@ -150,16 +162,14 @@ protocol VMLibraryPresenting: AnyObject {
     /// VM was set up with.
     ///
     /// The request's `answer` is called exactly once — the start that raised it
-    /// is suspended until it arrives. With
-    /// ``GuestAccountPasswordAnswer/cancelled`` when there is nowhere to ask
-    /// right now: only the user may decide to boot without the account, because
-    /// that decision retracts it.
+    /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
+    /// there is nowhere to ask right now.
     func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest)
     /// Ask the user to confirm what a verb they started refused without.
     ///
     /// The request's `answer` is called exactly once — the verb that raised it
-    /// is suspended until it arrives — with `false` when the window it would be
-    /// asked in goes away first.
+    /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
+    /// there is nowhere to ask right now.
     func presentConfirmationRequest(_ request: ConfirmationRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
