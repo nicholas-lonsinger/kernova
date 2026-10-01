@@ -110,7 +110,7 @@ final class SnapshotSectionView: NSView {
         if showsHeader { rows.append(makeHeader()) }
         rows.append(makeGroupedFormCard(rows: [listStack, footer]))
         rows.append(
-            makeGroupedFormCaption(
+            GroupedFormStateNote.temporarilyStanding(
                 "Reverting returns the VM to the state and settings it had when the snapshot was "
                     + "taken. Snapshots stay until you delete them. A snapshot's size counts "
                     + "the blocks it shares with the VM's disks, so the listed sizes overlap "

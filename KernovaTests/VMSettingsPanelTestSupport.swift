@@ -131,12 +131,15 @@ func panelHeaderLockHints(in vc: VMSettingsViewController) -> [NSView] {
     return settingsLockHints(in: header)
 }
 
-/// The grouped-form row whose leading label reads `label`.
+/// The grouped-form row whose leading label reads `label`: the
+/// ``GroupedFormControlRow`` titled `label`, or else the stack holding that
+/// label directly.
 @MainActor
 func settingsRow(labeled label: String, in view: NSView) -> NSView? {
-    firstSubview(NSStackView.self, in: view) { stack in
-        stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
-    }
+    firstSubview(GroupedFormControlRow.self, in: view) { $0.titleLabel.stringValue == label }
+        ?? firstSubview(NSStackView.self, in: view) { stack in
+            stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
+        }
 }
 
 /// The title of `row` when it is a ``GroupedFormControlRow``, which is what

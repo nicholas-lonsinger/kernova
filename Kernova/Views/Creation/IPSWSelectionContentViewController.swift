@@ -343,7 +343,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         card.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
         conditionalContainer.setCustomSpacing(Spacing.small, after: card)
 
-        let caption = makeGroupedFormCaption(
+        let caption = GroupedFormStateNote.temporarilyStanding(
             "macOS skips its setup questions and creates the account you enter "
                 + "on the Account step.")
         conditionalContainer.addArrangedSubview(caption)

@@ -28,7 +28,9 @@ final class ClipboardSettingsViewController: NSViewController {
     private var preferences: AppPreferences { viewModel.preferences }
 
     private let sizePopUp = NSPopUpButton()
-    private let estimateCaption = makeGroupedFormCaption("")
+    private lazy var estimateCaption = GroupedFormStateNote.temporarilyStanding { [unowned self] in
+        Self.estimateText(for: preferences.clipboardMaxPasteBytes)
+    }
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -75,7 +77,7 @@ final class ClipboardSettingsViewController: NSViewController {
         let section = NSStackView(views: [
             makeGroupedFormSectionHeader("Clipboard Transfers"),
             card,
-            makeGroupedFormCaption(Self.deadlineCaption),
+            GroupedFormStateNote.temporarilyStanding(Self.deadlineCaption),
         ])
         section.orientation = .vertical
         section.alignment = .leading
@@ -117,17 +119,17 @@ final class ClipboardSettingsViewController: NSViewController {
                 Self.logger, .fault,
                 "Stored paste ceiling \(stored, privacy: .public) is not an offered choice")
             assertionFailure("Stored paste ceiling \(stored) is not an offered choice")
-            estimateCaption.stringValue = Self.estimateText(for: stored)
+            estimateCaption.refresh()
             return
         }
         sizePopUp.selectItem(at: index)
-        estimateCaption.stringValue = Self.estimateText(for: stored)
+        estimateCaption.refresh()
     }
 
     @objc private func maxPasteSizeChanged() {
         guard let bytes = sizePopUp.selectedItem?.representedObject as? Int else { return }
         preferences.clipboardMaxPasteBytes = bytes
-        estimateCaption.stringValue = Self.estimateText(for: bytes)
+        estimateCaption.refresh()
         // The guest enforces its own copy of the ceiling, so a running agent
         // has to be told; the host's checks read the preference directly.
         viewModel.applyClipboardPasteLimitChange()

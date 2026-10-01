@@ -112,7 +112,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         commandLineField.delegate = self
 
         addFullWidth(
-            makeGroupedFormCaption("Provide the kernel image and optional initrd/command line."))
+            GroupedFormStateNote.temporarilyStanding("Provide the kernel image and optional initrd/command line."))
         addFullWidth(
             makeGroupedFormCard(rows: [
                 makeFileRow(
@@ -150,7 +150,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         options.alignment = .leading
         options.spacing = Spacing.large
 
-        addFullWidth(makeGroupedFormCaption("Choose the installer image to boot from via EFI."))
+        addFullWidth(GroupedFormStateNote.temporarilyStanding("Choose the installer image to boot from via EFI."))
         addFullWidth(options)
 
         switch creationVM.linuxSelection {

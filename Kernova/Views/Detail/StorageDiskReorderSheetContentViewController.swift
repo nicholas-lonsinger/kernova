@@ -128,25 +128,19 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Boot Order")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
-
-        let info = InfoButtonView()
-        info.configure(
-            label: "Boot Order",
-            paragraphs: [
+        let title = makeSheetTitle(
+            "Boot Order",
+            info: [
                 .body(
                     "Drag rows to set the order in which the guest sees its storage. Position 1 boots first on EFI guests; on macOS and Linux Kernel boot, the order also determines guest device enumeration (for example, /dev/vda, /dev/vdb)."
                 )
-            ]
-        )
+            ])
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [title, info, spacer])
+        let stack = NSStackView(views: [title, spacer])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = Spacing.small

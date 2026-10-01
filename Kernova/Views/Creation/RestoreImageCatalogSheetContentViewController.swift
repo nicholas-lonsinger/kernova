@@ -137,9 +137,7 @@ final class RestoreImageCatalogSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Choose a macOS Version")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
+        let title = makeSheetTitle("Choose a macOS Version")
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false

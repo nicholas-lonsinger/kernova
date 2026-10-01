@@ -44,7 +44,7 @@ final class GeneralSettingsViewController: NSViewController {
         let loginCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Open at Login", control: openAtLoginSwitch)
         ])
-        let loginCaption = makeGroupedFormCaption(
+        let loginCaption = GroupedFormStateNote.temporarilyStanding(
             "Open Kernova automatically when you log in. With Continue running in "
                 + "the menu bar on, it opens in the menu bar with no window.")
         let openLoginItemsButton = NSButton(
@@ -57,7 +57,7 @@ final class GeneralSettingsViewController: NSViewController {
         let menuBarCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Continue running in the menu bar", control: keepInMenuBarSwitch)
         ])
-        let menuBarCaption = makeGroupedFormCaption(
+        let menuBarCaption = GroupedFormStateNote.temporarilyStanding(
             "Quitting (⌘Q) or closing all windows will keep Kernova running in the menu bar. To "
                 + "fully quit, either Quit directly from the menu bar item or with Quit Kernova "
                 + "(⌥⌘Q). With this off, Kernova has no menu bar item and quits when you close "

@@ -132,9 +132,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Add an Installer Image by URL")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
+        let title = makeSheetTitle("Add an Installer Image by URL")
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -193,7 +191,7 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
         checksumField.delegate = self
         checksumField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let checksumNote = makeGroupedFormCaption(
+        let checksumNote = GroupedFormStateNote.temporarilyStanding(
             "Without a checksum, the download isn't verified.")
 
         resultContainer.orientation = .vertical

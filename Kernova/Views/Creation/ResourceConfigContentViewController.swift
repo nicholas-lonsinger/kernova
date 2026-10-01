@@ -83,7 +83,7 @@ final class ResourceConfigContentViewController: NSViewController {
 
         addSectionHeader("Storage", to: form)
         addCard([makeGroupedFormCardRow("Disk size", control: diskPopUp)], to: form)
-        let caption = makeGroupedFormCaption(
+        let caption = GroupedFormStateNote.temporarilyStanding(
             "Physical disk usage grows only as data is written (ASIF sparse format).")
         form.addArrangedSubview(caption)
         caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true

@@ -66,8 +66,8 @@ struct VMOverviewResolved: Sendable {
     var micWarning: MicWarningState = .none
     /// The banner message a category's panel shows, by category.
     var warnings: [VMSettingsCategory: String] = [:]
-    /// The General section's note naming the other VMs holding this one's
-    /// machine ID.
+    /// The note naming the other VMs holding this one's machine ID: the
+    /// Machine ID row's note, and the General card's closing line.
     var sharedMachineIDNote: String?
 }
 

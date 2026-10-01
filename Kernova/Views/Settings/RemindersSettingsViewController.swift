@@ -43,9 +43,16 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     ///
     /// The label is grayed in step with a disabled switch.
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
+    /// Describes the per-VM switches while there are any.
+    private lazy var vmCaption = GroupedFormStateNote(
+        "Turn a virtual machine off to stop its own reminder. This has no effect once the "
+            + "agent is installed.",
+        shownWhen: { [unowned self] in !vmSwitches.isEmpty })
     /// Explains the disabled per-VM rows while the app-wide switch is off.
-    private var vmCaption = NSTextField()
-    private var vmOverrideCaption = NSTextField()
+    private lazy var vmOverrideCaption = GroupedFormStateNote(
+        "The reminder above is off, so these have no effect. Turn it back on to choose per "
+            + "virtual machine.",
+        shownWhen: { [unowned self] in viewModel.agentInstallPromptDisabled })
     /// Flashes the pane's scroller when its content overflows the viewport,
     /// signaling there's more below.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -82,7 +89,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let menuBarCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Menu bar quit reminder", control: menuBarQuitSwitch)
         ])
-        let menuBarCaption = makeGroupedFormCaption(
+        let menuBarCaption = GroupedFormStateNote.temporarilyStanding(
             "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
                 + "it — and your virtual machines — are still going.")
 
@@ -91,7 +98,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let agentInstallCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Guest agent install reminder", control: agentInstallSwitch)
         ])
-        let agentInstallCaption = makeGroupedFormCaption(
+        let agentInstallCaption = GroupedFormStateNote.temporarilyStanding(
             "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "
                 + "machine.")
 
@@ -99,13 +106,6 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         vmSection.orientation = .vertical
         vmSection.alignment = .leading
         vmSection.spacing = Spacing.none
-        vmCaption = makeGroupedFormCaption(
-            "Turn a virtual machine off to stop its own reminder. This has no effect once the "
-                + "agent is installed.")
-        vmOverrideCaption = makeGroupedFormCaption(
-            "The reminder above is off, so these have no effect. Turn it back on to choose per "
-                + "virtual machine.")
-        vmOverrideCaption.isHidden = true
 
         // Indented beneath the switch that governs them, the alignment Apple's
         // guidance uses to show a control's subordinates.
@@ -124,7 +124,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         resetButton.bezelStyle = .push
         resetButton.controlSize = .small
         resetButton.setContentHuggingPriority(.required, for: .horizontal)
-        let resetCaption = makeGroupedFormCaption(
+        let resetCaption = GroupedFormStateNote.temporarilyStanding(
             "Turns every reminder above back on, including for all virtual machines.")
 
         let content = NSStackView(views: [
@@ -287,7 +287,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             VMConfigurationKeyRegistry.agentInstallReminder.applies($0.configuration)
         }
         guard !reminded.isEmpty else {
-            let empty = makeGroupedFormCaption("No macOS virtual machines yet.")
+            let empty = makeGroupedFormContentText("No macOS virtual machines yet.")
             vmSection.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
             return
@@ -323,9 +323,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // is a lone "No virtual machines yet." row, so it would be describing
         // controls that aren't on screen.
         let hasVMs = !vmSwitches.isEmpty
-        vmCaption.isHidden = !hasVMs
+        vmCaption.refresh()
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
-        vmOverrideCaption.isHidden = !overridden
+        vmOverrideCaption.refresh()
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on

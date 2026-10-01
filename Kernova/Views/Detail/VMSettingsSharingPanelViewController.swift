@@ -122,9 +122,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // Shared Directories
     private var sharedListStack = NSStackView()
     private var addSharedButton = NSButton()
-    /// States ``sharingDeviceCaption`` while a control it disables is shown;
-    /// hidden otherwise.
-    private var sharingDeviceCaptionView = NSView()
+    /// States ``sharingDeviceCaption`` while a control it disables is shown.
+    private var sharingDeviceCaptionView: GroupedFormStateNote?
     /// The shared-directory rows and the diff behind them, rebuilt with the
     /// section's list stack.
     private var sharedList: VMSettingsKeyedListController<VMSettingsRenderedRow, AttachmentRowView>?
@@ -134,8 +133,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     private var logForwardingSwitch = NSSwitch()
     private var installReminderSwitch = NSSwitch()
     /// Explains the disabled install-reminder row while the prompt is off
-    /// app-wide; hidden otherwise.
-    private var installReminderOverrideCaption = NSView()
+    /// app-wide.
+    private var installReminderOverrideCaption: GroupedFormStateNote?
 
     // Drag and drop (macOS guests only)
     private var dropFilesSwitch = NSSwitch()
@@ -162,8 +161,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         let card = makeGroupedFormCard(rows: [
             sharedListStack, makeGroupedFormButtonRow([addSharedButton]),
         ])
-        let caption = makeGroupedFormCaption(Self.sharingDeviceCaption)
-        caption.isHidden = true
+        let caption = GroupedFormStateNote(
+            Self.sharingDeviceCaption,
+            shownWhen: { [weak self] in self?.showsSharingDeviceRule ?? false })
         sharingDeviceCaptionView = caption
 
         let paragraphs: [InfoPopoverParagraph] =
@@ -280,14 +280,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
         dropFilesSwitch = makeGroupedFormSwitch(target: self, action: #selector(dropFilesToggled))
         // Not lockable — every toggle here takes effect live.
-        let overrideCaption = makeGroupedFormCaption(Self.installPromptDisabledCaption)
-        overrideCaption.isHidden = true
+        let overrideCaption = GroupedFormStateNote(
+            Self.installPromptDisabledCaption,
+            shownWhen: { [weak self] in self?.viewModel.agentInstallPromptDisabled ?? false })
         installReminderOverrideCaption = overrideCaption
         let card = makeGroupedFormCard(
             rows: [
-                makeGroupedFormRowWithInfo(
+                makeGroupedFormCardRow(
                     "Forward guest logs", control: logForwardingSwitch,
-                    paragraphs: [
+                    info: [
                         .body(
                             "Streams `os.Logger` records from the macOS guest agent to the host so they appear in Console.app under `app.kernova.guest`. Off by default; can be toggled while the VM is running."
                         )
@@ -295,25 +296,25 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 // Passthrough rides on sharing — it goes inert when sharing is off —
                 // so it nests as a sub-option rather than an equal sibling toggle.
                 makeGroupedFormSubOptionGroup(
-                    primary: makeGroupedFormRowWithInfo(
+                    primary: makeGroupedFormCardRow(
                         "Clipboard sharing", control: clipboardSwitch,
-                        paragraphs: [
+                        info: [
                             .body("Exchanges clipboard text between host and guest.")
                         ]),
-                    subOption: makeGroupedFormRowWithInfo(
+                    subOption: makeGroupedFormCardRow(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                        paragraphs: Self.passthroughInfoParagraphs)),
-                makeGroupedFormRowWithInfo(
+                        info: Self.passthroughInfoParagraphs)),
+                makeGroupedFormCardRow(
                     "Drag and drop files", control: dropFilesSwitch,
-                    paragraphs: [
+                    info: [
                         .body(
                             "Lets you drag files and folders from this Mac onto the VM display; the guest agent saves them to the guest's Downloads folder. Independent of clipboard sharing, and can be toggled while the VM is running."
                         )
                     ]),
                 GroupedFormNotedRow(
-                    makeGroupedFormRowWithInfo(
+                    makeGroupedFormCardRow(
                         "Show install reminder", control: installReminderSwitch,
-                        paragraphs: [
+                        info: [
                             .body(
                                 "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
                             )
@@ -321,7 +322,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     notes: [overrideCaption]),
             ])
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Guest Agent"), card, makeGroupedFormCaption(Self.agentDependencyCaption),
+            lockRegistry.makeHeader("Guest Agent"), card,
+            GroupedFormStateNote.temporarilyStanding(Self.agentDependencyCaption),
         ])
     }
 
@@ -343,9 +345,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCard(rows: [
                 makeGroupedFormSubOptionGroup(
                     primary: makeGroupedFormCardRow("Clipboard sharing", control: clipboardSwitch),
-                    subOption: makeGroupedFormRowWithInfo(
+                    subOption: makeGroupedFormCardRow(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                        paragraphs: Self.passthroughInfoParagraphs))
+                        info: Self.passthroughInfoParagraphs))
             ]),
         ])
     }
@@ -372,7 +374,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             !overridden
                 && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
             control: installReminderSwitch)
-        installReminderOverrideCaption.isHidden = !overridden
+        installReminderOverrideCaption?.refresh()
     }
 
     private func refreshClipboard() {
@@ -386,6 +388,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         applyGroupedFormRowEnabled(
             isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
             control: clipboardPassthroughSwitch)
+    }
+
+    /// Whether a control the first-or-last-share rule disables is on screen:
+    /// Add always, and a Remove or read-only switch only beside a share.
+    private var showsSharingDeviceRule: Bool {
+        let shownOffers =
+            currentSharedDirectories.isEmpty
+            ? [sharesOffer(.add)] : [sharesOffer(.add), sharesOffer(.change), sharesOffer(.remove)]
+        return shownOffers.contains(.changesSharingDevice)
     }
 
     private func refreshSharedList() {
@@ -408,10 +419,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 controlsEnabled: readOnlyOffer.isOffered,
                 ejectEnabled: removeOffer.isOffered)
         }
-        // Each control the rule disables is on screen: Add always, and a
-        // Remove or read-only switch only beside a share.
-        let shownOffers = directories.isEmpty ? [addOffer] : [addOffer, readOnlyOffer, removeOffer]
-        sharingDeviceCaptionView.isHidden = !shownOffers.contains(.changesSharingDevice)
+        sharingDeviceCaptionView?.refresh()
         sharedList?.update(
             models,
             makeRow: { model in makeSharedRow(model) },

@@ -36,7 +36,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: CopyValueButton?
     /// Stands in for the card's rows while the mode is None.
-    private var networkNoDeviceCaption = NSTextField()
+    private var networkNoDeviceCaption: GroupedFormStateNote?
     /// Holds the banner naming the other VMs sharing this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
@@ -76,7 +76,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         rows.append(makeIsolationRow())
         rows.append(makeIPAddressRow())
         rows.append(makeMACAddressRow())
-        networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
+        // None leaves no device to describe, so the card's remaining rows give
+        // way to a caption saying so.
+        let noDevice = GroupedFormStateNote(
+            "This virtual machine has no network device.",
+            shownWhen: { [weak self] in self?.instance.configuration.networkEnabled == false })
+        networkNoDeviceCaption = noDevice
         networkWarningContainer = NSStackView()
         networkWarningContainer.orientation = .vertical
         networkWarningContainer.alignment = .leading
@@ -114,7 +119,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             leading: [makeGroupedFormInfoButton(label: "Network", paragraphs: paragraphs)],
             trailing: [hint])
         return makeGroupedFormSection([
-            makeGroupedFormCard(rows: rows, notes: [networkNoDeviceCaption]),
+            makeGroupedFormCard(rows: rows, notes: [noDevice]),
             networkWarningContainer,
         ])
     }
@@ -125,9 +130,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private func makeIsolationRow() -> GroupedFormCollapsibleRow {
         isolationSwitch = makeGroupedFormSwitch(target: self, action: #selector(isolationToggled))
         let row = GroupedFormCollapsibleRow(
-            row: makeGroupedFormRowWithInfo(
+            row: makeGroupedFormCardRow(
                 "Isolate from other VMs", control: isolationSwitch,
-                paragraphs: [
+                info: [
                     .body(
                         "Runs the guest on a network of its own instead of the one every other VM in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
                     )
@@ -372,13 +377,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         {
             rebuildNetworkModeMenu()
         }
-        // None leaves no device to describe, so the card's remaining rows give way
-        // to a caption saying so.
-        let hasDevice = instance.configuration.networkEnabled
         refreshIsolationRow(editable: modeEditable)
         refreshMACAddressRow()
         refreshMACAddressWarning()
-        networkNoDeviceCaption.isHidden = hasDevice
+        networkNoDeviceCaption?.refresh()
         refreshIPAddressRow()
     }
 

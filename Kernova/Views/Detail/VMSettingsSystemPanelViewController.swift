@@ -86,9 +86,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var displayHiDPISwitch = NSSwitch()
     private var displayAutoResizeSwitch = NSSwitch()
     /// Caption naming the resolution the guest will boot at.
-    private var displayResolutionCaption = NSTextField()
-    /// Orange "takes effect on next start" caption, shown only while read-only.
-    private var displayRestartCaption = NSTextField()
+    private var displayResolutionCaption: GroupedFormStateNote?
+    /// Orange "takes effect on next start" caption, shown while the guest holds
+    /// a session.
+    private var displayRestartCaption: GroupedFormStateNote?
     /// Set while the user has explicitly chosen Custom, so the popup doesn't
     /// snap back to a preset the current size happens to match.
     private var displayResolutionIsCustom = false
@@ -187,13 +188,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         var rows: [NSView] = [
             // Not `lockable`: the flag lives on the display view, so
             // it is legal to flip while the VM runs.
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
-                paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
+                info: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
             lockRegistry.lockable(
-                makeGroupedFormRowWithInfo(
+                makeGroupedFormCardRow(
                     "Size display to fit window at startup", control: displayMatchWindowSwitch,
-                    paragraphs: [
+                    info: [
                         .body(
                             "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
                         ),
@@ -210,9 +211,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         if supportsDensity {
             rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormRowWithInfo(
+                    makeGroupedFormCardRow(
                         "HiDPI (Retina)", control: displayHiDPISwitch,
-                        paragraphs: [
+                        info: [
                             .body(
                                 "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above."
                             ),
@@ -221,15 +222,18 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                             ),
                         ]), displayHiDPISwitch))
         }
-        displayResolutionCaption = makeGroupedFormCaption("")
-        let restart = makeGroupedFormCaption("Takes effect on next start.")
+        let resolution = GroupedFormStateNote.temporarilyStanding { [weak self] in
+            self?.displayResolutionCaptionText() ?? ""
+        }
+        displayResolutionCaption = resolution
+        let restart = GroupedFormStateNote(
+            "Takes effect on next start.", shownWhen: { [weak self] in self?.guestHoldsSession ?? false })
         restart.textColor = .systemOrange
-        restart.isHidden = true
         displayRestartCaption = restart
 
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Display", lockable: true),
-            makeGroupedFormCard(rows: rows, notes: [displayResolutionCaption, restart]),
+            makeGroupedFormCard(rows: rows, notes: [resolution, restart]),
         ])
     }
 
@@ -357,18 +361,18 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // Not `lockable`: the flag lives on the display view, so it
         // is legal to flip while the VM runs.
         var rows: [NSView] = [
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Send system keys to guest", control: systemKeysPopUp,
-                paragraphs: Self.systemKeysInfoParagraphs)
+                info: Self.systemKeysInfoParagraphs)
         ]
         if isMacOS {
             inputDevicesPopUp = makePopUp(
                 Self.inputDeviceChoices, action: #selector(inputDevicesChanged))
             rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormRowWithInfo(
+                    makeGroupedFormCardRow(
                         "Devices", control: inputDevicesPopUp,
-                        paragraphs: Self.inputDevicesInfoParagraphs), inputDevicesPopUp))
+                        info: Self.inputDevicesInfoParagraphs), inputDevicesPopUp))
         }
 
         return makeGroupedFormSection([
@@ -403,9 +407,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             "Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Expose serial socket", control: serialRelaySwitch,
-                paragraphs: [
+                info: [
                     .body(
                         "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting; when it grows large it rolls to `serial.log.1` alongside."
                     ),
@@ -481,8 +485,8 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             applyGroupedFormRowEnabled(manualEnabled, control: control)
         }
 
-        displayResolutionCaption.stringValue = displayResolutionCaptionText()
-        displayRestartCaption.isHidden = !guestHoldsSession
+        displayResolutionCaption?.refresh()
+        displayRestartCaption?.refresh()
     }
 
     private func displayResolutionCaptionText() -> String {
@@ -516,8 +520,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         case .none:
             break
         case .willPrompt:
-            let caption = makeGroupedFormCaption(
-                "macOS will ask for microphone permission the first time a VM uses it.")
+            let caption = GroupedFormStateNote(
+                "macOS will ask for microphone permission the first time a VM uses it.",
+                shownWhen: { [weak self] in self?.resolved.micWarning == .willPrompt })
+            caption.refresh()
             addGroupedFormFullWidth(caption, to: audioWarningContainer)
         case .denied:
             let info = NSButton(

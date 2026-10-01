@@ -198,14 +198,15 @@ struct RemindersSettingsViewControllerTests {
         defer { controller.viewDidDisappear() }
 
         #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
-        let explanation = try #require(
-            findLabel(containing: "so these have no effect", in: controller.view))
-        #expect(explanation.isHidden)
+        // A state note holds no text while its state is off.
+        #expect(findLabel(containing: "so these have no effect", in: controller.view) == nil)
 
         try setAppWideInstallReminder(on: false, in: controller)
 
         #expect(viewModel.agentInstallPromptDisabled == true)
         #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
+        let explanation = try #require(
+            findLabel(containing: "so these have no effect", in: controller.view))
         #expect(!explanation.isHidden)
 
         try setAppWideInstallReminder(on: true, in: controller)

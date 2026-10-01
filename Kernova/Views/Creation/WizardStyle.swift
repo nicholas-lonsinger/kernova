@@ -30,15 +30,23 @@ enum WizardStyle {
     static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
 
+/// A step's title, followed by an info button holding `info` when it has
+/// paragraphs — the home for background about the step as a whole.
 @MainActor
-func makeWizardTitle(_ text: String) -> NSTextField {
+func makeWizardTitle(_ text: String, info: [InfoPopoverParagraph] = []) -> NSView {
     let label = NSTextField(labelWithString: text)
     label.font = Typography.title
     label.alignment = .left
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
     label.isSelectable = false
-    return label
+    guard !info.isEmpty else { return label }
+
+    let row = NSStackView(views: [label, makeGroupedFormInfoButton(label: text, paragraphs: info)])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = Spacing.small
+    return row
 }
 
 @MainActor
@@ -60,13 +68,13 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
 let wizardRadioDescriptionIndent: CGFloat = 20
 
 /// Lays out a caller-supplied radio button as a native option row: a leading
-/// symbol icon, the radio (with its title), and a secondary description wrapped
-/// beneath the title.
+/// symbol icon, the radio (with its title), and, when there is one, a secondary
+/// description wrapped beneath the title.
 ///
 /// The caller creates the radio, so it owns target/action and can track it for
 /// selection state; this only arranges the icon/description around it.
 @MainActor
-func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String)
+func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String? = nil)
     -> NSView
 {
     radio.font = Typography.body
@@ -78,17 +86,9 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
     icon.translatesAutoresizingMaskIntoConstraints = false
     icon.setContentHuggingPriority(.required, for: .horizontal)
 
-    let description = NSTextField(wrappingLabelWithString: descriptionText)
-    description.font = .preferredFont(forTextStyle: .subheadline)
-    description.textColor = .secondaryLabelColor
-    description.maximumNumberOfLines = 0
-    description.isSelectable = false
-    description.translatesAutoresizingMaskIntoConstraints = false
-
     let option = NSView()
     option.addSubview(icon)
     option.addSubview(radio)
-    option.addSubview(description)
     NSLayoutConstraint.activate([
         icon.leadingAnchor.constraint(equalTo: option.leadingAnchor),
         icon.centerYAnchor.constraint(equalTo: radio.centerYAnchor),
@@ -97,7 +97,20 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
         radio.topAnchor.constraint(equalTo: option.topAnchor),
         radio.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
         radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
+    ])
+    guard let descriptionText else {
+        radio.bottomAnchor.constraint(equalTo: option.bottomAnchor).isActive = true
+        return option
+    }
 
+    let description = NSTextField(wrappingLabelWithString: descriptionText)
+    description.font = .preferredFont(forTextStyle: .subheadline)
+    description.textColor = .secondaryLabelColor
+    description.maximumNumberOfLines = 0
+    description.isSelectable = false
+    description.translatesAutoresizingMaskIntoConstraints = false
+    option.addSubview(description)
+    NSLayoutConstraint.activate([
         description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
         description.leadingAnchor.constraint(
             equalTo: radio.leadingAnchor, constant: wizardRadioDescriptionIndent),

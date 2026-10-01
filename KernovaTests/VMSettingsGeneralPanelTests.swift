@@ -855,7 +855,7 @@ struct VMSettingsGeneralPanelTests {
 
     // MARK: - Machine ID
 
-    private static let sharedMachineIDCaption = "Same machine ID as \u{201C}Twin\u{201D}."
+    private static let sharedMachineIDNote = "Same machine ID as \u{201C}Twin\u{201D}."
 
     @Test("A VM with a machine ID shows its fingerprint, the whole digest in the tooltip")
     func machineIDRowShowsTheFingerprint() throws {
@@ -873,7 +873,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(isVisible(value, within: vc.view))
         #expect(value.toolTip == fingerprint.digest)
         #expect(value.font?.isFixedPitch == true)
-        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(!visibleLabel(Self.sharedMachineIDNote, in: vc.view))
         #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
@@ -885,7 +885,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
-    @Test("Another VM arriving with the same machine ID is named beneath the card")
+    @Test("Another VM arriving with the same machine ID is named under the Machine ID row")
     func sharedMachineIDFollowsTheLibrary() async throws {
         let identity = Data([2, 7, 1, 8])
         let viewModel = makeViewModel()
@@ -894,12 +894,16 @@ struct VMSettingsGeneralPanelTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.general)
-        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(!visibleLabel(Self.sharedMachineIDNote, in: vc.view))
 
         viewModel.library.registerFixture(name: "Twin") { $0.genericMachineIdentifierData = identity }
         // The pane's repaint is the main-actor task the change enqueued.
         await drainMainQueue()
 
-        #expect(visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(visibleLabel(Self.sharedMachineIDNote, in: vc.view))
+        let title = try #require(panelLabel("Machine ID", in: vc))
+        let owner = try #require(
+            sequence(first: title as NSView, next: \.superview).first { $0 is GroupedFormNotedRow })
+        #expect(visibleLabel(Self.sharedMachineIDNote, in: owner))
     }
 }

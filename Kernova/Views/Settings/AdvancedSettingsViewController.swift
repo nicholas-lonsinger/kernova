@@ -55,7 +55,7 @@ final class AdvancedSettingsViewController: NSViewController {
         let card = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Always show advanced options", control: alwaysShowSwitch)
         ])
-        let caption = makeGroupedFormCaption(
+        let caption = GroupedFormStateNote.temporarilyStanding(
             "Advanced actions such as Start in Recovery Mode are normally revealed by holding the "
                 + "Option (⌥) key in a virtual machine's context menu. Turn this on to always show "
                 + "them.")
@@ -64,7 +64,7 @@ final class AdvancedSettingsViewController: NSViewController {
             makeGroupedFormCardRow(
                 "Offer to start duplicate machine IDs anyway", control: duplicateIDOverrideSwitch)
         ])
-        let duplicateIDCaption = makeGroupedFormCaption(
+        let duplicateIDCaption = GroupedFormStateNote.temporarilyStanding(
             "Kernova never starts a virtual machine while another with the same machine ID is "
                 + "active. Turn this on to be asked each time whether to start it anyway. Apple "
                 + "documents running two virtual machines at once with the same identifier as "
@@ -73,7 +73,7 @@ final class AdvancedSettingsViewController: NSViewController {
         let cloneCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow("Clone as", control: cloneOutcomePopUp)
         ])
-        let cloneCaption = makeGroupedFormCaption(
+        let cloneCaption = GroupedFormStateNote.temporarilyStanding(
             "A New Machine gets its own machine ID and MAC address, so it can run alongside its "
                 + "source. An Exact Copy keeps both, so the two are the same machine to their "
                 + "guests and networks: each is marked as sharing the other\u{2019}s MAC address, "
@@ -110,7 +110,7 @@ final class AdvancedSettingsViewController: NSViewController {
             let toolCard = makeGroupedFormCard(rows: [
                 makeGroupedFormCardRow("Command line tool", control: installButton)
             ])
-            let toolCaption = makeGroupedFormCaption(
+            let toolCaption = GroupedFormStateNote.temporarilyStanding(
                 "Links this copy's kernova tool into a folder you choose, so a shell can drive "
                     + "your virtual machines. The tool drives the copy of Kernova it links into, "
                     + "starting that copy when it is not running. If the folder is not already "
@@ -119,7 +119,7 @@ final class AdvancedSettingsViewController: NSViewController {
             let completionsCard = makeGroupedFormCard(rows: [
                 makeGroupedFormCardRow("Shell completions", control: makeCompletionsButton())
             ])
-            let completionsCaption = makeGroupedFormCaption(
+            let completionsCaption = GroupedFormStateNote.temporarilyStanding(
                 "Writes a small file that loads completions from the tool itself, so they stay "
                     + "current as Kernova updates. Tab then completes verbs and flags, and your "
                     + "own virtual machines, snapshots, and setting keys. bash needs the "
@@ -337,7 +337,7 @@ final class AdvancedSettingsViewController: NSViewController {
         _ failure: any Error, titled title: String, offering lead: String, command: String
     ) {
         let hint = NSStackView(views: [
-            makeGroupedFormCaption(lead),
+            makeGroupedFormContentText(lead),
             makeCalloutCode(command),
         ])
         hint.orientation = .vertical

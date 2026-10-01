@@ -30,7 +30,9 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// shape afterwards.
     private let notesEditor = NotesEditorView(text: "", placeholder: "Optional")
     private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
-    private var captionLabel = NSTextField()
+    private lazy var captionLabel = GroupedFormStateNote.temporarilyStanding { [unowned self] in
+        captionText
+    }
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
@@ -60,11 +62,10 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         self.mode = mode
         guard isViewLoaded else { return }
         headerBodyLabel.stringValue = headerBodyText
-        captionLabel.stringValue = captionText
+        captionLabel.refresh()
     }
 
     override func loadView() {
-        captionLabel = makeGroupedFormCaption(captionText)
         let stack = NSStackView(views: [
             makeHeader(), makeFormCard(), captionLabel, makeFooter(),
         ])
@@ -142,11 +143,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
             pointSize: Self.heroPointSize, weight: .regular)
         icon.setContentHuggingPriority(.required, for: .vertical)
 
-        let title = NSTextField(labelWithString: "Take Snapshot of \u{201C}\(vmName)\u{201D}")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.alignment = .center
-        title.lineBreakMode = .byTruncatingMiddle
-        title.isSelectable = false
+        let title = makeSheetTitle("Take Snapshot of \u{201C}\(vmName)\u{201D}")
 
         let body = headerBodyLabel
         body.stringValue = headerBodyText
@@ -159,9 +156,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = Spacing.standard
-        for row in [title, body] {
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        title.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 

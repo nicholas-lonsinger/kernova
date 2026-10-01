@@ -125,9 +125,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Add a Restore Image by URL")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
+        let title = makeSheetTitle("Add a Restore Image by URL")
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
