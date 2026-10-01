@@ -16,7 +16,7 @@ struct CLIVerbWireTests {
     private var info: VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared",
+            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)

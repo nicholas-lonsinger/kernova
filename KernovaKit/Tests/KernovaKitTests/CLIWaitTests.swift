@@ -197,6 +197,7 @@ struct CLIWaitTests {
                 VMInfo(
                     id: alpha, name: "Alpha", status: status, guestOS: "macOS", cpuCount: 4,
                     memoryBytes: 8 * 1024 * 1024 * 1024, diskSizeInGB: 64, networkMode: "shared",
+                    networkMembership: "common",
                     macAddress: nil, ipAddress: .unavailable, agentStatus: agentStatus,
                     hasSavedState: false, isEphemeral: false, snapshotCount: 0,
                     bundlePath: "/Users/somebody/Alpha.kernova", heldByAnotherCopy: false)))

@@ -55,7 +55,7 @@ struct ConfigurationBuilderTests {
             Issue.record("The fixture bundle holds no EFI variable store")
         case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
             .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .bridgedNetworkingNotEntitled, .hostOnlyNetworkingNotEntitled:
+            .networkNotEntitled:
             break
         }
     }
@@ -1075,7 +1075,7 @@ struct ConfigurationBuilderTests {
         #expect(devices.count == 1)
         let device = try #require(devices.first as? VZVirtioNetworkDeviceConfiguration)
         #expect(device.attachment is VZNATNetworkDeviceAttachment)
-        #expect(networks.requestedKinds.isEmpty)
+        #expect(networks.requestedNetworks.isEmpty)
     }
 
     @Test("Shared Network with the entitlement attaches the app-managed shared network")
@@ -1090,7 +1090,7 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedKinds == [.shared])
+        #expect(networks.requestedNetworks == [.common(.shared)])
     }
 
     @Test("A shared network that cannot be materialized builds the device detached")
@@ -1153,7 +1153,7 @@ struct ConfigurationBuilderTests {
             try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .bridgedNetworkingNotEntitled = e
+                case .networkNotEntitled(.bridged) = e
             else { return false }
             return true
         }
@@ -1171,7 +1171,7 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedKinds == [.hostOnly])
+        #expect(networks.requestedNetworks == [.common(.hostOnly)])
     }
 
     @Test("Host Only mode in a build without the entitlement names the entitlement")
@@ -1185,12 +1185,113 @@ struct ConfigurationBuilderTests {
             try builder.assemble(from: makeHostOnlyConfig(), bundleURL: bundleURL, validate: false)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .hostOnlyNetworkingNotEntitled = e
+                case .networkNotEntitled(.vmnet(let id)) = e, id == VmnetNetworkID.common(.hostOnly)
             else { return false }
             return true
         }
         // The entitlement is checked before the network is asked for.
-        #expect(networks.requestedKinds.isEmpty)
+        #expect(networks.requestedNetworks.isEmpty)
+    }
+
+    @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
+    func isolatedModesAttachTheVMsOwnNetwork() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let networks = MockVmnetNetworkProvider()
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+
+        var shared = makeLinuxConfig()
+        shared.networkMembership = .isolated
+        var hostOnly = makeHostOnlyConfig()
+        hostOnly.networkMembership = .isolated
+        for config in [shared, hostOnly] {
+            let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+                .configuration.networkDevices
+            #expect(devices[0].attachment === networks.scriptedAttachment)
+        }
+
+        #expect(networks.requestedNetworks == [.own(.shared), .own(.hostOnly)])
+        #expect(networks.openedOwners == [shared.id, hostOnly.id])
+    }
+
+    @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
+    @MainActor
+    func everyPathFollowsJoinedNetwork() async throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        for (mode, kind) in [(VMNetworkMode.shared, VmnetNetworkKind.shared), (.hostOnly, .hostOnly)] {
+            let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+                $0.networkEnabled = true
+                $0.networkMode = mode
+                $0.networkMembership = .isolated
+                $0.macAddress = "aa:bb:cc:dd:ee:07"
+            }
+            let config = instance.configuration
+            let id = VmnetNetworkID(kind: kind, owner: config.id)
+            #expect(config.joinedNetwork == .vmnet(id))
+
+            // The build asks the VM's own session view for its own network.
+            let networks = MockVmnetNetworkProvider()
+            _ = try makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+                .assemble(from: config, bundleURL: bundleURL, validate: false)
+            #expect(networks.openedOwners == [config.id])
+            #expect(networks.requestedNetworks == [.own(kind)])
+
+            // Recovery attaches the same network.
+            let device = MockNetworkDeviceControl()
+            let coordinator = NetworkAttachmentCoordinator(
+                vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
+                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: networks,
+                entitlements: .entitled, choice: { config.networkChoice }, onPendingChange: { _ in })
+            coordinator.activate()
+            #expect(device.appliedPlans == [.vmnet(.own(kind))])
+            coordinator.stop()
+
+            // The observer reads that network's subnet and nothing else.
+            let observerNetworks = MockVmnetNetworkProvider()
+            observerNetworks.scriptedSubnets = [id: .scripted("192.168.70.0")]
+            let observer = GuestAddressObserver(
+                reader: ScriptedARPTable([
+                    .scripted("192.168.70.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
+                    .scripted("192.168.64.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
+                ]),
+                vmnetNetworks: observerNetworks, entitlements: .entitled)
+            let roster = StubVMInstanceRoster()
+            roster.instances = [instance]
+            observer.roster = roster
+            await observer.readForTesting()
+            #expect(observer.address(for: instance) == .observed("192.168.70.5"))
+        }
+    }
+
+    @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
+    func isolatedModeWithoutItsNetworkBuildsDetached() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let networks = MockVmnetNetworkProvider()
+        networks.attachmentError = TestFailure("network limit reached")
+        let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
+        var config = makeLinuxConfig()
+        config.networkMembership = .isolated
+
+        let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+            .configuration.networkDevices
+        #expect(devices[0].attachment == nil)
+        #expect(networks.requestedNetworks == [.own(.shared)])
+    }
+
+    @Test("An isolated Shared VM in a build without the entitlement is refused, not put on system NAT")
+    func isolatedSharedWithoutTheEntitlementThrows() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let builder = makeBuilder(entitlements: .unentitled)
+        var config = makeLinuxConfig()
+        config.networkMembership = .isolated
+
+        #expect {
+            try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .networkNotEntitled(let network) = e, network.isOwn
+            else { return false }
+            return true
+        }
     }
 
     @Test("A Host Only network that cannot be materialized builds the device detached")

@@ -3,20 +3,17 @@ import KernovaLogging
 import Virtualization
 import vmnet
 
-/// An app-managed vmnet network, keyed by role. Each case is one logical
-/// network the app owns; every VM whose mode maps to that role joins the same
-/// network, so membership is what expresses guest↔guest reachability
-/// (docs/NETWORKING.md).
+/// The vmnet mode an app-managed network runs in.
 enum VmnetNetworkKind: String, CaseIterable, Sendable {
-    /// The Host Only network: guests on it reach the host and each other,
+    /// Host Only: guests reach the host and the other guests on their network,
     /// never the LAN or the internet.
     case hostOnly
-    /// The Shared Network network: guests reach the internet through the
-    /// host's connection (NAT44/NAT66, DHCP, DNS proxy), and the host reaches
-    /// them at the addresses they hold on its subnet.
+    /// Shared Network: guests reach the internet through the host's connection
+    /// (NAT44/NAT66, DHCP, DNS proxy), and the host reaches them at the
+    /// addresses they hold on its subnet.
     case shared
 
-    /// The network backing `mode`, `nil` for a mode no app-managed network
+    /// The kind backing `mode`, `nil` for a mode no app-managed network
     /// realizes (Bridged — external DHCP owns addressing there).
     init?(mode: VMNetworkMode) {
         switch mode {
@@ -25,6 +22,26 @@ enum VmnetNetworkKind: String, CaseIterable, Sendable {
         case .bridged: return nil
         }
     }
+}
+
+/// One app-managed vmnet network. Membership is what expresses guest↔guest
+/// reachability (docs/NETWORKING.md): separate networks do not reach each
+/// other (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md).
+struct VmnetNetworkID: Hashable, Sendable {
+    let kind: VmnetNetworkKind
+    /// The VM whose network of its own this is, `nil` for the one network
+    /// every VM of `kind` without one of its own joins.
+    let owner: UUID?
+
+    /// The network every VM of `kind` with common membership joins.
+    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, owner: nil) }
+}
+
+/// A network as one VM's session names it: the common network of `kind`, or
+/// the VM's own.
+struct VmnetNetworkSelection: Hashable, Sendable {
+    let kind: VmnetNetworkKind
+    let isOwn: Bool
 }
 
 /// The IPv4 block a network hands its guests, in host byte order.
@@ -56,11 +73,20 @@ enum IPv4Value {
     }
 }
 
+// A class, not a struct: Swift 6.4 at -Onone reads `dictionary[key]?.field`
+// from a class's stored dictionary as `.some(garbage)` for a missing key when
+// the value pairs a bare `OpaquePointer` with the field, and wrapping the
+// pointer in a class reference compiles correctly
+// (docs/research/2026-09-30-swift-6-4-onone-optional-chain-through-a-pointer-payload.md).
 /// A materialized app-managed vmnet network.
-struct VmnetNetworkHandle: @unchecked Sendable {
+final class VmnetNetworkHandle: @unchecked Sendable {
     /// Feed to `VZVmnetNetworkDeviceAttachment(network:)`. Safe to cross
     /// isolation domains: the ref is an immutable reservation handle.
     let network: vmnet_network_ref
+
+    init(network: vmnet_network_ref) {
+        self.network = network
+    }
 }
 
 /// The vmnet calls `VmnetNetworkService` makes, and every use of the refs they
@@ -75,6 +101,9 @@ protocol VmnetNetworkOperating: Sendable {
     )
     /// A VZ attachment joining `handle`'s network.
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment
+    /// Gives up the reference `createNetwork` returned. An attachment built
+    /// over the network holds its own.
+    func releaseNetwork(_ handle: VmnetNetworkHandle)
 }
 
 /// Releases a vmnet object Swift imports as a bare `OpaquePointer`. The vmnet
@@ -121,13 +150,17 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
             containing: UInt32(bigEndian: address.s_addr), mask: UInt32(bigEndian: mask.s_addr))
         #log(
             Self.logger, .notice,
-            "Created the \(kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public) mask \(IPv4Value.string(subnet.mask), privacy: .public)"
+            "Created a \(kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public) mask \(IPv4Value.string(subnet.mask), privacy: .public)"
         )
         return (VmnetNetworkHandle(network: network), subnet)
     }
 
     func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
         VZVmnetNetworkDeviceAttachment(network: handle.network)
+    }
+
+    func releaseNetwork(_ handle: VmnetNetworkHandle) {
+        releaseVmnetRef(handle.network)
     }
 
     private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {
@@ -138,36 +171,50 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     }
 }
 
-/// App-managed vmnet networks, as attachment construction, attachment recovery
-/// and the guest-address observer consume them.
+/// App-managed vmnet networks, as the app at large reads them.
 protocol VmnetNetworkProviding: Sendable {
-    /// A VZ attachment joining the app-managed network of `kind`, materializing
-    /// the network first when none is materialized. Blocks for the vmnet XPC
-    /// round-trip — never call on the main actor; config assembly runs
-    /// off-main. Throws when the network cannot be materialized.
-    func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment
-    /// The non-blocking variant for the main-actor live-attach path: an
-    /// attachment when the network is already materialized, `nil` otherwise.
-    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment?
-    /// Materializes the network of `kind` off the caller's actor. `true` on
-    /// success (or when already materialized); failures are logged here.
-    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool
-    /// The kind whose materialized network `network` is, `nil` for a network
-    /// this service does not hold.
-    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind?
-    /// The IPv4 subnet the materialized network of `kind` hands its guests,
-    /// `nil` while none is materialized. Cheap and non-blocking — safe from the
-    /// main actor.
-    func ipv4Subnet(for kind: VmnetNetworkKind) -> IPv4Subnet?
+    /// The view one session of the VM `owner` attaches through. The VM's own
+    /// networks exist only while a view opened for it lives.
+    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking
+    /// The IPv4 subnet `network` hands its guests, `nil` while it is not
+    /// materialized. Cheap and non-blocking — safe from the main actor.
+    func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet?
 }
 
-/// Owns the app's managed vmnet networks — the Host Only network and the
-/// Shared Network network.
+/// App-managed vmnet networks as one VM session's attachment construction and
+/// attachment recovery consume them.
+protocol VmnetSessionNetworking: Sendable {
+    /// A VZ attachment joining `network`, materializing it first when it is
+    /// not. Blocks for the vmnet XPC round-trip — never call on the main
+    /// actor; config assembly runs off-main. Throws when the network cannot be
+    /// materialized.
+    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment
+    /// The non-blocking variant for the main-actor live-attach path: an
+    /// attachment when the network is already materialized, `nil` otherwise.
+    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment?
+    /// Materializes `network` off the caller's actor. `true` on success (or
+    /// when already materialized); failures are logged here.
+    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool
+    /// The selection `network` is for this session, `nil` for a network it
+    /// cannot attach to — one the service does not hold, or another VM's own.
+    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection?
+}
+
+/// Owns the app's managed vmnet networks: the common Host Only and Shared
+/// networks, and each VM's networks of its own.
 ///
-/// Each is created on first use, on the subnet the system picks, and held for
-/// the life of the process: a network whose last VM leaves goes idle rather
-/// than away, and the same ref starts it again
+/// A common network is created on first use and held for the life of the
+/// process: one whose last VM leaves goes idle rather than away, and the same
+/// ref starts it again
 /// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
+/// A VM's own network is created only through a ``VmnetSessionNetworks`` view
+/// opened for that VM, and released when the last such view goes — so it is
+/// held for the whole session (an in-guest reboot stops and restarts it,
+/// docs/research/2026-09-22-vmnet-network-run-and-forwarding-rules.md) and
+/// never outlives it.
+///
+/// Every network gets the subnet the system picks. A process holds a bounded
+/// number of networks; a create past that fails like any other.
 ///
 /// Lock-guarded `Sendable` rather than `@MainActor`: it never touches
 /// `VZVirtualMachine`, and `ConfigurationBuilder` consumes it during off-main
@@ -183,13 +230,15 @@ final class VmnetNetworkService: @unchecked Sendable {
     }
 
     private let operations: any VmnetNetworkOperating
-    /// Guards `networks` — never held across a vmnet call, so the main-actor
-    /// paths (`attachmentIfMaterialized`, `ipv4Subnet`) can never block behind
-    /// a materialization in flight.
+    /// Guards `networks` and `openViews` — never held across a vmnet call, so
+    /// the main-actor paths (`attachmentIfMaterialized`, `ipv4Subnet`) can
+    /// never block behind a materialization in flight.
     private let stateLock = NSLock()
-    /// The materialized network of each kind, present exactly for the kinds one
-    /// exists for.
-    private var networks: [VmnetNetworkKind: MaterializedNetwork] = [:]
+    /// Every materialized network, present exactly for the ones that exist.
+    private var networks: [VmnetNetworkID: MaterializedNetwork] = [:]
+    /// How many session views are open for each VM, present exactly for VMs
+    /// with at least one.
+    private var openViews: [UUID: Int] = [:]
     /// Serializes materialization, so concurrent callers produce one network.
     private let materializeLock = NSLock()
 
@@ -197,52 +246,130 @@ final class VmnetNetworkService: @unchecked Sendable {
         self.operations = operations
     }
 
-    /// The app-managed network of `kind`, materializing it on first use.
-    /// Blocks for the vmnet XPC round-trip — never call on the main actor.
-    func network(for kind: VmnetNetworkKind) throws -> VmnetNetworkHandle {
-        if let handle = cachedHandle(for: kind) { return handle }
+    /// `id`'s network, materializing it on first use. Blocks for the vmnet XPC
+    /// round-trip — never call on the main actor.
+    ///
+    /// File-private: an owned network is materialized only through a view
+    /// opened for its owner, which keeps the owner's view count above zero for
+    /// the whole call.
+    fileprivate func network(for id: VmnetNetworkID) throws -> VmnetNetworkHandle {
+        if let handle = cachedHandle(for: id) { return handle }
         materializeLock.lock()
         defer { materializeLock.unlock() }
-        if let handle = cachedHandle(for: kind) { return handle }
-        let (handle, subnet) = try operations.createNetwork(kind)
-        stateLock.withLock { networks[kind] = MaterializedNetwork(handle: handle, subnet: subnet) }
+        if let handle = cachedHandle(for: id) { return handle }
+        let (handle, subnet) = try operations.createNetwork(id.kind)
+        stateLock.withLock { networks[id] = MaterializedNetwork(handle: handle, subnet: subnet) }
+        if let owner = id.owner {
+            #log(
+                Self.logger, .notice,
+                "Created VM \(owner.uuidString, privacy: .public)'s own \(id.kind.rawValue, privacy: .public) network on \(IPv4Value.string(subnet.network), privacy: .public)"
+            )
+        }
         return handle
     }
 
-    private func cachedHandle(for kind: VmnetNetworkKind) -> VmnetNetworkHandle? {
-        stateLock.withLock { networks[kind]?.handle }
+    fileprivate func cachedHandle(for id: VmnetNetworkID) -> VmnetNetworkHandle? {
+        stateLock.withLock { networks[id]?.handle }
+    }
+
+    fileprivate func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
+        operations.attachment(joining: handle)
+    }
+
+    fileprivate func id(ofNetwork network: vmnet_network_ref) -> VmnetNetworkID? {
+        stateLock.withLock { networks.first(where: { $0.value.handle.network == network })?.key }
+    }
+
+    fileprivate func openView(for owner: UUID) {
+        stateLock.withLock { openViews[owner, default: 0] += 1 }
+    }
+
+    /// Closes one of `owner`'s views, releasing its own networks with the last.
+    fileprivate func closeView(for owner: UUID) {
+        let released: [(VmnetNetworkID, VmnetNetworkHandle)] = stateLock.withLock {
+            let remaining = (openViews[owner] ?? 0) - 1
+            guard remaining <= 0 else {
+                openViews[owner] = remaining
+                return []
+            }
+            openViews[owner] = nil
+            let owned = networks.filter { $0.key.owner == owner }
+            for id in owned.keys { networks[id] = nil }
+            return owned.map { ($0.key, $0.value.handle) }
+        }
+        for (id, handle) in released {
+            operations.releaseNetwork(handle)
+            #log(
+                Self.logger, .notice,
+                "Released VM \(owner.uuidString, privacy: .public)'s own \(id.kind.rawValue, privacy: .public) network"
+            )
+        }
     }
 }
 
 extension VmnetNetworkService: VmnetNetworkProviding {
-    func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
-        operations.attachment(joining: try network(for: kind))
+    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking {
+        VmnetSessionNetworks(service: self, owner: owner)
     }
 
-    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
-        cachedHandle(for: kind).map(operations.attachment(joining:))
+    func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet? {
+        stateLock.withLock { networks[network]?.subnet }
+    }
+}
+
+/// One VM session's view of the app-managed networks: the common ones, and
+/// the VM's own, which exist only while a view of the VM's is open.
+///
+/// The session context holds it for the session's whole life, and anything
+/// still materializing through it holds it until that finishes.
+final class VmnetSessionNetworks: VmnetSessionNetworking {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VmnetSessionNetworks")
+
+    private let service: VmnetNetworkService
+    let owner: UUID
+
+    fileprivate init(service: VmnetNetworkService, owner: UUID) {
+        self.service = service
+        self.owner = owner
+        service.openView(for: owner)
+    }
+
+    deinit {
+        service.closeView(for: owner)
+    }
+
+    private func id(_ selection: VmnetNetworkSelection) -> VmnetNetworkID {
+        VmnetNetworkID(kind: selection.kind, owner: selection.isOwn ? owner : nil)
+    }
+
+    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment {
+        service.attachment(joining: try service.network(for: id(network)))
+    }
+
+    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment? {
+        service.cachedHandle(for: id(network)).map(service.attachment(joining:))
     }
 
     // A nonisolated async method runs off the caller's actor, so the blocking
     // vmnet round-trip inside `network(for:)` never lands on the main thread.
-    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
+    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool {
         do {
-            _ = try network(for: kind)
+            _ = try service.network(for: id(network))
             return true
         } catch {
             #log(
                 Self.logger, .error,
-                "Could not materialize the \(kind.rawValue, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
+                "Could not materialize the \(network.isOwn ? "own " : "", privacy: .public)\(network.kind.rawValue, privacy: .public) network: \(error.localizedDescription, privacy: .public)"
             )
             return false
         }
     }
 
-    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {
-        stateLock.withLock { networks.first(where: { $0.value.handle.network == network })?.key }
-    }
-
-    func ipv4Subnet(for kind: VmnetNetworkKind) -> IPv4Subnet? {
-        stateLock.withLock { networks[kind]?.subnet }
+    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection? {
+        guard let id = service.id(ofNetwork: network) else { return nil }
+        guard let networkOwner = id.owner else {
+            return VmnetNetworkSelection(kind: id.kind, isOwn: false)
+        }
+        return networkOwner == owner ? VmnetNetworkSelection(kind: id.kind, isOwn: true) : nil
     }
 }

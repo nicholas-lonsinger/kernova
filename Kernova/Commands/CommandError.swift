@@ -61,7 +61,8 @@ enum CommandError: Error, Sendable, Equatable {
     case invalidArgument(String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
-    /// This build cannot do what was asked, and no VM was named.
+    /// This build cannot do what was asked: the cause is the build, whatever
+    /// VM the verb named.
     case unsupportedByBuild(capability: String)
     /// Running the VM would put two guests on one identity.
     case conflict(vm: VMSummary, with: VMSummary, reason: ConflictReason)

@@ -1374,7 +1374,8 @@ struct VMConfigurationTests {
         let decoded = try decoder.decode(VMConfiguration.self, from: data)
 
         #expect(decoded.networkMode == .hostOnly)
-        #expect(decoded.networkChoice == NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil))
+        #expect(
+            decoded.networkChoice == NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil))
     }
 
     @Test("A host-only config decodes from the stored raw value")
@@ -1385,6 +1386,33 @@ struct VMConfigurationTests {
         let decoded = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
 
         #expect(decoded.networkMode == .hostOnly)
+    }
+
+    @Test("A config with no isolation key joins its mode's common network")
+    func absentIsolationDecodesAsTheCommonNetwork() throws {
+        let json = Self.makeBaseJSON(extraFields: "\"networkMode\": \"hostOnly\"")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(VMConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.networkMembership == .common)
+        #expect(decoded.joinedNetwork == .vmnet(.common(.hostOnly)))
+    }
+
+    @Test("An isolated config round-trips onto a network only it joins")
+    func isolationRoundTripsOntoTheVMsOwnNetwork() throws {
+        var config = VMConfiguration(name: "Isolated", guestOS: .linux, bootMode: .efi)
+        config.networkMembership = .isolated
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
+
+        #expect(decoded.networkMembership == .isolated)
+        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, owner: config.id)))
+        // Bridged has no app-managed network to be isolated on.
+        var bridged = decoded
+        bridged.networkMode = .bridged
+        #expect(bridged.joinedNetwork == .bridged)
+        #expect(!bridged.joinsOwnNetwork)
     }
 
     @Test("A bridged config decodes Automatic from a stored mode without an interface")

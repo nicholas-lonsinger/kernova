@@ -21,7 +21,7 @@ struct VMCommandCoreConfigurationTests {
         let authority: MockSandboxSourceAuthority
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(entitlements: EntitlementService = .entitled) -> Harness {
         let storage = MockVMStorageService()
         let snapshots = MockVMBundleMachineFiles()
         let fileSystem = MockFileSystem()
@@ -33,7 +33,8 @@ struct VMCommandCoreConfigurationTests {
             machineFiles: snapshots,
             lifecycle: lifecycle,
             fileSystem: fileSystem,
-            preferences: preferences)
+            preferences: preferences,
+            entitlements: entitlements)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -164,6 +165,31 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "cpus", value: "3"),
                 ConfigurationEntry(key: "display.preference", value: "fullscreen"),
             ])
+    }
+
+    @Test("A set onto a network this build cannot attach is refused naming the build, and writes nothing")
+    func setOntoAnUnattachableNetworkIsRefused() throws {
+        let harness = makeHarness(entitlements: .unentitled)
+        let instance = makeInstance(in: harness) { $0.applyNetworkMode(.shared) }
+        let before = instance.configuration
+
+        for (key, value, capability) in [
+            ("network.mode", "hostOnly", "host-only networking"),
+            ("network.mode", "bridged", "bridged networking"),
+            ("network.membership", "isolated", "isolating a virtual machine from other virtual machines"),
+        ] {
+            #expect(throws: CommandError.unsupportedByBuild(capability: capability)) {
+                try harness.core.setConfiguration(
+                    .name("Alpha"), assignments: [ConfigurationEntry(key: key, value: value)],
+                    confirmed: false)
+            }
+        }
+        // The wire states the refusal as the build's.
+        #expect(
+            CommandError.unsupportedByBuild(capability: "host-only networking").dto.message
+                == "This build of Kernova does not support host-only networking.")
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == before)
     }
 
     @Test("A set keeps what another copy wrote to the bundle since this one read it")

@@ -37,32 +37,32 @@ struct VMOverviewResolverTests {
 
     @Test("Every mode names itself the way the picker titles its entry")
     func modeTitlesMatchThePicker() {
-        #expect(NetworkModeChoice.shared.title(entitled: true, interfaces: []) == "Shared Network")
-        #expect(NetworkModeChoice.none.title(entitled: true, interfaces: []) == "None")
-        #expect(NetworkModeChoice.hostOnly.title(entitled: true, interfaces: []) == "Host Only")
+        #expect(NetworkModeChoice.shared.title(attachable: true, interfaces: []) == "Shared Network")
+        #expect(NetworkModeChoice.none.title(attachable: true, interfaces: []) == "None")
+        #expect(NetworkModeChoice.hostOnly.title(attachable: true, interfaces: []) == "Host Only")
         #expect(
-            NetworkModeChoice.bridged(nil).title(entitled: true, interfaces: []) == "Automatic")
+            NetworkModeChoice.bridged(nil).title(attachable: true, interfaces: []) == "Automatic")
         #expect(
-            NetworkModeChoice.bridged("en0").title(entitled: true, interfaces: [Self.wiFi])
+            NetworkModeChoice.bridged("en0").title(attachable: true, interfaces: [Self.wiFi])
                 == "Wi-Fi (en0)")
     }
 
     @Test("A mode the signature doesn't authorize still names itself, marked unavailable")
     func unentitledModesNameThemselves() {
         #expect(
-            NetworkModeChoice.hostOnly.title(entitled: false, interfaces: [])
+            NetworkModeChoice.hostOnly.title(attachable: false, interfaces: [])
                 == "Host Only (unavailable)")
         #expect(
-            NetworkModeChoice.bridged("en0").title(entitled: false, interfaces: [Self.wiFi])
+            NetworkModeChoice.bridged("en0").title(attachable: false, interfaces: [Self.wiFi])
                 == "Bridged (unavailable)")
         // Entitled, but the host has stopped offering the interface.
         #expect(
-            NetworkModeChoice.bridged("en5").title(entitled: true, interfaces: [Self.wiFi])
+            NetworkModeChoice.bridged("en5").title(attachable: true, interfaces: [Self.wiFi])
                 == "en5 (unavailable)")
         // An interface the host names nothing else reads as its bare identifier.
         let bare = BridgedInterface(identifier: "bridge0", localizedDisplayName: "bridge0")
         #expect(
-            NetworkModeChoice.bridged("bridge0").title(entitled: true, interfaces: [bare])
+            NetworkModeChoice.bridged("bridge0").title(attachable: true, interfaces: [bare])
                 == "bridge0")
     }
 
@@ -126,7 +126,7 @@ struct VMOverviewResolverTests {
     @Test("The address is the observer's answer for a running VM, and displaying it materializes nothing")
     func addressComesFromTheObserver() async {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0")]
+        vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
         let model = makeSettingsViewModel(
             preferences: preferences, vmnetNetworks: vmnet,
             arpTable: ScriptedARPTable([

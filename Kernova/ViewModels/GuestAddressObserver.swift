@@ -22,10 +22,10 @@ final class GuestAddressObserver {
     /// How often, in seconds, the table is read while anything is watched.
     nonisolated static let defaultPollInterval: TimeInterval = 2
 
-    /// A watched VM: its MAC address on the network its mode joins.
+    /// A watched VM: its MAC address on the network it joins.
     struct Key: Hashable, Sendable {
         let hardwareAddress: EthernetAddress
-        let kind: VmnetNetworkKind
+        let network: VmnetNetworkID
     }
 
     /// The address each watched VM was seen using at the last read.
@@ -33,12 +33,9 @@ final class GuestAddressObserver {
 
     @ObservationIgnored private let reader: any ARPTableReading
     @ObservationIgnored private let vmnetNetworks: any VmnetNetworkProviding
-    /// Whether this process can read the table —
-    /// `EntitlementService.supportsGuestAddressObservation`.
-    @ObservationIgnored private let canObserve: Bool
-    /// Whether Shared rides the app-managed network rather than the system NAT
-    /// attachment, which no network here backs.
-    @ObservationIgnored private let isVMNetworkingEntitled: Bool
+    /// What this build authorizes: whether the table can be read at all, and
+    /// which networks an app-managed vmnet network realizes.
+    @ObservationIgnored private let entitlements: EntitlementService
     @ObservationIgnored private let clock: any EngineClock
     @ObservationIgnored private let pollInterval: TimeInterval
     /// The wall clock the table's expiries are measured against, in Unix
@@ -56,38 +53,35 @@ final class GuestAddressObserver {
     init(
         reader: any ARPTableReading,
         vmnetNetworks: any VmnetNetworkProviding,
-        canObserve: Bool,
-        isVMNetworkingEntitled: Bool,
+        entitlements: EntitlementService,
         clock: any EngineClock = makePlatformEngineClock(),
         pollInterval: TimeInterval = GuestAddressObserver.defaultPollInterval,
         now: @escaping @Sendable () -> Int = { Int(Date().timeIntervalSince1970) }
     ) {
         self.reader = reader
         self.vmnetNetworks = vmnetNetworks
-        self.canObserve = canObserve
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
+        self.entitlements = entitlements
         self.clock = clock
         self.pollInterval = pollInterval
         self.now = now
     }
 
-    /// What `instance`'s guest is seen using for an address on the network its
-    /// mode joins.
+    /// What `instance`'s guest is seen using for an address on the network it
+    /// joins.
     func address(for instance: VMInstance) -> GuestIPAddress {
         let config = instance.configuration
-        guard config.networkEnabled, config.networkMode != .bridged,
-            instance.hasLiveVirtualMachine, let key = key(for: config)
-        else { return Self.address(withNoLiveGuest: config) }
+        guard instance.hasLiveVirtualMachine, let key = key(for: config) else {
+            return Self.address(withNoLiveGuest: config)
+        }
         return observedAddresses[key].map(GuestIPAddress.observed) ?? .notObserved
     }
 
     /// What a guest configured as `config` answers for an address while
     /// nothing of it is live — a VM at rest, or one still being written.
     static func address(withNoLiveGuest config: VMConfiguration) -> GuestIPAddress {
-        guard config.networkEnabled else { return .unavailable }
         // Answered before the capability: external DHCP owns a bridged guest's
         // address whether or not this process can read the table.
-        return config.networkMode == .bridged ? .externallyAssigned : .unavailable
+        config.joinedNetwork == .bridged ? .externallyAssigned : .unavailable
     }
 
     /// Starts reading the table if a VM is running on an app-managed network
@@ -113,9 +107,9 @@ final class GuestAddressObserver {
 
     /// Reads the table once and publishes what it shows for `keys`.
     private func read(for keys: Set<Key>) async {
-        var subnets: [VmnetNetworkKind: IPv4Subnet] = [:]
-        for kind in VmnetNetworkKind.allCases {
-            subnets[kind] = vmnetNetworks.ipv4Subnet(for: kind)
+        var subnets: [VmnetNetworkID: IPv4Subnet] = [:]
+        for network in Set(keys.map(\.network)) {
+            subnets[network] = vmnetNetworks.ipv4Subnet(for: network)
         }
         let entries: [ARPEntry]
         do {
@@ -145,14 +139,18 @@ final class GuestAddressObserver {
     /// carrying its MAC inside its network's subnet and expiring after `now`,
     /// the one expiring last. A permanent entry (expiry `0`) never counts — the
     /// host's own addresses and multicast groups are the ones the table holds.
+    ///
+    /// One MAC address on two networks holds a lease on each
+    /// (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md),
+    /// so it resolves per network.
     nonisolated static func addresses(
-        in entries: [ARPEntry], for keys: Set<Key>, on subnets: [VmnetNetworkKind: IPv4Subnet],
+        in entries: [ARPEntry], for keys: Set<Key>, on subnets: [VmnetNetworkID: IPv4Subnet],
         at now: Int
     ) -> [Key: String] {
         var latest: [Key: ARPEntry] = [:]
         for entry in entries where entry.expiry > now {
-            for (kind, subnet) in subnets where subnet.contains(entry.ipv4) {
-                let key = Key(hardwareAddress: entry.hardwareAddress, kind: kind)
+            for (network, subnet) in subnets where subnet.contains(entry.ipv4) {
+                let key = Key(hardwareAddress: entry.hardwareAddress, network: network)
                 guard keys.contains(key), (latest[key]?.expiry ?? .min) < entry.expiry else { continue }
                 latest[key] = entry
             }
@@ -170,15 +168,16 @@ final class GuestAddressObserver {
     }
 
     /// What `config` is watched under, `nil` where nothing here can see its
-    /// address: networking off, a mode no app-managed network realizes, a build
-    /// that attaches Shared to system NAT, a process that cannot read the
-    /// table, or a MAC address that does not parse.
+    /// address: a process that cannot read the table, a network this build
+    /// realizes other than as an app-managed vmnet network (none, Bridged,
+    /// system NAT), or a MAC address that does not parse.
     private func key(for config: VMConfiguration) -> Key? {
-        guard canObserve, isVMNetworkingEntitled, config.networkEnabled,
-            let kind = VmnetNetworkKind(mode: config.networkMode),
+        guard entitlements.supportsGuestAddressObservation,
+            let joined = config.joinedNetwork, case .vmnet(let network) = joined,
+            case .vmnet? = entitlements.realization(of: joined),
             let mac = config.macAddress, let hardwareAddress = EthernetAddress(mac)
         else { return nil }
-        return Key(hardwareAddress: hardwareAddress, kind: kind)
+        return Key(hardwareAddress: hardwareAddress, network: network)
     }
 
     #if DEBUG

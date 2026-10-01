@@ -27,7 +27,9 @@ struct VMSettingsNetworkPanelTests {
     /// over `arpTable` as the host's table.
     private func makeAddressedViewModel(_ arpTable: ScriptedARPTable) -> VMLibraryViewModel {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.shared: .scripted("192.168.64.0"), .hostOnly: .scripted("192.168.128.0")]
+        vmnet.scriptedSubnets = [
+            .common(.shared): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
+        ]
         return makeViewModel(vmnetNetworks: vmnet, arpTable: arpTable)
     }
 
@@ -44,6 +46,7 @@ struct VMSettingsNetworkPanelTests {
         macAddress: String? = "aa:bb:cc:dd:ee:ff",
         interfaces: MockBridgedInterfaceProvider = MockBridgedInterfaceProvider(),
         entitled: Bool = true,
+        isolated: Bool = false,
         isReadOnly: Bool = false,
         phase: VMLifecyclePhase = .stopped,
         holdsSavedState: Bool = false,
@@ -59,6 +62,7 @@ struct VMSettingsNetworkPanelTests {
             $0.networkEnabled = networkEnabled
             $0.networkMode = mode
             $0.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+            $0.networkMembership = isolated ? .isolated : .common
             $0.macAddress = macAddress
         }
         if holdsSavedState { try? VMInstanceFixture.writeSaveFile(for: instance) }
@@ -212,6 +216,45 @@ struct VMSettingsNetworkPanelTests {
         #expect(
             popUp.menu?.items.first { $0.title == "Host Only (unavailable)" }?.isEnabled == false)
         #expect(popUp.menu?.items.first { $0.title == "Host Only" } == nil)
+    }
+
+    // MARK: - Isolation
+
+    @Test("Isolation is offered for Shared Network and Host Only, and for no other mode")
+    func isolationIsOfferedForAppManagedModes() {
+        #expect(visibleLabel("Isolate from other VMs", in: makeNetworkController(mode: .shared).0.view))
+        #expect(visibleLabel("Isolate from other VMs", in: makeNetworkController(mode: .hostOnly).0.view))
+        #expect(!visibleLabel("Isolate from other VMs", in: makeNetworkController(mode: .bridged).0.view))
+        #expect(
+            !visibleLabel("Isolate from other VMs", in: makeNetworkController(networkEnabled: false).0.view))
+    }
+
+    @Test("An unentitled build offers no isolation, but shows a VM already isolated so it can be turned off")
+    func unentitledBuildShowsIsolationOnlyToTurnItOff() throws {
+        #expect(!visibleLabel("Isolate from other VMs", in: makeNetworkController(entitled: false).0.view))
+
+        let (vc, instance) = makeNetworkController(entitled: false, isolated: true)
+        #expect(visibleLabel("Isolate from other VMs", in: vc.view))
+
+        let toggle = try #require(firstSwitch(action: "isolationToggled", in: vc.view))
+        #expect(toggle.isEnabled)
+        toggle.state = .off
+        toggle.sendAction(toggle.action, to: toggle.target)
+        #expect(instance.configuration.networkMembership == .common)
+        #expect(!visibleLabel("Isolate from other VMs", in: vc.view))
+    }
+
+    @Test("Turning isolation on puts the VM on a network of its own")
+    func isolationSwitchWritesTheChoice() throws {
+        let (vc, instance) = makeNetworkController(mode: .hostOnly)
+        let toggle = try #require(firstSwitch(action: "isolationToggled", in: vc.view))
+        #expect(toggle.state == .off)
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(instance.configuration.networkMembership == .isolated)
+        #expect(instance.configuration.joinsOwnNetwork)
     }
 
     @Test("Choosing Host Only writes the mode and mints a MAC address")

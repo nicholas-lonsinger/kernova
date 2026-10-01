@@ -20,6 +20,11 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var entitlements: EntitlementService { context.viewModel.entitlements }
 
     private var networkModePopUp = NSPopUpButton()
+    /// The isolation row, shown for a mode an app-managed network realizes —
+    /// and in a build that cannot isolate, only while the VM is set isolated,
+    /// so the user can turn it off.
+    private var isolationRow: GroupedFormCollapsibleRow?
+    private var isolationSwitch = NSSwitch()
     /// The Network header's lock hint, hidden — unlike its `lockHints` peers —
     /// while the picker is the live-switch surface.
     private var networkLockHint: NSView?
@@ -68,6 +73,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let modeRow = makeGroupedFormCardRow("Mode", control: networkModePopUp)
 
         var rows: [NSView] = [modeRow]
+        rows.append(makeIsolationRow())
         rows.append(makeIPAddressRow())
         rows.append(makeMACAddressRow())
         networkNoDeviceCaption = makeGroupedFormCaption("This virtual machine has no network device.")
@@ -78,10 +84,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         // The IP address row shows a running Shared guest's address only where
-        // the guest rides the app-managed network and the host's table can be
+        // the guest rides an app-managed network and the host's table can be
         // read, so only there does the copy point at it.
+        let sharedRidesVmnet =
+            entitlements.realization(of: .vmnet(.common(.shared))) != .systemNAT
         let sharedReachClause =
-            entitlements.hasVMNetworking && entitlements.supportsGuestAddressObservation
+            sharedRidesVmnet && entitlements.supportsGuestAddressObservation
             ? "this Mac reaches it at the address in the IP address row"
             : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = [
@@ -109,6 +117,43 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCard(rows: rows, notes: [networkNoDeviceCaption]),
             networkWarningContainer,
         ])
+    }
+
+    /// The isolation row: a switch putting a Shared or Host Only VM on a
+    /// network of its own. Like the Mode picker it hot-swaps while the VM
+    /// runs, so `refreshNetwork()` owns its enablement.
+    private func makeIsolationRow() -> GroupedFormCollapsibleRow {
+        isolationSwitch = makeGroupedFormSwitch(target: self, action: #selector(isolationToggled))
+        let row = GroupedFormCollapsibleRow(
+            row: makeGroupedFormRowWithInfo(
+                "Isolate from other VMs", control: isolationSwitch,
+                paragraphs: [
+                    .body(
+                        "Runs the guest on a network of its own instead of the one every other VM in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
+                    )
+                ]))
+        isolationRow = row
+        return row
+    }
+
+    private func refreshIsolationRow(editable: Bool) {
+        let config = instance.configuration
+        let isolated = config.networkMembership == .isolated
+        // Shown on an app-managed network where the build can attach the VM's
+        // own, and to a VM already isolated so it can be turned off.
+        var onAppManagedNetwork = false
+        if case .vmnet = config.joinedNetwork { onAppManagedNetwork = true }
+        isolationRow?.isHidden =
+            !onAppManagedNetwork || !(offers { $0.networkMembership = .isolated } || isolated)
+        isolationSwitch.state = isolated ? .on : .off
+        applyGroupedFormRowEnabled(editable, control: isolationSwitch)
+    }
+
+    @objc private func isolationToggled() {
+        let membership: VMNetworkMembership = isolationSwitch.state == .on ? .isolated : .common
+        write(VMConfigurationKeyRegistry.networkMembership.assigning(membership.rawValue))
+        refreshResolved()
+        refreshNetwork()
     }
 
     /// The IP address row: the address the host last saw the guest use, with a
@@ -221,7 +266,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let liveSwitchable = networkModeIsLiveSwitchable
         let current = NetworkModeChoice(instance.configuration)
         addNetworkModeItem("Shared Network", choice: .shared, to: menu)
-        if entitlements.hasVMNetworking {
+        if offers(.hostOnly) {
             addNetworkModeItem("Host Only", choice: .hostOnly, to: menu)
         } else if current == .hostOnly {
             // A host-only VM in a build the entitlement doesn't cover: the
@@ -236,7 +281,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
         renderedNetworkChoice = current
         renderedNetworkLiveSwitchable = liveSwitchable
-        if entitlements.hasVMNetworking {
+        if offers(.bridged) {
             menu.addItem(.sectionHeader(title: "Bridged"))
             addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
             if let interfaces {
@@ -269,6 +314,20 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
 
         selectNetworkModeItem()
+    }
+
+    /// Whether the picker offers `mode`: the network choosing it puts the VM
+    /// on is one this build can attach — what the mode key's write checks.
+    private func offers(_ mode: VMNetworkMode) -> Bool {
+        offers { $0.applyNetworkMode(mode) }
+    }
+
+    /// Whether the network `change` puts the VM on is one this build can
+    /// attach — what the network keys' writes check.
+    private func offers(_ change: (inout VMConfiguration) -> Void) -> Bool {
+        var candidate = instance.configuration
+        change(&candidate)
+        return candidate.joinedNetwork.map(entitlements.canAttach) ?? false
     }
 
     /// Appends one Mode entry.
@@ -316,6 +375,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // None leaves no device to describe, so the card's remaining rows give way
         // to a caption saying so.
         let hasDevice = instance.configuration.networkEnabled
+        refreshIsolationRow(editable: modeEditable)
         refreshMACAddressRow()
         refreshMACAddressWarning()
         networkNoDeviceCaption.isHidden = hasDevice

@@ -60,7 +60,7 @@ extension VMCommandCore {
         _ selector: VMSelector, assignments: [ConfigurationEntry], confirmed: Bool
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let context = VMConfigurationWriteContext(instance)
+        let context = VMConfigurationWriteContext(instance, entitlements: library.entitlements)
         let guestOS = instance.configuration.guestOS
 
         var answered: [VMConfigurationKey] = []

@@ -74,8 +74,9 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   `RemovableMediaDeviceService`, `LiveDirectoryShareService`, and
   `USBAccessoryService` (macOS 27; optional on `VMLifecycleCoordinator` — `nil`
   is the capability's absence).
-- Network: `VmnetNetworkService` (process-wide), `NetworkAttachmentCoordinator`
-  (one per session, held by `VMSessionContext`), and `GuestAddressObserver`
+- Network: `VmnetNetworkService` (process-wide) and the `VmnetSessionNetworks`
+  view each session attaches through and `NetworkAttachmentCoordinator` (one
+  of each per session, held by `VMSessionContext`), and `GuestAddressObserver`
   (over `HostARPTableReader`) and `VMMACAddressRegistry`, sequenced by
   `VMLibrary`.
 - Vsock, macOS guests: `KernovaVsockPort` and `VsockListenerHost`; per VM, a

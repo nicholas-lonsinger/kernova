@@ -540,7 +540,7 @@ struct VMSettingsGeneralPanelTests {
         var settings = instance.settings
         do {
             try VMConfigurationKeyRegistry.ephemeral.apply(
-                value, to: &settings, context: VMConfigurationWriteContext(instance))
+                value, to: &settings, context: VMConfigurationWriteContext(instance, entitlements: .entitled))
             return nil
         } catch let error as CommandError {
             return error.message
@@ -567,10 +567,11 @@ struct VMSettingsGeneralPanelTests {
                 let toggle = try #require(firstSwitch(action: "ephemeralModeToggled", in: vc.view))
 
                 #expect(
-                    toggle.isEnabled == key.accepts(String(!ephemeral), for: instance), "\(label)")
+                    toggle.isEnabled == key.accepts(String(!ephemeral), for: instance, entitlements: .entitled),
+                    "\(label)")
                 #expect(
                     visibleLabel(EphemeralModeCopy.noSnapshotsCaption, in: vc.view)
-                        == !key.accepts("true", for: instance), "\(label)")
+                        == !key.accepts("true", for: instance, entitlements: .entitled), "\(label)")
             }
         }
     }

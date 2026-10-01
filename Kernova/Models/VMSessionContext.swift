@@ -113,6 +113,11 @@ final class VMSessionContext {
 
     // MARK: - Network Attachment Recovery
 
+    /// This session's view of the app-managed vmnet networks, adopted from
+    /// the configuration build and held until ``tearDown()``: the VM's own
+    /// networks live exactly as long as a view of its own does.
+    @ObservationIgnored var vmnetNetworks: (any VmnetSessionNetworking)?
+
     /// Keeps the live network attachment realizing the configured mode;
     /// created with the `VZVirtualMachine` for network-enabled VMs, activated
     /// once the session reaches `.running`, torn down with the session.
@@ -180,6 +185,7 @@ final class VMSessionContext {
         // the `VZVirtualMachine`; the boot paths' file-lock retry covers the
         // lagging deallocation of the VM's advisory locks.
         session = nil
+        vmnetNetworks = nil
         fileAccess.releaseAll()
     }
 

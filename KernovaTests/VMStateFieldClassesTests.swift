@@ -111,7 +111,7 @@ struct VMStateFieldClassesTests {
     func everyKeysClassesWriteWhatItMoves() {
         let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
         let context = VMConfigurationWriteContext(
-            snapshots: VMSnapshotManifest(snapshots: [snapshot]))
+            snapshots: VMSnapshotManifest(snapshots: [snapshot]), entitlements: .entitled)
         var networked = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
         networked.applyNetworkMode(.shared)
         var unaddressed = networked

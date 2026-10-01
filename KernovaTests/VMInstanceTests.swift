@@ -536,11 +536,12 @@ struct VMInstanceTests {
             $0.networkEnabled = true
             $0.networkMode = .shared
         }
-        let device = MockNetworkDeviceControl(plan: .nat)
+        let device = MockNetworkDeviceControl(plan: .vmnet(.common(.shared)))
         let coordinator = attachNetworkCoordinator(
             to: instance, device: device,
             provider: MockBridgedInterfaceProvider(
-                available: [BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")]))
+                available: [BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")]),
+            entitlements: .entitled)
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 

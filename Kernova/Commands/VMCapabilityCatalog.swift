@@ -281,7 +281,7 @@ struct VMCapabilityCatalog {
     ) -> Bool {
         isAvailable(
             key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
-            && key.accepts(value, for: instance)
+            && key.accepts(value, for: instance, entitlements: library.entitlements)
     }
 
     /// What one edit of a VM's shared-directory list is offered as.

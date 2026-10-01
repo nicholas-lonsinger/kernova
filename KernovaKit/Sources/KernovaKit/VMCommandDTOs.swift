@@ -53,6 +53,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let diskSizeInGB: Int
     /// The network the VM joins, `nil` when networking is off.
     public let networkMode: String?
+    /// Which network of its mode the VM joins — `common` or `isolated` —
+    /// `nil` where it joins no app-managed network (networking off, or
+    /// bridged).
+    public let networkMembership: String?
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -81,6 +85,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         memoryBytes: UInt64,
         diskSizeInGB: Int,
         networkMode: String?,
+        networkMembership: String?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,
@@ -98,6 +103,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.memoryBytes = memoryBytes
         self.diskSizeInGB = diskSizeInGB
         self.networkMode = networkMode
+        self.networkMembership = networkMembership
         self.macAddress = macAddress
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus
@@ -390,9 +396,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case invalidArgument(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
-    /// This build cannot do what was asked, and no VM was named — a host-scoped
-    /// verb whose capability the build lacks, where naming a virtual machine
-    /// would describe something the caller never asked about.
+    /// This build cannot do what was asked: the cause is the build, whatever
+    /// VM the verb named, so the refusal names no virtual machine.
     case unsupportedByBuild(capability: String)
     /// The VM answered; something the verb named *on* it did not. `item` is
     /// what was looked for, in the words the user reads.

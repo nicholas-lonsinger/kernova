@@ -30,6 +30,42 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
     case always
 }
 
+/// Which network of its mode a Shared or Host Only VM joins — membership,
+/// which is what expresses guest↔guest reach (docs/NETWORKING.md).
+enum VMNetworkMembership: String, Codable, Sendable, Equatable, CaseIterable {
+    /// The mode's common network, which every VM of the mode on it shares.
+    case common
+    /// A network of the VM's own, which no other guest joins.
+    case isolated
+}
+
+/// A network a VM's device can join.
+enum VMJoinedNetwork: Hashable, Sendable {
+    /// The host's LAN through a bridged interface — any interface, since
+    /// Automatic resolves at start and which link two VMs land on is not
+    /// knowable in advance.
+    case bridged
+    /// An app-managed vmnet network.
+    case vmnet(VmnetNetworkID)
+
+    /// Whether this is one VM's network of its own.
+    var isOwn: Bool {
+        guard case .vmnet(let id) = self else { return false }
+        return id.owner != nil
+    }
+
+    /// What a build that cannot attach this network lacks, as a refusal
+    /// names it.
+    var entitledCapability: String {
+        switch self {
+        case .bridged: "bridged networking"
+        case .vmnet(let id) where id.owner != nil: "isolating a virtual machine from other virtual machines"
+        case .vmnet(let id) where id.kind == .hostOnly: "host-only networking"
+        case .vmnet: "Shared Network"
+        }
+    }
+}
+
 /// Persistent configuration for a virtual machine, serialized to `config.json`
 /// inside each VM bundle directory — what a snapshot captures and a revert
 /// restores. Per-VM state a revert must leave alone is ``VMHostState``.
@@ -89,6 +125,10 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// BSD name of the host interface a bridged VM attaches to (e.g. `en0`), or
     /// `nil` for Automatic — resolved against the host's default route at start.
     var bridgedInterfaceIdentifier: String?
+
+    /// Which network of its mode a Shared or Host Only VM joins. Bridged
+    /// ignores it.
+    var networkMembership: VMNetworkMembership
 
     var macAddress: String?
 
@@ -306,6 +346,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled: Bool = true,
         networkMode: VMNetworkMode = .shared,
         bridgedInterfaceIdentifier: String? = nil,
+        networkMembership: VMNetworkMembership = .common,
         macAddress: String? = nil,
         clipboardSharingEnabled: Bool = false,
         clipboardPassthroughEnabled: Bool = false,
@@ -351,6 +392,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = networkEnabled
         self.networkMode = networkMode
         self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+        self.networkMembership = networkMembership
         self.macAddress = macAddress
         self.clipboardSharingEnabled = clipboardSharingEnabled
         self.clipboardPassthroughEnabled = clipboardPassthroughEnabled
@@ -407,6 +449,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
             String.self, forKey: .bridgedInterfaceIdentifier)
+        self.networkMembership =
+            try c.decodeIfPresent(VMNetworkMembership.self, forKey: .networkMembership) ?? .common
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
         self.clipboardPassthroughEnabled =
@@ -497,6 +541,30 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         networkEnabled = true
         networkMode = mode
         mintMACAddressIfNeeded()
+    }
+
+    /// The network this VM's device joins, `nil` when it carries none: two
+    /// devices share a link exactly when they join equal networks.
+    var joinedNetwork: VMJoinedNetwork? {
+        guard networkEnabled else { return nil }
+        guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
+        let owner: UUID? =
+            switch networkMembership {
+            case .common: nil
+            case .isolated: id
+            }
+        return .vmnet(VmnetNetworkID(kind: kind, owner: owner))
+    }
+
+    /// Whether this VM's device joins a network of its own — what every
+    /// surface reports as isolated.
+    var joinsOwnNetwork: Bool { joinedNetwork?.isOwn ?? false }
+
+    /// The membership this VM's device joins its network with, `nil` where no
+    /// app-managed network is joined (no device, or Bridged).
+    var effectiveNetworkMembership: VMNetworkMembership? {
+        guard case .vmnet = joinedNetwork else { return nil }
+        return networkMembership
     }
 
     /// Gives a VM with no address of its own one, for the reason

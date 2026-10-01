@@ -42,6 +42,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     let preferences: AppPreferences
 
+    /// What this build's signature authorizes, as every surface that degrades
+    /// without an entitlement reads it.
+    let entitlements: EntitlementService
+
     // MARK: - Collaborators
 
     /// Drives a running VM's XHCI removable-media list to what its
@@ -229,11 +233,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences
+        self.entitlements = entitlements
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
         let guestAddresses = GuestAddressObserver(
-            reader: arpTable, vmnetNetworks: vmnetNetworks,
-            canObserve: entitlements.supportsGuestAddressObservation,
-            isVMNetworkingEntitled: entitlements.hasVMNetworking)
+            reader: arpTable, vmnetNetworks: vmnetNetworks, entitlements: entitlements)
         self.guestAddresses = guestAddresses
         let macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
         self.macAddresses = macAddresses

@@ -10,39 +10,31 @@ enum NetworkAttachmentPlan: Equatable, Sendable {
     /// The system NAT attachment — Shared Network in an unentitled build.
     case nat
     case bridged(String)
-    case hostOnly
-    /// The app-managed vmnet shared network — Shared Network in an entitled
-    /// build.
-    case sharedVmnet
+    /// An app-managed vmnet network — Host Only, and Shared Network in an
+    /// entitled build.
+    case vmnet(VmnetNetworkSelection)
 
-    /// The mode this plan realizes. The bridged interface is ignored:
-    /// an attachment over any interface realizes Bridged.
-    var realizedMode: VMNetworkMode {
+    /// The realization this plan attaches by. The bridged interface is
+    /// ignored: an attachment over any interface realizes Bridged.
+    var realization: VMNetworkRealization {
         switch self {
-        case .nat, .sharedVmnet: .shared
+        case .nat: .systemNAT
         case .bridged: .bridged
-        case .hostOnly: .hostOnly
+        case .vmnet(let selection): .vmnet(selection)
         }
-    }
-
-    func matches(_ mode: VMNetworkMode) -> Bool {
-        realizedMode == mode
     }
 
     /// The app-managed network this plan attaches to, `nil` for plans vmnet
     /// does not back.
-    var vmnetKind: VmnetNetworkKind? {
-        switch self {
-        case .hostOnly: .hostOnly
-        case .sharedVmnet: .shared
-        case .nat, .bridged: nil
-        }
+    var vmnetSelection: VmnetNetworkSelection? {
+        guard case .vmnet(let selection) = self else { return nil }
+        return selection
     }
 }
 
 /// The network the user chose for a VM, as attachment recovery needs it.
 struct NetworkChoice: Equatable {
-    let mode: VMNetworkMode
+    let joinedNetwork: VMJoinedNetwork
     /// The persisted bridged interface, `nil` for Automatic.
     let bridgedInterfaceIdentifier: String?
 }
@@ -51,8 +43,9 @@ extension VMConfiguration {
     /// The network the user chose, as attachment recovery consumes it; `nil`
     /// when the VM has no network device.
     var networkChoice: NetworkChoice? {
-        guard networkEnabled else { return nil }
-        return NetworkChoice(mode: networkMode, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier)
+        joinedNetwork.map {
+            NetworkChoice(joinedNetwork: $0, bridgedInterfaceIdentifier: bridgedInterfaceIdentifier)
+        }
     }
 }
 
@@ -96,7 +89,7 @@ extension VMSession: NetworkAttachmentInstalling {}
 @MainActor
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     private let session: any NetworkAttachmentInstalling
-    private let vmnetNetworks: any VmnetNetworkProviding
+    private let vmnetNetworks: any VmnetSessionNetworking
 
     /// The plan the device is on: what `apply`/`detach` last installed,
     /// cleared when the framework reports the attachment disconnected.
@@ -109,7 +102,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     init(
         session: any NetworkAttachmentInstalling,
         initialPlan: NetworkAttachmentPlan?,
-        vmnetNetworks: any VmnetNetworkProviding
+        vmnetNetworks: any VmnetSessionNetworking
     ) {
         self.session = session
         self.appliedPlan = initialPlan
@@ -121,7 +114,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     /// configuration build installed. A network the service does not hold
     /// realizes nothing, so reconciliation replaces it.
     nonisolated static func plan(
-        of attachment: VZNetworkDeviceAttachment, in vmnetNetworks: any VmnetNetworkProviding
+        of attachment: VZNetworkDeviceAttachment, in vmnetNetworks: any VmnetSessionNetworking
     ) -> NetworkAttachmentPlan? {
         switch attachment {
         case is VZNATNetworkDeviceAttachment:
@@ -129,11 +122,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
         case let bridged as VZBridgedNetworkDeviceAttachment:
             .bridged(bridged.interface.identifier)
         case let vmnet as VZVmnetNetworkDeviceAttachment:
-            switch vmnetNetworks.kind(ofNetwork: vmnet.network) {
-            case .hostOnly: .hostOnly
-            case .shared: .sharedVmnet
-            case nil: nil
-            }
+            vmnetNetworks.selection(ofNetwork: vmnet.network).map(NetworkAttachmentPlan.vmnet)
         default:
             nil
         }
@@ -152,14 +141,12 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
                 Self.bridgedInterface(identifier)
                     .map(VZBridgedNetworkDeviceAttachment.init(interface:))
             }
-        case .hostOnly, .sharedVmnet:
+        case .vmnet(let selection):
             // Non-blocking: an unmaterialized network refuses the apply, and
             // the coordinator materializes it off-main and reconciles when
             // it's ready.
-            guard let kind = plan.vmnetKind,
-                vmnetNetworks.attachmentIfMaterialized(for: kind) != nil
-            else { return false }
-            make = { [vmnetNetworks] in vmnetNetworks.attachmentIfMaterialized(for: kind) }
+            guard vmnetNetworks.attachmentIfMaterialized(for: selection) != nil else { return false }
+            make = { [vmnetNetworks] in vmnetNetworks.attachmentIfMaterialized(for: selection) }
         }
         appliedPlan = plan
         appliedGeneration += 1
@@ -316,11 +303,10 @@ final class NetworkAttachmentCoordinator {
     private let device: any NetworkDeviceControlling
     private let interfaces: any BridgedInterfaceProviding
     private let linkObserver: any NetworkLinkObserving
-    private let vmnetNetworks: any VmnetNetworkProviding
-    /// Whether this build realizes Shared over the app-managed vmnet network
-    /// (`.sharedVmnet`) or the system NAT attachment (`.nat`). A process-wide
-    /// constant, snapshotted at init.
-    private let isVMNetworkingEntitled: Bool
+    private let vmnetNetworks: any VmnetSessionNetworking
+    /// What this build authorizes, which decides how each network the user
+    /// chooses is attached (``EntitlementService/realization(of:)``).
+    private let entitlements: EntitlementService
     private let retryDelays: [TimeInterval]
     private let disconnectBurstWindow: TimeInterval
     private let vmnetRematerializeDelays: [TimeInterval]
@@ -338,10 +324,10 @@ final class NetworkAttachmentCoordinator {
     private var retryTask: Task<Void, Never>?
     private var nextRetryIndex = 0
     private var vmnetMaterializationTask: Task<Void, Never>?
-    /// The kind the in-flight materialization serves — a live mode switch to
-    /// the other vmnet-backed mode must supersede it, not be swallowed by the
+    /// The network the in-flight materialization serves — a live switch to
+    /// another vmnet network must supersede it, not be swallowed by the
     /// single-flight guard.
-    private var vmnetMaterializationKind: VmnetNetworkKind?
+    private var vmnetMaterializationSelection: VmnetNetworkSelection?
     /// Identifies the current materialization task, so a superseded
     /// (cancelled) task resuming late cannot clear its replacement's handle.
     private var vmnetMaterializationGeneration = 0
@@ -351,8 +337,8 @@ final class NetworkAttachmentCoordinator {
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
-        vmnetNetworks: any VmnetNetworkProviding,
-        isVMNetworkingEntitled: Bool,
+        vmnetNetworks: any VmnetSessionNetworking,
+        entitlements: EntitlementService,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
         disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
         vmnetRematerializeDelays: [TimeInterval] =
@@ -367,7 +353,7 @@ final class NetworkAttachmentCoordinator {
         self.interfaces = interfaces
         self.linkObserver = linkObserver
         self.vmnetNetworks = vmnetNetworks
-        self.isVMNetworkingEntitled = isVMNetworkingEntitled
+        self.entitlements = entitlements
         self.retryDelays = retryDelays
         self.disconnectBurstWindow = disconnectBurstWindow
         self.vmnetRematerializeDelays = vmnetRematerializeDelays
@@ -393,7 +379,7 @@ final class NetworkAttachmentCoordinator {
         cancelRetry()
         vmnetMaterializationTask?.cancel()
         vmnetMaterializationTask = nil
-        vmnetMaterializationKind = nil
+        vmnetMaterializationSelection = nil
     }
 
     /// VZ's attachment-disconnect callback: the framework has nil'd the
@@ -477,13 +463,16 @@ final class NetworkAttachmentCoordinator {
             device.detach()
         }
 
-        // Never leave an attachment realizing a mode other than the chosen one
-        // (a refused apply can leave the previous mode's attachment live): when
-        // the chosen mode cannot attach, the honest state is detached, not a
-        // substituted mode (docs/NETWORKING.md). A refused apply whose live
-        // attachment does match the mode is kept — a working bridge beats
+        // Never leave an attachment realizing a network other than the chosen
+        // one (a refused apply can leave the previous one's attachment live):
+        // when the chosen network cannot attach, the honest state is detached,
+        // not a substituted network (docs/NETWORKING.md) — an isolated VM never
+        // stays on its mode's common network. A refused apply whose live
+        // attachment does match the choice is kept — a working bridge beats
         // detaching, and the next trigger retries.
-        if let current = device.currentPlan, !current.matches(choice.mode) {
+        if let current = device.currentPlan,
+            current.realization != entitlements.realization(of: choice.joinedNetwork)
+        {
             device.detach()
         }
 
@@ -491,7 +480,7 @@ final class NetworkAttachmentCoordinator {
         setPending(pending)
         if pending {
             scheduleRetry()
-            if let kind = desired?.vmnetKind { ensureVmnetMaterialization(of: kind) }
+            if let selection = desired?.vmnetSelection { ensureVmnetMaterialization(of: selection) }
         }
     }
 
@@ -500,13 +489,13 @@ final class NetworkAttachmentCoordinator {
     /// the wake-up signal ladder exhaustion would otherwise leave missing,
     /// since host link changes are a bridged signal and a detached device
     /// fires no disconnects.
-    private func ensureVmnetMaterialization(of kind: VmnetNetworkKind) {
+    private func ensureVmnetMaterialization(of selection: VmnetNetworkSelection) {
         if vmnetMaterializationTask != nil {
-            guard vmnetMaterializationKind != kind else { return }
+            guard vmnetMaterializationSelection != selection else { return }
             vmnetMaterializationTask?.cancel()
             vmnetMaterializationTask = nil
         }
-        vmnetMaterializationKind = kind
+        vmnetMaterializationSelection = selection
         vmnetMaterializationGeneration += 1
         let generation = vmnetMaterializationGeneration
         vmnetMaterializationTask = Task {
@@ -516,7 +505,7 @@ final class NetworkAttachmentCoordinator {
                 guard let coordinator = self, coordinator.isActive, coordinator.isPending else {
                     break
                 }
-                if await vmnetNetworks.materializeNetwork(for: kind) {
+                if await vmnetNetworks.materializeNetwork(for: selection) {
                     self?.clearMaterializationTask(generation: generation)
                     if let coordinator = self, coordinator.isActive {
                         coordinator.reconcile(trigger: "vmnet network materialized")
@@ -537,17 +526,18 @@ final class NetworkAttachmentCoordinator {
     private func clearMaterializationTask(generation: Int) {
         guard vmnetMaterializationGeneration == generation else { return }
         vmnetMaterializationTask = nil
-        vmnetMaterializationKind = nil
+        vmnetMaterializationSelection = nil
     }
 
-    /// The plan the chosen mode resolves to right now, `nil` when Bridged has
-    /// no usable host interface.
+    /// The plan the chosen network resolves to right now, `nil` when Bridged
+    /// has no usable host interface or the build cannot realize the choice.
     private func resolvePlan(for choice: NetworkChoice) -> NetworkAttachmentPlan? {
-        switch choice.mode {
-        case .shared:
-            return isVMNetworkingEntitled ? .sharedVmnet : .nat
-        case .hostOnly:
-            return .hostOnly
+        guard let realization = entitlements.realization(of: choice.joinedNetwork) else { return nil }
+        switch realization {
+        case .systemNAT:
+            return .nat
+        case .vmnet(let selection):
+            return .vmnet(selection)
         case .bridged:
             let available = interfaces.interfaces().map(\.identifier)
             // The persisted interface is reclaimed the moment the host offers
@@ -592,10 +582,12 @@ final class NetworkAttachmentCoordinator {
     }
 
     private func ladderExhausted() {
-        guard let choice = choice(), let kind = resolvePlan(for: choice)?.vmnetKind else { return }
+        guard let choice = choice(), let selection = resolvePlan(for: choice)?.vmnetSelection else {
+            return
+        }
         #log(
             Self.logger, .warning,
-            "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(kind.rawValue, privacy: .public) network"
+            "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(selection.isOwn ? "own " : "", privacy: .public)\(selection.kind.rawValue, privacy: .public) network"
         )
     }
 

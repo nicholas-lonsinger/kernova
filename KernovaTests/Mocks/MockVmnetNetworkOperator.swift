@@ -20,6 +20,8 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
     private(set) var createdKinds: [VmnetNetworkKind] = []
     /// The network each attachment was built to join, in call order.
     private(set) var attachedNetworks: [OpaquePointer] = []
+    /// Every network given back, in call order.
+    private(set) var releasedNetworks: [OpaquePointer] = []
 
     private var fabricatedNetworks: [UnsafeMutableRawPointer] = []
 
@@ -41,62 +43,80 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating, @unchecked Sendable
         attachedNetworks.append(handle.network)
         return VZNATNetworkDeviceAttachment()
     }
+
+    /// Records the release; the fabricated pointer is freed with the mock.
+    func releaseNetwork(_ handle: VmnetNetworkHandle) {
+        releasedNetworks.append(handle.network)
+    }
 }
 
-/// Scripted stand-in for `VmnetNetworkProviding`, so attachment-building tests
-/// name a Host Only attachment without materializing a vmnet network.
+/// Scripted stand-in for both vmnet provider seams, so attachment-building and
+/// recovery tests name a vmnet attachment without materializing a network.
+/// Every session view it opens is itself.
 ///
 /// `scriptedAttachment` is a NAT attachment purely as a stand-in object —
 /// callers only compare its identity.
-final class MockVmnetNetworkProvider: VmnetNetworkProviding, @unchecked Sendable {
+final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetSessionNetworking, @unchecked Sendable {
     var scriptedAttachment: VZNetworkDeviceAttachment = VZNATNetworkDeviceAttachment()
-    /// The kinds counting as materialized. `attachmentIfMaterialized` and
-    /// `ipv4Subnet` answer `nil` for a kind not in it, and `materializeNetwork`
+    /// The networks counting as materialized. `attachmentIfMaterialized` and
+    /// `ipv4Subnet` answer `nil` for one not in it, and `materializeNetwork`
     /// inserts.
-    var materializedKinds: Set<VmnetNetworkKind> = Set(VmnetNetworkKind.allCases)
-    /// When `true`, `materializeNetwork` fails and leaves `materializedKinds` as is.
+    var materializedNetworks: Set<VmnetNetworkSelection> = Set(
+        VmnetNetworkKind.allCases.flatMap { [.common($0), .own($0)] })
+    /// When `true`, `materializeNetwork` fails and leaves `materializedNetworks` as is.
     var materializeFails = false
-    /// The subnet each kind's network hands its guests, which
-    /// `ipv4Subnet(for:)` serves only while the kind is materialized, as the
-    /// service does — one for every kind, since every materialized network
-    /// has one.
-    var scriptedSubnets: [VmnetNetworkKind: IPv4Subnet] = [
-        .shared: .scripted("192.168.64.0"), .hostOnly: .scripted("192.168.128.0"),
+    /// The subnet each network hands its guests, which `ipv4Subnet(for:)`
+    /// serves only while it is materialized, as the service does.
+    var scriptedSubnets: [VmnetNetworkID: IPv4Subnet] = [
+        .common(.shared): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
     ]
 
     var attachmentError: (any Error)?
 
-    private(set) var requestedKinds: [VmnetNetworkKind] = []
+    /// The VM each session view was opened for, in call order.
+    private(set) var openedOwners: [UUID] = []
+    private(set) var requestedNetworks: [VmnetNetworkSelection] = []
     private(set) var materializeCount = 0
     /// Every `materializeNetwork` call, in order — failures included.
-    private(set) var materializeRequestedKinds: [VmnetNetworkKind] = []
+    private(set) var materializeRequestedNetworks: [VmnetNetworkSelection] = []
 
-    func attachment(for kind: VmnetNetworkKind) throws -> VZNetworkDeviceAttachment {
-        requestedKinds.append(kind)
+    func sessionNetworks(ownedBy owner: UUID) -> any VmnetSessionNetworking {
+        openedOwners.append(owner)
+        return self
+    }
+
+    func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet? {
+        let selection = VmnetNetworkSelection(kind: network.kind, isOwn: network.owner != nil)
+        guard materializedNetworks.contains(selection) else { return nil }
+        return scriptedSubnets[network]
+    }
+
+    func attachment(for network: VmnetNetworkSelection) throws -> VZNetworkDeviceAttachment {
+        requestedNetworks.append(network)
         if let attachmentError { throw attachmentError }
         return scriptedAttachment
     }
 
-    func attachmentIfMaterialized(for kind: VmnetNetworkKind) -> VZNetworkDeviceAttachment? {
-        requestedKinds.append(kind)
-        guard materializedKinds.contains(kind), attachmentError == nil else { return nil }
+    func attachmentIfMaterialized(for network: VmnetNetworkSelection) -> VZNetworkDeviceAttachment? {
+        requestedNetworks.append(network)
+        guard materializedNetworks.contains(network), attachmentError == nil else { return nil }
         return scriptedAttachment
     }
 
-    func materializeNetwork(for kind: VmnetNetworkKind) async -> Bool {
+    func materializeNetwork(for network: VmnetNetworkSelection) async -> Bool {
         materializeCount += 1
-        materializeRequestedKinds.append(kind)
+        materializeRequestedNetworks.append(network)
         guard !materializeFails else { return false }
-        materializedKinds.insert(kind)
+        materializedNetworks.insert(network)
         return true
     }
 
-    func kind(ofNetwork network: vmnet_network_ref) -> VmnetNetworkKind? {
+    func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection? {
         nil
     }
+}
 
-    func ipv4Subnet(for kind: VmnetNetworkKind) -> IPv4Subnet? {
-        guard materializedKinds.contains(kind) else { return nil }
-        return scriptedSubnets[kind]
-    }
+extension VmnetNetworkSelection {
+    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: false) }
+    static func own(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: true) }
 }
