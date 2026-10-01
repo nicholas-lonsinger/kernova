@@ -25,12 +25,15 @@ extension KernovaCommand {
             switch value {
             case .newMachine:
                 ArgumentHelp(
-                    "Give the clone its own machine identity and MAC address, so both can run at once. "
-                        + "Not offered for a guest running macOS 12 or earlier.")
+                    "Give the clone its own machine identity and MAC address, so both can run at once, "
+                        + "with no snapshots and Ephemeral Mode off. Not offered for a guest running "
+                        + "macOS 12 or earlier.")
             case .exactCopy:
                 ArgumentHelp(
-                    "Keep the source's machine identity and MAC address. The two never run on the same "
-                        + "network at once, and run at once only when one is started anyway.")
+                    "Keep the source's machine identity and MAC address, and carry its snapshots, "
+                        + "Ephemeral Mode and display preferences but not start at launch. The two "
+                        + "never run on the same network at once, and run at once only when one is "
+                        + "started anyway.")
             }
         }
     }

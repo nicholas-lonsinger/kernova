@@ -19,6 +19,6 @@ protocol VMStorageProviding: Sendable {
     func reclaimStagedBundles() -> Task<Void, Never>
     func deleteVMBundle(at bundleURL: URL) throws
     func permanentlyDeleteVMBundle(at bundleURL: URL) throws
-    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String])
+    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String])
         throws
 }

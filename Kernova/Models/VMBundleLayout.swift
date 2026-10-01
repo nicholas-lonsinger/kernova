@@ -19,9 +19,14 @@ struct VMBundleLayout: Sendable {
     static let snapshotManifestRelativePath = "Snapshots/manifest.json"
     static let usbPairingsRelativePath = "usb-accessories.json"
 
+    /// The directory holding one snapshot, relative to the bundle root.
+    static func snapshotRelativePath(id: UUID) -> String {
+        "Snapshots/\(id.uuidString)"
+    }
+
     /// A snapshot's own `config.json`, relative to the bundle root.
     static func snapshotConfigRelativePath(id: UUID) -> String {
-        "Snapshots/\(id.uuidString)/\(configRelativePath)"
+        "\(snapshotRelativePath(id: id))/\(configRelativePath)"
     }
 
     /// The serialized `VMConfiguration`.

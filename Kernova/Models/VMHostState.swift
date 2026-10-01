@@ -91,6 +91,19 @@ struct VMHostState: Codable, Sendable, Equatable {
             ?? defaults.agentInstallNudgeDismissed
     }
 
+    // MARK: - Arrival
+
+    /// Readies host state a copy brings in from another bundle — an import or
+    /// an Exact Copy clone.
+    ///
+    /// Start at launch is the one setting that runs a guest with no user
+    /// action, so it is local intent rather than something a copy carries in:
+    /// a VM arriving pre-marked would boot on the next launch without ever
+    /// being asked for, and an Exact Copy would start beside its source.
+    mutating func arriveAsCopy() {
+        startsAutomaticallyOnLaunch = false
+    }
+
     // MARK: - Ephemeral mode
 
     /// Turns Ephemeral Mode on with `baseline`, or off — which clears the

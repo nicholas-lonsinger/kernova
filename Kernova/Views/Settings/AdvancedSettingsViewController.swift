@@ -78,7 +78,9 @@ final class AdvancedSettingsViewController: NSViewController {
                 + "source. An Exact Copy keeps both, so the two are the same machine to their "
                 + "guests and networks: each is marked as sharing the other\u{2019}s MAC address, "
                 + "they never run on the same network at once, and they run at once only when "
-                + "you start one anyway. Where a "
+                + "you start one anyway. An Exact Copy also carries its source\u{2019}s snapshots, "
+                + "Ephemeral Mode and display preferences, but not start at launch; a New Machine "
+                + "starts with none of these. Where a "
                 + "virtual machine offers both, the second Clone item in the Virtual Machine menu, "
                 + "or Option (⌥) over Clone in its context menu, makes the other for one clone.")
 

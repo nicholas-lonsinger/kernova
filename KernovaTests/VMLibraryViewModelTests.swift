@@ -4870,28 +4870,92 @@ struct VMLibraryViewModelTests {
         #expect(storage.cloneVMBundleCallCount == 1)
     }
 
-    /// Duplicating a VM asks for a copy of the machine: not a second guest
-    /// booting at every launch, not a baseline the clone's bundle holds no
-    /// snapshot for, and not the source's window placement or dismissals.
-    @Test("A clone starts with the default host state, whatever its source's")
-    func cloneStartsWithDefaultHostState() async throws {
+    @Test("A New Machine starts with the default host state and no snapshots, whatever its source's")
+    func newMachineCloneStartsWithDefaultHostState() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
+        let baseline = UUID()
         var sourceHostState = VMHostState(
             startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
             lastFullscreenDisplayID: 4_280_803_137, agentInstallNudgeDismissed: true)
-        sourceHostState.applyEphemeralMode(enabled: true, baseline: UUID())
-        let instance = viewModel.library.registerFixture(name: "Original", hostState: sourceHostState)
+        sourceHostState.applyEphemeralMode(enabled: true, baseline: baseline)
+        let instance = viewModel.library.registerFixture(
+            name: "Original", hostState: sourceHostState,
+            snapshots: VMSnapshotManifest(
+                snapshots: [VMSnapshot(id: baseline, name: "Baseline", macAddress: nil)],
+                currentID: baseline))
         instance.activity.placeForTesting(.stopped)
 
-        viewModel.cloneVM(instance)
+        viewModel.cloneVM(instance, as: .newMachine)
         await viewModel.awaitArrivalsForTesting()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         #expect(clone.hostState == VMHostState())
+        #expect(clone.snapshotManifest.isEmpty)
         #expect(
             storage.files.data(
                 atRelativePath: VMBundleLayout.hostStateRelativePath, in: clone.bundleURL) == nil)
-        #expect(storage.lastCloneFilesToCopy?.contains("host-state.json") == false)
+        let copied = try #require(storage.lastCloneRelativePaths)
+        #expect(!copied.contains { $0.hasPrefix("Snapshots") })
+        #expect(!copied.contains(VMBundleLayout.hostStateRelativePath))
+        #expect(instance.hostState == sourceHostState)
+    }
+
+    @Test("An Exact Copy carries its source's snapshots and host state, but not start at launch")
+    func exactCopyCarriesSnapshotsAndHostState() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let baseline = UUID()
+        let later = UUID()
+        var sourceHostState = VMHostState(
+            startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
+            lastFullscreenDisplayID: 4_280_803_137, agentInstallNudgeDismissed: true)
+        sourceHostState.applyEphemeralMode(enabled: true, baseline: baseline)
+        let manifest = VMSnapshotManifest(
+            snapshots: [
+                VMSnapshot(id: baseline, name: "Baseline", macAddress: nil),
+                VMSnapshot(id: later, name: "Later", macAddress: nil),
+            ],
+            currentID: later)
+        let instance = viewModel.library.registerFixture(
+            name: "Original", hostState: sourceHostState, snapshots: manifest)
+        instance.activity.placeForTesting(.stopped)
+
+        // Each listed snapshot's directory, plus a revert's staging directory
+        // and a directory no manifest entry names — neither of which is a
+        // snapshot the copy holds.
+        let layout = instance.bundleLayout
+        let fm = FileManager.default
+        for id in [baseline, later] {
+            let directory = layout.snapshotDirectoryURL(id: id)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(id.uuidString.utf8).write(to: directory.appendingPathComponent("marker"))
+        }
+        let orphan = UUID()
+        try fm.createDirectory(
+            at: layout.snapshotDirectoryURL(id: orphan), withIntermediateDirectories: true)
+        try fm.createDirectory(at: layout.restoreStagingURL, withIntermediateDirectories: true)
+
+        viewModel.cloneVM(instance, as: .exactCopy)
+        await viewModel.awaitArrivalsForTesting()
+        let clone = try #require(viewModel.instances.first { $0.id != instance.id })
+
+        var expectedHostState = sourceHostState
+        expectedHostState.startsAutomaticallyOnLaunch = false
+        #expect(clone.hostState == expectedHostState)
+        #expect(clone.snapshotManifest.snapshots.map(\.id) == [baseline, later])
+        #expect(clone.snapshotManifest.currentID == later)
+        // The Ephemeral baseline names a snapshot the copy itself holds.
+        #expect(clone.snapshotManifest.snapshot(id: baseline) != nil)
+
+        let cloneLayout = clone.bundleLayout
+        for id in [baseline, later] {
+            let marker = cloneLayout.snapshotDirectoryURL(id: id).appendingPathComponent("marker")
+            #expect(try Data(contentsOf: marker) == Data(id.uuidString.utf8))
+        }
+        #expect(
+            !fm.fileExists(
+                atPath: cloneLayout.snapshotDirectoryURL(id: orphan).path(percentEncoded: false)))
+        #expect(!fm.fileExists(atPath: cloneLayout.restoreStagingURL.path(percentEncoded: false)))
+        #expect(storage.lastCloneRelativePaths?.contains(VMBundleLayout.usbPairingsRelativePath) == false)
         #expect(instance.hostState == sourceHostState)
     }
 
@@ -5000,53 +5064,31 @@ struct VMLibraryViewModelTests {
         await viewModel.awaitArrivalsForTesting()
     }
 
-    @Test("cloneVM remaps internal additional disk path to its regenerated id and copies the file")
-    func cloneVMRemapsAdditionalDiskPath() async throws {
+    @Test("A clone's additional in-bundle disk keeps its path and id, and its file is copied")
+    func cloneKeepsAdditionalDiskPathAndID() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
-
-        // Build a source bundle on disk with a real additional-disk file
-        // living at `AdditionalDisks/<source-disk-id>.asif`.
-        let sourceDiskID = UUID()
+        let diskID = UUID()
+        let extra = StorageDisk(
+            id: diskID, path: VMBundleLayout.additionalDiskRelativePath(id: diskID),
+            label: "Extra", isInternal: true)
         let instance = viewModel.library.admitFixture(name: "Original") {
-            $0.storageDisks = [
-                StorageDisk(path: "Disk.asif", isInternal: true),
-                StorageDisk(
-                    id: sourceDiskID,
-                    path: "AdditionalDisks/\(sourceDiskID.uuidString).asif",
-                    label: "Extra",
-                    isInternal: true
-                ),
-            ]
+            $0.storageDisks = [StorageDisk(path: "Disk.asif", isInternal: true), extra]
         }
         instance.activity.placeForTesting(.stopped)
-        let sourceLayout = VMBundleLayout(bundleURL: instance.bundleURL)
-        let fm = FileManager.default
-        try fm.createDirectory(at: sourceLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-        let sourceDiskFile = sourceLayout.additionalDiskURL(id: sourceDiskID)
-        try Data("disk-bytes".utf8).write(to: sourceDiskFile)
-
+        let sourceLayout = instance.bundleLayout
+        try FileManager.default.createDirectory(
+            at: sourceLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+        try Data("disk-bytes".utf8).write(to: sourceLayout.additionalDiskURL(id: diskID))
         storage.bundles[instance.bundleURL] = instance.configuration
 
-        viewModel.cloneVM(instance)
+        viewModel.cloneVM(instance, as: .newMachine)
         await viewModel.awaitArrivalsForTesting()
+        let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
-        let clone = viewModel.instances.first { $0.id != instance.id }
-        #expect(clone != nil)
-
-        let clonedDisks = clone?.configuration.storageDisks ?? []
-        guard let extra = clonedDisks.first(where: { $0.path.hasPrefix("AdditionalDisks/") }) else {
-            Issue.record("Cloned configuration is missing the additional disk")
-            return
-        }
-
-        // The path must point at the regenerated id, not the source's id,
-        // and the copied file must exist at exactly that resolved location.
-        #expect(extra.id != sourceDiskID)
-        #expect(extra.path == "AdditionalDisks/\(extra.id.uuidString).asif")
-        if let clone {
-            let resolved = clone.bundleURL.appendingPathComponent(extra.path)
-            #expect(fm.fileExists(atPath: resolved.path(percentEncoded: false)))
-        }
+        #expect(clone.configuration.storageDisks == instance.configuration.storageDisks)
+        #expect(
+            try Data(contentsOf: clone.bundleLayout.additionalDiskURL(id: diskID))
+                == Data("disk-bytes".utf8))
     }
 
     // MARK: - Clone Machine Identity
@@ -5099,7 +5141,7 @@ struct VMLibraryViewModelTests {
 
         #expect(clonedID != nil)
         #expect(clonedID != Self.sourceMachineID)
-        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == false)
+        #expect(storage.lastCloneRelativePaths?.contains("MachineIdentifier") == false)
     }
 
     @Test("cloneVM makes an Exact Copy when the preference asks for one")
@@ -5113,7 +5155,7 @@ struct VMLibraryViewModelTests {
 
         #expect(clonedID == Self.sourceMachineID)
         // The identifier file has to travel with the bundle, not just the config.
-        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+        #expect(storage.lastCloneRelativePaths?.contains("MachineIdentifier") == true)
     }
 
     @Test("cloneVM's explicit outcome beats the preference")
@@ -5126,7 +5168,7 @@ struct VMLibraryViewModelTests {
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID == Self.sourceMachineID)
-        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+        #expect(storage.lastCloneRelativePaths?.contains("MachineIdentifier") == true)
     }
 
     @Test("The alternate Clone makes an Exact Copy under the default preference")
@@ -5163,7 +5205,7 @@ struct VMLibraryViewModelTests {
         let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID == Self.sourceMachineID)
-        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+        #expect(storage.lastCloneRelativePaths?.contains("MachineIdentifier") == true)
     }
 
     @Test("A guest running macOS 12 offers no alternate Clone")
@@ -5245,7 +5287,7 @@ struct VMLibraryViewModelTests {
 
         // Nothing minted into the configuration: the copied file is the identity.
         #expect(clonedID == nil)
-        #expect(storage.lastCloneFilesToCopy?.contains("MachineIdentifier") == true)
+        #expect(storage.lastCloneRelativePaths?.contains("MachineIdentifier") == true)
     }
 
     // MARK: - Cancel Preparing

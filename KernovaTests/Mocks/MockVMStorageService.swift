@@ -95,8 +95,8 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
     /// since each is minted fresh rather than derived from a configuration.
     var stagedBundleURLs: [URL] = []
 
-    /// The `filesToCopy` argument from the most recent `cloneVMBundle` call.
-    var lastCloneFilesToCopy: [String]?
+    /// The `relativePaths` argument from the most recent `cloneVMBundle` call.
+    var lastCloneRelativePaths: [String]?
 
     // MARK: - Error Injection
 
@@ -212,21 +212,29 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL)
     }
 
-    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String])
+    func cloneVMBundle(from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String])
         throws
     {
         cloneVMBundleCallCount += 1
-        lastCloneFilesToCopy = filesToCopy
+        lastCloneRelativePaths = relativePaths
         if let cloneHold {
             cloneEntered.notify()
             cloneHold.wait()
         }
         if let error = cloneVMBundleError { throw error }
-        // Mirrors the real service actually creating the bundle directory on disk:
-        // a macOS clone's `copyWork` writes a regenerated MachineIdentifier file
-        // straight into this URL afterward, which needs the directory to exist.
-        try FileManager.default.createDirectory(
-            at: destinationBundleURL, withIntermediateDirectories: true)
+        // Mirrors the real service on disk: a macOS clone's `copyOut` writes
+        // its MachineIdentifier file straight into this URL afterward, and a
+        // test that lays real files into the source reads them in the clone.
+        let fm = FileManager.default
+        try fm.createDirectory(at: destinationBundleURL, withIntermediateDirectories: true)
+        for relativePath in relativePaths {
+            let source = sourceBundleURL.appendingPathComponent(relativePath)
+            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
+            let destination = destinationBundleURL.appendingPathComponent(relativePath)
+            try fm.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: destination)
+        }
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: destinationBundleURL)
     }
 

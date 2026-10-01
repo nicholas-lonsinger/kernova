@@ -314,9 +314,6 @@ struct ConfigurationBuilder: Sendable {
     }
 
     /// Returns `true` when this disk is the bundle's primary disk (`Disk.asif`).
-    ///
-    /// Path-based, not id-based, so it stays correct after `clonedForNewInstance`
-    /// regenerates disk ids.
     static func isMainBundleDisk(_ disk: StorageDisk, layout: VMBundleLayout) -> Bool {
         disk.isInternal && disk.path == layout.diskImageURL.lastPathComponent
     }

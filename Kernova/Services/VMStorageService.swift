@@ -166,21 +166,24 @@ struct VMStorageService: Sendable {
     }
 
     /// Creates `destinationBundleURL`, a path ``makeStagedBundleURL()`` minted,
-    /// as ``createVMBundle(at:)`` does, and copies `filesToCopy` into it from
-    /// the source bundle, skipping any the source lacks; the clone writes its
-    /// own configuration.
+    /// as ``createVMBundle(at:)`` does, and copies each file or directory
+    /// `relativePaths` names into it from the source bundle, skipping any the
+    /// source lacks; the clone writes its own configuration.
     func cloneVMBundle(
-        from sourceBundleURL: URL, to destinationBundleURL: URL, filesToCopy: [String]
+        from sourceBundleURL: URL, to destinationBundleURL: URL, relativePaths: [String]
     ) throws {
         try stagingRoot.createDirectory(at: destinationBundleURL)
 
         let fm = FileManager.default
-        for fileName in filesToCopy {
-            let sourceFile = sourceBundleURL.appendingPathComponent(fileName)
-            let destinationFile = destinationBundleURL.appendingPathComponent(fileName)
-            if fm.fileExists(atPath: sourceFile.path(percentEncoded: false)) {
-                try fm.copyItem(at: sourceFile, to: destinationFile)
-            }
+        for relativePath in relativePaths {
+            let source = sourceBundleURL.appendingPathComponent(relativePath)
+            guard fm.fileExists(atPath: source.path(percentEncoded: false)) else { continue }
+            let destination = destinationBundleURL.appendingPathComponent(relativePath)
+            try fm.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Same volume, so APFS clones each file rather than duplicating its
+            // blocks.
+            try fm.copyItem(at: source, to: destination)
         }
 
         #log(
