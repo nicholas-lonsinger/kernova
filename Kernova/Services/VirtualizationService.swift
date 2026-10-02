@@ -850,7 +850,7 @@ final class VirtualizationService {
     /// answering the same teardown lag.
     ///
     /// A restore or resume failure surfaces as
-    /// ``VirtualizationError/restoreFailed(underlying:)`` with the save file
+    /// ``VirtualizationError/restoreFailed(underlying:hostLocked:)`` with the save file
     /// left in place — a cold boot over a suspended session destroys it, so
     /// discarding the saved state stays an explicit user action.
     private func restoreFromSaveFile(
