@@ -407,7 +407,7 @@ final class VirtualizationService {
     /// the destination before the guest is touched, then inside one pause the
     /// guest's memory is written where `savingStateTo` says — every
     /// passthrough USB accessory taken off first and owed back — and `copy`
-    /// copies the disks beside it; with no saved state, nothing is detached.
+    /// copies the disks beside it.
     ///
     /// Answers the guest put back the way it was found, or — on a failure,
     /// which leaves whatever `prepare` laid down for the caller to discard —
@@ -416,7 +416,7 @@ final class VirtualizationService {
         _ instance: VMInstance, _ capture: borrowing VMCaptureContext,
         session: any VMSnapshotSessionOperating,
         prepare: () async throws -> Prepared,
-        savingStateTo saveFileURL: (Prepared) -> URL?,
+        savingStateTo saveFileURL: (Prepared) -> URL,
         copy: (Prepared) async throws -> Void
     ) async -> VMOperationEnding<Void> {
         let wasRunning =
@@ -425,12 +425,9 @@ final class VirtualizationService {
             } ?? false
         do {
             let prepared = try await prepare()
-            let saveFileURL = saveFileURL(prepared)
-            if saveFileURL != nil {
-                try await detachUSBAccessories(owingReturns: capture, session: session)
-            }
+            try await detachUSBAccessories(owingReturns: capture, session: session)
             try await captureLiveState(
-                session: session, wasRunning: wasRunning, saveFileURL: saveFileURL
+                session: session, wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
             ) {
                 try await copy(prepared)
             }
@@ -443,12 +440,12 @@ final class VirtualizationService {
     }
 
     /// Copies a live VM into a clone through ``captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
-    /// `prepare` creates the clone's staged bundle, and `copy` copies the
-    /// source's files into it inside the pause that writes the guest's memory
-    /// to `saveFileURL` first, when there is one.
+    /// `prepare` lays down the clone's staged bundle, and `copy` copies the
+    /// files the guest writes into it inside the pause that writes the
+    /// guest's memory to `saveFileURL` first.
     func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        savingStateTo saveFileURL: URL?,
+        savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void
     ) async throws -> VMOperationEnding<Void> {
@@ -467,7 +464,7 @@ final class VirtualizationService {
         case .rest:
             #log(
                 Self.logger, .notice,
-                "Copied running VM '\(instance.name, privacy: .public)' into a clone (saved state: \(saveFileURL != nil, privacy: .public))"
+                "Copied running VM '\(instance.name, privacy: .public)' into a clone"
             )
         }
         return ending
@@ -611,9 +608,9 @@ final class VirtualizationService {
         context.releaseAccessory(deviceID: item.deviceID)
     }
 
-    /// Pauses the guest, writes its live state into `saveFileURL` when there
-    /// is one, copies the disks beside it, and leaves the guest executing only
-    /// if it was found executing.
+    /// Writes the guest's live state into `saveFileURL`, copies the disks
+    /// beside it, and leaves the guest executing only if it was found
+    /// executing.
     ///
     /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
     /// which does not record who paused the guest: an unconditional call
@@ -622,13 +619,11 @@ final class VirtualizationService {
     static func captureLiveState(
         session: any VMSnapshotSessionOperating,
         wasRunning: Bool,
-        saveFileURL: URL?,
+        saveFileURL: URL,
         captureDisks: () async throws -> Void
     ) async throws {
         try await session.pauseIfRunning()
-        if let saveFileURL {
-            try await session.saveMachineState(to: saveFileURL)
-        }
+        try await session.saveMachineState(to: saveFileURL)
         try await captureDisks()
         if wasRunning {
             try await session.resumeIfPaused()

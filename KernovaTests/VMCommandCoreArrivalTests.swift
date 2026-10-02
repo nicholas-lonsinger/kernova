@@ -524,9 +524,17 @@ struct VMCommandCoreArrivalTests {
         #expect(source.hasSaveFile)
     }
 
+    /// The bundle files a running `source`'s guest writes — what a live
+    /// copy takes inside its pause.
+    private func guestWrittenPaths(of source: VMInstance) -> [String] {
+        VMBundleMachineFiles.capturedRelativePaths(
+            for: source.configuration, layout: source.bundleLayout)
+    }
+
     @Test(
-        "An Exact Copy of a running VM saves its state and copies its disks inside one pause, then resumes it")
-    func exactCopyOfARunningVMCopiesInsideOnePause() async throws {
+        "A live clone copies its settled files before the pause, and only what the guest writes inside it",
+        arguments: [CloneOutcome.exactCopy, .newMachine])
+    func liveCloneCopiesOnlyGuestWrittenFilesInsideThePause(outcome: CloneOutcome) async throws {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.running(sessionID: sessionID), in: harness)
@@ -536,12 +544,21 @@ struct VMCommandCoreArrivalTests {
         storage.cloneHold = hold
 
         let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
+            try await harness.core.clone(.id(source.id), outcome: outcome, waitForOutcome: true)
         }
+        // The settled files go first, with the guest untouched.
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
-        // The disks copy while the guest is paused on the state just written.
+        #expect(await session.calls.isEmpty)
+        let settled = storage.lastCloneRelativePaths ?? []
+        #expect(settled.contains(VMBundleLayout.hardwareModelRelativePath))
+        #expect(Set(settled).isDisjoint(with: guestWrittenPaths(of: source)))
+        hold.signal()
+        // The guest-written files copy while the guest is paused on the state
+        // just written, and nothing else does.
+        try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 2 }
         #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
         #expect(await session.guestState == .paused)
+        #expect(storage.lastCloneRelativePaths == guestWrittenPaths(of: source))
         #expect(source.status == .cloning)
         hold.signal()
         let row = try await waiter.value
@@ -550,12 +567,19 @@ struct VMCommandCoreArrivalTests {
         #expect(await session.guestState == .running)
         #expect(source.phase == .running(sessionID: sessionID))
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
-        #expect(clone.phase == .suspended)
-        #expect(clone.hasSaveFile)
+        // Both outcomes save; only an Exact Copy keeps what was saved.
+        switch outcome {
+        case .exactCopy:
+            #expect(clone.phase == .suspended)
+            #expect(clone.hasSaveFile)
+        case .newMachine:
+            #expect(clone.phase == .stopped)
+            #expect(!clone.hasSaveFile)
+        }
     }
 
-    @Test("A New Machine of a paused VM copies inside a pause with no saved state, and leaves it paused")
-    func newMachineOfAPausedVMSavesNothing() async throws {
+    @Test("A New Machine of a paused VM saves and copies inside a pause, stays paused, and arrives stopped")
+    func newMachineOfAPausedVMArrivesStopped() async throws {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.livePaused(sessionID: sessionID), in: harness)
@@ -565,16 +589,16 @@ struct VMCommandCoreArrivalTests {
         let row = try await harness.core.clone(
             .id(source.id), outcome: .newMachine, waitForOutcome: true)
 
-        #expect(await session.calls == ["pauseIfRunning"])
+        #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
         #expect(await session.guestState == .paused)
         #expect(source.phase == .livePaused(sessionID: sessionID))
-        #expect(storage.cloneVMBundleCallCount == 1)
+        #expect(storage.cloneVMBundleCallCount == 2)
         let clone = try #require(harness.library.instances.first { $0.id == row.id })
         #expect(clone.phase == .stopped)
         #expect(!clone.hasSaveFile)
     }
 
-    @Test("A live clone whose save fails copies nothing, discards the staged bundle and puts the source back running")
+    @Test("A live clone whose save fails copies no guest file, discards the staged bundle and resumes the source")
     func failedLiveSaveDiscardsTheCloneAndResumesTheSource() async throws {
         let harness = makeHarness()
         let sessionID = UUID()
@@ -587,7 +611,10 @@ struct VMCommandCoreArrivalTests {
             try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
         }
 
-        #expect(storage.cloneVMBundleCallCount == 0)
+        // Only the settled files, before the pause, were copied.
+        #expect(storage.cloneVMBundleCallCount == 1)
+        let copied = Set(storage.lastCloneRelativePaths ?? [])
+        #expect(copied.isDisjoint(with: guestWrittenPaths(of: source)))
         #expect(storage.discardedStagedURLs.count == 1)
         #expect(await session.guestState == .running)
         #expect(source.phase == .running(sessionID: sessionID))
@@ -619,8 +646,7 @@ struct VMCommandCoreArrivalTests {
             #expect(
                 error.message
                     == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
-                    + "Cloning a virtual machine with a writable external disk takes a stopped VM. "
-                    + "Stop it first.")
+                    + "Cloning a virtual machine with a writable external disk takes a stopped VM.")
         }
         #expect(storage.cloneVMBundleCallCount == 0)
         #expect(harness.library.entries.map(\.id) == [source.id])

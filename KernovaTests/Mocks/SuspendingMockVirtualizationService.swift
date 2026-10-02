@@ -179,7 +179,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
 
     func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
-        savingStateTo saveFileURL: URL?,
+        savingStateTo saveFileURL: URL,
         prepare: () async throws -> Void,
         copy: () async throws -> Void
     ) async throws -> VMOperationEnding<Void> {
