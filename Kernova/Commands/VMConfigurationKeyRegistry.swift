@@ -514,7 +514,7 @@ enum VMConfigurationKeyRegistry {
             config.networkMembership = try membership(value, context: context)
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         },
-        refusalOnResult: namedNetworkRefusal)
+        refusalOnResult: membershipRefusal)
 
     /// The membership `value` spells: `common`, `isolated`, or a named
     /// network the library lists, by identifier or by name.
@@ -541,10 +541,8 @@ enum VMConfigurationKeyRegistry {
     /// Why the network the VM ends up on cannot stand, judged once both
     /// network keys have landed: a named network the library lists runs its
     /// VMs in its own kind, so a VM joins it only in that mode
-    /// (``VMNamedNetwork/kind``).
-    ///
-    /// A VM naming a network the library does not list is refused too: the
-    /// write would put it on a network nothing manages.
+    /// (``VMNamedNetwork/kind``), and a VM joining a named network joins one
+    /// the library lists.
     private static func namedNetworkRefusal(
         _ config: VMConfiguration, context: VMConfigurationWriteContext
     ) -> String? {
@@ -552,9 +550,7 @@ enum VMConfigurationKeyRegistry {
             case .named(let networkID) = id.scope
         else { return nil }
         guard let network = context.networks.first(where: { $0.id == networkID }) else {
-            return
-                "network.membership names a network this library does not list. "
-                + "Set network.membership to common, isolated, or a network it lists."
+            return unlistedNetworkRefusal
         }
         guard network.kind != id.kind else { return nil }
         return
@@ -562,6 +558,25 @@ enum VMConfigurationKeyRegistry {
             + "runs in that mode. Set network.mode=\(network.mode.rawValue) as well, or choose "
             + "another network.membership."
     }
+
+    /// ``namedNetworkRefusal(_:context:)``, and a membership naming a network
+    /// the library does not list whatever the VM's mode — the key's own value
+    /// is refused where it is entered, not at the mode change that would make
+    /// it count.
+    private static func membershipRefusal(
+        _ config: VMConfiguration, context: VMConfigurationWriteContext
+    ) -> String? {
+        if let networkID = config.networkMembership.namedNetwork,
+            !context.networks.contains(where: { $0.id == networkID })
+        {
+            return unlistedNetworkRefusal
+        }
+        return namedNetworkRefusal(config, context: context)
+    }
+
+    private static let unlistedNetworkRefusal =
+        "network.membership names a network this library does not list. "
+        + "Set network.membership to common, isolated, or a network it lists."
 
     /// Refuses a write that moves the VM onto a network this build cannot
     /// attach (``EntitlementService/canAttach(_:)``), where the user enters it

@@ -236,11 +236,12 @@ protocol VmnetSessionNetworking: Sendable {
 /// ref starts it again
 /// (docs/research/2026-09-18-vmnet-dhcp-reservations-lapse-on-network-stop.md).
 /// Every other network is created only through a ``VmnetSessionNetworks``
-/// view, which makes the view's VM one of its members, and is released when
-/// the last view of its last member goes — so it is held for every member's
-/// whole session (an in-guest reboot stops and restarts it,
+/// view, which makes the view's VM one of its members until that VM joins
+/// another network or its last view goes; the network is released with its
+/// last member — so it is held while any member's session is on it (an
+/// in-guest reboot stops and restarts it,
 /// docs/research/2026-09-22-vmnet-network-run-and-forwarding-rules.md) and
-/// outlives none of them.
+/// outlives all of them.
 ///
 /// Every network gets the subnet the system picks. A process holds a bounded
 /// number of networks; a create past that fails like any other.
@@ -259,7 +260,7 @@ final class VmnetNetworkService: @unchecked Sendable {
     }
 
     private let operations: any VmnetNetworkOperating
-    /// Guards `networks`, `members` and `openViews` — never held across a
+    /// Guards `networks`, `members`, `joined` and `openViews` — never held across a
     /// vmnet call, so the main-actor paths (`attachmentIfMaterialized`,
     /// `ipv4Subnet`) can never block behind a materialization in flight.
     private let stateLock = NSLock()
@@ -268,6 +269,9 @@ final class VmnetNetworkService: @unchecked Sendable {
     /// The VMs whose views joined each materialized network other than a
     /// common one, present exactly for those networks and never empty.
     private var members: [VmnetNetworkID: Set<UUID>] = [:]
+    /// The network each VM's views last joined. A VM has one network device,
+    /// so joining another takes it off this one.
+    private var joined: [UUID: VmnetNetworkID] = [:]
     /// How many session views are open for each VM, present exactly for VMs
     /// with at least one.
     private var openViews: [UUID: Int] = [:]
@@ -290,10 +294,11 @@ final class VmnetNetworkService: @unchecked Sendable {
         defer { materializeLock.unlock() }
         if let handle = cachedHandle(for: id, member: member) { return handle }
         let (handle, subnet) = try operations.createNetwork(id.kind)
-        stateLock.withLock {
+        let left = stateLock.withLock {
             networks[id] = MaterializedNetwork(handle: handle, subnet: subnet)
-            join(id, member: member)
+            return join(id, member: member)
         }
+        release(left, lastHeldBy: member)
         switch id.scope {
         case .common:
             break
@@ -313,17 +318,54 @@ final class VmnetNetworkService: @unchecked Sendable {
 
     /// `id`'s handle when it is materialized, with `member` joined to it.
     fileprivate func cachedHandle(for id: VmnetNetworkID, member: UUID) -> VmnetNetworkHandle? {
-        stateLock.withLock {
-            guard let handle = networks[id]?.handle else { return nil }
-            join(id, member: member)
-            return handle
+        let (handle, left) = stateLock.withLock {
+            () -> (VmnetNetworkHandle?, [(VmnetNetworkID, VmnetNetworkHandle)]) in
+            guard let handle = networks[id]?.handle else { return (nil, []) }
+            return (handle, join(id, member: member))
         }
+        release(left, lastHeldBy: member)
+        return handle
     }
 
-    /// Records `member` as holding `id`. Call with `stateLock` held.
-    private func join(_ id: VmnetNetworkID, member: UUID) {
-        guard id.scope != .common else { return }
-        members[id, default: []].insert(member)
+    /// Records `member` as on `id` and off the network it was on before,
+    /// answering that network when `member` was its last member. Call with
+    /// `stateLock` held.
+    private func join(
+        _ id: VmnetNetworkID, member: UUID
+    ) -> [(VmnetNetworkID, VmnetNetworkHandle)] {
+        let previous = joined.updateValue(id, forKey: member)
+        if id.scope != .common { members[id, default: []].insert(member) }
+        guard let previous, previous != id else { return [] }
+        return leave(previous, member: member)
+    }
+
+    /// Takes `member` off `id`, answering `id` once it has no member left —
+    /// removed from the map, for the caller to release outside the lock.
+    /// Call with `stateLock` held.
+    private func leave(
+        _ id: VmnetNetworkID, member: UUID
+    ) -> [(VmnetNetworkID, VmnetNetworkHandle)] {
+        guard var holders = members[id], holders.remove(member) != nil else { return [] }
+        guard holders.isEmpty else {
+            members[id] = holders
+            return []
+        }
+        members[id] = nil
+        guard let network = networks.removeValue(forKey: id) else { return [] }
+        return [(id, network.handle)]
+    }
+
+    /// Gives back each of `released`, which `member` was the last to hold.
+    /// Its attachments keep their own references, so a guest still attached
+    /// keeps the network until its device moves.
+    private func release(_ released: [(VmnetNetworkID, VmnetNetworkHandle)], lastHeldBy member: UUID) {
+        for (id, handle) in released {
+            operations.releaseNetwork(handle)
+            #log(
+                Self.logger, .notice,
+                "Released the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network its last member, VM \(member.uuidString, privacy: .public), held"
+            )
+        }
     }
 
     fileprivate func attachment(joining handle: VmnetNetworkHandle) -> VZNetworkDeviceAttachment {
@@ -338,9 +380,8 @@ final class VmnetNetworkService: @unchecked Sendable {
         stateLock.withLock { openViews[owner, default: 0] += 1 }
     }
 
-    /// Closes one of `owner`'s views. With its last, `owner` leaves every
-    /// network it joined, and each network it was the last member of is
-    /// released.
+    /// Closes one of `owner`'s views. With its last, `owner` leaves the
+    /// network it was on, which is released when `owner` was its last member.
     fileprivate func closeView(for owner: UUID) {
         let released: [(VmnetNetworkID, VmnetNetworkHandle)] = stateLock.withLock {
             let remaining = (openViews[owner] ?? 0) - 1
@@ -349,27 +390,10 @@ final class VmnetNetworkService: @unchecked Sendable {
                 return []
             }
             openViews[owner] = nil
-            var released: [(VmnetNetworkID, VmnetNetworkHandle)] = []
-            for (id, var holders) in members where holders.contains(owner) {
-                holders.remove(owner)
-                guard holders.isEmpty else {
-                    members[id] = holders
-                    continue
-                }
-                members[id] = nil
-                if let network = networks.removeValue(forKey: id) {
-                    released.append((id, network.handle))
-                }
-            }
-            return released
+            guard let current = joined.removeValue(forKey: owner) else { return [] }
+            return leave(current, member: owner)
         }
-        for (id, handle) in released {
-            operations.releaseNetwork(handle)
-            #log(
-                Self.logger, .notice,
-                "Released the \(VmnetNetworkSelection(id).logDescription, privacy: .public) network its last member, VM \(owner.uuidString, privacy: .public), held"
-            )
-        }
+        release(released, lastHeldBy: owner)
     }
 }
 

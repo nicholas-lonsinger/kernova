@@ -30,9 +30,9 @@ final class VMNetworkDirectory {
     /// Every named network, ordered by name.
     private(set) var networks: [VMNamedNetwork] = []
 
-    /// Why the file could not be read, `nil` when it was, or holds nothing
-    /// yet. While set, every change is refused, so the unread file is never
-    /// overwritten.
+    /// Why the file could not be read the last time, `nil` when it was, or
+    /// holds nothing yet. A change reads the file again first and refuses
+    /// when that read fails, so an unread file is never overwritten.
     private(set) var readFailure: String?
 
     /// The file the networks persist in, `nil` to keep them in memory only.
@@ -41,12 +41,16 @@ final class VMNetworkDirectory {
     /// The networks `fileURL` holds — none when there is no file yet.
     init(fileURL: URL?) {
         self.fileURL = fileURL
+        reload()
+    }
+
+    /// Reads the file again, taking in what another copy of Kernova sharing
+    /// the library wrote since.
+    func reload() {
         guard let fileURL else { return }
         do {
-            let data = try Data(contentsOf: fileURL)
-            networks = Self.ordered(try JSONDecoder().decode(File.self, from: data).networks)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return
+            networks = try Self.coordinatedRead(fileURL)
+            readFailure = nil
         } catch {
             readFailure = error.localizedDescription
             #log(
@@ -95,35 +99,44 @@ final class VMNetworkDirectory {
     /// Lists a new network of `kind` named `name`.
     @discardableResult
     func create(name: String, kind: VmnetNetworkKind, verb: VMVerb) throws -> VMNamedNetwork {
-        let network = VMNamedNetwork(id: UUID(), name: try validatedName(name, for: nil), kind: kind)
-        try commit(networks + [network], verb: verb)
-        return network
+        var created: VMNamedNetwork?
+        try commit(verb: verb) { networks in
+            let network = VMNamedNetwork(
+                id: UUID(), name: try Self.validatedName(name, for: nil, among: networks), kind: kind)
+            created = network
+            return networks + [network]
+        }
+        guard let created else { preconditionFailure("A committed create made no network") }
+        return created
     }
 
     /// Renames the network `id` identifies. A VM names it by identifier, so
     /// no VM changes.
     func rename(_ id: UUID, to name: String, verb: VMVerb) throws {
-        let name = try validatedName(name, for: id)
-        try commit(
-            networks.map { network in
+        try commit(verb: verb) { networks in
+            let name = try Self.validatedName(name, for: id, among: networks)
+            return networks.map { network in
                 guard network.id == id else { return network }
                 var renamed = network
                 renamed.name = name
                 return renamed
-            }, verb: verb)
+            }
+        }
     }
 
     /// Stops listing the network `id` identifies.
     func remove(_ id: UUID, verb: VMVerb) throws {
-        try commit(networks.filter { $0.id != id }, verb: verb)
+        try commit(verb: verb) { networks in networks.filter { $0.id != id } }
     }
 
-    /// `name` trimmed, refusing one that cannot name a network beside the
-    /// others — `id`'s own name excepted.
+    /// `name` trimmed, refusing one that cannot name a network beside
+    /// `networks` — `id`'s own name excepted.
     ///
     /// A membership value reads `common`, `isolated` or an identifier before
     /// a name, so a name spelling one of those could never be chosen.
-    private func validatedName(_ name: String, for id: UUID?) throws -> String {
+    private static func validatedName(
+        _ name: String, for id: UUID?, among networks: [VMNamedNetwork]
+    ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw CommandError.invalidArgument("A network needs a name.")
@@ -146,31 +159,79 @@ final class VMNetworkDirectory {
         return trimmed
     }
 
-    /// Writes `candidate` to the file, and lists it once the write lands.
-    private func commit(_ candidate: [VMNamedNetwork], verb: VMVerb) throws {
-        if let readFailure {
-            throw CommandError.operationFailed(
-                verb: verb,
-                message: "Kernova couldn\u{2019}t read its list of networks, so it changes none: \(readFailure)")
+    /// Applies `change` to the networks the file holds now and writes the
+    /// result, under one coordinated write, so a change another copy of
+    /// Kernova made in between is changed rather than overwritten; then lists
+    /// the result.
+    private func commit(
+        verb: VMVerb, _ change: ([VMNamedNetwork]) throws -> [VMNamedNetwork]
+    ) throws {
+        guard let fileURL else {
+            networks = Self.ordered(try change(networks))
+            return
         }
-        let ordered = Self.ordered(candidate)
-        if let fileURL {
-            do {
-                try FileManager.default.createDirectory(
-                    at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                try encoder.encode(File(networks: ordered)).write(to: fileURL, options: .atomic)
-            } catch {
-                throw CommandError.operationFailed(
-                    verb: verb,
-                    message: "Kernova couldn\u{2019}t save its list of networks: \(error.localizedDescription)")
+        var coordinationError: NSError?
+        var outcome: Result<[VMNamedNetwork], any Error> = .success([])
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        NSFileCoordinator().coordinate(
+            writingItemAt: fileURL, options: .forMerging, error: &coordinationError
+        ) { url in
+            outcome = Result {
+                let current: [VMNamedNetwork]
+                do {
+                    current = try Self.read(url)
+                } catch {
+                    throw CommandError.operationFailed(
+                        verb: verb,
+                        message:
+                            "Kernova couldn\u{2019}t read its list of networks, so it changes none: \(error.localizedDescription)"
+                    )
+                }
+                let candidate = Self.ordered(try change(current))
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    try encoder.encode(File(networks: candidate)).write(to: url, options: .atomic)
+                } catch {
+                    throw CommandError.operationFailed(
+                        verb: verb,
+                        message: "Kernova couldn\u{2019}t save its list of networks: \(error.localizedDescription)")
+                }
+                return candidate
             }
         }
-        networks = ordered
+        if let coordinationError {
+            throw CommandError.operationFailed(
+                verb: verb,
+                message: "Kernova couldn\u{2019}t save its list of networks: \(coordinationError.localizedDescription)")
+        }
+        networks = try outcome.get()
+        readFailure = nil
     }
 
-    private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
+    /// The networks the file at `url` holds, none when there is no file.
+    nonisolated private static func read(_ url: URL) throws -> [VMNamedNetwork] {
+        do {
+            return ordered(try JSONDecoder().decode(File.self, from: Data(contentsOf: url)).networks)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return []
+        }
+    }
+
+    /// ``read(_:)`` under a coordinated read.
+    nonisolated private static func coordinatedRead(_ url: URL) throws -> [VMNamedNetwork] {
+        var coordinationError: NSError?
+        var outcome: Result<[VMNamedNetwork], any Error> = .success([])
+        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) {
+            coordinated in
+            outcome = Result { try read(coordinated) }
+        }
+        if let coordinationError { throw coordinationError }
+        return try outcome.get()
+    }
+
+    nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
         networks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 }

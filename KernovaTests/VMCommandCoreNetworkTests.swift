@@ -116,4 +116,21 @@ struct VMCommandCoreNetworkTests {
             try harness.core.createNetwork(name: "Lab", kind: .shared)
         }
     }
+
+    @Test("A VM naming the network whose membership is inert never holds up the delete")
+    func anInertNamerDoesNotBlockTheDelete() throws {
+        let harness = makeHarness()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
+            $0.networkMode = .bridged
+            $0.networkMembership = .network(lab.id)
+        }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+
+        try harness.core.deleteNetwork("Lab")
+
+        #expect(harness.core.networks().isEmpty)
+        // Its state takes no write; it names an unlisted network until it does.
+        #expect(suspended.configuration.networkMembership == .network(lab.id))
+    }
 }

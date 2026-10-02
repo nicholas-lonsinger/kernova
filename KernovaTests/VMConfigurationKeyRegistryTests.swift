@@ -467,6 +467,10 @@ struct VMConfigurationKeyRegistryTests {
         // Bridged and no device make the membership inert.
         try modeField.write("bridged", &config, listing)
         #expect(modeField.refusalOnResult(config, listing) == nil)
+        // An identifier the library does not list is refused even where the
+        // membership is inert.
+        try membershipField.write(UUID().uuidString, &config, listing)
+        #expect(membershipField.refusalOnResult(config, listing) != nil)
     }
 
     @Test("A build without VM networking refuses a write onto a network it cannot attach, naming the build")

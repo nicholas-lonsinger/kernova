@@ -84,9 +84,9 @@ struct VmnetNetworkServiceTests {
         let own = VmnetNetworkID(kind: .shared, scope: .vm(vmA))
         var first: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmA)
         var second: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmA)
-        _ = try first?.attachment(for: .own(.shared))
         _ = try first?.attachment(for: .common(.shared))
-        let ownNetwork = try #require(operations.attachedNetworks.first)
+        _ = try first?.attachment(for: .own(.shared))
+        let ownNetwork = try #require(operations.attachedNetworks.last)
         #expect(service.ipv4Subnet(for: own) != nil)
 
         first = nil
@@ -207,5 +207,28 @@ struct VmnetNetworkServiceTests {
         #expect(service.ipv4Subnet(for: id) == nil)
         // A session that never joined it held nothing.
         #expect(outsider.attachmentIfMaterialized(for: .named(lab, .hostOnly)) == nil)
+    }
+
+    @Test("A VM that joins another network leaves the one it was on, which goes with its last member")
+    func joiningAnotherNetworkLeavesTheLastOne() throws {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations)
+        let view = service.sessionNetworks(ownedBy: vmA)
+        let other = service.sessionNetworks(ownedBy: vmB)
+        let lab = UUID()
+        let bench = UUID()
+
+        _ = try view.attachment(for: .named(lab, .shared))
+        let labNetwork = try lastJoined(operations)
+        _ = try other.attachment(for: .named(bench, .shared))
+        let benchNetwork = try lastJoined(operations)
+        _ = try view.attachment(for: .named(bench, .shared))
+        #expect(operations.releasedNetworks == [labNetwork])
+
+        // Bench still has its other member.
+        _ = try other.attachment(for: .common(.shared))
+        #expect(!operations.releasedNetworks.contains(benchNetwork))
+        _ = try view.attachment(for: .own(.shared))
+        #expect(operations.releasedNetworks.contains(benchNetwork))
     }
 }

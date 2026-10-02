@@ -164,7 +164,7 @@ extension VMCommandCore {
     ) -> CommandError? {
         // An edit that took the VM off its own network has the membership
         // the offer would put back, so re-issuing it would change nothing.
-        guard conflict.reason == .macAddress, conflict.source.networkMembership == .common,
+        guard conflict.reason == .macAddress, conflict.source.networkMembership != .isolated,
             macAddressRemedyRefusal(.ownNetwork, for: conflict.target, holdingSavedState: false)
                 == nil
         else { return nil }

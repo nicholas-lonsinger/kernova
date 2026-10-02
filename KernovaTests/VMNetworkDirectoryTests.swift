@@ -70,4 +70,19 @@ struct VMNetworkDirectoryTests {
         config.networkEnabled = false
         #expect(directory.network(joinedBy: config) == nil)
     }
+
+    @Test("Two copies sharing the file change it rather than overwrite each other")
+    func twoCopiesKeepEachOthersNetworks() throws {
+        let first = VMNetworkDirectory(fileURL: fileURL)
+        let second = VMNetworkDirectory(fileURL: fileURL)
+        try first.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        try second.create(name: "Bench", kind: .hostOnly, verb: .createNetwork)
+        #expect(second.networks.map(\.name) == ["Bench", "Lab"])
+        // A name the other copy took is refused, though this one never saw it.
+        #expect(throws: CommandError.self) {
+            try first.create(name: "bench", kind: .shared, verb: .createNetwork)
+        }
+        first.reload()
+        #expect(first.networks.map(\.name) == ["Bench", "Lab"])
+    }
 }
