@@ -1319,7 +1319,8 @@ struct VirtualizationServiceTests {
             await restAfterFailedBringUp(
                 .reverting(snapshotID: snapshot.id, resumesAfter: true), on: instance,
                 with: VirtualizationError.revertResumeFailed(
-                    underlying: ConfigurationBuilderError.sharedDirectoryNotFound("/gone")))
+                    underlying: ConfigurationBuilderError.sharedDirectoryNotFound(
+                        id: UUID(), path: "/gone", label: "gone")))
                 == .suspended)
     }
 

@@ -483,7 +483,10 @@ struct VMSettingsSharingPanelTests {
         toggle.state = .off
         toggle.sendAction(toggle.action, to: toggle.target)
 
-        #expect(presenter.errors == ["Shared directory is not writable: \(folder)."])
+        #expect(
+            presenter.errors == [
+                "Shared folder '\(share.displayName)' is not writable: \(folder)."
+            ])
         #expect(toggle.state == .on)
         #expect(instance.configuration.sharedDirectories?.first?.readOnly == true)
     }

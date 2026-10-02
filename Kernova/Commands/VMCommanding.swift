@@ -98,8 +98,9 @@ protocol VMCommanding: AnyObject {
         macAddressRemedy: MACAddressRemedy?
     ) async throws
 
-    /// Detaches the attachment a failed start named, leaving the file itself
-    /// untouched — the removal half of the start-failed alert's offer.
+    /// Removes the entry a failed start or resume named — a storage disk, a
+    /// removable medium, or a shared folder — leaving the file or folder itself
+    /// untouched: the removal half of the start-failed alert's offer.
     ///
     /// Starts nothing: a caller that wants the VM running follows this with
     /// ``start(_:recovery:consent:macAddressRemedy:)``.

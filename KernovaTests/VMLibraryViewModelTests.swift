@@ -2606,6 +2606,124 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty, "\(way)")
     }
 
+    /// Every way a shared folder can be unusable, with the reason each one
+    /// reaches the alert as.
+    enum UnusableSharedFolder: CaseIterable, Sendable {
+        case notFound
+        case notADirectory
+        case notReadable
+        case notWritable
+
+        func error(id: UUID, path: String, label: String) -> ConfigurationBuilderError {
+            switch self {
+            case .notFound: .sharedDirectoryNotFound(id: id, path: path, label: label)
+            case .notADirectory: .sharedDirectoryNotADirectory(id: id, path: path, label: label)
+            case .notReadable: .sharedDirectoryNotReadable(id: id, path: path, label: label)
+            case .notWritable: .sharedDirectoryNotWritable(id: id, path: path, label: label)
+            }
+        }
+
+        var reason: StartFailedAttachment.Reason {
+            switch self {
+            case .notFound: .notFound
+            case .notADirectory: .notADirectory
+            case .notReadable: .notReadable
+            case .notWritable: .notWritable
+            }
+        }
+    }
+
+    @Test(
+        "A start offers the removal however the shared folder turned out to be unusable",
+        arguments: UnusableSharedFolder.allCases)
+    func startOffersRemovalForEveryUnusableSharedFolder(way: UnusableSharedFolder) async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let share = SharedDirectory(path: "/Volumes/Ext/Projects")
+        let instance = viewModel.library.admitFixture(phase: .stopped) {
+            $0.sharedDirectories = [share]
+        }
+        virtService.startError = way.error(
+            id: share.id, path: share.path, label: share.displayName)
+
+        await viewModel.start(instance)
+
+        let offered = presenter.startFailedAttachments.first
+        #expect(presenter.startFailedAttachments.count == 1, "\(way)")
+        #expect(offered?.kind == .sharedDirectory, "\(way)")
+        #expect(offered?.reason == way.reason, "\(way)")
+        #expect(offered?.id == share.id, "\(way)")
+        #expect(offered?.label == "Projects", "\(way)")
+        #expect(offered?.verb == .start, "\(way)")
+        #expect(offered?.message.contains("'Projects'") == true, "\(way)")
+        #expect(presenter.errors.isEmpty, "\(way)")
+    }
+
+    @Test(
+        "A resume offers the removal however the shared folder turned out to be unusable",
+        arguments: UnusableSharedFolder.allCases)
+    func resumeOffersRemovalForEveryUnusableSharedFolder(way: UnusableSharedFolder) async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let share = SharedDirectory(path: "/Volumes/Ext/Projects")
+        let instance = viewModel.library.admitFixture(phase: .suspended) {
+            $0.sharedDirectories = [share]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        virtService.restoreError = way.error(
+            id: share.id, path: share.path, label: share.displayName)
+
+        await viewModel.resume(instance)
+
+        let offered = presenter.startFailedAttachments.first
+        #expect(presenter.startFailedAttachments.count == 1, "\(way)")
+        #expect(offered?.kind == .sharedDirectory, "\(way)")
+        #expect(offered?.reason == way.reason, "\(way)")
+        #expect(offered?.id == share.id, "\(way)")
+        #expect(offered?.verb == .resume, "\(way)")
+        #expect(presenter.errors.isEmpty, "\(way)")
+    }
+
+    /// An offer whose action could only no-op leaves a button that appears to
+    /// do nothing.
+    @Test("A shared folder no longer on the VM is not offered for removal")
+    func startDoesNotOfferASharedFolderThatIsGone() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = viewModel.library.admitFixture(phase: .stopped) {
+            $0.sharedDirectories = [SharedDirectory(path: "/Volumes/Ext/Kept")]
+        }
+        virtService.startError = ConfigurationBuilderError.sharedDirectoryNotFound(
+            id: UUID(), path: "/Volumes/Ext/Gone", label: "Gone")
+
+        await viewModel.start(instance)
+
+        #expect(presenter.startFailedAttachments.isEmpty)
+        #expect(presenter.showError == true)
+    }
+
+    @Test("removeStartFailedAttachmentAndStart discards the saved state along with a shared folder")
+    func removeStartFailedSharedFolderDiscardsSaveFile() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let share = SharedDirectory(path: "/Volumes/Ext/Projects")
+        let instance = viewModel.library.admitFixture(phase: .suspended) {
+            $0.sharedDirectories = [share]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let failure = StartFailedAttachment(
+            verb: .resume, kind: .sharedDirectory, reason: .notFound, id: share.id,
+            label: share.displayName, message: "Shared folder 'Projects' not found.")
+
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        #expect(instance.configuration.sharedDirectories == nil)
+        #expect(!instance.hasSaveFile)
+        #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartRoute != .restoredSavedState)
+        #expect(instance.status == .running)
+    }
+
     /// The removal is irreversible for a bundle-internal entry: nothing
     /// re-creates one, so a Return on "Remove and Start" would cost the user the
     /// disk's entry for good — and an EFI VM built from a local ISO carries

@@ -965,7 +965,7 @@ func makeGroupedFormReadOnlyCaption() -> NSTextField {
 
 /// An inline trailing "eject" button for an attachment/share row.
 ///
-/// Detaches only — the backing file is untouched — so it is neutral-tinted
+/// Detaches only — the backing file or folder is untouched — so it is neutral-tinted
 /// rather than destructive red.
 @MainActor
 func makeGroupedFormEjectButton(

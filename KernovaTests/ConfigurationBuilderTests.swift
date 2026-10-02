@@ -155,18 +155,18 @@ struct ConfigurationBuilderTests {
     func builderThrowsForMissingSharedDirectoryPath() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
-        let config = makeLinuxConfig(sharedDirectories: [
-            SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
-        ])
+        let share = SharedDirectory(path: "/nonexistent/path/\(UUID().uuidString)")
+        let config = makeLinuxConfig(sharedDirectories: [share])
 
         let builder = makeBuilder()
         #expect {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
+            // The entry is named the way the Sharing pane names its row.
             guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotFound = e
+                case .sharedDirectoryNotFound(let id, let path, let label) = e
             else { return false }
-            return true
+            return id == share.id && path == share.path && label == share.displayName
         }
     }
 
@@ -216,9 +216,9 @@ struct ConfigurationBuilderTests {
             try builder.build(from: config, bundleURL: bundleURL)
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotWritable = e
+                case .sharedDirectoryNotWritable(_, _, let label) = e
             else { return false }
-            return true
+            return label == "readonly-share"
         }
     }
 
@@ -268,6 +268,35 @@ struct ConfigurationBuilderTests {
                 case .sharedDirectoryNotADirectory = e
             else { return false }
             return true
+        }
+    }
+
+    /// The swap re-validates a served entry at the folder the device serves,
+    /// which is the symlink's target, while the error names the row the
+    /// Sharing pane shows.
+    @Test("A live swap's refusal of a served folder names the entry, not its resolved path")
+    func liveSwapRefusalNamesTheEntry() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let target = bundleURL.appendingPathComponent("served-target")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let targetPath = target.path(percentEncoded: false)
+        let linkPath = bundleURL.appendingPathComponent("Projects").path(percentEncoded: false)
+        try FileManager.default.createSymbolicLink(atPath: linkPath, withDestinationPath: targetPath)
+        var share = SharedDirectory(path: linkPath, readOnly: true)
+        let serving = try ConfigurationBuilder.macOSDirectoryShare(for: [share])
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: targetPath)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
+        }
+        share.readOnly = false
+
+        #expect {
+            try ConfigurationBuilder.macOSDirectoryShare(for: [share], serving: serving)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .sharedDirectoryNotWritable(let id, _, let label) = e
+            else { return false }
+            return id == share.id && label == "Projects"
         }
     }
 
