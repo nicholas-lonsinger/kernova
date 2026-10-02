@@ -296,6 +296,45 @@ struct VMCapabilityCatalog {
             && key.accepts(value, for: instance, entitlements: library.entitlements)
     }
 
+    /// How turning Ephemeral Mode on is taken.
+    enum EphemeralModeEnable: Equatable {
+        /// The `ephemeral` key takes the write: a snapshot stands as the baseline.
+        case writing
+        /// The VM has no snapshot, so the enable captures one to stand as the
+        /// baseline.
+        case capturingBaseline
+    }
+
+    /// How turning Ephemeral Mode on for `instance` is taken, `nil` when the
+    /// mode is on or the VM can neither name a baseline nor capture one — the
+    /// level the no-snapshot caption reads, which an operation holding the VM
+    /// does not move.
+    func ephemeralModeEnable(on instance: VMInstance) -> EphemeralModeEnable? {
+        guard !instance.hostState.ephemeralModeEnabled else { return nil }
+        // The baseline an enable defaults to, the same answer the key reads.
+        if instance.snapshotManifest.defaultEphemeralBaseline(preferring: nil) != nil {
+            return .writing
+        }
+        return isApplicable(.takeSnapshot, to: instance) ? .capturingBaseline : nil
+    }
+
+    /// Whether turning Ephemeral Mode on for `instance` can be invoked right
+    /// now — what every Ephemeral Mode switch reads for its `isEnabled` while
+    /// off.
+    func isEphemeralModeEnableAvailable(on instance: VMInstance) -> Bool {
+        let key = VMConfigurationKeyRegistry.ephemeral
+        switch ephemeralModeEnable(on: instance) {
+        case .writing:
+            return isAvailable(key, writing: String(true), on: instance)
+        case .capturingBaseline:
+            return isAvailable(
+                key.capability(writing: String(true), for: instance.configuration.guestOS),
+                on: instance) && isAvailable(.takeSnapshot, on: instance)
+        case nil:
+            return false
+        }
+    }
+
     /// What one edit of a VM's shared-directory list is offered as.
     enum SharedDirectoriesOffer: Equatable {
         /// The edit is taken now, as a write this capability admits.

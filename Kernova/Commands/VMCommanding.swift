@@ -205,9 +205,12 @@ protocol VMCommanding: AnyObject {
 
     // MARK: - Snapshots
 
+    /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
+    /// with it as the baseline, written inside the capture.
     @discardableResult
-    func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
-        -> SnapshotSummary
+    func takeSnapshot(
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
+    ) async throws -> SnapshotSummary
 
     /// Returns the VM to a snapshot, optionally capturing the current state
     /// first so the revert is reversible.
@@ -511,5 +514,14 @@ protocol VMCommanding: AnyObject {
 extension VMCommanding {
     func stop(_ selector: VMSelector, disposition: StopDisposition, consent: Consent) async throws {
         try await stop(selector, disposition: disposition, consent: consent, timeout: nil)
+    }
+}
+
+extension VMCommanding {
+    @discardableResult
+    func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
+        -> SnapshotSummary
+    {
+        try await takeSnapshot(selector, name: name, notes: notes, asEphemeralBaseline: false)
     }
 }

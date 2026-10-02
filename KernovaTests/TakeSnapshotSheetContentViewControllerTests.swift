@@ -24,14 +24,34 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     private func makeSheet(
         vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
-        mode: VMCaptureMode = .live
+        mode: VMCaptureMode = .live, purpose: TakeSnapshotPurpose = .restorePoint
     ) -> (TakeSnapshotSheetContentViewController, Recorder) {
         let recorder = Recorder()
         let sheet = TakeSnapshotSheetContentViewController(
-            vmName: vmName, suggestedName: suggestedName, mode: mode)
+            vmName: vmName, suggestedName: suggestedName, mode: mode, purpose: purpose)
         sheet.delegate = recorder
         sheet.loadViewIfNeeded()
         return (sheet, recorder)
+    }
+
+    @Test("A baseline capture names what the new baseline returns the VM to")
+    func baselineCaptureNamesTheBaseline() {
+        let (sheet, _) = makeSheet(mode: .live, purpose: .ephemeralBaseline)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .warm), in: sheet.view) != nil)
+
+        // The VM finishing its shutdown makes the capture cold, and the note
+        // follows it.
+        sheet.update(mode: .stopped)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .cold), in: sheet.view) != nil)
+        #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: .warm), in: sheet.view) == nil)
+    }
+
+    @Test("A restore point says nothing about Ephemeral Mode")
+    func restorePointHasNoBaselineNote() {
+        let (sheet, _) = makeSheet(mode: .live)
+        for kind in [VMSnapshotKind.warm, .cold] {
+            #expect(findLabel(withText: EphemeralModeCopy.baselineSheetNote(for: kind), in: sheet.view) == nil)
+        }
     }
 
     @Test("The title names the VM")

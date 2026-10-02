@@ -54,8 +54,8 @@ struct VMOverviewSummaryTests {
         #expect(rows(.general, makeInstance(guestOS: .linux)).isEmpty)
     }
 
-    @Test("The Ephemeral card switch is offered exactly when the key would take its flip")
-    func ephemeralCardOfferIsTheKeysAnswer() throws {
+    @Test("The Ephemeral card switch is offered exactly when the catalog takes its flip")
+    func ephemeralCardOfferIsTheCatalogsAnswer() throws {
         let snapshot = VMSnapshot(
             name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
         let key = VMConfigurationKeyRegistry.ephemeral
@@ -71,9 +71,11 @@ struct VMOverviewSummaryTests {
                     toggles(for: .general, instance: instance)
                         .first { $0.toggle == .ephemeralMode })
 
-                #expect(
-                    state.isEnabled == key.accepts(String(!ephemeral), for: instance, entitlements: .entitled),
-                    "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
+                let offered =
+                    ephemeral
+                    ? key.accepts("false", for: instance, entitlements: .entitled)
+                    : VMCapabilityCatalog(library: library).isEphemeralModeEnableAvailable(on: instance)
+                #expect(state.isEnabled == offered, "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
             }
         }
     }
@@ -346,14 +348,18 @@ struct VMOverviewSummaryTests {
         }
     }
 
-    @Test("Ephemeral Mode is offerable only with a snapshot to fall back to")
-    func ephemeralToggleNeedsASnapshot() {
+    @Test("Ephemeral Mode is offerable without a snapshot only while one can be taken")
+    func ephemeralToggleNeedsASnapshotOrItsCapture() {
         let instance = makeInstance()
         func ephemeral(_ instance: VMInstance) -> VMOverviewSummary.ToggleState? {
             toggles(for: .general, instance: instance)
                 .first { $0.toggle == .ephemeralMode }
         }
-        #expect(ephemeral(instance)?.isEnabled == false)
+        // A stopped VM takes the baseline as the mode turns on.
+        #expect(ephemeral(instance)?.isEnabled == true)
+        let settingUp = makeInstance()
+        settingUp.activity.placeForTesting(.initialBoot)
+        #expect(ephemeral(settingUp)?.isEnabled == false)
 
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.seedSnapshotManifest(

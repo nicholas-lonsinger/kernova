@@ -12,6 +12,15 @@ enum GuestAgentInstallerPurpose: Equatable {
     case manage
 }
 
+/// What a snapshot taken from the Take Snapshot sheet is for.
+enum TakeSnapshotPurpose: Equatable, Sendable {
+    /// A restore point and nothing more.
+    case restorePoint
+    /// Turning Ephemeral Mode on for a VM with no snapshot: the capture becomes
+    /// its baseline.
+    case ephemeralBaseline
+}
+
 /// A bring-up that failed because one attachment couldn't be used, where
 /// removing that attachment (detach only — the file is untouched) is a valid
 /// way to get the VM running again.
@@ -141,8 +150,9 @@ protocol VMLibraryPresenting: AnyObject {
     /// files, each individually selectable for deletion. `permanently` selects
     /// the immediate (bypass-Trash) variant.
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool)
-    /// Show the sheet that names and annotates a new snapshot.
-    func presentTakeSnapshotSheet(for instance: VMInstance)
+    /// Show the sheet that names and annotates a new snapshot taken for
+    /// `purpose`.
+    func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose)
     /// Show the revert confirmation for one snapshot.
     func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance)
     /// Show the delete confirmation for one snapshot.

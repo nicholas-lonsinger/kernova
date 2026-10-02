@@ -336,8 +336,8 @@ struct DetailAlertsPresenterTests {
 
         // No window, so nothing drains: both requests would otherwise sit in
         // `pending` and show two sheets back to back.
-        presenter.presentTakeSnapshotSheet(for: vm)
-        presenter.presentTakeSnapshotSheet(for: vm)
+        presenter.presentTakeSnapshotSheet(for: vm, purpose: .restorePoint)
+        presenter.presentTakeSnapshotSheet(for: vm, purpose: .restorePoint)
 
         #expect(presenter.pendingCountForTesting == 1)
         #expect(presenter.isSnapshotSheetQueuedForTesting)

@@ -15,13 +15,15 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     private let vmName: String
     private let suggestedName: String
+    /// What the capture is for, which the delegate reads back on confirm.
+    let purpose: TakeSnapshotPurpose
 
     /// How a capture confirmed right now would be taken, which the header and
     /// caption describe.
     ///
     /// Not fixed at presentation: the VM can change state while this
     /// window-modal sheet is up, and the mode is stamped at confirm time
-    /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:)``) — so the copy has to
+    /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:for:)``) — so the copy has to
     /// follow it or it describes a capture that won't happen.
     private(set) var mode: VMCaptureMode
 
@@ -31,6 +33,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private let notesEditor = NotesEditorView(text: "", placeholder: "Optional")
     private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
     private lazy var captionLabel = GroupedFormStateNote { [unowned self] in captionText }
+    private lazy var baselineLabel = GroupedFormStateNote { [unowned self] in baselineText }
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
@@ -41,10 +44,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48
 
-    init(vmName: String, suggestedName: String, mode: VMCaptureMode) {
+    init(
+        vmName: String, suggestedName: String, mode: VMCaptureMode,
+        purpose: TakeSnapshotPurpose = .restorePoint
+    ) {
         self.vmName = vmName
         self.suggestedName = suggestedName
         self.mode = mode
+        self.purpose = purpose
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -61,12 +68,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         guard isViewLoaded else { return }
         headerBodyLabel.stringValue = headerBodyText
         captionLabel.refresh()
+        baselineLabel.refresh()
     }
 
     override func loadView() {
         captionLabel.refresh()
+        baselineLabel.refresh()
         let stack = NSStackView(views: [
-            makeHeader(), makeFormCard(), captionLabel, makeFooter(),
+            makeHeader(), makeFormCard(), captionLabel, baselineLabel, makeFooter(),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -114,6 +123,14 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         case .live: "The virtual machine pauses briefly while its state is written."
         case .suspended: "The virtual machine stays suspended."
         case .stopped: nil
+        }
+    }
+
+    /// What the capture becomes beyond a restore point, or `nil` when nothing.
+    var baselineText: String? {
+        switch purpose {
+        case .restorePoint: nil
+        case .ephemeralBaseline: EphemeralModeCopy.baselineSheetNote(for: mode.kind)
         }
     }
 

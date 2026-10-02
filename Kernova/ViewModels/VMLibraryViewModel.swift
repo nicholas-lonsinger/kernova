@@ -1004,21 +1004,26 @@ final class VMLibraryViewModel {
     // MARK: - Snapshots
 
     /// Opens the Take Snapshot sheet.
-    func requestTakeSnapshot(_ instance: VMInstance) {
+    func requestTakeSnapshot(_ instance: VMInstance, for purpose: TakeSnapshotPurpose = .restorePoint) {
         guard capabilities.isAvailable(.takeSnapshot, on: instance) else { return }
-        presenter?.presentTakeSnapshotSheet(for: instance)
+        presenter?.presentTakeSnapshotSheet(for: instance, purpose: purpose)
     }
 
-    /// Captures a snapshot from the Take Snapshot sheet's confirm.
+    /// Captures a snapshot from the Take Snapshot sheet's confirm; for an
+    /// Ephemeral baseline, the capture also turns the mode on with it.
     ///
     /// The returned Task lets tests await the capture.
     @discardableResult
-    func takeSnapshot(_ instance: VMInstance, name: String, notes: String = "") -> Task<Void, Never> {
+    func takeSnapshot(
+        _ instance: VMInstance, name: String, notes: String = "",
+        for purpose: TakeSnapshotPurpose = .restorePoint
+    ) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
             await self.run(on: instance) {
                 _ = try await self.commands.takeSnapshot(
-                    .id(instance.id), name: name, notes: notes)
+                    .id(instance.id), name: name, notes: notes,
+                    asEphemeralBaseline: purpose == .ephemeralBaseline)
             }
         }
     }

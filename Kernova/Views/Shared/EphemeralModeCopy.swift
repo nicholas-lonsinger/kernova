@@ -42,8 +42,18 @@ enum EphemeralModeCopy {
     ]
 
     /// The note under the toggle while the VM has no snapshot to stand as a
-    /// baseline.
-    static let noSnapshotsCaption = "Take a snapshot first to use as the baseline."
+    /// baseline; `capturesBaseline` when turning the mode on takes one.
+    static func noSnapshotsCaption(capturesBaseline: Bool) -> String {
+        capturesBaseline
+            ? "Turning it on takes a snapshot to use as the baseline."
+            : "Take a snapshot first to use as the baseline."
+    }
+
+    /// The Take Snapshot sheet's note when its capture turns the mode on,
+    /// naming where a `kind` baseline leaves the VM.
+    static func baselineSheetNote(for kind: VMSnapshotKind) -> String {
+        "Ephemeral Mode turns on with this snapshot as its baseline. \(baselineCaption(for: kind))"
+    }
 
     static let badgeHelpText = "Ephemeral: reverts to its baseline snapshot at every shutdown"
 }

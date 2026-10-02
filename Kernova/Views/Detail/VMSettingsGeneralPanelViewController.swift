@@ -294,13 +294,13 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
         renderedEphemeralBaselines = nil
 
-        let noSnapshots = GroupedFormStateNote(
-            EphemeralModeCopy.noSnapshotsCaption,
-            shownWhen: { [weak self] in
-                guard let self else { return false }
-                return !VMConfigurationKeyRegistry.ephemeral.accepts(
-                    "true", for: instance, entitlements: viewModel.entitlements)
-            })
+        let noSnapshots = GroupedFormStateNote(content: { [weak self] in
+            guard let self, instance.snapshotManifest.defaultEphemeralBaseline(preferring: nil) == nil
+            else { return nil }
+            return EphemeralModeCopy.noSnapshotsCaption(
+                capturesBaseline: viewModel.capabilities.ephemeralModeEnable(on: instance)
+                    == .capturingBaseline)
+        })
         ephemeralNoSnapshotsCaption = noSnapshots
 
         // Reads the resolved baseline rather than the popup's selection, so the
@@ -442,10 +442,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private func refreshEphemeralMode() {
         let manifest = instance.snapshotManifest
         let enabled = instance.hostState.ephemeralModeEnabled
-        let key = VMConfigurationKeyRegistry.ephemeral
         ephemeralSwitch.state = enabled ? .on : .off
         applyGroupedFormRowEnabled(
-            isAvailable(key, writing: String(!enabled)), control: ephemeralSwitch)
+            VMOverviewToggle.ephemeralMode.isFlippable(
+                from: enabled, on: instance, capabilities: viewModel.capabilities),
+            control: ephemeralSwitch)
         applyGroupedFormRowEnabled(
             isAvailable(
                 VMConfigurationKeyRegistry.ephemeralBaseline,
