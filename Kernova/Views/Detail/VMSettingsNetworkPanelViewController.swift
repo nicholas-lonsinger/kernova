@@ -621,5 +621,4 @@ extension VMSettingsNetworkPanelViewController: NSTextFieldDelegate {
 extension VmnetNetworkKind {
     /// The order the Mode picker lists each kind's networks in.
     fileprivate static let menuOrder: [VmnetNetworkKind] = [.shared, .hostOnly]
-
 }
