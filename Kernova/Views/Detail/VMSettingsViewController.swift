@@ -490,8 +490,16 @@ extension VMSettingsViewController {
         writeMirrored(VMConfigurationKeyRegistry.autoStart.assigning(isOn))
     }
 
+    /// A VM with no snapshot takes its baseline first: the enable opens the
+    /// Take Snapshot sheet, and the mode turns on once that capture lands.
     private func setEphemeralMode(_ isOn: Bool) {
-        writeMirrored(VMConfigurationKeyRegistry.ephemeral.assigning(isOn))
+        guard isOn, viewModel.capabilities.ephemeralModeEnable(on: instance) == .capturingBaseline
+        else {
+            writeMirrored(VMConfigurationKeyRegistry.ephemeral.assigning(isOn))
+            return
+        }
+        viewModel.requestTakeSnapshot(instance, for: .ephemeralBaseline)
+        apply()
     }
 
     /// Writes a setting that renders on more than one surface, re-rendering all

@@ -321,7 +321,7 @@ final class DetailAlertsPresenter: NSObject {
         }
     }
 
-    func presentTakeSnapshotSheet(for instance: VMInstance) {
+    func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
         // A window-modal sheet is authoritative while it is up: a second
         // gesture (the menu key equivalent stays live under it) is dropped
         // rather than queued behind it. The queued request counts too — it is
@@ -335,17 +335,17 @@ final class DetailAlertsPresenter: NSObject {
             return
         }
         isSnapshotSheetQueued = true
-        enqueue { $0.showTakeSnapshotSheet(for: instance) }
+        enqueue { $0.showTakeSnapshotSheet(for: instance, purpose: purpose) }
     }
 
-    private func showTakeSnapshotSheet(for instance: VMInstance) {
+    private func showTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
         isSnapshotSheetQueued = false
         // The request may have queued behind another alert, so re-check the VM
         // is still snapshottable rather than showing a sheet that can't confirm.
         guard let window, let mode = instance.snapshotCaptureMode else { return }
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
-            mode: mode)
+            mode: mode, purpose: purpose)
         content.delegate = self
         shownSnapshotInstance = instance
         // The capture's mode is decided at confirm time, so the sheet's copy
@@ -932,7 +932,7 @@ extension DetailAlertsPresenter: TakeSnapshotSheetContentViewControllerDelegate 
         _ vc: TakeSnapshotSheetContentViewController, didConfirmName name: String, notes: String
     ) {
         if let instance = shownSnapshotInstance {
-            viewModel.takeSnapshot(instance, name: name, notes: notes)
+            viewModel.takeSnapshot(instance, name: name, notes: notes, for: vc.purpose)
         }
         snapshotSheetPresenter.close()
     }

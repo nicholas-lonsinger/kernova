@@ -314,6 +314,63 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.showError)
     }
 
+    @Test("A baseline capture turns Ephemeral Mode on with the snapshot it produced")
+    func baselineCaptureTurnsTheModeOnWithIt() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+
+        await harness.viewModel.takeSnapshot(
+            instance, name: "Clean install", for: .ephemeralBaseline
+        ).value
+
+        let captured = try #require(instance.snapshotManifest.snapshots.first)
+        #expect(instance.hostState.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == captured.id)
+        #expect(!presenter.showError)
+    }
+
+    /// The baseline is the capture's own result, not whichever snapshot the
+    /// mode would default to, so the Current one — named first here — is
+    /// passed over.
+    @Test("The baseline is the capture's snapshot even beside another")
+    func baselineIsTheCapturesSnapshot() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+        let earlier = makeSnapshot(name: "Earlier")
+        seed(harness, instance, [earlier], currentID: earlier.id)
+
+        await harness.viewModel.takeSnapshot(
+            instance, name: "Baseline", for: .ephemeralBaseline
+        ).value
+
+        let captured = try #require(
+            instance.snapshotManifest.snapshots.first { $0.name == "Baseline" })
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == captured.id)
+    }
+
+    @Test("A failed baseline capture leaves Ephemeral Mode off")
+    func failedBaselineCaptureLeavesTheModeOff() async {
+        let harness = makeHarness()
+        harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Doomed", for: .ephemeralBaseline).value
+
+        #expect(instance.snapshotManifest.isEmpty)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(presenter.showError)
+    }
+
+    @Test("A restore point leaves Ephemeral Mode alone")
+    func restorePointLeavesTheModeAlone() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Plain").value
+
+        #expect(!instance.hostState.ephemeralModeEnabled)
+    }
+
     @Test("A manifest write that fails undoes the capture")
     func failedManifestWriteUndoesTheCapture() async {
         let harness = makeHarness()

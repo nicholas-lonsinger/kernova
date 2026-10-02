@@ -30,6 +30,18 @@ enum VMOverviewToggle: String, Sendable {
         case .dropFiles: VMConfigurationKeyRegistry.dropFiles
         }
     }
+
+    /// Whether a switch showing `isOn` takes a flip on `instance` right now —
+    /// what every surface carrying this switch reads for its `isEnabled`.
+    @MainActor
+    func isFlippable(
+        from isOn: Bool, on instance: VMInstance, capabilities: VMCapabilityCatalog
+    ) -> Bool {
+        if self == .ephemeralMode, !isOn {
+            return capabilities.ephemeralModeEnable(on: instance) != nil
+        }
+        return capabilities.isAvailable(key, writing: String(!isOn), on: instance)
+    }
 }
 
 /// A command a card offers at its foot, run through the same view-model gate the
@@ -215,7 +227,7 @@ enum VMOverviewSummary {
             let isOn = toggle.key.read(instance.settings) == String(true)
             return ToggleState(
                 toggle: toggle, isOn: isOn,
-                isEnabled: capabilities.isAvailable(toggle.key, writing: String(!isOn), on: instance))
+                isEnabled: toggle.isFlippable(from: isOn, on: instance, capabilities: capabilities))
         }
     }
 

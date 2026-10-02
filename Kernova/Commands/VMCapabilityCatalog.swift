@@ -296,6 +296,31 @@ struct VMCapabilityCatalog {
             && key.accepts(value, for: instance, entitlements: library.entitlements)
     }
 
+    /// How turning Ephemeral Mode on is taken.
+    enum EphemeralModeEnable: Equatable {
+        /// The `ephemeral` key takes the write: a snapshot stands as the baseline.
+        case writing
+        /// The VM has no snapshot, so the enable captures one to stand as the
+        /// baseline first.
+        case capturingBaseline
+    }
+
+    /// How turning Ephemeral Mode on for `instance` is taken right now, `nil`
+    /// when it can't be — what every Ephemeral Mode switch reads for its
+    /// `isEnabled` while off.
+    func ephemeralModeEnable(on instance: VMInstance) -> EphemeralModeEnable? {
+        let key = VMConfigurationKeyRegistry.ephemeral
+        if isAvailable(key, writing: String(true), on: instance) { return .writing }
+        guard
+            instance.snapshotManifest.defaultEphemeralBaseline(preferring: nil) == nil,
+            isAvailable(
+                key.capability(writing: String(true), for: instance.configuration.guestOS),
+                on: instance),
+            isAvailable(.takeSnapshot, on: instance)
+        else { return nil }
+        return .capturingBaseline
+    }
+
     /// What one edit of a VM's shared-directory list is offered as.
     enum SharedDirectoriesOffer: Equatable {
         /// The edit is taken now, as a write this capability admits.
