@@ -78,8 +78,6 @@ func makeGroupedFormScrollView(
     // unveiled for the same reason.
     scrollView.automaticallyAdjustsContentInsets = false
     scrollView.contentInsets = NSEdgeInsetsZero
-    scrollView.contentView.automaticallyAdjustsContentInsets = false
-    scrollView.contentView.contentInsets = NSEdgeInsetsZero
 
     let docView = NSView()
     docView.translatesAutoresizingMaskIntoConstraints = false

@@ -218,13 +218,8 @@ final class DeleteVMSheetContentViewController: NSViewController {
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
-        // Disable safe-area-like auto-adjustment AND zero the clip view's own
-        // contentInsets — on macOS Tahoe the default contributes a visible ~10pt
-        // of padding above the document.
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsetsZero
-        scrollView.contentView.automaticallyAdjustsContentInsets = false
-        scrollView.contentView.contentInsets = NSEdgeInsetsZero
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let listStack = NSStackView()
