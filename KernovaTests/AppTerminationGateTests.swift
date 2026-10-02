@@ -269,6 +269,31 @@ struct AppTerminationGateTests {
         #expect(instance.phase == .suspended)
     }
 
+    @Test("A quit saves every other live VM while one VM's save is still running")
+    func quitSavesOtherVMsBeforeWaiting() async throws {
+        let (controller, viewModel, spy) = makeFullQuit()
+        let stuck = admitPeer(named: "Stuck", to: viewModel)
+        stuck.activity.placeForTesting(.running(sessionID: UUID()))
+        let gate = GatedStep()
+        let save = try stuck.activity.launch(.saving) { _ in
+            try await gate.pass()
+            return .rest(.asStarted, ())
+        }
+        try await gate.waitUntilEntered()
+        let live = admitPeer(named: "Live", to: viewModel)
+        live.activity.placeForTesting(.running(sessionID: UUID()))
+
+        controller.requestFullQuit()
+        try await waitForChange { live.phase == .suspended }
+        #expect(stuck.phase.operation?.kind == .saving)
+        #expect(spy.endings.isEmpty)
+
+        gate.release()
+        try await save.value()
+        try await spy.ended.wait { spy.endings.count == 1 }
+        #expect(stuck.phase == .suspended)
+    }
+
     @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")
     func residentQuitClosesTheGUI() async throws {
         let spy = SoftQuitSpy()

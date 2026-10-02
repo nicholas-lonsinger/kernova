@@ -440,17 +440,19 @@ final class AppTerminationController: NSObject {
 
     // MARK: - Save Pass
 
-    /// Waits out whatever a quit must not exit through, then save-suspends
-    /// every VM settled live, one session at a time.
+    /// Save-suspends every VM settled live, one session at a time, and waits
+    /// out whatever a quit must not exit through whenever nothing is left to
+    /// save.
     ///
-    /// The wait comes first on every iteration because more of what it waits
-    /// for can follow: an Ephemeral VM's power-off — a save's force-stop
-    /// fallback among them — admits its baseline revert, and an operation's
-    /// end admits the reconcile an edit admitted before the quit owes that
-    /// VM. Nothing else can: the library's termination has begun, so
-    /// admission refuses every other operation — which is also why a VM
-    /// selected here is still settled live when its save is decided, in the
-    /// same main-actor turn.
+    /// Saving comes first, so an operation that never ends holds back only
+    /// the process's exit, never another VM's save. The wait ends as soon as
+    /// another VM settles live, and more work a quit waits out can follow:
+    /// an Ephemeral VM's power-off — a save's force-stop fallback among them —
+    /// admits its baseline revert, and an operation's end admits the reconcile
+    /// an edit admitted before the quit owes that VM. Nothing else can: the
+    /// library's termination has begun, so admission refuses every other
+    /// operation — which is also why a VM selected here is still settled live
+    /// when its save is decided, in the same main-actor turn.
     ///
     /// Each session is saved at most once: a force stop that failed leaves the
     /// same session live, and re-selecting it would loop forever, while a VM
@@ -460,16 +462,20 @@ final class AppTerminationController: NSObject {
         var savedCount = 0
         var failedCount = 0
         while true {
-            if viewModel.quitMustWaitOut {
-                #log(Self.logger, .notice, "Termination waiting on work a quit must not exit through")
-                await waitForObservedChange { [viewModel] in !viewModel.quitMustWaitOut }
+            if let (instance, sessionID) = nextSessionToSave(excluding: handled) {
+                handled.insert(sessionID)
+                if await saveForTermination(instance) {
+                    savedCount += 1
+                } else {
+                    failedCount += 1
+                }
+                continue
             }
-            guard let (instance, sessionID) = nextSessionToSave(excluding: handled) else { break }
-            handled.insert(sessionID)
-            if await saveForTermination(instance) {
-                savedCount += 1
-            } else {
-                failedCount += 1
+            guard viewModel.quitMustWaitOut else { break }
+            #log(Self.logger, .notice, "Termination waiting on work a quit must not exit through")
+            let saved = handled
+            await waitForObservedChange { [viewModel] in
+                !viewModel.quitMustWaitOut || self.nextSessionToSave(excluding: saved) != nil
             }
         }
         #log(
