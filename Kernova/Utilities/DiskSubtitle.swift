@@ -1,23 +1,16 @@
 import Foundation
 
-/// Human-readable subtitle for a storage-disk row.
-nonisolated func diskSubtitle(for disk: StorageDisk, bundleLayout: VMBundleLayout) -> String {
-    diskSubtitle(path: disk.path, isInternal: disk.isInternal, bundleLayout: bundleLayout)
-}
-
 /// Human-readable subtitle for any attachment row — a storage disk or a
-/// removable medium — backed by a file at `path`.
+/// removable medium — backed by `image`.
 ///
 /// Both figures are read **live** from the file, so they reflect an external
 /// resize rather than a stored snapshot; when neither is readable (an ejected
 /// external volume), the fallback is the in-bundle placeholder or the path.
 /// `nonisolated`, taking the `Sendable` `VMBundleLayout` rather than the
 /// instance, so the file reads can run off the main thread.
-nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBundleLayout) -> String {
-    // One coalesced read for both figures (rather than two separate stats).
+nonisolated func diskSubtitle(of image: DiskImageReference, bundleLayout: VMBundleLayout) -> String {
     diskSubtitle(
-        sizes: bundleLayout.diskSizes(forRelativePath: path, isInternal: isInternal),
-        path: path, isInternal: isInternal)
+        sizes: bundleLayout.diskSizes(of: image), path: image.path, isInternal: image.isInternal)
 }
 
 /// Formats already-read sizes into the subtitle string.
