@@ -12,10 +12,9 @@ protocol VMSnapshotSessionOperating: Sendable {
     func saveMachineState(to url: URL) async throws
     func restoreMachineState(from url: URL) async throws
     func resume() async throws
-    /// Detaches the USB device carrying `uuid`. A save path calls it for every
-    /// passthrough accessory before writing state — see
-    /// ``VirtualizationService/detachUSBAccessories(_:session:)``.
-    func detachUSBDevice(uuid: UUID) async throws
+    /// The `uuid` of every device on the USB controller, empty when the
+    /// machine has none.
+    func usbDeviceIDs() async -> Set<UUID>
 }
 
 extension VMSession: VMSnapshotSessionOperating {}

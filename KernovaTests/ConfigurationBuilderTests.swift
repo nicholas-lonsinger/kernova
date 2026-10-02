@@ -440,6 +440,32 @@ struct ConfigurationBuilderTests {
         #expect(xhci.usbDevices.first is VZUSBMassStorageDeviceConfiguration)
     }
 
+    @Test("A restore's passthrough devices follow the removable media on XHCI, under their saved UUIDs")
+    @MainActor
+    func usbPassthroughFollowsRemovableMediaOnXHCI() throws {
+        let bundleURL = try makeBundle(withDisk: true)
+        let isoURL = bundleURL.appendingPathComponent("install.iso")
+        try Data().write(to: isoURL)
+        var config = VMConfiguration(name: "Test Linux", guestOS: .linux, bootMode: .efi)
+        let media = RemovableMediaItem(path: isoURL.path(percentEncoded: false), readOnly: true)
+        config.removableMedia = [media]
+        let savedID = UUID()
+        let restoration = USBPassthroughRestoration(
+            registryID: 7,
+            attached: AttachedUSBAccessory(
+                deviceID: savedID,
+                accessory: MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")),
+            configuration: VZUSBMassStorageDeviceConfiguration(
+                attachment: try VZDiskImageStorageDeviceAttachment(url: isoURL, readOnly: true)))
+        restoration.configuration.uuid = savedID
+
+        let result = try makeBuilder().assemble(
+            from: config, bundleURL: bundleURL, usbPassthrough: [restoration], validate: false)
+
+        let xhci = try #require(result.configuration.usbControllers.first)
+        #expect(xhci.usbDevices.map(\.uuid) == [media.id, savedID])
+    }
+
     @Test("Removable media returns coldRemovableMedia infos with matching UUIDs")
     func removableMediaReturnsDeviceInfos() throws {
         let bundleURL = try makeBundle(withDisk: true)

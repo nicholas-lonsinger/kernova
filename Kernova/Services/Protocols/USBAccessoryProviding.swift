@@ -1,4 +1,5 @@
 import Foundation
+import Virtualization
 
 /// Failures USB accessory attach and detach report.
 enum USBAccessoryError: LocalizedError, Equatable {
@@ -57,6 +58,27 @@ protocol USBAccessoryProviding: AnyObject {
 
     /// Detaches the passthrough device `deviceID` names.
     func detach(deviceID: UUID, from instance: VMInstance) async throws
+
+    /// The device that puts the accessory `reservation` names back on a guest
+    /// restored from a saved state holding it under `deviceID`, or `nil` when
+    /// the accessory is no longer assigned to Kernova.
+    func restoration(
+        of reservation: borrowing VMAccessoryReservation, as deviceID: UUID
+    ) -> USBPassthroughRestoration?
+}
+
+/// A passthrough device a restore configures under the `uuid` its saved state
+/// holds it by, and the record the guest holds it under once restored.
+///
+/// `@unchecked Sendable` for the reason ``ConfigurationBuilder/BuildResult``
+/// is: built on the main actor and handed whole to the configuration build,
+/// which is the only thing that touches `configuration` afterwards.
+struct USBPassthroughRestoration: @unchecked Sendable {
+    let registryID: UInt64
+    /// `deviceID` is the saved `uuid`.
+    let attached: AttachedUSBAccessory
+    /// Carries `attached.deviceID` as its `uuid`.
+    let configuration: any VZUSBDeviceConfiguration
 }
 
 /// Where the capability's presence is decided, once.

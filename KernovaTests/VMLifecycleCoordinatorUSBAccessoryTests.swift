@@ -6,9 +6,7 @@ import Testing
 
 /// What the coordinator guarantees about passthrough accessories: that an edit
 /// is serialized against the save paths, that a session lost under an attach
-/// takes the device back, that a device VZ already lost still clears, and that
-/// a warm snapshot ends once its files are written, owing back what it had to
-/// take off.
+/// takes the device back, and that a device VZ already lost still clears.
 @Suite("VMLifecycleCoordinator USB Accessory Tests", .caseScoped)
 @MainActor
 struct VMLifecycleCoordinatorUSBAccessoryTests {
@@ -210,42 +208,6 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         #expect(library.accessoryHolders.holder(of: 5) === second)
     }
 
-    @Test("An accessory another VM took while a capture had it off the guest stays with that VM")
-    func anOwedReturnLeavesAnAccessoryAnotherVMTook() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let (library, (first, firstSession), (second, secondSession)) = makeTwoInstances(
-            on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
-        try await coordinator.attachUSBAccessory(9, to: first, for: firstSession)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-        let gate = GatedStep()
-        virtualization.takeSnapshotGate = gate
-
-        async let snapshot: Void = {
-            _ = try? await coordinator.takeSnapshot(
-                first, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }()
-        try await gate.waitUntilEntered()
-        // The stick comes back under a new handle while the capture holds the
-        // first VM, so its return waits behind the capture — and the other VM
-        // takes it meanwhile.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        #expect(first.activity.queuedFollowUpCountForTesting == 1)
-        try await coordinator.attachUSBAccessory(11, to: second, for: secondSession)
-        gate.release()
-        await snapshot
-
-        // The owed attach was decided when the capture freed the VM, and
-        // refused as held: nothing was asked of VZ for it.
-        #expect(first.activity.queuedFollowUpCountForTesting == 0)
-        #expect(service.attachedRegistryIDs == [9, 11])
-        #expect(library.accessoryHolders.holder(of: 11) === second)
-        #expect(first.liveUSBAccessories.isEmpty)
-        #expect(first.phase == .running(sessionID: firstSession))
-    }
-
     // MARK: - A session lost under the attach
 
     @Test("An attach whose session goes away hands the device back rather than recording it")
@@ -305,273 +267,18 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         }
     }
 
-    // MARK: - A warm snapshot owes back what it took off
+    // MARK: - An arrival under a capture
 
-    /// Runs a warm capture's real sweep over `session`, and has macOS
-    /// withdraw each stick it took off while the reset the detach causes runs
-    /// — it comes back later as a new IORegistry node, same serial, different
-    /// `registryID`.
-    private func captureEjecting(
-        service: MockUSBAccessoryService,
-        session: MockSnapshotSession = MockSnapshotSession(guestState: .running)
-    ) -> @MainActor (borrowing VMCaptureContext) async throws -> Void {
-        { context in
-            let before = context.operation.instance.liveUSBAccessories
-            defer {
-                let still = Set(context.operation.instance.liveUSBAccessories.map(\.deviceID))
-                let ejected = Set(
-                    before.filter { !still.contains($0.deviceID) }.map(\.accessory.registryID))
-                service.accessories.removeAll { ejected.contains($0.registryID) }
-            }
-            try await VirtualizationService.detachUSBAccessories(
-                owingReturns: context, session: session)
-        }
-    }
-
-    /// Which VM the library owes the return of the accessory carrying
-    /// `serial`, as `MockUSBAccessoryService.accessory` composes its identity.
-    private func owedTo(_ serial: String, in instance: VMInstance) throws -> VMInstance? {
-        let identity = try #require(
-            MockUSBAccessoryService.accessory(registryID: 0, serial: serial).identity)
-        return instance.peers?.accessoryHolders.owedReturn(of: identity)
-    }
-
-    @Test("An accessory back during a capture is re-attached, under its new handle, as the capture frees the VM")
-    func anArrivalDuringACaptureAttachesAfterIt() async throws {
+    @Test("A paired accessory that arrives during a capture is attached in the step the capture ends")
+    func aPairedArrivalAttachesAsTheCaptureEnds() async throws {
         let virtualization = MockVirtualizationService()
         let (coordinator, service) = makeCoordinator(virtualization: virtualization)
         let sessionID = UUID()
         let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-        let gate = GatedStep()
-        virtualization.takeSnapshotGate = gate
-
-        let snapshot = Task {
-            try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }
-        try await gate.waitUntilEntered()
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        // The capture holds the VM, so the return waits behind it.
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-        #expect(service.attachedRegistryIDs == [9])
-
-        service.suspendNextAttach = true
-        gate.release()
-        _ = try await snapshot.value
-        // The capture's own ending admitted the attach: no other request could
-        // be decided against the VM in between.
-        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 11))
-        try await service.attachStarted()
-        service.resumeAttach()
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [9, 11])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [11])
-        #expect(instance.phase == .running(sessionID: sessionID))
-    }
-
-    @Test("A capture ends when its files are written, so a Pause right after it is admitted")
-    func aCaptureDoesNotWaitForItsAccessories() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-
-        _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _, _ in }
-
-        // Nothing has come back, and nothing holds the VM waiting for it.
-        #expect(instance.phase == .running(sessionID: sessionID))
-        try await coordinator.pause(instance)
-        #expect(instance.phase == .livePaused(sessionID: sessionID))
-
-        // The stick arrives later and still goes back on the guest.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [9, 11])
-        #expect(instance.phase == .livePaused(sessionID: sessionID))
-    }
-
-    @Test("Every accessory a capture took off goes back as it arrives")
-    func twoAccessoriesGoBackAsEachArrives() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "AAA"))
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 10, serial: "BBB"))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        try await coordinator.attachUSBAccessory(10, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-
-        _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _, _ in }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 12, serial: "BBB"))
-        try await waitForChange { instance.liveUSBAccessories.count == 1 }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "AAA"))
-        try await waitForChange { instance.liveUSBAccessories.count == 2 }
-
-        #expect(service.attachedRegistryIDs == [9, 10, 12, 11])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [12, 11])
-    }
-
-    @Test("A snapshot owes nothing back for an accessory nothing durable identifies")
-    func anUnidentifiableAccessoryIsNotOwed() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-
-        _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _, _ in }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11))
-
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        #expect(instance.phase == .running(sessionID: sessionID))
-        #expect(service.attachedRegistryIDs == [9])
-        #expect(instance.liveUSBAccessories.isEmpty)
-    }
-
-    @Test("A guest that goes away before its accessory comes back leaves it with the host")
-    func aTeardownDropsWhatTheGuestWasOwed() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        let accessory = MockUSBAccessoryService.accessory(registryID: 9, serial: "0373")
-        let identity = try #require(accessory.identity)
-        service.accessories.append(accessory)
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
-        _ = try await coordinator.takeSnapshot(
-            instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-        ) { _, _ in }
-        let holders = try #require(instance.peers?.accessoryHolders)
-        #expect(holders.owedReturn(of: identity) === instance)
-
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(holders.owedReturn(of: identity) == nil)
-
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        #expect(service.attachedRegistryIDs == [9])
-        #expect(instance.liveUSBAccessories.isEmpty)
-    }
-
-    // MARK: - A capture that failed ejected the same hardware
-
-    @Test("A capture that failed still gets back what it took off")
-    func aFailedCaptureGetsItsAccessoriesBack() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        let eject = captureEjecting(service: service)
-        virtualization.onTakeSnapshot = { context in
-            try await eject(context)
-            #expect(try self.owedTo("0373", in: instance) === instance)
-            // Back before the capture has even failed.
-            service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        }
-        virtualization.takeSnapshotError = VMSnapshotError.snapshotMissingSavedState
-
-        await #expect(throws: VMSnapshotError.self) {
-            try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }
-
-        // The snapshot is gone and the guest is still running, so the user's
-        // hardware goes back where it was.
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [9, 11])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [11])
-    }
-
-    @Test("A sweep that threw part-way owes back exactly what it took off, and gets it back")
-    func aPartialSweepOwesOnlyTheEjected() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        for (registryID, serial) in [(9, "AAA"), (10, "BBB"), (12, "CCC")] {
-            service.accessories.append(
-                MockUSBAccessoryService.accessory(registryID: UInt64(registryID), serial: serial))
-            service.nextDeviceID = UUID()
-            try await coordinator.attachUSBAccessory(
-                UInt64(registryID), to: instance, for: sessionID)
-        }
-        // The second detach throws: the first is off, the second and the
-        // third are still on the guest.
-        let session = MockSnapshotSession(guestState: .running)
-        let second = try #require(instance.liveUSBAccessories.dropFirst().first)
-        await session.setDetachError(
-            VMSessionError.usbControllerUnavailable, forDeviceID: second.deviceID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service, session: session)
-
-        await #expect(throws: VMSessionError.self) {
-            try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }
-
-        #expect(try owedTo("AAA", in: instance) === instance)
-        #expect(try owedTo("BBB", in: instance) == nil)
-        #expect(try owedTo("CCC", in: instance) == nil)
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "AAA"))
-        try await waitForChange { instance.liveUSBAccessories.count == 3 }
-        #expect(service.attachedRegistryIDs == [9, 10, 12, 11])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [10, 12, 11])
-    }
-
-    @Test("A capture that fails before its sweep owes nothing back")
-    func aCaptureThatFailsBeforeItsSweepOwesNothing() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 9, serial: "0373"))
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.takeSnapshotError = VMSnapshotError.snapshotMissingSavedState
-
-        await #expect(throws: VMSnapshotError.self) {
-            try await coordinator.takeSnapshot(
-                instance, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }
-
-        #expect(try owedTo("0373", in: instance) == nil)
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [9])
-    }
-
-    // MARK: - One follow-up per request
-
-    @Test("A paired accessory back during a capture is attached once, though the capture's end also finds it owed")
-    func aPairedReturnIsQueuedOnce() async throws {
-        let virtualization = MockVirtualizationService()
-        let (coordinator, service) = makeCoordinator(virtualization: virtualization)
-        let sessionID = UUID()
-        let instance = makeInstance(sessionID: sessionID, on: coordinator)
-        let accessory = MockUSBAccessoryService.accessory(registryID: 9, serial: "0373")
+        let accessory = MockUSBAccessoryService.accessory(registryID: 11, serial: "0373")
         var pairings = instance.usbPairings
         pairings.upsert(try #require(USBAccessoryPairing.make(for: accessory)))
         instance.seedUSBPairings(pairings)
-        service.accessories.append(accessory)
-        try await coordinator.attachUSBAccessory(9, to: instance, for: sessionID)
-        virtualization.onTakeSnapshot = captureEjecting(service: service)
         let gate = GatedStep()
         virtualization.takeSnapshotGate = gate
 
@@ -581,21 +288,20 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
             ) { _, _ in }
         }
         try await gate.waitUntilEntered()
-        service.assign(MockUSBAccessoryService.accessory(registryID: 11, serial: "0373"))
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
+        // The capture holds the VM, so the accessory waits with the host.
+        service.assign(accessory)
+        #expect(service.attachedRegistryIDs.isEmpty)
 
         service.suspendNextAttach = true
         gate.release()
         _ = try await snapshot.value
-        // The capture's end is also the VM's attachable edge, which answers
-        // the paired accessory; that attach joined the queued one rather than
-        // waiting behind it to be refused as held.
+        // The capture's end is the VM's attachable edge, which takes the
+        // paired accessory back before any other request is decided.
         #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 11))
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         try await service.attachStarted()
         service.resumeAttach()
         try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [9, 11])
+        #expect(service.attachedRegistryIDs == [11])
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
     }
 }

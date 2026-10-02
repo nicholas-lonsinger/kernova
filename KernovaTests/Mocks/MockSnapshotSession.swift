@@ -55,36 +55,15 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         guestState = .running
     }
 
-    /// Device UUIDs `detachUSBDevice(uuid:)` was asked for, in order.
-    private(set) var detachedUSBDeviceIDs: [UUID] = []
-    var detachError: (any Error)?
+    /// What `usbDeviceIDs()` answers: the devices on the controller.
+    private var controllerDeviceIDs: Set<UUID> = []
 
-    /// The one device `detachError` answers for, `nil` for every one of them.
-    private var detachErrorDeviceID: UUID?
-
-    /// Fails the detach of `deviceID`, or of every device when none is named —
-    /// which is what separates a sweep that throws part-way from one that
-    /// throws on its first device.
-    func setDetachError(_ error: any Error, forDeviceID deviceID: UUID? = nil) {
-        detachError = error
-        detachErrorDeviceID = deviceID
+    func setUSBDeviceIDs(_ deviceIDs: Set<UUID>) {
+        controllerDeviceIDs = deviceIDs
     }
 
-    /// Runs as each detach begins, before it can throw — the moment a sweep
-    /// has committed to taking that device off.
-    private var beforeDetach: (@Sendable (UUID) async -> Void)?
-
-    func setBeforeDetach(_ work: @escaping @Sendable (UUID) async -> Void) {
-        beforeDetach = work
-    }
-
-    func detachUSBDevice(uuid: UUID) async throws {
-        calls.append("detachUSBDevice")
-        await beforeDetach?(uuid)
-        if let detachError, detachErrorDeviceID == nil || detachErrorDeviceID == uuid {
-            throw detachError
-        }
-        detachedUSBDeviceIDs.append(uuid)
+    func usbDeviceIDs() async -> Set<UUID> {
+        controllerDeviceIDs
     }
 
     func saveMachineState(to url: URL) async throws {
@@ -110,9 +89,16 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         afterRestore = work
     }
 
+    private var restoreError: (any Error)?
+
+    func setRestoreError(_ error: any Error) {
+        restoreError = error
+    }
+
     func restoreMachineState(from url: URL) async throws {
         calls.append("restoreMachineState")
         restoredStateURLs.append(url)
+        if let restoreError { throw restoreError }
         await afterRestore?()
     }
 

@@ -404,6 +404,10 @@ actor VMSession {
         }
     }
 
+    func usbDeviceIDs() -> Set<UUID> {
+        Set(vm.usbControllers.first?.usbDevices.map(\.uuid) ?? [])
+    }
+
     private func usbController() throws -> VZUSBController {
         guard let controller = vm.usbControllers.first else {
             #log(Self.logger, .fault, "USB call on a session with no USB controller")

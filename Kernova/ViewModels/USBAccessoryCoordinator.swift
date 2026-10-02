@@ -23,10 +23,6 @@ struct USBAccessoryPairingRequest {
 /// Starts the accessory listener, keeps each guest's record of what it holds
 /// honest, and hands an accessory back to the guest it was last placed on.
 ///
-/// An accessory a warm capture took off a guest goes back to that guest on its
-/// next arrival, whatever the pairings say: the capture's detach reset it, and
-/// the unit coming back is known to be the one the guest held.
-///
 /// macOS answers *whether* — the user assigns the accessory to Kernova in
 /// Apple's *Virtual Machine Accessories* menu extra. *Which VM* is the user's
 /// answer too, given once: placing an accessory on a guest records a pairing
@@ -121,21 +117,11 @@ final class USBAccessoryCoordinator {
         // already said why.
         guard let identity = info.identity else { return }
 
-        // Spent by this arrival whatever it then decides, like the token
-        // below, so one return owed is one arrival routed.
-        let owedTo = holders.owedReturn(of: identity)
-        let owedSessionID = owedTo?.activity.spendOwedReturn(of: identity)
-
         if releasedByUser.remove(identity) != nil {
             #log(
                 Self.logger, .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public) for the host: it came back from a detach the user asked for"
             )
-            return
-        }
-
-        if let owedTo, let owedSessionID {
-            owedTo.activity.follow(autoAttach(info, to: owedTo, for: owedSessionID, as: .owedReturn))
             return
         }
 
@@ -173,7 +159,7 @@ final class USBAccessoryCoordinator {
             )
             return
         }
-        paired.activity.follow(autoAttach(info, to: paired, for: sessionID, as: .paired))
+        paired.activity.follow(autoAttach(info, to: paired, for: sessionID))
     }
 
     /// Drops any guest's record of an accessory that has just re-enumerated.
@@ -208,7 +194,7 @@ final class USBAccessoryCoordinator {
     func sessionBecameAttachable(_ instance: VMInstance) -> [VMFollowUp] {
         guard let sessionID = instance.attachableSessionID else { return [] }
         let held = holders.heldRegistryIDs
-        let owed = service.accessories.filter { accessory in
+        let paired = service.accessories.filter { accessory in
             guard !held.contains(accessory.registryID), let identity = accessory.identity else {
                 return false
             }
@@ -216,22 +202,14 @@ final class USBAccessoryCoordinator {
             guard claimantCount(of: identity) == 1 else { return false }
             return !(identity.form == .receptacle && sharesItsModel(accessory))
         }
-        return owed.map { autoAttach($0, to: instance, for: sessionID, as: .paired) }
+        return paired.map { autoAttach($0, to: instance, for: sessionID) }
     }
 
     // MARK: - The One Automatic Attach
 
-    /// Why an automatic attach takes an accessory to a VM, as its log line
-    /// says.
-    private enum AutoAttachReason {
-        /// The accessory is paired with the VM.
-        case paired
-        /// A warm capture took the accessory off the VM's guest.
-        case owedReturn
-    }
-
-    /// The follow-up that passes `accessory` through to `instance`, for as
-    /// long as the session `sessionID` names lasts.
+    /// The follow-up that passes `accessory`, which is paired with
+    /// `instance`, through to it, for as long as the session `sessionID`
+    /// names lasts.
     ///
     /// Queued behind whatever holds the VM, and decided afresh when it frees
     /// it: an accessory unplugged meanwhile, or taken by another attach, stays
@@ -241,8 +219,7 @@ final class USBAccessoryCoordinator {
     /// failure or a refusal leaves the accessory with the host and says so in
     /// the log.
     private func autoAttach(
-        _ accessory: USBAccessoryInfo, to instance: VMInstance, for sessionID: UUID,
-        as reason: AutoAttachReason
+        _ accessory: USBAccessoryInfo, to instance: VMInstance, for sessionID: UUID
     ) -> VMFollowUp {
         let registryID = accessory.registryID
         return VMFollowUp(
@@ -257,14 +234,9 @@ final class USBAccessoryCoordinator {
             try lifecycle.launchUSBAccessoryAttach(
                 registryID, to: instance, for: sessionID, resolving: outcome
             ) { _, attached in
-                let because =
-                    switch reason {
-                    case .paired: "it is paired with that virtual machine"
-                    case .owedReturn: "a snapshot took it off that virtual machine"
-                    }
                 #log(
                     Self.logger, .notice,
-                    "Passed USB accessory \(attached.accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': \(because, privacy: .public)"
+                    "Passed USB accessory \(attached.accessory.displayName, privacy: .public) through to '\(instance.name, privacy: .public)': it is paired with that virtual machine"
                 )
             }
         }

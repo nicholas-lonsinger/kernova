@@ -178,10 +178,6 @@ final class VMLifecycleCoordinator {
     }
 
     /// Suspends the VM to disk.
-    ///
-    /// The accessories the write ejects stay off, on both outcomes: the guest
-    /// is going away, and a suspend that fails takes the session down with it,
-    /// so there is no guest left to put anything back on.
     func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         try await instance.activity.perform(.saving, origin: origin) { context in
             try await virtualizationService.save(instance, context)
@@ -193,16 +189,8 @@ final class VMLifecycleCoordinator {
     /// Captures `snapshot` in `mode` and lists it with `record`, inside one
     /// capture operation, which ends once the snapshot's files are written.
     ///
-    /// A warm capture takes every passthrough accessory off before it writes
-    /// the guest's state, because a saved state carrying one cannot be
-    /// restored. Unlike a suspend the guest is still running afterwards, so
-    /// each one is owed back to it as it goes
-    /// (``VirtualizationService/detachUSBAccessories(owingReturns:session:)``):
-    /// the capture's detach resets the device, macOS assigns it back after a
-    /// delay nothing bounds, and that arrival follows the attach to this VM.
-    /// `record` that
-    /// throws leaves nothing behind: unlisted files are files no surface can
-    /// reach or remove, so the capture is undone.
+    /// A `record` that throws leaves nothing behind: unlisted files are files
+    /// no surface can reach or remove, so the capture is undone.
     func takeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
@@ -958,10 +946,10 @@ final class VMLifecycleCoordinator {
     /// session `sessionID` names, inside an operation holding the VM whose
     /// admission reserved the accessory for it.
     ///
-    /// The operation is what makes the save paths' "no passthrough device on
-    /// the controller when `saveMachineState` runs" post-condition hold by
-    /// construction rather than by timing: a save or a snapshot cannot start
-    /// while this is in flight, and this cannot start while one of those is.
+    /// The operation is what keeps the accessories a saved state is recorded
+    /// as holding (``VirtualizationService/saveMachineState(_:session:to:)``)
+    /// from changing under the write: a save or a snapshot cannot start while
+    /// this is in flight, and this cannot start while one of those is.
     ///
     /// `whileHeld` runs once the accessory is the guest's, as a write of the
     /// operation still holding the VM.
@@ -1030,8 +1018,8 @@ final class VMLifecycleCoordinator {
     /// the VM, inside an operation holding the VM.
     ///
     /// A device VZ no longer holds is a success, not a failure: a surprise
-    /// unplug or a save's own detach sweep may have got there first, and the
-    /// outcome the caller asked for already holds. The release happens either
+    /// unplug may have got there first, and the outcome the caller asked for
+    /// already holds. The release happens either
     /// way.
     ///
     /// `whileHeld` runs once the device is off, as a write of the operation

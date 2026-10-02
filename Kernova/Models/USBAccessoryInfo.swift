@@ -55,11 +55,10 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     /// A key held by a unit in that same receptacle is not among them:
     /// detaching a passthrough device resets it, and what macOS hands back
     /// about 700 ms later is the same stick in the same hole. It has to retake
-    /// its key, or the record still naming it could never be reconciled and the
-    /// accessory a warm capture ejected could never be found again. Every other
-    /// key belongs to a unit somewhere else — a second one of a model whose
-    /// vendor duplicated the serial, above all — and handing it the same key
-    /// would make one indistinguishable from the other.
+    /// its key, or the record still naming it could never be reconciled.
+    /// Every other key belongs to a unit somewhere else — a second one of a
+    /// model whose vendor duplicated the serial, above all — and handing it
+    /// the same key would make one indistinguishable from the other.
     private static func keysClaimedAgainst(
         arrivalIn receptacle: String?, by held: [USBAccessoryInfo]
     ) -> Set<String> {
@@ -121,11 +120,12 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
 /// A passthrough device a running guest currently holds, and the accessory
 /// behind it.
 ///
-/// Runtime-only: the attachment lives no longer than the session, and nothing
-/// re-creates it on restore.
+/// Runtime-only: the attachment lives no longer than the session. A saved
+/// state keeps its own record of the devices it holds
+/// (``SavedUSBPassthroughDevices``), from which a restore makes new ones.
 struct AttachedUSBAccessory: Sendable, Equatable, Identifiable {
-    /// The `VZUSBDevice.uuid` VZ minted for the attachment, and what a detach
-    /// names.
+    /// The `VZUSBDevice.uuid` VZ minted for the attachment — or, restored, the
+    /// one the saved state holds it by — and what a detach names.
     let deviceID: UUID
     let accessory: USBAccessoryInfo
     let attachedAt: Date

@@ -61,11 +61,8 @@ final class MockVirtualizationService: VirtualizationProviding {
     var saveError: (any Error)?
     var takeSnapshotError: (any Error)?
 
-    /// Runs once the capture operation holds the VM, so a test can reproduce
-    /// what the real capture does to the instance while it runs.
-    var onTakeSnapshot: (@MainActor (borrowing VMCaptureContext) async throws -> Void)?
-    /// Parks a capture after ``onTakeSnapshot`` and before it writes, so a
-    /// test can act while the capture holds the VM.
+    /// Parks a capture before it writes, so a test can act while the capture
+    /// holds the VM.
     var takeSnapshotGate: GatedStep?
     var revertToSnapshotError: (any Error)?
 
@@ -164,15 +161,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let mode = context.mode
         let snapshot = request.record(capturedIn: mode)
-        // Stands in for what a real warm capture does to the VM mid-flight —
-        // notably taking every passthrough accessory off before it writes the
-        // guest's state.
-        do {
-            try await onTakeSnapshot?(context)
-        } catch {
-            guard mode == .live else { throw error }
-            return .failed(.asStarted, error)
-        }
         try await takeSnapshotGate?.pass()
         if let error = takeSnapshotError {
             guard mode == .live else { throw error }

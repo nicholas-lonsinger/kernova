@@ -1124,16 +1124,6 @@ final class VMActivity {
         return accessoryHolders?.release(deviceID: deviceID, of: owner, AccessoryHoldersKey())
     }
 
-    /// Spends the return a warm capture owes this VM of the accessory
-    /// carrying `identity`, answering the session it is owed to — `nil` when
-    /// none is owed here.
-    func spendOwedReturn(of identity: USBAccessoryIdentity) -> UUID? {
-        guard let owner,
-            accessoryHolders?.spendOwedReturn(of: identity, to: owner, AccessoryHoldersKey()) == true
-        else { return nil }
-        return liveSessionID
-    }
-
     // MARK: - Session Lifecycle
 
     // periphery:ignore:parameters bringUp - an access token: its type admits the caller
@@ -1357,9 +1347,9 @@ struct VMUSBAttachContext: ~Copyable, Sendable {
 /// so no accessory is passed through to a guest unless it is reserved for
 /// that guest's VM.
 ///
-/// Minted only by an attach's admission, once the reservation is written.
-/// Non-copyable and passed borrowed, so it cannot outlive the operation that
-/// reserved it.
+/// Minted only once the reservation is written — by an attach's admission,
+/// or by ``VMBringUpContext/reserveAccessory(_:)``. Non-copyable and passed
+/// borrowed, so it cannot outlive the operation that reserved it.
 struct VMAccessoryReservation: ~Copyable, Sendable {
     let registryID: UInt64
     /// The VM the accessory is reserved for.
@@ -1381,8 +1371,9 @@ struct VMAccessoryReservation: ~Copyable, Sendable {
 
 /// What every write to ``VMAccessoryHolders`` asks for, so only this file —
 /// ``VMActivity``'s admission, operation endings, session teardown and
-/// unplugs, and the reservations it mints — writes the holder map. The
-/// initializer is `fileprivate`, which `@testable import` does not open.
+/// unplugs, a restore's bring-up, and the reservations it mints — writes the
+/// holder map. The initializer is `fileprivate`, which `@testable import`
+/// does not open.
 struct AccessoryHoldersKey {
     fileprivate init() {}
 }
@@ -1396,6 +1387,27 @@ struct VMBringUpContext: ~Copyable, Sendable {
 
     fileprivate init(operation: consuming VMOperationContext) {
         self.operation = operation
+    }
+
+    /// Reserves the accessory `registryID` names for the VM this bring-up
+    /// holds, for a restore to put back in the configuration it builds —
+    /// `nil`, reserving nothing, while any VM holds it.
+    @MainActor func reserveAccessory(_ registryID: UInt64) -> VMAccessoryReservation? {
+        let instance = operation.instance
+        guard let holders = instance.peers?.accessoryHolders,
+            (try? holders.reserve(registryID, for: instance, AccessoryHoldersKey())) != nil
+        else { return nil }
+        return VMAccessoryReservation(registryID: registryID, instance: instance)
+    }
+
+    /// Records `restoration`'s accessory as the guest's once the machine
+    /// configured with it exists, answering whether this VM still held the
+    /// reservation ``reserveAccessory(_:)`` made.
+    @MainActor func hold(_ restoration: USBPassthroughRestoration) -> Bool {
+        let instance = operation.instance
+        return instance.peers?.accessoryHolders.settle(
+            restoration.registryID, as: restoration.attached, for: instance,
+            AccessoryHoldersKey()) ?? false
     }
 
     #if DEBUG
@@ -1429,23 +1441,6 @@ struct VMCaptureContext: ~Copyable, Sendable {
     fileprivate init(operation: consuming VMOperationContext, mode: VMCaptureMode) {
         self.operation = operation
         self.mode = mode
-    }
-
-    /// Records `item`, which the guest holds, as owed back to this VM, for
-    /// its next arrival to take there — nothing when nothing durable
-    /// identifies it.
-    @MainActor func oweReturn(of item: AttachedUSBAccessory) {
-        let instance = operation.instance
-        instance.peers?.accessoryHolders.oweReturn(of: item, to: instance, AccessoryHoldersKey())
-    }
-
-    /// Takes back the return ``oweReturn(of:)`` recorded for `item`, whose
-    /// detach failed and which the guest still holds.
-    @MainActor func forgiveReturn(of item: AttachedUSBAccessory) {
-        guard let identity = item.accessory.identity else { return }
-        let instance = operation.instance
-        instance.peers?.accessoryHolders.spendOwedReturn(
-            of: identity, to: instance, AccessoryHoldersKey())
     }
 }
 

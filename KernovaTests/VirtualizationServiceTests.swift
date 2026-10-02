@@ -8,7 +8,7 @@ import KernovaTestSupport
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: MockVmnetNetworkProvider(), entitlements: .unentitled)
+        vmnetNetworks: MockVmnetNetworkProvider(), entitlements: .unentitled, usbAccessories: nil)
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
     // MARK: - Snapshot capture
@@ -19,7 +19,7 @@ struct VirtualizationServiceTests {
         var stateWhileCapturing: MockSnapshotSession.GuestState?
 
         try await VirtualizationService.captureLiveState(
-            session: session, wasRunning: true,
+            VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: true,
             saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
         ) {
             stateWhileCapturing = await session.guestState
@@ -37,7 +37,7 @@ struct VirtualizationServiceTests {
         let session = MockSnapshotSession(guestState: .paused)
 
         try await VirtualizationService.captureLiveState(
-            session: session, wasRunning: false,
+            VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: false,
             saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
         ) {}
 
@@ -55,7 +55,7 @@ struct VirtualizationServiceTests {
 
         await #expect(throws: VMSnapshotError.self) {
             try await VirtualizationService.captureLiveState(
-                session: session, wasRunning: true,
+                VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: true,
                 saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
             ) { captured = true }
         }
@@ -63,164 +63,270 @@ struct VirtualizationServiceTests {
         #expect(!captured)
     }
 
-    // MARK: - Detaching passthrough accessories before a save
+    // MARK: - Passthrough accessories across a save
 
-    /// A VM in a library whose live session holds `count` passthrough
-    /// accessories, attached the way every attach is.
+    /// A VM in a library whose live session holds `accessories`, attached the
+    /// way every attach is.
     private struct AccessoryFixture {
         /// Kept for the test's length: the VM reads what it holds from it.
         let library: VMLibrary
         let instance: VMInstance
-        let deviceIDs: [UUID]
-
-        /// Runs the sweep inside a save operation holding the VM, as both save
-        /// paths do, leaving the guest live whatever the sweep did so what it
-        /// still holds can be read.
-        @MainActor
-        func sweep(_ session: MockSnapshotSession) async throws {
-            try await instance.activity.perform(.saving) { context in
-                do {
-                    try await VirtualizationService.detachUSBAccessories(context, session: session)
-                    return .rest(.asStarted, ())
-                } catch {
-                    return .failed(.asStarted, error)
-                }
-            }
-        }
+        let attached: [AttachedUSBAccessory]
     }
 
-    private func instanceHoldingAccessories(_ count: Int) async throws -> AccessoryFixture {
-        let accessories = MockUSBAccessoryService()
-        let lifecycle = makeTestLifecycle(usbAccessoryService: accessories)
+    private func instanceHolding(_ accessories: [USBAccessoryInfo]) async throws -> AccessoryFixture {
+        let service = MockUSBAccessoryService()
+        let lifecycle = makeTestLifecycle(usbAccessoryService: service)
         let library = makeWiredLibrary(lifecycle: lifecycle)
         let sessionID = UUID()
         let instance = library.registerFixture(phase: .running(sessionID: sessionID))
         instance.beginSessionContextForTesting()
-        var deviceIDs: [UUID] = []
-        for index in 0..<count {
-            let registryID = UInt64(index + 1)
-            accessories.accessories.append(
-                MockUSBAccessoryService.accessory(registryID: registryID, serial: "SER\(index)"))
-            let deviceID = UUID()
-            accessories.nextDeviceID = deviceID
-            try await lifecycle.attachUSBAccessory(registryID, to: instance, for: sessionID)
-            deviceIDs.append(deviceID)
+        var attached: [AttachedUSBAccessory] = []
+        for accessory in accessories {
+            service.accessories.append(accessory)
+            attached.append(
+                try await lifecycle.attachUSBAccessory(
+                    accessory.registryID, to: instance, for: sessionID))
         }
-        return AccessoryFixture(library: library, instance: instance, deviceIDs: deviceIDs)
+        return AccessoryFixture(library: library, instance: instance, attached: attached)
     }
 
-    @Test("Every passthrough accessory is detached, and released from the VM")
-    func detachesEveryAccessoryBeforeSaving() async throws {
-        let fixture = try await instanceHoldingAccessories(2)
-        let session = MockSnapshotSession(guestState: .running)
+    @Test("A suspend writes the state with its accessories on, and records each on the save file")
+    func suspendRecordsTheAccessoriesItSaved() async throws {
+        let fixture = try await instanceHolding([
+            MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0"),
+            MockUSBAccessoryService.accessory(registryID: 2, receptacle: "hub/Port-A@1"),
+        ])
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        await session.setUSBDeviceIDs(Set(fixture.attached.map(\.deviceID)))
 
-        try await fixture.sweep(session)
+        try await suspend(fixture.instance, over: session)
 
-        let detached = await session.detachedUSBDeviceIDs
-        #expect(detached == fixture.deviceIDs)
-        #expect(fixture.instance.liveUSBAccessories.isEmpty)
+        let saved = SavedUSBPassthroughDevices.devices(
+            onSaveFileAt: fixture.instance.bundleLayout.saveFileURL)
+        #expect(saved.map(\.deviceID) == fixture.attached.map(\.deviceID))
+        // A serial names the unit; a port names whatever is in it.
+        #expect(saved.map(\.unitKey) == [fixture.attached[0].accessory.identity?.key, nil])
+        #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
+        #expect(fixture.instance.phase == .suspended)
+    }
+
+    @Test("A device VZ dropped before the write is left out of the record")
+    func aDeviceOffTheControllerIsNotRecorded() async throws {
+        let fixture = try await instanceHolding([
+            MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0"),
+            MockUSBAccessoryService.accessory(registryID: 2, serial: "SER1"),
+        ])
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        await session.setUSBDeviceIDs([fixture.attached[1].deviceID])
+
+        try await suspend(fixture.instance, over: session)
+
+        let saved = SavedUSBPassthroughDevices.devices(
+            onSaveFileAt: fixture.instance.bundleLayout.saveFileURL)
+        #expect(saved.map(\.deviceID) == [fixture.attached[1].deviceID])
+    }
+
+    @Test("A warm capture leaves every accessory on the guest and records them on its saved state")
+    func warmCaptureKeepsItsAccessories() async throws {
+        let fixture = try await instanceHolding([
+            MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0")
+        ])
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        await session.setUSBDeviceIDs([fixture.attached[0].deviceID])
+        let saveFileURL = scratch.url.appendingPathComponent("Snapshot.vzvmsave")
+
+        try await VirtualizationService.captureLiveState(
+            fixture.instance, session: session, wasRunning: true, saveFileURL: saveFileURL
+        ) {}
+
+        #expect(fixture.instance.liveUSBAccessories == fixture.attached)
+        let saved = SavedUSBPassthroughDevices.devices(onSaveFileAt: saveFileURL)
+        #expect(saved.map(\.deviceID) == [fixture.attached[0].deviceID])
+    }
+
+    // MARK: - Passthrough accessories across a restore
+
+    /// A library whose USB service assigns what a test puts in it, and the
+    /// accessory coordinator the app wires beside it.
+    private struct RestoreFixture {
+        /// Kept for the test's length: the VMs read what they hold from it.
+        let library: VMLibrary
+        let lifecycle: VMLifecycleCoordinator
+        let service: MockUSBAccessoryService
+        /// Kept for the test's length: the service holds its callbacks weakly.
+        let router: USBAccessoryCoordinator?
+    }
+
+    private func makeRestoreFixture() -> RestoreFixture {
+        let service = MockUSBAccessoryService()
+        let lifecycle = makeTestLifecycle(usbAccessoryService: service)
+        let library = makeWiredLibrary(lifecycle: lifecycle)
+        let router = USBAccessoryCoordinator(
+            lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
+            pairings: library)
+        library.onSessionBecameAttachable = { [weak router] instance in
+            router?.sessionBecameAttachable(instance) ?? []
+        }
+        return RestoreFixture(library: library, lifecycle: lifecycle, service: service, router: router)
+    }
+
+    /// A suspended VM in `fixture`'s library whose saved state holds `saved`,
+    /// recorded as a save records them.
+    private func suspendedInstance(
+        holding saved: [AttachedUSBAccessory], in fixture: RestoreFixture,
+        pairings: USBAccessoryPairingSet = USBAccessoryPairingSet()
+    ) throws -> VMInstance {
+        let instance = fixture.library.registerFixture(
+            name: "Suspended VM", phase: .suspended, pairings: pairings)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        try SavedUSBPassthroughDevices.record(
+            saved, onSaveFileAt: instance.bundleLayout.saveFileURL)
+        return instance
+    }
+
+    /// Restores `instance` the way a resume does, over `session` standing in
+    /// for a machine configured with what the reservation put back.
+    private func restore(
+        _ instance: VMInstance, service: (any USBAccessoryProviding)?,
+        session: MockSnapshotSession = MockSnapshotSession(guestState: .paused)
+    ) async throws {
+        try await instance.activity.launchStartGuest(.restoringSavedState) { context in
+            instance.beginSessionContextForTesting()
+            let restorations = VirtualizationService.reserveSavedUSBAccessories(
+                instance, context.bringUp, service: service)
+            context.bringUp.bindSessionForTesting(UUID())
+            try await VirtualizationService.restoreSavedState(
+                instance, context.bringUp, holding: restorations, session: session)
+            return .rest(.live(.running), ())
+        }.value()
+    }
+
+    @Test("A restore puts the unit its state holds back on the guest, under the saved device ID")
+    func restorePutsTheSavedUnitBack() async throws {
+        let fixture = makeRestoreFixture()
+        let saved = AttachedUSBAccessory(
+            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        // The same unit, back under a new handle since the suspend.
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"))
+
+        try await restore(instance, service: fixture.service)
+
+        #expect(fixture.service.restoredRegistryIDs == [7])
+        #expect(instance.liveUSBAccessories.map(\.deviceID) == [saved.deviceID])
+        #expect(fixture.library.accessoryHolders.holder(of: 7) === instance)
+        #expect(!instance.hasSaveFile)
+    }
+
+    @Test("A restore leaves out a unit that is not assigned to Kernova")
+    func restoreLeavesOutAnAbsentUnit() async throws {
+        let fixture = makeRestoreFixture()
+        let saved = AttachedUSBAccessory(
+            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "OTHER"))
+
+        try await restore(instance, service: fixture.service)
+
+        #expect(fixture.service.restoredRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
+        #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
+        #expect(instance.phase.sessionID != nil)
+    }
+
+    @Test("A restore leaves out an accessory its state knew only by its port")
+    func restoreLeavesOutAPortKeyedAccessory() async throws {
+        let fixture = makeRestoreFixture()
+        let portKeyed = MockUSBAccessoryService.accessory(registryID: 1, receptacle: "hub/Port-A@1")
+        let saved = AttachedUSBAccessory(deviceID: UUID(), accessory: portKeyed)
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        // Whatever is in that port now: VZ would take any unit under the saved
+        // device ID, so the port cannot say it is the one the state holds.
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, receptacle: "hub/Port-A@1"))
+
+        try await restore(instance, service: fixture.service)
+
+        #expect(fixture.service.restoredRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
+    }
+
+    @Test("A restore leaves an accessory another VM holds with that VM")
+    func restoreLeavesAnotherVMsAccessoryAlone() async throws {
+        let fixture = makeRestoreFixture()
+        let saved = AttachedUSBAccessory(
+            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        let otherSession = UUID()
+        let other = fixture.library.registerFixture(
+            name: "Other VM", phase: .running(sessionID: otherSession))
+        other.beginSessionContextForTesting()
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"))
+        try await fixture.lifecycle.attachUSBAccessory(7, to: other, for: otherSession)
+
+        try await restore(instance, service: fixture.service)
+
+        #expect(fixture.service.restoredRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
+        #expect(fixture.library.accessoryHolders.holder(of: 7) === other)
+    }
+
+    @Test("A restored accessory paired with the VM is not attached a second time")
+    func restoreIsNotFollowedByAPairedAttach() async throws {
+        let fixture = makeRestoreFixture()
+        let accessory = MockUSBAccessoryService.accessory(registryID: 7, serial: "0373")
+        let saved = AttachedUSBAccessory(deviceID: UUID(), accessory: accessory)
+        var pairings = USBAccessoryPairingSet()
+        pairings.upsert(try #require(USBAccessoryPairing.make(for: accessory)))
+        let instance = try suspendedInstance(holding: [saved], in: fixture, pairings: pairings)
+        fixture.service.accessories.append(accessory)
+
+        try await restore(instance, service: fixture.service)
+
+        // The restore's end is the VM's attachable edge, which takes back every
+        // paired accessory the host still has; this one is the guest's.
+        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
+        #expect(fixture.service.attachedRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.map(\.deviceID) == [saved.deviceID])
+    }
+
+    @Test("A restored accessory VZ reports gone is dropped from the guest's record")
+    func aRestoredAccessoryCanBeUnplugged() async throws {
+        let fixture = makeRestoreFixture()
+        let saved = AttachedUSBAccessory(
+            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"))
+        try await restore(instance, service: fixture.service)
+
+        instance.handleSessionEvent(.usbPassthroughDeviceDidDisconnect(saved.deviceID))
+
+        #expect(instance.liveUSBAccessories.isEmpty)
         #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
     }
 
-    @Test("A device the controller already lost is released and does not fail the save")
-    func anAlreadyDetachedDeviceIsNotAFailure() async throws {
-        let fixture = try await instanceHoldingAccessories(1)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setDetachError(VMSessionError.usbDeviceNotFound)
+    @Test("A restore that fails frees the accessories it put back")
+    func aFailedRestoreFreesItsAccessories() async throws {
+        let fixture = makeRestoreFixture()
+        let saved = AttachedUSBAccessory(
+            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
+        let instance = try suspendedInstance(holding: [saved], in: fixture)
+        fixture.service.accessories.append(
+            MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"))
+        let session = MockSnapshotSession(guestState: .paused)
+        await session.setRestoreError(NSError(domain: VZError.errorDomain, code: 12))
 
-        try await fixture.sweep(session)
-
-        #expect(fixture.instance.liveUSBAccessories.isEmpty)
-    }
-
-    @Test("A detach that fails for any other reason stops the save rather than writing state")
-    func aFailedDetachStopsTheSave() async throws {
-        let fixture = try await instanceHoldingAccessories(1)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setDetachError(VMSessionError.usbControllerUnavailable)
-
-        // Swallowing this would write a saved state still carrying a
-        // passthrough device — a file `VZErrorRestore` refuses and nothing can
-        // recover, produced by an operation that reported success.
-        await #expect(throws: VMSessionError.self) {
-            try await fixture.sweep(session)
+        await #expect(throws: VirtualizationError.self) {
+            try await restore(instance, service: fixture.service, session: session)
         }
 
-        let calls = await session.calls
-        #expect(!calls.contains("saveMachineState"))
-        #expect(fixture.instance.liveUSBAccessories.count == 1)
-    }
-
-    @Test("A sweep that throws part-way leaves only what it never reached attached")
-    func aPartialSweepClearsWhatItEjected() async throws {
-        let fixture = try await instanceHoldingAccessories(2)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setDetachError(
-            VMSessionError.usbControllerUnavailable, forDeviceID: fixture.deviceIDs[1])
-
-        await #expect(throws: VMSessionError.self) {
-            try await fixture.sweep(session)
-        }
-
-        #expect(fixture.instance.liveUSBAccessories.map(\.deviceID) == [fixture.deviceIDs[1]])
-    }
-
-    @Test("A capture's sweep owes back exactly the accessories it took off")
-    func aCaptureSweepOwesWhatItTookOff() async throws {
-        let fixture = try await instanceHoldingAccessories(3)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setDetachError(
-            VMSessionError.usbControllerUnavailable, forDeviceID: fixture.deviceIDs[1])
-        let owedBefore = OwedRecord()
-        let holders = fixture.library.accessoryHolders
-        let identities = fixture.instance.liveUSBAccessories.compactMap(\.accessory.identity)
-        #expect(identities.count == 3)
-        let firstDevice = fixture.deviceIDs[0]
-        let firstIdentity = identities[0]
-        await session.setBeforeDetach { deviceID in
-            await MainActor.run {
-                guard deviceID == firstDevice else { return }
-                owedBefore.instance = holders.owedReturn(of: firstIdentity)
-            }
-        }
-
-        await #expect(throws: VMSessionError.self) {
-            try await fixture.instance.activity.captureSnapshot(.live) { context in
-                try await VirtualizationService.detachUSBAccessories(
-                    owingReturns: context, session: session)
-                return .rest(.asStarted, ())
-            }
-        }
-
-        // Owed before its own detach ran, since macOS can hand it back before
-        // that returns.
-        #expect(owedBefore.instance === fixture.instance)
-        #expect(holders.owedReturn(of: identities[0]) === fixture.instance)
-        // The one whose detach threw is still the guest's, and the one never
-        // reached was never taken off.
-        #expect(holders.owedReturn(of: identities[1]) == nil)
-        #expect(holders.owedReturn(of: identities[2]) == nil)
-    }
-
-    @Test("A save's sweep owes nothing back")
-    func aSaveSweepOwesNothing() async throws {
-        let fixture = try await instanceHoldingAccessories(1)
-        let identity = try #require(fixture.instance.liveUSBAccessories.first?.accessory.identity)
-
-        try await fixture.sweep(MockSnapshotSession(guestState: .running))
-
-        #expect(fixture.library.accessoryHolders.owedReturn(of: identity) == nil)
-    }
-
-    @Test("A session holding nothing asks VZ for no detach at all")
-    func noAccessoriesMeansNoDetachCalls() async throws {
-        let fixture = try await instanceHoldingAccessories(0)
-        let session = MockSnapshotSession(guestState: .running)
-
-        try await fixture.sweep(session)
-
-        let calls = await session.calls
-        #expect(calls.isEmpty)
+        #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
+        #expect(instance.hasSaveFile)
     }
 
     // MARK: - A bring-up that fails before its session is live
@@ -370,7 +476,7 @@ struct VirtualizationServiceTests {
 
         try await instance.activity.launchStartGuest(.restoringSavedState) { context in
             try await VirtualizationService.restoreSavedState(
-                instance, context.bringUp.operation, session: session)
+                instance, context.bringUp, session: session)
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
         }.value()
@@ -1414,10 +1520,4 @@ struct VirtualizationServiceTests {
         #expect(instance.configuration.kernelPath == picked.path(percentEncoded: false))
         #expect(storage.bundles[instance.bundleURL]?.kernelPath == picked.path(percentEncoded: false))
     }
-}
-
-/// Which VM a return was owed to at one moment mid-sweep.
-@MainActor
-private final class OwedRecord {
-    var instance: VMInstance?
 }
