@@ -1283,6 +1283,21 @@ struct VirtualizationServiceTests {
         // own state's answer.
         #expect(!message.lowercased().contains("try again"))
         #expect(!message.contains("Resume"))
+        #expect(!message.contains("locked"))
+    }
+
+    @Test("A restore that failed while the Mac was locked says an unlock is needed")
+    func restoreFailedWhileLockedNamesTheUnlock() {
+        let message = VirtualizationError.restoreFailed(
+            underlying: NSError(
+                domain: VZError.errorDomain, code: VZError.Code.restore.rawValue,
+                userInfo: [NSLocalizedDescriptionKey: "permission denied"]),
+            hostLocked: true
+        ).localizedDescription
+
+        #expect(message.contains("permission denied"))
+        #expect(message.contains("can be restored only while it is unlocked"))
+        #expect(message.hasSuffix("The saved state was kept."))
     }
 
     @Test("A revert whose resume failed names the Resume the VM is left offering")

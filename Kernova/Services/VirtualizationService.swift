@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KernovaKit
 import KernovaLogging
@@ -817,7 +818,7 @@ final class VirtualizationService {
     /// and transience classifiers can read the VZ failure underneath.
     static func unwrappedRestoreFailure(_ error: Error) -> Error {
         guard let virtualizationError = error as? VirtualizationError,
-            case .restoreFailed(let underlying) = virtualizationError
+            case .restoreFailed(let underlying, _) = virtualizationError
         else { return error }
         return underlying
     }
@@ -911,11 +912,12 @@ final class VirtualizationService {
             context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
+            let hostLocked = !NSApplication.shared.isProtectedDataAvailable
             #log(
                 logger, .error,
-                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlyingChainDescription(nsError), privacy: .public)]"
+                "Restore failed for VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public) [\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public); underlying: \(underlyingChainDescription(nsError), privacy: .public); host locked: \(hostLocked, privacy: .public)]"
             )
-            throw VirtualizationError.restoreFailed(underlying: error)
+            throw VirtualizationError.restoreFailed(underlying: error, hostLocked: hostLocked)
         }
     }
 }
@@ -933,7 +935,11 @@ enum VirtualizationError: LocalizedError {
     /// The file system turned the removal of the suspend slot down, so the VM
     /// is still resting on the session the discard was asked to end.
     case savedStateNotDiscarded
-    case restoreFailed(underlying: any Error)
+    /// `hostLocked` is whether this Mac's protected data was unavailable when
+    /// the restore failed: the VM helper's Secure Enclave key is when-unlocked
+    /// class (`docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md`),
+    /// so no restore succeeds until the Mac is unlocked.
+    case restoreFailed(underlying: any Error, hostLocked: Bool = false)
     /// The revert wrote the snapshot back, and bringing the VM up on it failed.
     case revertResumeFailed(underlying: any Error)
 
@@ -949,12 +955,15 @@ enum VirtualizationError: LocalizedError {
             // The VM still holds the session, so it is still offered — nothing
             // was lost, and the same command is the way to try again.
             "The saved state could not be deleted."
-        case .restoreFailed(let underlying):
+        case .restoreFailed(let underlying, let hostLocked):
             // States what is known and stops. Nothing here can tell whether a
             // second attempt would fare better — after the device set has
             // diverged from the one the state was written with, none ever will
             // — and which commands the VM offers is its own state's answer.
             "Could not restore the saved state: \(underlying.localizedDescription)\n\n"
+                + (hostLocked
+                    ? "This Mac is locked, and a saved state can be restored only while it is unlocked. "
+                    : "")
                 + "The saved state was kept."
         case .revertResumeFailed(let underlying):
             "The virtual machine was reverted to the snapshot, but it could not be "
@@ -970,7 +979,7 @@ enum VirtualizationError: LocalizedError {
 extension VirtualizationError: CustomNSError {
     var errorUserInfo: [String: Any] {
         switch self {
-        case .restoreFailed(let underlying), .revertResumeFailed(let underlying):
+        case .restoreFailed(let underlying, _), .revertResumeFailed(let underlying):
             [NSUnderlyingErrorKey: underlying as NSError]
         default:
             [:]
