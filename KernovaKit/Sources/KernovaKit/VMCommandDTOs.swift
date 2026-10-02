@@ -53,10 +53,13 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let diskSizeInGB: Int
     /// The network the VM joins, `nil` when networking is off.
     public let networkMode: String?
-    /// Which network of its mode the VM joins — `common` or `isolated` —
-    /// `nil` where it joins no app-managed network (networking off, or
-    /// bridged).
+    /// Which network of its mode the VM joins — `common`, `isolated`, or a
+    /// named network's identifier, as `network.membership` reads it — `nil`
+    /// where it joins no app-managed network (networking off, or bridged).
     public let networkMembership: String?
+    /// The name of the named network the VM joins, `nil` where it joins none
+    /// or one the library does not list.
+    public let networkName: String?
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -86,6 +89,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         diskSizeInGB: Int,
         networkMode: String?,
         networkMembership: String?,
+        networkName: String?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,
@@ -104,6 +108,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.diskSizeInGB = diskSizeInGB
         self.networkMode = networkMode
         self.networkMembership = networkMembership
+        self.networkName = networkName
         self.macAddress = macAddress
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus
@@ -228,6 +233,36 @@ public struct USBPairingSummary: Codable, Sendable, Hashable {
         self.key = key
         self.name = name
         self.pairedAt = pairedAt
+    }
+}
+
+/// The mode every virtual machine on a named network runs in.
+public enum NetworkKind: String, Codable, Sendable, Hashable, CaseIterable {
+    /// Shared Network: the guests reach the internet through this Mac.
+    case shared
+    /// Host Only: the guests reach this Mac and each other, nothing else.
+    case hostOnly
+}
+
+/// One named network: the virtual machines on it reach each other, and no
+/// other guest.
+public struct NetworkSummary: Codable, Sendable, Hashable {
+    /// The network's stable identifier, which a virtual machine's
+    /// `network.membership` names.
+    public let id: UUID
+    /// What the user called it, unique in the library.
+    public let name: String
+    /// The mode every virtual machine on it runs in.
+    public let kind: NetworkKind
+    /// The virtual machines that join it, in the order the sidebar shows them.
+    public let members: [VMSummary]
+
+    /// Describes one named network.
+    public init(id: UUID, name: String, kind: NetworkKind, members: [VMSummary]) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.members = members
     }
 }
 

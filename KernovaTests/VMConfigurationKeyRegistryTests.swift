@@ -32,9 +32,11 @@ struct VMConfigurationKeyRegistryTests {
     }
 
     private func context(
-        _ manifest: VMSnapshotManifest? = nil, entitlements: EntitlementService = .entitled
+        _ manifest: VMSnapshotManifest? = nil, entitlements: EntitlementService = .entitled,
+        networks: [VMNamedNetwork] = []
     ) -> VMConfigurationWriteContext {
-        VMConfigurationWriteContext(snapshots: manifest ?? makeManifest(), entitlements: entitlements)
+        VMConfigurationWriteContext(
+            snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: networks)
     }
 
     /// Writes `key` into whichever half of `settings` holds it.
@@ -56,7 +58,7 @@ struct VMConfigurationKeyRegistryTests {
             Issue.record("\(key.name) is not a configuration key")
             return nil
         }
-        return field.refusalOnResult(config)
+        return field.refusalOnResult(config, context())
     }
 
     /// Writes a configuration key, on a VM whose host state is the default.
@@ -411,6 +413,64 @@ struct VMConfigurationKeyRegistryTests {
         #expect(read(key, config) == "isolated")
         #expect(key.capability(writing: "common", for: .linux) == .switchNetworkMembership)
         #expect(throws: CommandError.self) { try write(key, "true", to: &config) }
+    }
+
+    @Test("network.membership names a listed network by name or identifier, and reads back its identifier")
+    func membershipNamesANamedNetwork() throws {
+        let key = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
+        guard case .configuration(let field) = key.field else {
+            Issue.record("not a configuration key")
+            return
+        }
+        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
+        let listing = context(networks: [lab])
+        var config = makeConfiguration()
+
+        try field.write("lab", &config, listing)
+        #expect(config.networkMembership == .network(lab.id))
+        #expect(read(key, config) == lab.id.uuidString)
+        #expect(config.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .named(lab.id))))
+        #expect(field.refusalOnResult(config, listing) == nil)
+
+        // What a read answered is taken back.
+        var again = makeConfiguration()
+        try field.write(read(key, config), &again, listing)
+        #expect(again.networkMembership == config.networkMembership)
+        #expect(throws: CommandError.self) { try field.write("Office", &config, listing) }
+    }
+
+    @Test("A VM joins a named network only in the network's mode, and only one the library lists")
+    func namedNetworkMembershipIsJudgedOnTheResult() throws {
+        let membership = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
+        let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
+        guard case .configuration(let membershipField) = membership.field,
+            case .configuration(let modeField) = mode.field
+        else {
+            Issue.record("not configuration keys")
+            return
+        }
+        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .hostOnly)
+        let listing = context(networks: [lab])
+
+        // Shared VM onto a Host Only network: refused until the mode follows.
+        var config = makeConfiguration()
+        try membershipField.write("Lab", &config, listing)
+        #expect(membershipField.refusalOnResult(config, listing)?.contains("hostOnly") == true)
+        try modeField.write("hostOnly", &config, listing)
+        #expect(membershipField.refusalOnResult(config, listing) == nil)
+        #expect(modeField.refusalOnResult(config, listing) == nil)
+
+        // The network leaving the library leaves the VM on an unlisted one,
+        // which a write onto it refuses.
+        #expect(membershipField.refusalOnResult(config, context()) != nil)
+
+        // Bridged and no device make the membership inert.
+        try modeField.write("bridged", &config, listing)
+        #expect(modeField.refusalOnResult(config, listing) == nil)
+        // An identifier the library does not list is refused even where the
+        // membership is inert.
+        try membershipField.write(UUID().uuidString, &config, listing)
+        #expect(membershipField.refusalOnResult(config, listing) != nil)
     }
 
     @Test("A build without VM networking refuses a write onto a network it cannot attach, naming the build")

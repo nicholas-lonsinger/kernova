@@ -17,7 +17,7 @@ struct CLIVerbWireTests {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.4"),
+            networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
@@ -298,5 +298,48 @@ struct CLIVerbWireTests {
         #expect(
             exchanged.sent
                 == [.forgetUSBPairing(.idOrName("Alpha"), key: "04e8:6300:0100@hub/Port-A@1")])
+    }
+
+    // MARK: - Named networks
+
+    private var lab: NetworkSummary {
+        NetworkSummary(
+            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE") ?? UUID(), name: "Lab",
+            kind: .hostOnly, members: [alpha])
+    }
+
+    @Test("network list asks for the library's networks and names no virtual machine")
+    func networkListAsksForTheNetworks() throws {
+        let exchanged = try CLIWire.exchange(
+            ["network", "list"], answering: VMCommandResponse(result: .networks([lab])))
+
+        #expect(exchanged.sent == [.networks])
+        #expect(try exchanged.answer.payload() == .networks([lab]))
+    }
+
+    @Test("network create crosses with its name and kind, the kind shared unless --kind names one")
+    func networkCreateSendsItsKind() throws {
+        let answered = VMCommandResponse(result: .network(lab))
+
+        let plain = try CLIWire.exchange(["network", "create", "Lab"], answering: answered)
+        #expect(plain.sent == [.createNetwork(name: "Lab", kind: .shared)])
+        #expect(try plain.answer.payload() == .network(lab))
+
+        let hostOnly = try CLIWire.exchange(
+            ["network", "create", "Lab", "--kind", "hostOnly"], answering: answered)
+        #expect(hostOnly.sent == [.createNetwork(name: "Lab", kind: .hostOnly)])
+    }
+
+    @Test("network rename and delete cross with the network as the line spelled it")
+    func networkRenameAndDeleteSendTheirNetwork() throws {
+        // The app matches a name or an identifier, so the argument crosses
+        // verbatim either way.
+        let renamed = try CLIWire.exchange(
+            ["network", "rename", "Lab", "Bench"], answering: accepted)
+        #expect(renamed.sent == [.renameNetwork(network: "Lab", newName: "Bench")])
+
+        let deleted = try CLIWire.exchange(
+            ["network", "delete", lab.id.uuidString], answering: accepted)
+        #expect(deleted.sent == [.deleteNetwork(network: lab.id.uuidString)])
     }
 }

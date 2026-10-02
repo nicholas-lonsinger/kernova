@@ -2,21 +2,27 @@ import AVFoundation
 import Foundation
 import KernovaKit
 
-/// What a Mode menu item selects, and how every surface naming the mode names
-/// it.
+/// What a Mode menu item selects, and how every surface naming the VM's
+/// network names it.
 ///
-/// `bridged`'s payload is the host interface identifier, `nil` for Automatic.
+/// `vmnet` is Shared Network or Host Only, on the network of that mode its
+/// membership names. `bridged`'s payload is the host interface identifier,
+/// `nil` for Automatic.
 enum NetworkModeChoice: Equatable {
-    case shared
-    case hostOnly
+    case vmnet(VmnetNetworkKind, VMNetworkMembership)
     case none
     case bridged(String?)
+
+    /// Shared Network's common network.
+    static let shared = NetworkModeChoice.vmnet(.shared, .common)
+    /// Host Only's common network.
+    static let hostOnly = NetworkModeChoice.vmnet(.hostOnly, .common)
 
     init(_ configuration: VMConfiguration) {
         switch configuration.effectiveNetworkMode {
         case nil: self = .none
-        case .shared: self = .shared
-        case .hostOnly: self = .hostOnly
+        case .shared: self = .vmnet(.shared, configuration.networkMembership)
+        case .hostOnly: self = .vmnet(.hostOnly, configuration.networkMembership)
         case .bridged: self = .bridged(configuration.bridgedInterfaceIdentifier)
         }
     }
@@ -29,26 +35,51 @@ enum NetworkModeChoice: Equatable {
     }
 
     /// The Mode picker's title for this choice, which is what the Network card
-    /// states beside the address.
+    /// states beside the address. `networks` is the library's named networks.
     ///
-    /// A mode whose network this build cannot attach (`attachable` false)
-    /// still names itself, marked unavailable: the picker offers no entry for
-    /// it, so this is what shows a VM already on it what it is set to.
-    func title(attachable: Bool, interfaces: [BridgedInterface]) -> String {
+    /// A network this build cannot attach (`attachable` false) still names
+    /// itself, marked unavailable: the picker offers no entry for it, so this
+    /// is what shows a VM already on it what it is set to.
+    func title(
+        attachable: Bool, interfaces: [BridgedInterface], networks: [VMNamedNetwork]
+    ) -> String {
+        let unavailable = " (unavailable)"
         switch self {
-        case .shared:
-            return "Shared Network"
-        case .hostOnly:
-            return attachable ? "Host Only" : "Host Only (unavailable)"
+        case .vmnet(let kind, let membership):
+            let base: String
+            switch membership {
+            case .common:
+                base = Self.kindTitle(kind)
+            case .isolated:
+                base = "\(Self.kindTitle(kind)), Isolated"
+            case .network(let id):
+                // A network the library does not list in this mode is one no
+                // surface can choose, so it never reads as merely unavailable.
+                guard let network = networks.first(where: { $0.id == id && $0.kind == kind })
+                else { return Self.unlistedNetworkTitle }
+                base = network.name
+            }
+            return attachable ? base : base + unavailable
         case .none:
             return "None"
         case .bridged(let identifier):
-            guard attachable else { return "Bridged (unavailable)" }
+            guard attachable else { return "Bridged" + unavailable }
             guard let identifier else { return "Automatic" }
             guard let interface = interfaces.first(where: { $0.identifier == identifier }) else {
-                return "\(identifier) (unavailable)"
+                return identifier + unavailable
             }
             return Self.interfaceTitle(interface)
+        }
+    }
+
+    /// How a VM naming a network the library does not list names it.
+    static let unlistedNetworkTitle = "Network Not in This Library"
+
+    /// How Shared Network or Host Only names itself.
+    static func kindTitle(_ kind: VmnetNetworkKind) -> String {
+        switch kind {
+        case .shared: "Shared Network"
+        case .hostOnly: "Host Only"
         }
     }
 
@@ -112,9 +143,9 @@ final class VMOverviewResolver {
     /// forward, where System Settings may have changed it.
     private var micPermission: AVAuthorizationStatus
 
-    /// The choice the mode title was named for, so naming it again — which
-    /// enumerates the host's bridgeable interfaces — happens only when the mode
-    /// moves.
+    /// The choice the mode title was named for, so naming a bridged
+    /// interface again — which enumerates the host's bridgeable interfaces —
+    /// happens only when the choice moves.
     private var titledNetworkChoice: NetworkModeChoice?
 
     /// The VM and disk the capacity was last read for, so a re-resolve re-uses
@@ -251,11 +282,14 @@ final class VMOverviewResolver {
 
     private func refreshNetwork(_ config: VMConfiguration) {
         let choice = NetworkModeChoice(config)
-        if choice != titledNetworkChoice {
+        // Only an interface's title costs an enumeration; every other one is
+        // named again each pass, so a renamed network re-titles.
+        if choice != titledNetworkChoice || !choice.namesAHostInterface {
             titledNetworkChoice = choice
             resolved.networkModeTitle = choice.title(
                 attachable: config.joinedNetwork.map(viewModel.entitlements.canAttach) ?? true,
-                interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [])
+                interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [],
+                networks: viewModel.networks.networks)
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)
     }

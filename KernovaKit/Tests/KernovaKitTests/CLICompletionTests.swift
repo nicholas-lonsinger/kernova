@@ -182,6 +182,7 @@ struct CLICompletionTests {
             ).isEmpty)
         #expect(CompletionSource.availableUSBAccessories(in: unreachable).isEmpty)
         #expect(CompletionSource.configurationKeys(in: unreachable).isEmpty)
+        #expect(CompletionSource.networkNames(in: unreachable).isEmpty)
     }
 
     @Test("The library listing is what a virtual machine argument offers")
@@ -394,6 +395,25 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.configurationKeys(suffix: "=", in: context(to: assigning))
                 == ["cpus="])
+    }
+
+    @Test("A network argument offers the library's networks by name, described by their kind")
+    func networkNamesComeFromTheLibrary() throws {
+        let listener = try TestCommandSocket()
+        defer { listener.close() }
+        listener.serve([
+            [
+                VMCommandResponse(
+                    result: .networks([
+                        NetworkSummary(id: UUID(), name: "Lab", kind: .hostOnly, members: [alpha])
+                    ]))
+            ]
+        ])
+
+        #expect(
+            CompletionSource.networkNames(in: context(to: listener, asking: .zsh))
+                == ["Lab:hostOnly"])
+        #expect(listener.requests().map(\.verb) == [.networks])
     }
 
     // MARK: - Handing them to a shell

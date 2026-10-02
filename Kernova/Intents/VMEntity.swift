@@ -49,6 +49,11 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Network Membership")
     var networkMembership: String?
 
+    /// The name of the named network the VM joins, `nil` where it joins none
+    /// or one the library does not list.
+    @Property(title: "Network")
+    var networkName: String?
+
     @Property(title: "MAC Address")
     var macAddress: String?
 
@@ -85,6 +90,7 @@ struct VMEntity: IndexedEntity {
         self.diskSizeInGB = info.diskSizeInGB
         self.networkMode = info.networkMode
         self.networkMembership = info.networkMembership
+        self.networkName = info.networkName
         self.macAddress = info.macAddress
         self.ipAddress = info.ipAddress.address
         self.agentStatus = info.agentStatus

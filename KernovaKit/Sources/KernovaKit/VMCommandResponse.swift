@@ -45,6 +45,10 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case configurationKeys([ConfigurationKeyDescriptor])
         /// Configuration values, in the order they were asked for.
         case configuration([ConfigurationEntry])
+        /// The library's named networks.
+        case networks([NetworkSummary])
+        /// One named network a verb created.
+        case network(NetworkSummary)
         /// One library change, for a transport streaming them.
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.

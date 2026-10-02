@@ -104,12 +104,11 @@ enum SettingsPaneMetrics {
 ///
 /// Holds a **General** tab (app-lifecycle toggles), a **Reminders** tab (turning
 /// suppressed reminders back on), a **Clipboard** tab (the maximum paste size),
-/// and an **Advanced** tab; the toolbar style is used so further panes can be
-/// added later as additional `NSTabViewItem`s.
+/// a **Networks** tab (the library's named networks) in a build that can attach
+/// one, and an **Advanced** tab.
 ///
-/// The Reminders and Clipboard panes need the app's `VMLibraryViewModel` — to
-/// list and re-arm per-VM install nudges, and to push a changed paste ceiling to
-/// running guests — so this controller is constructed with it.
+/// The Reminders, Clipboard and Networks panes need the app's
+/// `VMLibraryViewModel`, so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
@@ -147,6 +146,14 @@ final class SettingsTabViewController: NSTabViewController {
         clipboard.label = "Clipboard"
         clipboard.image = Self.symbol("clipboard")
         addTabViewItem(clipboard)
+
+        if !NetworksSettingsViewController.creatableKinds(viewModel.entitlements).isEmpty {
+            let networks = NSTabViewItem(
+                viewController: NetworksSettingsViewController(viewModel: viewModel))
+            networks.label = "Networks"
+            networks.image = Self.symbol("network")
+            addTabViewItem(networks)
+        }
 
         let advanced = NSTabViewItem(
             viewController: AdvancedSettingsViewController(preferences: viewModel.preferences))

@@ -1225,7 +1225,7 @@ struct ConfigurationBuilderTests {
                 $0.macAddress = "aa:bb:cc:dd:ee:07"
             }
             let config = instance.configuration
-            let id = VmnetNetworkID(kind: kind, owner: config.id)
+            let id = VmnetNetworkID(kind: kind, scope: .vm(config.id))
             #expect(config.joinedNetwork == .vmnet(id))
 
             // The build asks the VM's own session view for its own network.

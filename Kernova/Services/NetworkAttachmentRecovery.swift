@@ -587,7 +587,7 @@ final class NetworkAttachmentCoordinator {
         }
         #log(
             Self.logger, .warning,
-            "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(selection.isOwn ? "own " : "", privacy: .public)\(selection.kind.rawValue, privacy: .public) network"
+            "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(selection.logDescription, privacy: .public) network"
         )
     }
 

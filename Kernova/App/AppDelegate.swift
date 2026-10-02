@@ -119,7 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             preferences: .shared,
             vmnetNetworks: vmnetNetworks,
             arpTable: HostARPTableReader(),
-            entitlements: entitlements)
+            entitlements: entitlements,
+            networks: VMNetworkDirectory(fileURL: VMNetworkDirectory.productionFileURL))
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
@@ -340,15 +341,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Cocoa builds each command itself and hands it nothing to work with.
     var scriptingGateway: VMScriptingGateway? { lifecycle.scriptingGateway }
 
-    /// `NSApplication` is the scripting root, and the dictionary gives it a
-    /// `virtual machines` element — a key it forwards here.
+    /// `NSApplication` is the scripting root, and the dictionary gives it
+    /// `virtual machines` and `networks` elements — keys it forwards here.
     func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
-        key == Self.virtualMachinesKey
+        Self.scriptingKeys.contains(key)
     }
 
     /// The literal KVC key the dictionary's `virtual machine` element is
     /// declared with, which is also the key Cocoa asks this delegate for.
     nonisolated static let virtualMachinesKey = "virtualMachines"
+
+    /// The literal KVC key the dictionary's `network` element is declared with.
+    nonisolated static let networksKey = "networks"
+
+    /// Every element key the application's dictionary entry declares.
+    nonisolated static let scriptingKeys: Set<String> = [virtualMachinesKey, networksKey]
 
     /// Every VM in the library, as the dictionary's `virtual machine` elements.
     ///
@@ -371,6 +378,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
         scriptingGateway?.virtualMachine(named: name)
+    }
+
+    /// Every named network, as the dictionary's `network` elements, read as
+    /// ``virtualMachines`` is.
+    @objc var networks: [VMNetworkScriptObject] {
+        scriptingGateway?.networks() ?? []
+    }
+
+    /// What `make new …` creates as an element of the application: Cocoa asks
+    /// `NSApplication`, which forwards a key this delegate handles.
+    nonisolated override func newScriptingObject(
+        of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
+        properties: [String: Any]
+    ) -> Any? {
+        // Cocoa has coerced each property to the type the dictionary declares.
+        let name = properties["name"] as? String
+        let kind = properties["kind"] as? NSNumber
+        return MainActor.assumeIsolated { () -> VMNetworkScriptObject? in
+            guard let gateway = scriptingGateway else {
+                NSScriptCommand.current()?.refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
+                return nil
+            }
+            return gateway.makeElement(forKey: key, name: name, kind: kind)
+        }
+    }
+
+    /// Where Cocoa inserts what ``newScriptingObject(of:forValueForKey:withContentsValue:properties:)``
+    /// answered, and a `move` re-inserts what it removed: the core listed the
+    /// network when it was made, so there is nothing to insert.
+    @objc(insertInNetworks:)
+    func insertInNetworks(_ network: Any) {}
+
+    /// The positional spelling of ``insertInNetworks(_:)``, which `make … at`
+    /// and `move` reach: the networks are ordered by name, so the position
+    /// names nothing.
+    @objc(insertInNetworks:atIndex:)
+    func insertInNetworks(_ network: Any, at index: Int) {}
+
+    /// Where Cocoa removes a network for a `delete` — and for a `move`, which
+    /// ``VMScriptingGateway/removeNetwork(at:)`` refuses.
+    @objc(removeFromNetworksAtIndex:)
+    func removeFromNetworks(at index: Int) {
+        scriptingGateway?.removeNetwork(at: index)
     }
 
     // MARK: - Menu Actions
@@ -643,13 +693,16 @@ private final class TestHostDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// `Kernova.sdef` ships in this bundle, so the process is scriptable however
-    /// it was launched, and Cocoa resolves the application's `virtual machine`
-    /// element through whichever delegate is installed. A key no delegate claims
+    /// it was launched, and Cocoa resolves the application's elements through
+    /// whichever delegate is installed. A key no delegate claims
     /// reaches `NSApplication`'s own KVC and raises `NSUnknownKeyException`.
     func application(_ sender: NSApplication, delegateHandlesKey key: String) -> Bool {
-        key == AppDelegate.virtualMachinesKey
+        AppDelegate.scriptingKeys.contains(key)
     }
 
     /// No VM: the test host reads no library.
     @objc var virtualMachines: [VMScriptObject] { [] }
+
+    /// No network, for the same reason.
+    @objc var networks: [VMNetworkScriptObject] { [] }
 }

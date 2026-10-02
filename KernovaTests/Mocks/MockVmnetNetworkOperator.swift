@@ -86,8 +86,7 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetSessionNetwork
     }
 
     func ipv4Subnet(for network: VmnetNetworkID) -> IPv4Subnet? {
-        let selection = VmnetNetworkSelection(kind: network.kind, isOwn: network.owner != nil)
-        guard materializedNetworks.contains(selection) else { return nil }
+        guard materializedNetworks.contains(VmnetNetworkSelection(network)) else { return nil }
         return scriptedSubnets[network]
     }
 
@@ -117,6 +116,9 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetSessionNetwork
 }
 
 extension VmnetNetworkSelection {
-    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: false) }
-    static func own(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, isOwn: true) }
+    static func common(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, membership: .common) }
+    static func own(_ kind: VmnetNetworkKind) -> Self { Self(kind: kind, membership: .isolated) }
+    static func named(_ id: UUID, _ kind: VmnetNetworkKind) -> Self {
+        Self(kind: kind, membership: .network(id))
+    }
 }

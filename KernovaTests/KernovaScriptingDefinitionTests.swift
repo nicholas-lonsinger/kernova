@@ -143,7 +143,7 @@ struct KernovaScriptingDefinitionTests {
         let vm = try #require(classes.first as? XMLElement)
         let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
 
-        #expect(properties.count == 16, "One property per VMInfo field")
+        #expect(properties.count == 17, "One property per VMInfo field")
         for property in properties {
             let key = try #require(try values("cocoa", "key", in: property).first)
             #expect(
@@ -168,6 +168,46 @@ struct KernovaScriptingDefinitionTests {
         #expect(
             AppDelegate.instancesRespond(
                 to: NSSelectorFromString("valueInVirtualMachinesWithName:")))
+    }
+
+    @Test("Every property and element of a network reads a key the object answers to")
+    func everyNetworkKeyResolves() throws {
+        let classes = try loadSuite().nodes(forXPath: "class[@name='network']")
+        let network = try #require(classes.first as? XMLElement)
+        let keyed = try network.nodes(forXPath: "property | element").compactMap { $0 as? XMLElement }
+
+        #expect(keyed.count == 4)
+        for node in keyed {
+            let key = try #require(try values("cocoa", "key", in: node).first)
+            #expect(
+                VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString(key)),
+                "VMNetworkScriptObject answers to no \(key)")
+        }
+        // A rename is a `set name`; the kind is fixed when a network is made.
+        #expect(try values("property[@name='name']", "access", in: network).isEmpty)
+        #expect(try values("property[@name='kind']", "access", in: network) == ["r"])
+        #expect(try values("property[@name='id']", "access", in: network) == ["r"])
+        #expect(VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString("setName:")))
+    }
+
+    @Test("The application's networks element reads, makes and deletes through the delegate")
+    func theNetworksElementIsTheDelegateKey() throws {
+        let extensions = try loadSuite().nodes(
+            forXPath: "class-extension[@extends='application']/element[@type='network']")
+        let element = try #require(extensions.first as? XMLElement)
+
+        let key = try #require(try values("cocoa", "key", in: element).first)
+
+        #expect(key == AppDelegate.networksKey)
+        #expect(AppDelegate.scriptingKeys.contains(key))
+        // The spellings Cocoa's KVC looks for, which nothing else checks.
+        for selector in [
+            key, "insertInNetworks:", "insertInNetworks:atIndex:", "removeFromNetworksAtIndex:",
+        ] {
+            #expect(
+                AppDelegate.instancesRespond(to: NSSelectorFromString(selector)),
+                "AppDelegate answers to no \(selector)")
+        }
     }
 
     // MARK: - Enumerations
@@ -223,6 +263,20 @@ struct KernovaScriptingDefinitionTests {
             #expect(declared[method.term] == method.code, "No \(method.term) enumerator")
             #expect(method.disposition == disposition)
         }
+    }
+
+    @Test("Every kind of named network has a term a script can name")
+    func everyNetworkKindHasAnEnumerator() throws {
+        let declared = try enumerators("network kind")
+
+        #expect(declared.count == NetworkKind.allCases.count)
+        for kind in NetworkKind.allCases {
+            let term = VMScriptNetworkKind(kind)
+            #expect(declared[term.term] == term.code, "No \(term.term) enumerator")
+            #expect(term.kind == kind)
+        }
+        let suite = try loadSuite()
+        #expect(try values("class[@name='network']/property[@name='kind']", "type", in: suite) == ["network kind"])
     }
 
     @Test("Every change to a network a MAC address conflict takes has a term, on every bring-up command")

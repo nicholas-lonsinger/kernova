@@ -125,6 +125,9 @@ enum VMScriptMACConflictRemedy: CaseIterable {
 class VMScriptCommand: NSScriptCommand {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptCommand")
 
+    /// What a script reads back before the app has a gateway to answer it.
+    nonisolated static let notReady = "Kernova is not ready to answer scripts."
+
     /// Takes the event over from Cocoa's own dispatch.
     ///
     /// Cocoa's `execute()` evaluates the receivers first and answers a failure
@@ -169,7 +172,7 @@ class VMScriptCommand: NSScriptCommand {
     /// Runs the verb, recording whatever refused it.
     private func record() async {
         guard let gateway = (NSApp.delegate as? AppDelegate)?.scriptingGateway else {
-            refuse(Int(errAEEventFailed), "Kernova is not ready to answer scripts.")
+            refuse(Int(errAEEventFailed), Self.notReady)
             return
         }
         guard let addressed else {

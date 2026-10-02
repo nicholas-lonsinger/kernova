@@ -62,7 +62,7 @@ enum VMOverviewAction: String, Sendable {
 /// Produced by ``VMOverviewResolver`` and read by every surface stating one of
 /// them — the overview's cards and the panel rows showing the same figure.
 struct VMOverviewResolved: Sendable {
-    /// The Mode picker's current title, which names the bridged interface.
+    /// The Mode picker's current title, which names the network the VM joins.
     var networkModeTitle: String?
     /// What the guest's address resolves to for the mode it is on.
     var ipAddress: GuestIPAddress = .unavailable
@@ -166,11 +166,11 @@ enum VMOverviewSummary {
             guard config.networkEnabled, let mode = resolved.networkModeTitle else {
                 return [Row(label: "Mode", value: "None")]
             }
-            // The mode names the row, so the address it hands the guest is the
-            // value beside it rather than a line of its own.
+            // The network names the row, so the address it hands the guest is
+            // the value beside it rather than a line of its own.
             return [
                 Row(
-                    label: config.joinsOwnNetwork ? "\(mode), Isolated" : mode,
+                    label: mode,
                     value: resolved.ipAddress.displayText ?? "",
                     copy: resolved.ipAddress.address.map { RowCopy(value: $0, name: "Copy IP Address") })
             ]

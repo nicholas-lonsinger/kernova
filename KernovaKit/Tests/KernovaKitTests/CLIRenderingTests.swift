@@ -21,7 +21,7 @@ struct CLIRenderingTests {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
+            networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
@@ -87,8 +87,8 @@ struct CLIRenderingTests {
         let heldInfo = VMInfo(
             id: base.id, name: base.name, status: "stopped", guestOS: base.guestOS,
             cpuCount: base.cpuCount, memoryBytes: base.memoryBytes, diskSizeInGB: base.diskSizeInGB,
-            networkMode: base.networkMode, networkMembership: base.networkMembership, macAddress: base.macAddress,
-            ipAddress: .notObserved,
+            networkMode: base.networkMode, networkMembership: base.networkMembership, networkName: nil,
+            macAddress: base.macAddress, ipAddress: .notObserved,
             agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, bundlePath: base.bundlePath, heldByAnotherCopy: true)
         let status = try #require(
@@ -283,6 +283,56 @@ struct CLIRenderingTests {
             try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
         #expect(row["sizeBytes"] as? Int == 8_192)
         #expect(row["privateBytes"] == nil)
+    }
+
+    // MARK: - Named networks
+
+    private var networks: [NetworkSummary] {
+        [
+            NetworkSummary(
+                id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE") ?? UUID(),
+                name: "Lab", kind: .hostOnly, members: [alpha, longName]),
+            NetworkSummary(
+                id: UUID(uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF") ?? UUID(),
+                name: "Spare", kind: .shared, members: []),
+        ]
+    }
+
+    @Test("A network listing names each network's kind and members, with the identifier last")
+    func networkListingCarriesEveryColumn() {
+        let lines = TableRenderer.render(networks, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        #expect(lines[0].hasPrefix("NAME"))
+        for heading in ["KIND", "MEMBERS"] {
+            #expect(lines[0].contains(heading), "missing \(heading)")
+        }
+        #expect(lines[0].hasSuffix("ID"))
+        // The kind reads as the network.mode value `network create --kind`
+        // takes back.
+        #expect(lines[1].hasPrefix("Lab"))
+        #expect(lines[1].contains("hostOnly"))
+        #expect(lines[1].contains("Alpha, \(longName.name)"))
+        #expect(lines[1].hasSuffix(networks[0].id.uuidString))
+        // A network nobody is on says so, rather than leaving a blank a
+        // column reader would skip.
+        #expect(lines[2].contains("None"))
+        #expect(lines[2].hasSuffix(networks[1].id.uuidString))
+        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    @Test("--quiet on a network listing prints names alone, and an empty library prints nothing")
+    func quietNetworkListingIsNamesOnly() {
+        #expect(TableRenderer.render(networks, quiet: true) == "Lab\nSpare")
+        #expect(TableRenderer.render([NetworkSummary](), quiet: false).isEmpty)
+    }
+
+    @Test("A network's JSON is the wire DTO, members and all, decodable back")
+    func networkJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(networks)
+        let decoded = try JSONDecoder().decode([NetworkSummary].self, from: Data(rendered.utf8))
+        #expect(decoded == networks)
+        #expect(rendered.contains("\"kind\" : \"hostOnly\""))
     }
 
     // MARK: - Configuration
