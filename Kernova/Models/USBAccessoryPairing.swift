@@ -4,9 +4,9 @@ import Foundation
 /// answers to, and enough of its description to name it in a list while the
 /// device itself is in a drawer.
 ///
-/// A preference about what to attach, never part of the VM's configuration — a
-/// saved state restored into a configuration naming hardware that is no longer
-/// present fails, and both save paths detach first for that reason.
+/// A preference about what to attach, never part of the VM's configuration: no
+/// configuration names a passthrough device, and the guest takes the accessory
+/// by a fresh attach once it runs.
 struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
     /// ``USBAccessoryIdentity/key``.
     let key: String

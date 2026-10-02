@@ -140,8 +140,7 @@ struct VirtualizationServiceTests {
         await session.setDetachError(VMSessionError.usbControllerUnavailable)
 
         // Swallowing this would write a saved state still carrying a
-        // passthrough device — a file `VZErrorRestore` refuses and nothing can
-        // recover, produced by an operation that reported success.
+        // passthrough device, from an operation that reported success.
         await #expect(throws: VMSessionError.self) {
             try await fixture.sweep(session)
         }

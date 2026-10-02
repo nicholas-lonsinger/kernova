@@ -533,20 +533,23 @@ final class VirtualizationService {
     /// Takes every passthrough USB accessory off the VM `context` holds before
     /// its state is written.
     ///
-    /// A saved state is restored only into a configuration compatible with it,
-    /// and a passthrough device names host hardware that may be in a drawer by
-    /// then — a mismatch VZ reports as `VZErrorRestore`, failing the whole
-    /// restore with nothing the user can remove to recover. Nothing persists an
-    /// attachment, so dropping them before the write makes that unreachable
-    /// rather than merely unlikely. Both save paths call this — the warm
-    /// capture through ``detachUSBAccessories(owingReturns:session:)`` — and a
-    /// new one must too.
+    /// A saved state holding a passthrough device restores two ways
+    /// (docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md).
+    /// Naming the device under the `uuid` it was saved with is the one
+    /// `VZUSBDeviceConfiguration.uuid` documents, but VZ checks nothing about
+    /// the hardware behind that `uuid`, and the resumed guest would trust its
+    /// cached view of a drive the Mac or another VM may have written since.
+    /// Leaving the device out restored on the one host build measured, and no
+    /// vendor documents it. Detaching before the write keeps every saved state
+    /// free of host hardware, so a restore rests on neither. Both save paths
+    /// call this — the warm capture through
+    /// ``detachUSBAccessories(owingReturns:session:)`` — and a new one must too.
     ///
     /// A device the controller no longer holds is a success — an unplug got
     /// there first, and the post-condition already holds. Anything else throws:
-    /// writing a state that still carries a passthrough device produces a save
-    /// nothing can restore, so the save must fail where the user can see it
-    /// rather than succeed into an unusable file.
+    /// a state still carrying a passthrough device restores only by one of the
+    /// two ways above, so the save fails where the user can see it rather than
+    /// write one.
     ///
     /// Each accessory is released as its device leaves, and the one that threw
     /// is kept, so what the guest still holds afterwards is exactly what this
