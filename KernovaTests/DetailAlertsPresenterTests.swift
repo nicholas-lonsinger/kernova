@@ -404,6 +404,24 @@ struct DetailAlertsPresenterTests {
         #expect(!alert.buttons.contains { $0.role == .default })
     }
 
+    /// A saved state survives a removal of removable media, so the Start the
+    /// recovery runs restores it — and the button says so.
+    @Test("The removal offer names Resume where the saved state survives the removal")
+    func startFailedAlertNamesResumeWhereTheStateSurvives() throws {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        try VMInstanceFixture.writeSaveFile(for: vm)
+
+        let media = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone", verb: .resume, kind: .removableMedia),
+            on: vm)
+        let disk = presenter.startFailedAttachmentAlertForTesting(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), on: vm)
+
+        #expect(media.buttons.map(\.title) == ["Remove and Resume", "Cancel"])
+        #expect(disk.buttons.map(\.title) == ["Remove and Start", "Cancel"])
+    }
+
     @Test("The offer heads itself with the bring-up the user asked for")
     func startFailedAlertNamesTheBringUp() {
         let (presenter, viewModel) = makePresenter()
@@ -479,6 +497,21 @@ struct DetailAlertsPresenterTests {
         #expect(
             message.hasSuffix(
                 "Removing it also discards this virtual machine's saved state."))
+    }
+
+    /// A saved state restores with removable media removed, so its removal
+    /// costs nothing more than the item.
+    @Test("Removing removable media from a suspended VM does not claim to discard its saved state")
+    func startFailedAlertOnRemovableMediaWithASavedStateKeepsIt() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notFound, message: "Removable media 'Archive' was not found.", verb: .resume,
+                kind: .removableMedia),
+            holdsSavedState: true)
+
+        #expect(!message.contains("saved state"))
+        #expect(message.contains("and resume without it"))
+        #expect(message.hasSuffix("you can re-attach it later in Settings."))
     }
 
     /// Read Only does not make a folder a disk image, and nothing here knows

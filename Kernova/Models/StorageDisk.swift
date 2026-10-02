@@ -187,6 +187,17 @@ extension RemovableMediaItem {
         guard let agentPath = KernovaMacOSAgentInfo.installerPath else { return false }
         return path == agentPath
     }
+
+    /// Whether `new` is `old` with items removed and nothing else changed:
+    /// every item it keeps unchanged and in its place in the order.
+    static func isRemoval(from old: [RemovableMediaItem], to new: [RemovableMediaItem]) -> Bool {
+        guard new.count < old.count else { return false }
+        var kept = new[...]
+        for item in old where kept.first == item {
+            kept.removeFirst()
+        }
+        return kept.isEmpty
+    }
 }
 
 /// An external file a VM references that lives *outside* the VM bundle and is

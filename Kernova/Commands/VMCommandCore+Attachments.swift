@@ -736,8 +736,8 @@ extension VMCommandCore {
     // MARK: - Start-Failure Recovery
 
     /// The removal half of the ``CommandRecovery/removeStartFailedAttachment(_:)``
-    /// a failed bring-up offered: the attachment goes, then the VM's saved
-    /// state, leaving a VM the caller's own Start can boot.
+    /// a failed bring-up offered, leaving a VM the caller's own Start can bring
+    /// up.
     ///
     /// The entry is checked before anything else, so an entry somebody removed
     /// meanwhile answers as the no-op
@@ -745,21 +745,15 @@ extension VMCommandCore {
     /// rather than as that verb's stale-attachment refusal — and keeps its
     /// saved state, which a confirmation landing late must not destroy.
     ///
-    /// On a VM resting on its saved state the removal is a write of the discard
-    /// operation itself, committed *before* the saved state goes — the step
-    /// nothing can undo: the alert is window-modal and every other door stays
-    /// live behind it, so a bring-up or a copy can take the VM between the
-    /// offer and the click — and the configuration write can refuse or fail
-    /// to reach disk. Every one of those leaves the VM with both its session
-    /// and its attachment, and tells the caller why. A VM holding no saved
-    /// state — a bring-up consumed it while the alert was up, or a live session
-    /// takes the change as a hot-plug — gets the plain edit.
+    /// Removable media goes as a plain removal, and a saved state stays for
+    /// that Start to restore: a save file restores with removable media removed
+    /// (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
+    /// and a restore that fails keeps it, so Discard Saved State is still
+    /// there. The item is the one the bring-up failed on, so the VM resumed
+    /// with it no other way.
     ///
-    /// The edit's gate refuses while a saved state is on disk, so it is asked
-    /// of the VM as it will stand once the discard lands; the removal is the
-    /// same change the public verb makes — on these arguments (`trashFile:
-    /// false`, already-confirmed, entry re-checked above) that verb adds
-    /// nothing else.
+    /// A storage disk takes the VM's saved state with it
+    /// (``removeStartFailedStorageDisk(_:from:)``).
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -777,32 +771,55 @@ extension VMCommandCore {
             )
             return
         }
-        let capability: VMCapability =
-            switch failure.kind {
-            case .storageDisk: .editStorageDisks
-            case .removableMedia: .editRemovableMedia
-            }
+        switch failure.kind {
+        case .removableMedia:
+            try writeConfiguration(
+                of: instance, as: .removeRemovableMedia, verb: failure.verb,
+                Self.dropRemovableMedia(failure.id))
+            logStartFailedRemoval(failure, from: instance)
+        case .storageDisk:
+            try removeStartFailedStorageDisk(failure, from: instance)
+        }
+    }
+
+    /// ``removeStartFailedAttachment(_:attachment:)``'s storage-disk half,
+    /// which discards a saved state the VM holds — a save file does not restore
+    /// with a storage disk removed.
+    ///
+    /// The removal is then a write of the discard operation itself, committed
+    /// *before* the saved state goes — the step nothing can undo: the alert is
+    /// window-modal and every other door stays live behind it, so a bring-up or
+    /// a copy can take the VM between the offer and the click — and the
+    /// configuration write can refuse or fail to reach disk. Every one of those
+    /// leaves the VM with both its session and its disk, and tells the caller
+    /// why. A VM holding no saved state — a bring-up consumed it while the
+    /// alert was up — gets the plain edit.
+    ///
+    /// The edit's gate refuses while a saved state is on disk, so it is asked
+    /// of the VM as it will stand once the discard lands; the removal is the
+    /// same change the public verb makes — on these arguments (`trashFile:
+    /// false`, already-confirmed, entry re-checked by the caller) that verb
+    /// adds nothing else.
+    private func removeStartFailedStorageDisk(
+        _ failure: StartFailedAttachment, from instance: VMInstance
+    ) throws {
         // Decided as the VM will stand once the discard lands, so only the term
         // that discard clears is lifted and every other blocker — a bring-up in
         // flight, a copy still writing it — answers exactly as it will answer
         // the verb.
         // The refusal names what this VM really accepts rather than what it
         // would accept after a discard that is not going to happen.
-        guard capabilities.acceptsAsIfSavedStateDiscarded(capability, on: instance) else {
-            throw refusal(for: [capability], on: instance)
+        guard capabilities.acceptsAsIfSavedStateDiscarded(.editStorageDisks, on: instance) else {
+            throw refusal(for: [.editStorageDisks], on: instance)
         }
-        if case .storageDisk = failure.kind, let disk = storageDisk(id: failure.id, on: instance) {
+        if let disk = storageDisk(id: failure.id, on: instance) {
             try refuseSoleStorageDiskRemoval(of: disk, on: instance)
         }
-        let removal: (inout VMConfiguration) -> Void =
-            switch failure.kind {
-            case .storageDisk:
-                Self.dropStorageDisk(
-                    failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL))
-            case .removableMedia: Self.dropRemovableMedia(failure.id)
-            }
+        let removal = Self.dropStorageDisk(
+            failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL))
         guard instance.holdsSuspendedSession else {
-            try writeConfiguration(of: instance, as: capability, verb: failure.verb, removal)
+            try writeConfiguration(
+                of: instance, as: .editStorageDisks, verb: failure.verb, removal)
             logStartFailedRemoval(failure, from: instance)
             return
         }
@@ -816,25 +833,16 @@ extension VMCommandCore {
             }
         } catch {
             guard removed else { throw self.failure(error, verb: failure.verb, on: instance) }
-            // A save file does not restore with a storage disk removed, so the
-            // discard the VM still offers is that case's way out; one does
-            // restore with removable media removed
-            // (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md).
-            let removal =
-                "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted."
-            let message =
-                switch failure.kind {
-                case .storageDisk:
-                    removal
-                        + " That state can no longer be restored — discard it to start the virtual machine."
-                case .removableMedia: removal
-                }
-            throw CommandError.operationFailed(verb: failure.verb, message: message)
+            throw CommandError.operationFailed(
+                verb: failure.verb,
+                message:
+                    "\u{201C}\(failure.label)\u{201D} was removed from \u{201C}\(instance.name)\u{201D}, but its saved state could not be deleted. That state can no longer be restored — discard it to start the virtual machine."
+            )
         }
         logStartFailedRemoval(failure, from: instance)
         #log(
             Self.logger, .notice,
-            "Discarded saved state for '\(instance.name, privacy: .public)' along with the attachment its bring-up failed on"
+            "Discarded saved state for '\(instance.name, privacy: .public)' along with the disk its bring-up failed on"
         )
     }
 

@@ -115,7 +115,10 @@ extension VMConfiguration {
                     && !(new ?? []).isEmpty
                     ? [.machineKeys, .liveShares] : .machineKeys
             }),
-        .field("removableMedia", \.removableMedia, .hotPlugMedia),
+        .field("removableMedia", \.removableMedia) { old, new in
+            RemovableMediaItem.isRemoval(from: old ?? [], to: new ?? [])
+                ? [.hotPlugMedia, .removableMediaRemoval] : .hotPlugMedia
+        },
         // The network device: adding or removing it is hardware, and a mode
         // or interface change on the device it has is the live swap. A device
         // added with no address mints its first one.

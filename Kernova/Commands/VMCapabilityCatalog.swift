@@ -39,6 +39,10 @@ enum VMCapability: CaseIterable, Hashable {
     /// unless another VM still references the file, which keeps it.
     case trashStorageDisk
     case editRemovableMedia
+    /// Drop the removable medium a bring-up failed on — wider than
+    /// ``editRemovableMedia``: a saved state restores across a removal, so a
+    /// suspended VM takes one. Reached only from that failure's recovery.
+    case removeRemovableMedia
     /// Write a new disk image where the user chose and attach it as
     /// removable media.
     case createRemovableMedia
@@ -102,7 +106,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .delete: .delete
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
-        case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard,
+        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleSettingsPane:
             nil
         }
@@ -119,6 +123,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .renameSnapshot, .setSnapshotNotes: .snapshotMetadata
         case .editStorageDisks, .editSharedDirectories, .editConfiguration: .machineKeys
         case .editRemovableMedia, .toggleGuestAgentDisk: .hotPlugMedia
+        case .removeRemovableMedia: .removableMediaRemoval
         case .forgetUSBPairing: .pairingRules
         case .editLiveConfiguration: .liveKeys
         case .switchNetworkMode: .networkAttachment
@@ -176,8 +181,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .deleteSnapshot:
             return .operation(.deletingSnapshot)
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
-            .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia, .forgetUSBPairing,
-            .editLiveConfiguration, .switchNetworkMode, .switchNetworkMembership, .rename:
+            .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia,
+            .removeRemovableMedia, .forgetUSBPairing, .editLiveConfiguration, .switchNetworkMode,
+            .switchNetworkMembership, .rename:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)

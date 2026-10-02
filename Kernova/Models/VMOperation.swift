@@ -565,10 +565,15 @@ struct VMEditClasses: OptionSet, Sendable, Hashable {
     /// move a saved state of some modes restores across
     /// (``VMNetworkMode/savedStateRestoresOnAnotherNetworkOfThisMode``).
     static let networkMembership = VMEditClasses(rawValue: 1 << 10)
+    /// Removing removable media — the one move of the list a saved state
+    /// restores across (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
+    /// so admission keeps it open beside one.
+    static let removableMediaRemoval = VMEditClasses(rawValue: 1 << 11)
 
     static let all: VMEditClasses = [
         .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
         .snapshotMetadata, .pairingRules, .rename, .observations, .liveShares, .networkMembership,
+        .removableMediaRemoval,
     ]
 
     /// The classes a bring-up, save, capture or Force Stop leaves open.
