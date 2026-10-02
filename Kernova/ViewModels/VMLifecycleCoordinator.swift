@@ -194,15 +194,15 @@ final class VMLifecycleCoordinator {
     /// capture operation, which ends once the snapshot's files are written.
     ///
     /// A warm capture takes every passthrough accessory off before it writes
-    /// the guest's state, because a saved state carrying one cannot be
-    /// restored. Unlike a suspend the guest is still running afterwards, so
-    /// each one is owed back to it as it goes
+    /// the guest's state, for the reason
+    /// ``VirtualizationService/detachUSBAccessories(_:session:)`` gives. Unlike
+    /// a suspend the guest is still running afterwards, so each one is owed
+    /// back to it as it goes
     /// (``VirtualizationService/detachUSBAccessories(owingReturns:session:)``):
     /// the capture's detach resets the device, macOS assigns it back after a
     /// delay nothing bounds, and that arrival follows the attach to this VM.
-    /// `record` that
-    /// throws leaves nothing behind: unlisted files are files no surface can
-    /// reach or remove, so the capture is undone.
+    /// `record` that throws leaves nothing behind: unlisted files are files no
+    /// surface can reach or remove, so the capture is undone.
     func takeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
