@@ -224,4 +224,22 @@ struct KernovaScriptingDefinitionTests {
             #expect(method.disposition == disposition)
         }
     }
+
+    @Test("Every change to a network a MAC address conflict takes has a term, on every bring-up command")
+    func everyMACAddressRemedyHasAnEnumerator() throws {
+        let declared = try enumerators("MAC conflict remedy")
+
+        #expect(declared.count == MACAddressRemedy.allCases.count)
+        for remedy in MACAddressRemedy.allCases {
+            let term = VMScriptMACConflictRemedy(remedy)
+            #expect(declared[term.term] == term.code, "No \(term.term) enumerator")
+            #expect(term.remedy == remedy)
+        }
+        let suite = try loadSuite()
+        for verb in ["start", "restart", "resume"] {
+            let parameter = "command[@name='\(verb)']/parameter[@name='resolving MAC conflict by']"
+            #expect(try values(parameter, "type", in: suite) == ["MAC conflict remedy"], "\(verb)")
+            #expect(try values("\(parameter)/cocoa", "key", in: suite) == ["MACConflictRemedy"], "\(verb)")
+        }
+    }
 }

@@ -257,11 +257,10 @@ struct VMLibraryViewModelSnapshotTests {
             $0.macAddress = "aa:bb:cc:dd:ee:07"
         }
 
-        let took = try harness.viewModel.library.updateConfiguration(of: other, as: .machineKeys) {
-            $0.macAddress = "aa:bb:cc:dd:ee:05"
-        }
+        let outcome = harness.viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.networkMAC.assigning("aa:bb:cc:dd:ee:05")], on: other)
 
-        #expect(took.refusedForMACAddress)
+        #expect(outcome == .refused)
         #expect(other.configuration.macAddress == "aa:bb:cc:dd:ee:07")
         #expect(presenter.errorTitles == ["MAC Address In Use"])
         // The baseline is named as one, and offered no delete it would refuse.

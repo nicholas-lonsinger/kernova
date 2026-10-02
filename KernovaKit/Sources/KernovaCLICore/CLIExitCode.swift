@@ -50,7 +50,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .notFound, .itemNotFound, .itemNotFoundOnHost: self = .notFound
         case .ambiguous: self = .ambiguous
         case .invalidState, .changeTakesStoppedVM, .unsupported, .unsupportedByBuild, .conflict,
-            .confirmationRequired, .guestAccountPasswordRequired:
+            .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired:
             self = .refusedByState
         case .invalidArgument: self = .usage
         case .busy, .heldByAnotherCopy: self = .busy

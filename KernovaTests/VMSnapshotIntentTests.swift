@@ -127,13 +127,15 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: picked, takingCheckpoint: true, consent: .all)
+            vm, snapshot: picked, takingCheckpoint: true, consent: .all,
+            macAddressRemedy: .newAddress)
         try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .all)
         try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
         try await gateway.setSnapshotNotes(vm, snapshot: picked, notes: "a note")
 
         #expect(commands.revertCalls.map(\.selector) == [.id(vm)])
         #expect(commands.revertCalls.map(\.snapshot) == [snapshot])
+        #expect(commands.revertRemedies == [.newAddress])
         #expect(commands.deleteSnapshotCalls.map(\.selector) == [.id(vm)])
         #expect(commands.deleteSnapshotCalls.map(\.snapshot) == [snapshot])
         #expect(commands.renameSnapshotCalls.map(\.selector) == [.id(vm)])
@@ -158,7 +160,8 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                named, snapshot: stale, takingCheckpoint: false, consent: .all)
+                named, snapshot: stale, takingCheckpoint: false, consent: .all,
+                macAddressRemedy: nil)
         }
         await #expect(throws: CommandError.self) {
             try await gateway.deleteSnapshot(named, snapshot: stale, consent: .all)
@@ -346,7 +349,7 @@ struct VMSnapshotIntentTests {
             try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
                 try await gateway.revertToSnapshot(
                     vm, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
-                    consent: consent)
+                    consent: consent, macAddressRemedy: nil)
             }
 
             #expect(asked.map(\.kind) == [.revertToSnapshot])
@@ -374,7 +377,7 @@ struct VMSnapshotIntentTests {
         await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
                 vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), takingCheckpoint: true,
-                consent: .all)
+                consent: .all, macAddressRemedy: nil)
         }
     }
 

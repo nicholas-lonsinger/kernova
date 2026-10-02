@@ -18,6 +18,9 @@ enum VMConfigurationKeyGate: Hashable, Sendable {
     /// A property of the network device the VM already has, which hot-swaps
     /// with the attachment.
     case networkDevice
+    /// Which network of its mode the device joins: a hot swap on a running VM,
+    /// and a move a suspended VM of some modes takes beside its saved state.
+    case networkMembership
 
     /// Whether a running VM can take a write of a key gated on this.
     var editableWhileRunning: Bool { self != .atRest }
@@ -261,6 +264,7 @@ struct VMConfigurationKey: Sendable {
         case .atRest: .editConfiguration
         case .live: .editLiveConfiguration
         case .networkDevice: .switchNetworkMode
+        case .networkMembership: .switchNetworkMembership
         case .networkMode:
             value == VMConfigurationKeyRegistry.noNetworkValue
                 ? .editConfiguration : .switchNetworkMode
@@ -486,7 +490,7 @@ enum VMConfigurationKeyRegistry {
         summary:
             "Which network of its mode a shared or hostOnly guest joins: common, the one every "
             + "other guest in the mode joins, or isolated, a network of its own.",
-        gate: .networkDevice,
+        gate: .networkMembership,
         read: { $0.networkMembership.rawValue },
         write: { value, config, context in
             let before = config

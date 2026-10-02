@@ -41,6 +41,13 @@ struct CLIExitCodeTests {
                 .refusedByState
             ),
             (
+                .macAddressRemedyRequired(
+                    prompt: MACAddressRemedyPrompt(
+                        vm: vm, other: vm, verb: .start, title: "Duplicate MAC Address",
+                        message: "Change its network:", offers: [], dismissTitle: "Cancel")),
+                .refusedByState
+            ),
+            (
                 .conflict(
                     vm: vm, with: vm,
                     reason: .macAddressInUse(

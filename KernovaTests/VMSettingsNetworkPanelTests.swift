@@ -257,6 +257,26 @@ struct VMSettingsNetworkPanelTests {
         #expect(instance.configuration.joinsOwnNetwork)
     }
 
+    @Test(
+        "Beside a saved state, the isolation switch alone stays live, for a Shared VM only",
+        arguments: [VMNetworkMode.shared, .hostOnly])
+    func isolationSwitchStaysLiveBesideASharedSavedState(mode: VMNetworkMode) throws {
+        let (vc, instance) = makeNetworkController(
+            mode: mode, isReadOnly: true, phase: .suspended, holdsSavedState: true)
+        let toggle = try #require(firstSwitch(action: "isolationToggled", in: vc.view))
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+
+        #expect(toggle.isEnabled == (mode == .shared))
+        #expect(!popUp.isEnabled)
+        guard mode == .shared else { return }
+
+        toggle.state = .on
+        toggle.sendAction(toggle.action, to: toggle.target)
+
+        #expect(instance.configuration.networkMembership == .isolated)
+        #expect(instance.hasSaveFile)
+    }
+
     @Test("Choosing Host Only writes the mode and mints a MAC address")
     func selectingHostOnlyWritesConfigAndMintsAMACAddress() throws {
         // From a VM created with networking off, so the MAC is minted here.
@@ -686,8 +706,8 @@ struct VMSettingsNetworkPanelTests {
         #expect(!containsLabel(Self.duplicateMACBanner, in: vc.view))
     }
 
-    @Test("A refused live mode switch puts the Mode picker back on the VM's mode")
-    func refusedLiveModeSwitchRevertsThePicker() throws {
+    @Test("A refused live mode switch puts the Mode picker back on the VM's mode, offering a network of its own")
+    func refusedLiveModeSwitchRevertsThePicker() async throws {
         let presenter = MockVMLibraryPresenting()
         let viewModel = makeLibraryHolding("aa:bb:cc:dd:ee:ff", presenter: presenter)
         // The holder is live on Shared; this VM shares its address on Host Only,
@@ -703,8 +723,11 @@ struct VMSettingsNetworkPanelTests {
         popUp.sendAction(popUp.action, to: popUp.target)
 
         #expect(instance.configuration.networkMode == .hostOnly)
-        #expect(presenter.errorTitle == "Duplicate MAC Address")
         #expect(popUp.titleOfSelectedItem == "Host Only")
+        // The offer could not be shown here, so the refusal it stood for is.
+        try await waitForChange { presenter.errorTitle != nil }
+        #expect(presenter.macAddressRemedyRequests.map(\.prompt.offers.count) == [1])
+        #expect(presenter.errorTitles == ["Duplicate MAC Address"])
     }
 
     @Test("Generate discards a typed duplicate instead of refusing it")

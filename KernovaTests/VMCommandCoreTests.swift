@@ -1294,7 +1294,7 @@ struct VMCommandCoreTests {
                 return
             }
             #expect(conflict.other === live)
-            #expect(!conflict.offersOverride)
+            #expect(!conflict.asks)
         }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -1382,7 +1382,9 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.stopCallCount == 1)
     }
 
-    @Test("A shared MAC address on one network is refused even with the override on and confirmed")
+    @Test(
+        "A shared MAC address on one network is refused even with the override on and confirmed, offering only changes to the network"
+    )
     func duplicateMACIsNeverOverridden() async throws {
         let harness = makeHarness()
         preferences.allowsDuplicateMachineIDOverride = true
@@ -1400,11 +1402,8 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .all) })
-        guard case .conflict(_, _, let reason) = error else {
-            Issue.record("expected a conflict refusal, got \(error)")
-            return
-        }
-        #expect(reason == .macAddress)
+        let prompt = try #require(error.macAddressRemedyPrompt)
+        #expect(prompt.vm.id == twin.id)
         #expect(harness.virtualization.startCallCount == 0)
     }
 
@@ -1422,12 +1421,8 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .none) })
-        guard case .conflict(_, let other, let reason) = error else {
-            Issue.record("expected a conflict refusal, got \(error)")
-            return
-        }
-        #expect(other.id == live.id)
-        #expect(reason == .macAddress)
+        let prompt = try #require(error.macAddressRemedyPrompt)
+        #expect(prompt.other.id == live.id)
         #expect(harness.virtualization.startCallCount == 0)
         #expect(twin.phase == .stopped)
     }
@@ -1464,13 +1459,9 @@ struct VMCommandCoreTests {
                     consent: .all)
             })
 
-        guard case .conflict(let vm, let other, let reason) = error else {
-            Issue.record("expected a conflict refusal, got \(error)")
-            return
-        }
-        #expect(vm.id == reverting.id)
-        #expect(other.id == holder.id)
-        #expect(reason == .macAddress)
+        let prompt = try #require(error.macAddressRemedyPrompt)
+        #expect(prompt.vm.id == reverting.id)
+        #expect(prompt.other.id == holder.id)
         // Refused before the live guest was torn down or a file moved.
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
         #expect(reverting.status == .running)
@@ -1544,13 +1535,9 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 0)
         #expect(pending.status == .initialBoot)
         #expect(reported.isEmpty)
-        guard case .conflict(let vm, let other, let reason) = error else {
-            Issue.record("expected a conflict refusal, got \(error)")
-            return
-        }
-        #expect(vm.id == pending.id)
-        #expect(other.id == holder.id)
-        #expect(reason == .macAddress)
+        let prompt = try #require(error.macAddressRemedyPrompt)
+        #expect(prompt.vm.id == pending.id)
+        #expect(prompt.other.id == holder.id)
     }
 
     @Test("Resume-then-shut-down of a suspended VM onto a live identity is refused")

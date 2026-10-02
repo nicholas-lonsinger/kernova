@@ -57,10 +57,10 @@ struct RevertToSnapshotIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runWithConsent(asking: checkpointAwareConfirmation) { consent in
+        try await runBringUpWithConsent(asking: checkpointAwareConfirmation) { consent, remedy in
             try await gateway.revertToSnapshot(
                 vm.id, snapshot: snapshot.id, takingCheckpoint: takeCheckpoint,
-                consent: consent)
+                consent: consent, macAddressRemedy: remedy)
         }
         return .result()
     }

@@ -44,9 +44,9 @@ struct VMLiveIdentitiesTests {
         let allowsOverride: Bool
         let override: VMIdentityOverride
         let sharesMAC: Bool
-        /// `nil` admits; otherwise the reason refused and whether it offers
-        /// starting anyway.
-        let expected: (reason: ConflictReason, offersOverride: Bool)?
+        /// `nil` admits; otherwise the reason refused and whether it asks a
+        /// way through — starting anyway, or changing the VM's network.
+        let expected: (reason: ConflictReason, asks: Bool)?
 
         var testDescription: String {
             "setting \(allowsOverride ? "on" : "off"), \(override), MAC \(sharesMAC ? "shared" : "own")"
@@ -60,13 +60,14 @@ struct VMLiveIdentitiesTests {
         Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
         Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (.machineIdentity, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: false, expected: nil),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (.macAddress, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.macAddress, true)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.macAddress, true)),
+        Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, true)),
     ]
 
     @Test(
-        "A shared machine ID is waived only by a confirmed override the setting allows; a MAC address never",
+        "A shared machine ID is waived only by a confirmed override the setting allows; a MAC address never, though it asks for a remedy where someone can answer",
         arguments: rows)
     func decisionTable(row: Row) {
         let preferences = makeTestPreferences()
@@ -95,7 +96,8 @@ struct VMLiveIdentitiesTests {
         case (.refuse(.identityConflict(let conflict)), let expected?):
             #expect(conflict.other === live)
             #expect(conflict.reason == expected.reason)
-            #expect(conflict.offersOverride == expected.offersOverride)
+            #expect(conflict.asks == expected.asks)
+            #expect(conflict.configuration == twin.configuration)
         default:
             Issue.record("decided \(decision)")
         }

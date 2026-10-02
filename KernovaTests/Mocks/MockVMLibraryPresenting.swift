@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import Observation
 
 @testable import Kernova
@@ -53,6 +54,12 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     /// What this mock answers a confirmation with, answered on the spot for the
     /// reason ``guestAccountPasswordAnswer`` is.
     var confirmationAnswer: PresenterAnswer<Bool> = .answered(false)
+    /// MAC address remedy questions a bring-up asked, in order.
+    private(set) var macAddressRemedyRequests: [MACAddressRemedyRequest] = []
+    /// What this mock answers a remedy question with, answered on the spot for
+    /// the reason ``guestAccountPasswordAnswer`` is; unasked by default, which
+    /// leaves the refusal to the error path.
+    var macAddressRemedyAnswer: PresenterAnswer<MACAddressRemedy?> = .unasked
 
     func presentError(_ message: String, title: String) {
         errors.append(message)
@@ -98,6 +105,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     func presentConfirmationRequest(_ request: ConfirmationRequest) {
         confirmationRequests.append(request)
         request.answer(confirmationAnswer)
+    }
+    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest) {
+        macAddressRemedyRequests.append(request)
+        request.answer(macAddressRemedyAnswer)
     }
     func presentCreationWizard() { creationWizardCount += 1 }
     func focusGuestDisplay(for instance: VMInstance) {

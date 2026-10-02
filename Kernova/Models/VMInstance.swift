@@ -511,6 +511,7 @@ final class VMInstance {
             hasSnapshots: !snapshotManifest.isEmpty,
             guestOS: configuration.guestOS,
             networkEnabled: configuration.networkEnabled,
+            savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbSupported: peers?.supportsUSBAccessories ?? false,

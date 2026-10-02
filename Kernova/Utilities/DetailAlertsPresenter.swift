@@ -30,25 +30,30 @@ private final class OneShotGuestAccountAnswer {
     }
 }
 
-/// A ``ConfirmationRequest`` whose answer fires at most once — a button, or the
-/// window going away under the alert or the queue it waits in — for the reason
+/// A question a suspended verb waits on whose answer fires at most once — a
+/// button, or the window going away under the alert — for the reason
 /// ``OneShotGuestAccountAnswer`` exists.
 @MainActor
-private final class OneShotConfirmation {
-    let prompt: ConfirmationPrompt
-    private var answer: (@MainActor (PresenterAnswer<Bool>) -> Void)?
+private final class OneShotQuestion<Prompt, Answer> {
+    let prompt: Prompt
+    private var answer: (@MainActor (PresenterAnswer<Answer>) -> Void)?
 
-    init(_ request: ConfirmationRequest) {
-        self.prompt = request.prompt
-        self.answer = request.answer
+    init(prompt: Prompt, answer: @escaping @MainActor (PresenterAnswer<Answer>) -> Void) {
+        self.prompt = prompt
+        self.answer = answer
     }
 
-    func callAsFunction(_ value: PresenterAnswer<Bool>) {
+    func callAsFunction(_ value: PresenterAnswer<Answer>) {
         guard let answer else { return }
         self.answer = nil
         answer(value)
     }
 }
+
+/// A ``ConfirmationRequest`` answered at most once.
+private typealias OneShotConfirmation = OneShotQuestion<ConfirmationPrompt, Bool>
+/// A ``MACAddressRemedyRequest`` answered at most once.
+private typealias OneShotRemedy = OneShotQuestion<MACAddressRemedyPrompt, MACAddressRemedy?>
 
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
@@ -124,6 +129,8 @@ final class DetailAlertsPresenter: NSObject {
     /// The confirmation on screen, with a verb suspended behind it, held so
     /// ``stop()`` can decline it.
     private var outstandingConfirmations: [OneShotConfirmation] = []
+    /// The MAC address remedy questions on screen, each answered at most once.
+    private var outstandingRemedies: [OneShotRemedy] = []
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -165,6 +172,8 @@ final class DetailAlertsPresenter: NSObject {
         outstandingGuestAccount = nil
         for confirmation in outstandingConfirmations { confirmation(.unasked) }
         outstandingConfirmations.removeAll()
+        for remedy in outstandingRemedies { remedy(.unasked) }
+        outstandingRemedies.removeAll()
         // The alert on screen is attached to a window that is going away, so
         // it is dismissed as a cancel: its buttons would otherwise stay on a
         // sheet nobody can act on, with `isShowingAlert` left true under them.
@@ -404,7 +413,7 @@ final class DetailAlertsPresenter: NSObject {
     /// verb's refusal then takes the error path, which does queue. ``stop()``
     /// answers the one on screen the same way.
     func presentConfirmationRequest(_ request: ConfirmationRequest) {
-        let confirmation = OneShotConfirmation(request)
+        let confirmation = OneShotConfirmation(prompt: request.prompt, answer: request.answer)
         guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
             !snapshotSheetPresenter.isShown, pending.isEmpty
         else {
@@ -416,6 +425,33 @@ final class DetailAlertsPresenter: NSObject {
         }
         outstandingConfirmations.append(confirmation)
         show(confirmationRequestConfig(confirmation), in: window)
+    }
+
+    /// Asks which change to a VM's network a MAC address conflict takes,
+    /// answered unasked rather than queued for the reason
+    /// ``presentConfirmationRequest(_:)`` is.
+    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest) {
+        let remedy = OneShotRemedy(prompt: request.prompt, answer: request.answer)
+        guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
+            !snapshotSheetPresenter.isShown, pending.isEmpty
+        else {
+            #log(
+                Self.logger, .notice,
+                "Nowhere to ask how '\(request.prompt.vm.name, privacy: .public)' leaves a MAC address conflict; leaving its refusal standing"
+            )
+            remedy(.unasked)
+            return
+        }
+        outstandingRemedies.append(remedy)
+        let settle: (MACAddressRemedy?) -> Void = { [weak self, weak remedy] value in
+            guard let remedy else { return }
+            self?.outstandingRemedies.removeAll { $0 === remedy }
+            remedy(.answered(value))
+        }
+        show(
+            AlertConfiguration(
+                offering: request.prompt, choose: { settle($0) }, dismiss: { settle(nil) }),
+            in: window)
     }
 
     func presentInstallerMounted(

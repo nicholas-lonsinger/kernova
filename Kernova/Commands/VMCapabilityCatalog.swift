@@ -51,6 +51,9 @@ enum VMCapability: CaseIterable, Hashable {
     case editConfiguration
     case editLiveConfiguration
     case switchNetworkMode
+    /// Move the network device between its mode's common network and a
+    /// network of its own — which a saved state of some modes restores across.
+    case switchNetworkMembership
     case clone
     case rename
     case delete
@@ -91,7 +94,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .editSharedDirectories, .editLiveSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
-        case .editConfiguration, .editLiveConfiguration, .switchNetworkMode: .setConfiguration
+        case .editConfiguration, .editLiveConfiguration, .switchNetworkMode,
+            .switchNetworkMembership:
+            .setConfiguration
         case .clone: .clone
         case .rename: .rename
         case .delete: .delete
@@ -117,6 +122,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .forgetUSBPairing: .pairingRules
         case .editLiveConfiguration: .liveKeys
         case .switchNetworkMode: .networkAttachment
+        case .switchNetworkMembership: .networkMembership
         case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
@@ -171,7 +177,7 @@ enum VMCapability: CaseIterable, Hashable {
             return .operation(.deletingSnapshot)
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
             .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia, .forgetUSBPairing,
-            .editLiveConfiguration, .switchNetworkMode, .rename:
+            .editLiveConfiguration, .switchNetworkMode, .switchNetworkMembership, .rename:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)

@@ -88,6 +88,7 @@ struct VMCapabilityCatalogTests {
         .editConfiguration: .edit(.machineKeys),
         .editLiveConfiguration: .edit(.liveKeys),
         .switchNetworkMode: .edit(.networkAttachment),
+        .switchNetworkMembership: .edit(.networkMembership),
         .clone: .operation(.copyingOut),
         .rename: .edit(.rename),
         .delete: .operation(.deleting),
@@ -241,6 +242,23 @@ struct VMCapabilityCatalogTests {
             #expect(harness.catalog.accepts(.start, on: instance), "\(phase)")
             #expect(harness.catalog.stopAction(for: instance) == .discardSavedState, "\(phase)")
         }
+    }
+
+    @Test(
+        "Beside a saved state, membership switches for a Shared VM alone",
+        arguments: [VMNetworkMode.shared, .hostOnly, .bridged])
+    func savedStateLeavesMembershipOpenForSharedAlone(mode: VMNetworkMode) throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .suspended) {
+            $0.networkEnabled = true
+            $0.networkMode = mode
+        }
+        #expect(harness.catalog.isApplicable(.switchNetworkMembership, to: instance))
+
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        #expect(harness.catalog.isApplicable(.switchNetworkMembership, to: instance) == (mode == .shared))
+        #expect(!harness.catalog.isApplicable(.switchNetworkMode, to: instance))
     }
 
     @Test("Nothing is available that is not applicable")

@@ -126,6 +126,9 @@ extension KernovaCommand.Snapshot {
             help: "Capture the current state as a snapshot before reverting.")
         var checkpoint = true
 
+        /// The change a MAC address conflict takes, for a revert that resumes.
+        @OptionGroup var macConflict: MACConflictOption
+
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
@@ -139,7 +142,7 @@ extension KernovaCommand.Snapshot {
             _ = try client.send(
                 .revertToSnapshot(
                     selector, snapshot: target.id, takingCheckpoint: checkpoint,
-                    consent: options.consent)
+                    consent: options.consent, macAddressRemedy: macConflict.remedy)
             ).payload()
         }
     }

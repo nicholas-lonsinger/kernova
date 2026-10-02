@@ -98,6 +98,33 @@ struct AlertConfiguration {
         actions += prompt.alternatives.map { offered in
             (offered.title, offered.isDestructive, { alternative?(offered) })
         }
+        self.init(
+            title: prompt.title, message: prompt.message,
+            buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss))
+    }
+
+    /// Draws the changes a MAC address refusal offers, laid out by the rule
+    /// ``init(confirming:confirm:alternative:dismiss:)`` states: one that
+    /// discards a saved state never takes Return.
+    init(
+        offering prompt: MACAddressRemedyPrompt,
+        choose: @escaping (MACAddressRemedy) -> Void,
+        dismiss: @escaping () -> Void = {}
+    ) {
+        let actions = prompt.offers.map { offer -> (title: String, isDestructive: Bool, action: () -> Void) in
+            (offer.title, offer.isDestructive, { choose(offer.remedy) })
+        }
+        self.init(
+            title: prompt.title, message: prompt.message,
+            buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss))
+    }
+
+    /// `actions` and the dismiss, in the order and roles the two initializers
+    /// above describe.
+    private static func buttons(
+        _ actions: [(title: String, isDestructive: Bool, action: () -> Void)],
+        dismissTitle: String, dismiss: @escaping () -> Void
+    ) -> [AlertButton] {
         let safe = actions.filter { !$0.isDestructive }
         var destructive = actions.filter(\.isDestructive)
 
@@ -114,12 +141,11 @@ struct AlertConfiguration {
                         action: action.action))
             }
         }
-        buttons.append(AlertButton(prompt.dismissTitle, role: .cancel, action: dismiss))
+        buttons.append(AlertButton(dismissTitle, role: .cancel, action: dismiss))
         buttons += destructive.map {
             AlertButton($0.title, role: .destructive, action: $0.action)
         }
-
-        self.init(title: prompt.title, message: prompt.message, buttons: buttons)
+        return buttons
     }
 
     /// An alert that states something and is dismissed, with nothing to decide.

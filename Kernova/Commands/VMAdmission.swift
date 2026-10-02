@@ -64,7 +64,7 @@ enum VMAdmission {
                 (.heldByAnotherCopy, .heldByAnotherCopy):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
-                l.other === r.other && l.reason == r.reason && l.offersOverride == r.offersOverride
+                l.other === r.other && l.reason == r.reason && l.asks == r.asks
             case (.accessoryHeld(let l), .accessoryHeld(let r)):
                 l === r
             default: false
@@ -89,6 +89,10 @@ enum VMAdmission {
         var hasSnapshots: Bool
         var guestOS: VMGuestOS
         var networkEnabled: Bool
+        /// The saved state, if any, restores after the network device moves to
+        /// another network of its mode
+        /// (``VMConfiguration/savedStateSurvivesMembershipMove``).
+        var savedStateSurvivesMembershipMove = false
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
         var usbSupported: Bool
@@ -301,12 +305,14 @@ enum VMAdmission {
         case .stopped, .initialBoot, .failed, .suspended:
             let atRest = VMEditClasses.all.subtracting(.liveShares)
             guard facts.hasSaveFile else { return atRest }
-            return atRest.subtracting([.machineKeys, .hotPlugMedia, .networkAttachment])
+            var pinned = atRest.subtracting([.machineKeys, .hotPlugMedia, .networkAttachment])
+            if !facts.savedStateSurvivesMembershipMove { pinned.remove(.networkMembership) }
+            return pinned
         case .running, .livePaused:
             var classes = VMEditClasses.all.subtracting([
-                .machineKeys, .networkAttachment, .liveShares,
+                .machineKeys, .networkAttachment, .networkMembership, .liveShares,
             ])
-            if facts.networkEnabled { classes.insert(.networkAttachment) }
+            if facts.networkEnabled { classes.formUnion([.networkAttachment, .networkMembership]) }
             if case .running = phase, facts.guestOS.sharesDirectoriesThroughOneDevice {
                 classes.insert(.liveShares)
             }

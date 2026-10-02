@@ -6,6 +6,21 @@ enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
     case shared
     case bridged
     case hostOnly
+
+    /// Whether a saved state taken on one network of this mode restores on
+    /// another network of the same mode — what lets a VM holding one move
+    /// between its mode's common network and a network of its own.
+    var savedStateRestoresOnAnotherNetworkOfThisMode: Bool {
+        switch self {
+        // Measured Shared to Shared, onto a new network on another subnet
+        // (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md);
+        // the same note lists a restore onto another Host Only network as not
+        // measured, and Bridged has one network per interface, not a network
+        // of its own.
+        case .shared: true
+        case .hostOnly, .bridged: false
+        }
+    }
 }
 
 /// The user's choice of pointing/keyboard device pair for a macOS guest.
@@ -565,6 +580,14 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var effectiveNetworkMembership: VMNetworkMembership? {
         guard case .vmnet = joinedNetwork else { return nil }
         return networkMembership
+    }
+
+    /// Whether a saved state this VM holds restores after its device moves
+    /// between its mode's common network and a network of its own — `false`
+    /// where no app-managed network is joined.
+    var savedStateSurvivesMembershipMove: Bool {
+        effectiveNetworkMembership != nil
+            && networkMode.savedStateRestoresOnAnotherNetworkOfThisMode
     }
 
     /// Gives a VM with no address of its own one, for the reason

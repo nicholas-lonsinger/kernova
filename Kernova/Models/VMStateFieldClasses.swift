@@ -123,7 +123,13 @@ extension VMConfiguration {
             enabled ? [.machineKeys, .networkAttachment] : .machineKeys
         },
         .field("networkMode", \.networkMode, [.machineKeys, .networkAttachment]),
-        .field("networkMembership", \.networkMembership, [.machineKeys, .networkAttachment]),
+        // A saved state restores onto another network of the same mode
+        // (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md),
+        // so membership alone has a class of its own, which admission keeps
+        // open beside a saved state of a mode that was measured doing so.
+        .field(
+            "networkMembership", \.networkMembership,
+            [.machineKeys, .networkAttachment, .networkMembership]),
         .field(
             "bridgedInterfaceIdentifier", \.bridgedInterfaceIdentifier,
             [.machineKeys, .networkAttachment]),

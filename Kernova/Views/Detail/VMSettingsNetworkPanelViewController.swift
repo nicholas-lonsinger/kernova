@@ -131,8 +131,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     /// The isolation row: a switch putting a Shared or Host Only VM on a
-    /// network of its own. Like the Mode picker it hot-swaps while the VM
-    /// runs, so `refreshNetwork()` owns its enablement.
+    /// network of its own. It hot-swaps while the VM runs and is open beside
+    /// a saved state that survives the move, so `refreshNetwork()` owns its
+    /// enablement.
     private func makeIsolationRow() -> GroupedFormCollapsibleRow {
         isolationSwitch = makeGroupedFormSwitch(target: self, action: #selector(isolationToggled))
         let row = GroupedFormCollapsibleRow(
@@ -399,7 +400,11 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         {
             rebuildNetworkModeMenu()
         }
-        refreshIsolationRow(editable: modeEditable)
+        // Its own capability rather than the picker's: a suspended VM whose
+        // saved state survives a move takes a membership change and no other.
+        refreshIsolationRow(
+            editable: !isReadOnly
+                || viewModel.capabilities.isAvailable(.switchNetworkMembership, on: instance))
         refreshMACAddressRow()
         refreshMACAddressWarning()
         refreshIPAddressRow()

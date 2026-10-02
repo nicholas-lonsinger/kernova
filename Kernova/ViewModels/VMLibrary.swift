@@ -240,7 +240,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let guestAddresses = GuestAddressObserver(
             reader: arpTable, vmnetNetworks: vmnetNetworks, entitlements: entitlements)
         self.guestAddresses = guestAddresses
-        let macAddresses = VMMACAddressRegistry(guestAddresses: guestAddresses)
+        let macAddresses = VMMACAddressRegistry()
         self.macAddresses = macAddresses
         self.liveIdentities = VMLiveIdentities(macAddresses: macAddresses, preferences: preferences)
         let configurationPolicy = VMLibraryConfigurationPolicy(
@@ -260,9 +260,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
         macAddresses.roster = self
         liveIdentities.roster = self
-        macAddresses.onFailure = { [weak self] title, message in
-            self?.surfaceError(message, title: title)
-        }
         guestAddresses.roster = self
     }
 
@@ -587,8 +584,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// Why the library turned a settings write away.
     enum SettingsRefusal: LocalizedError {
-        /// The new MAC address is one another VM holds; the refusal was
-        /// presented as it was made.
+        /// The change puts the VM on a MAC address another VM holds, or — for
+        /// a running VM — onto the network another active VM uses it on.
         case macAddressInUse(VMMACAddressRegistry.MACAddressConflict)
         /// The write reached no library: the instance was never wired to one,
         /// or the library that wired it is gone.
@@ -629,7 +626,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     ///
     /// `mutate` applies to what `config.json` holds, not to memory, so a field
     /// another process changed since this one last read survives. A refusal
-    /// changes nothing; a MAC-address refusal is presented. A save that fails
+    /// changes nothing and is the caller's to render. A save that fails
     /// is presented, and memory stays equal to the file.
     ///
     /// `mutate` runs inside the coordinated write, so it must be pure. It may
@@ -684,9 +681,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                 wrote = config != onDisk
             }
         } catch let refusal as SettingsRefusal {
-            if case .macAddressInUse(let conflict) = refusal {
-                macAddresses.presentRefusal(conflict, on: instance)
-            }
             return .stopped(.refused(refusal))
         } catch let refused as VMStateFieldRefusal {
             return .stopped(.refused(outsidePermit(refused, on: instance)))

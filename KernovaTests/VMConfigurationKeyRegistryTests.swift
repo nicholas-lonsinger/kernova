@@ -409,7 +409,7 @@ struct VMConfigurationKeyRegistryTests {
         try write(key, "isolated", to: &config)
         #expect(config.networkMembership == .isolated)
         #expect(read(key, config) == "isolated")
-        #expect(key.capability(writing: "common", for: .linux) == .switchNetworkMode)
+        #expect(key.capability(writing: "common", for: .linux) == .switchNetworkMembership)
         #expect(throws: CommandError.self) { try write(key, "true", to: &config) }
     }
 

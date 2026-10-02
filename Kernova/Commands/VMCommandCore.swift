@@ -333,7 +333,7 @@ final class VMCommandCore: VMCommanding {
 
     /// What `reason` reads as in the command vocabulary, unrecorded — what a
     /// verb reports goes through ``admissionRefusal(_:on:verb:)``. `verb`
-    /// words the confirmation a conflict that offers starting anyway raises.
+    /// words the question a conflict the request can be asked about raises.
     func commandError(
         for reason: VMAdmission.Refusal, on instance: VMInstance, verb: VMVerb? = nil
     ) -> CommandError {
@@ -344,7 +344,9 @@ final class VMCommandCore: VMCommanding {
             invalidState(instance)
         case .removed:
             .notFound(.id(instance.id))
-        case .identityConflict(let conflict) where conflict.offersOverride:
+        case .identityConflict(let conflict) where conflict.asks && conflict.reason == .macAddress:
+            .macAddressRemedyRequired(macAddressRemedyPrompt(conflict, on: instance, verb: verb))
+        case .identityConflict(let conflict) where conflict.asks:
             .confirmationRequired(
                 Self.startBesideSharedMachineIdentityPrompt(
                     instance, sharingWith: conflict.other, verb: verb))
@@ -370,12 +372,7 @@ final class VMCommandCore: VMCommanding {
     static func startBesideSharedMachineIdentityPrompt(
         _ instance: VMInstance, sharingWith other: VMInstance, verb: VMVerb?
     ) -> ConfirmationPrompt {
-        let verb =
-            switch verb {
-            case .resume, .revertToSnapshot: "Resume"
-            case .restart: "Restart"
-            default: "Start"
-            }
+        let verb = bringUpTitle(verb)
         return ConfirmationPrompt(
             kind: .startBesideSharedMachineIdentity,
             title: "\(verb) \u{201C}\(instance.name)\u{201D} Anyway?",
@@ -551,7 +548,7 @@ final class VMCommandCore: VMCommanding {
     ) -> CommandError {
         switch refusal {
         case .macAddressInUse(let conflict):
-            .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+            macAddressRefusal(conflict, on: instance)
         case .noLibrary:
             .notFound(.id(instance.id))
         case .outsidePermit:

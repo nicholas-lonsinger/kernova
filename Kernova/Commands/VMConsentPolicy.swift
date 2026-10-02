@@ -32,17 +32,49 @@ enum VMConsentPolicy {
         prompting: (ConfirmationPrompt) async throws -> Void,
         _ body: (Consent) async throws -> Void
     ) async throws {
+        try await run(
+            prompting: prompting,
+            choosingMACAddressRemedy: { throw CommandError.macAddressRemedyRequired($0) },
+            { consent, _ in try await body(consent) })
+    }
+
+    /// ``run(prompting:_:)`` for a bring-up, which also refuses over a MAC
+    /// address another active VM uses on its network: a
+    /// ``CommandError/macAddressRemedyRequired(_:)`` goes to
+    /// `choosingMACAddressRemedy`, and `body` runs again carrying the remedy
+    /// chosen beside every consent given so far.
+    ///
+    /// One loop rather than two nested ones, because the answers arrive in
+    /// either order — a remedy can uncover a machine identity to confirm, and
+    /// a confirmation can be asked before the conflict is reached — and each
+    /// re-run has to carry both. One remedy per run: a second MAC address
+    /// refusal is the remedy not having taken, and is rethrown. What
+    /// `choosingMACAddressRemedy` throws is how a door says nobody chose.
+    @MainActor
+    static func run(
+        prompting: (ConfirmationPrompt) async throws -> Void,
+        choosingMACAddressRemedy: (MACAddressRemedyPrompt) async throws -> MACAddressRemedy,
+        _ body: (Consent, MACAddressRemedy?) async throws -> Void
+    ) async throws {
         var consent = Consent.none
+        var remedy: MACAddressRemedy?
         while true {
             do {
-                try await body(consent)
+                try await body(consent, remedy)
                 return
             } catch let error as CommandError {
-                guard let prompt = error.confirmationPrompt, isAnsweredByConfirming(prompt),
+                if let prompt = error.confirmationPrompt, isAnsweredByConfirming(prompt),
                     !consent.covers(prompt.kind)
-                else { throw error }
-                try await prompting(prompt)
-                consent = consent.adding(prompt.kind)
+                {
+                    try await prompting(prompt)
+                    consent = consent.adding(prompt.kind)
+                } else if let prompt = error.macAddressRemedyPrompt, remedy == nil,
+                    !prompt.offers.isEmpty
+                {
+                    remedy = try await choosingMACAddressRemedy(prompt)
+                } else {
+                    throw error
+                }
             }
         }
     }

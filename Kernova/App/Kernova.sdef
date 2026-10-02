@@ -28,6 +28,12 @@
 			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
 		</enumeration>
 
+		<enumeration name="MAC conflict remedy" code="KvMR" description="A change to a virtual machine's network that lets it run while another active virtual machine uses its MAC address on the same network.">
+			<enumerator name="own network" code="KrOn" description="Move a Shared Network or Host Only virtual machine to a network of its own."/>
+			<enumerator name="new MAC address" code="KrNa" description="Give it a new MAC address, discarding a saved state."/>
+			<enumerator name="no network" code="KrNn" description="Turn its networking off, discarding a saved state."/>
+		</enumeration>
+
 		<class-extension extends="application" description="Kernova's top-level scripting object.">
 			<cocoa class="NSApplication"/>
 			<element type="virtual machine" access="r" description="The virtual machines in the library.">
@@ -104,6 +110,9 @@
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+			<parameter name="resolving MAC conflict by" code="Kprm" type="MAC conflict remedy" optional="yes" description="When another active virtual machine uses its MAC address on the same network, change its network this way first.">
+				<cocoa key="MACConflictRemedy"/>
+			</parameter>
 		</command>
 
 		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
@@ -132,6 +141,9 @@
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+			<parameter name="resolving MAC conflict by" code="Kprm" type="MAC conflict remedy" optional="yes" description="When another active virtual machine uses its MAC address on the same network, change its network this way before it starts again.">
+				<cocoa key="MACConflictRemedy"/>
+			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
@@ -153,6 +165,9 @@
 			</direct-parameter>
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Resume it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
+			</parameter>
+			<parameter name="resolving MAC conflict by" code="Kprm" type="MAC conflict remedy" optional="yes" description="When another active virtual machine uses its MAC address on the same network, change its network this way first.">
+				<cocoa key="MACConflictRemedy"/>
 			</parameter>
 		</command>
 

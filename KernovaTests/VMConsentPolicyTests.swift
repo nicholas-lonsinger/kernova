@@ -66,4 +66,67 @@ struct VMConsentPolicyTests {
         }
         #expect(runs == 1)
     }
+
+    // MARK: - MAC address remedy
+
+    private func remedyPrompt(offers: [MACAddressRemedy] = MACAddressRemedy.allCases)
+        -> MACAddressRemedyPrompt
+    {
+        let vm = VMSummary(
+            id: UUID(), name: "Clone", status: "stopped", ipAddress: .unavailable,
+            heldByAnotherCopy: false)
+        return MACAddressRemedyPrompt(
+            vm: vm, other: vm, verb: .start, title: "Duplicate MAC Address", message: "Choose:",
+            offers: offers.map { MACAddressRemedyOffer(remedy: $0, title: "\($0)", isDestructive: false) },
+            dismissTitle: "Cancel")
+    }
+
+    @Test("A remedy chosen rides every re-run beside the consents given, in whichever order they are asked")
+    func remedyRidesBesideConsents() async throws {
+        var given: [(Consent, MACAddressRemedy?)] = []
+        let prompt = remedyPrompt()
+
+        try await VMConsentPolicy.run(
+            prompting: { _ in }, choosingMACAddressRemedy: { _ in .ownNetwork }
+        ) { consent, remedy in
+            given.append((consent, remedy))
+            guard remedy != nil else { throw CommandError.macAddressRemedyRequired(prompt) }
+            try verb(needing: [.startBesideSharedMachineIdentity])(consent)
+        }
+
+        #expect(given.map(\.0) == [.none, .none, Consent([.startBesideSharedMachineIdentity])])
+        #expect(given.map(\.1) == [nil, .ownNetwork, .ownNetwork])
+    }
+
+    @Test("A second MAC address refusal after a remedy is rethrown rather than asked again")
+    func aRepeatedRemedyRefusalIsRethrown() async throws {
+        var asked = 0
+        let refusal = CommandError.macAddressRemedyRequired(remedyPrompt())
+
+        await #expect(throws: refusal) {
+            try await VMConsentPolicy.run(
+                prompting: { _ in },
+                choosingMACAddressRemedy: { _ in
+                    asked += 1
+                    return .newAddress
+                }
+            ) { _, _ in throw refusal }
+        }
+        #expect(asked == 1)
+    }
+
+    @Test("A remedy refusal offering nothing, or met by a door that cannot choose, stands")
+    func unanswerableRemedyRefusalStands() async throws {
+        let empty = CommandError.macAddressRemedyRequired(remedyPrompt(offers: []))
+        await #expect(throws: empty) {
+            try await VMConsentPolicy.run(
+                prompting: { _ in }, choosingMACAddressRemedy: { _ in .noNetwork }
+            ) { _, _ in throw empty }
+        }
+
+        let offered = CommandError.macAddressRemedyRequired(remedyPrompt())
+        await #expect(throws: offered) {
+            try await VMConsentPolicy.run(prompting: { _ in }) { _ in throw offered }
+        }
+    }
 }

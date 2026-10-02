@@ -71,8 +71,10 @@ struct VMCommandEnvelopeTests {
             .usbAccessories(selector),
             .availableUSBAccessories,
             .events,
-            .start(selector, recovery: true, consent: .none),
-            .start(selector, recovery: false, consent: Consent([.startBesideSharedMachineIdentity])),
+            .start(selector, recovery: true, consent: .none, macAddressRemedy: nil),
+            .start(
+                selector, recovery: false, consent: Consent([.startBesideSharedMachineIdentity]),
+                macAddressRemedy: .ownNetwork),
             .cancelGuestSetup(selector, consent: .none),
             .cancelGuestSetup(selector, consent: .all),
             .stop(selector, disposition: .graceful, consent: .none, timeout: nil),
@@ -80,17 +82,18 @@ struct VMCommandEnvelopeTests {
             .stop(selector, disposition: .resumeThenShutDown, consent: .all, timeout: nil),
             .stop(selector, disposition: .force, consent: .all, timeout: 0.5),
             .pause(selector),
-            .resume(selector, consent: .none),
-            .resume(selector, consent: .all),
+            .resume(selector, consent: .none, macAddressRemedy: nil),
+            .resume(selector, consent: .all, macAddressRemedy: .newAddress),
             .suspend(selector),
-            .restart(selector, timeout: nil, consent: .none),
-            .restart(selector, timeout: 120, consent: .none),
+            .restart(selector, timeout: nil, consent: .none, macAddressRemedy: nil),
+            .restart(selector, timeout: 120, consent: .none, macAddressRemedy: .noNetwork),
             .open(selector),
             .reveal(selector),
             .showInFinder(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
-                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .all),
+                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .all,
+                macAddressRemedy: .newAddress),
             .deleteSnapshot(selector, snapshot: snapshotID, consent: .all),
             .renameSnapshot(selector, snapshot: snapshotID, newName: "Renamed"),
             .setSnapshotNotes(selector, snapshot: snapshotID, notes: "annotated"),
@@ -448,7 +451,44 @@ struct VMCommandEnvelopeTests {
             active.message
                 == "\u{201C}Alpha\u{201D} has the same MAC address as \u{201C}Alpha Copy\u{201D}, which is active. "
                 + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop \u{201C}Alpha Copy\u{201D} first, or give one of them a new address in Network settings.")
+                + "Stop \u{201C}Alpha Copy\u{201D} first, or change \u{201C}Alpha\u{201D}\u{2019}s network or MAC address in Network settings."
+        )
+        #expect(
+            sharing(.macAddress, otherHeldByAnotherCopy: true).message
+                == "\u{201C}Alpha\u{201D} has the same MAC address as \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
+                + "Two virtual machines with the same MAC address must not run on the same network at once. "
+                + "Change \u{201C}Alpha\u{201D}\u{2019}s network or MAC address in Network settings.")
+    }
+
+    @Test("A MAC address remedy refusal crosses whole, reading as the conflict it offers a way out of")
+    func macAddressRemedyRequiredRoundTrips() throws {
+        let vm = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+        let other = VMSummary(
+            id: UUID(), name: "Alpha Copy", status: "running", ipAddress: .unavailable,
+            heldByAnotherCopy: false)
+        let prompt = MACAddressRemedyPrompt(
+            vm: vm, other: other, verb: .start, title: "Duplicate MAC Address", message: "Choose:",
+            offers: [
+                MACAddressRemedyOffer(remedy: .ownNetwork, title: "Own", isDestructive: false),
+                MACAddressRemedyOffer(remedy: .newAddress, title: "New", isDestructive: true),
+            ],
+            dismissTitle: "Cancel")
+        let error = CommandErrorDTO.macAddressRemedyRequired(prompt: prompt)
+        let decoded = try JSONDecoder().decode(
+            CommandErrorDTO.self, from: JSONEncoder().encode(error))
+        #expect(decoded == error)
+        #expect(error.title == "Duplicate MAC Address")
+        #expect(
+            error.message
+                == CommandErrorDTO.conflictMessage(
+                    vm: "Alpha", other: "Alpha Copy", otherHeldByAnotherCopy: false,
+                    reason: .macAddress))
+        let request = VMCommandRequest(
+            verb: .start(.name("Alpha"), recovery: false, consent: .none, macAddressRemedy: .noNetwork))
+        #expect(
+            try JSONDecoder().decode(VMCommandRequest.self, from: JSONEncoder().encode(request))
+                == request)
     }
 
     @Test("A consent crosses as the set of confirmations given")

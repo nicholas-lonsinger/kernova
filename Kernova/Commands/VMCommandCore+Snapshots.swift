@@ -78,8 +78,13 @@ extension VMCommandCore {
 
     // MARK: - Revert
 
+    /// A remedy the caller chose for a MAC address conflict the resume would
+    /// meet makes the revert land at rest, takes the remedy there — on the
+    /// snapshot's saved state — and then starts the VM the way its state
+    /// names.
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, consent: Consent
+        _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, consent: Consent,
+        macAddressRemedy: MACAddressRemedy? = nil
     ) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
@@ -93,14 +98,17 @@ extension VMCommandCore {
         // anything else: a revert refused — or asking whether to resume beside
         // a VM sharing its machine identity — refuses before a capture its
         // re-issue would take a second time.
-        if case .refuse(let reason) = instance.activity.decide(
+        let decision = instance.activity.decide(
             .operation(
                 .bringUp(
                     .reverting(
                         snapshotID: snapshot.id,
                         resumesAfter: Self.revertResumes(instance, to: snapshot)))),
             posture: .commit, identity: identity)
-        {
+        let remedy = try macAddressRemedyToTake(
+            macAddressRemedy, answering: decision, on: instance, identity: identity,
+            holdingSavedState: true, accountFor: nil, verb: .revertToSnapshot)
+        if remedy == nil, case .refuse(let reason) = decision {
             throw admissionRefusal(reason, on: instance, verb: .revertToSnapshot)
         }
         if takingCheckpoint {
@@ -113,8 +121,18 @@ extension VMCommandCore {
         // Awaited *and* answered for: a caller that waited on the revert is told
         // whether the rollback happened, rather than getting a success while an
         // alert about the failure goes somewhere else.
-        try await awaitRevert(
-            instance, startRevert(instance, to: snapshot, identity: identity))
+        guard let remedy else {
+            try await awaitRevert(
+                instance, startRevert(instance, to: snapshot, identity: identity))
+            return
+        }
+        try await awaitRevert(instance, startRevert(instance, to: snapshot, resuming: false))
+        do {
+            try takeMACAddressRemedy(remedy, on: instance, verb: .revertToSnapshot)
+            try await startNow(instance, policy: .command(identity)).value()
+        } catch {
+            throw bringUpFailure(error, verb: .revertToSnapshot, on: instance)
+        }
     }
 
     /// The refusal a revert raises, and the copy every surface renders it with.
@@ -184,14 +202,16 @@ extension VMCommandCore {
     ///
     /// `identity` is what the caller can do about another active VM sharing
     /// the machine identity a revert that resumes would claim.
+    ///
+    /// `resuming` `false` lands a revert that would resume at rest instead.
     func startRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot,
-        identity: VMIdentityOverride = .unavailable
+        identity: VMIdentityOverride = .unavailable, resuming: Bool = true
     ) throws -> VMOutcome {
         do {
             return try launchRevert(
                 instance, to: snapshot, origin: .newWork, identity: identity,
-                resolving: VMOutcome())
+                resuming: resuming, resolving: VMOutcome())
         } catch {
             throw failure(error, verb: .revertToSnapshot, on: instance)
         }
@@ -202,7 +222,8 @@ extension VMCommandCore {
     @discardableResult
     private func launchRevert(
         _ instance: VMInstance, to snapshot: VMSnapshot, origin: VMRequestOrigin,
-        identity: VMIdentityOverride = .unavailable, resolving outcome: VMOutcome
+        identity: VMIdentityOverride = .unavailable, resuming: Bool = true,
+        resolving outcome: VMOutcome
     ) throws -> VMOutcome {
         guard instance.snapshotManifest.snapshot(id: snapshot.id) != nil else {
             #log(
@@ -215,7 +236,7 @@ extension VMCommandCore {
                     "\u{201C}\(instance.name)\u{201D} no longer lists the snapshot \u{201C}\(snapshot.name)\u{201D}."
             )
         }
-        let resumesAfter = Self.revertResumes(instance, to: snapshot)
+        let resumesAfter = resuming && Self.revertResumes(instance, to: snapshot)
         try lifecycle.startRevert(
             instance, to: snapshot, resumesAfter: resumesAfter, origin: origin,
             identity: identity, resolving: outcome,
