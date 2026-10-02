@@ -22,14 +22,14 @@ nonisolated func diskSubtitle(path: String, isInternal: Bool, bundleLayout: VMBu
 
 /// Formats already-read sizes into the subtitle string.
 nonisolated func diskSubtitle(sizes: VMBundleLayout.DiskSizes, path: String, isInternal: Bool) -> String {
-    let onDiskText = sizes.onDiskBytes.map { DataFormatters.formatBytes($0) }
+    let usedText = sizes.onDiskBytes.map { DataFormatters.formatBytes($0) }
     let allocatedText = sizes.capacityBytes.map { DataFormatters.formatBytes($0) }
 
-    switch (onDiskText, allocatedText) {
-    case let (.some(onDisk), .some(allocated)):
-        return "\(onDisk) (on disk) / \(allocated) (allocated)"
-    case let (.some(onDisk), .none):
-        return "\(onDisk) on disk"
+    switch (usedText, allocatedText) {
+    case let (.some(used), .some(allocated)):
+        return "\(used) (used) / \(allocated) (allocated)"
+    case let (.some(used), .none):
+        return "\(used) used"
     case let (.none, .some(allocated)):
         return "\(allocated) allocated"
     case (.none, .none):

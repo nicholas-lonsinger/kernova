@@ -23,15 +23,21 @@ enum ClipboardPassthroughConsent {
         candidate.clipboardPassthroughIsEffective && !current.clipboardPassthroughIsEffective
     }
 
+    /// What passthrough exposes while it runs: the consent prompt's message and
+    /// the passthrough switch's info, worded to read right before and after
+    /// the user turns it on.
+    static func disclosure(vmName: String) -> String {
+        "While it\u{2019}s on, \u{201C}\(vmName)\u{201D} continuously receives whatever you "
+            + "copy on this Mac, and its own clipboard is placed here \u{2014} with no per-copy "
+            + "confirmation. That includes passwords and other sensitive content."
+    }
+
     /// What the user is asked before passthrough starts running.
     static func prompt(vmName: String) -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .enableClipboardPassthrough,
             title: "Turn On Automatic Clipboard Passthrough?",
-            message:
-                "\u{201C}\(vmName)\u{201D} will continuously receive whatever you copy on this "
-                + "Mac, and its own clipboard will be placed here — with no per-copy "
-                + "confirmation. That includes passwords and other sensitive content.",
+            message: disclosure(vmName: vmName),
             confirmTitle: "Turn On",
             confirmIsDestructive: false,
             dismissTitle: "Cancel")

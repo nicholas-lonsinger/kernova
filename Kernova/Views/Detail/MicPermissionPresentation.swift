@@ -4,13 +4,11 @@ import Foundation
 /// What the Audio section should show beneath the Audio Input toggle, derived
 /// purely from the system permission status and whether audio input is enabled.
 enum MicWarningState: Equatable {
-    /// No supplementary UI (audio input disabled, or already authorized).
+    /// No supplementary UI: audio input disabled, permission granted, or not yet
+    /// requested — macOS asks on first use.
     case none
-    /// Audio input enabled but permission not yet requested; macOS will prompt on
-    /// first use. Shown as a neutral hint.
-    case willPrompt
     /// Audio input enabled but permission denied/restricted; shown as a warning
-    /// with a link to the permission instructions.
+    /// with a link to System Settings.
     case denied
 }
 
@@ -18,11 +16,9 @@ enum MicWarningState: Equatable {
 func micPermissionPresentation(_ status: AVAuthorizationStatus, audioInputEnabled: Bool) -> MicWarningState {
     guard audioInputEnabled else { return .none }
     switch status {
-    case .notDetermined:
-        return .willPrompt
     case .denied, .restricted:
         return .denied
-    case .authorized:
+    case .notDetermined, .authorized:
         return .none
     @unknown default:
         return .none

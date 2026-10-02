@@ -199,25 +199,43 @@ private func makeGroupedFormRowTitle(_ text: String) -> NSTextField {
     return label
 }
 
-/// A card row naming the control it holds: its leading title, then the
-/// control pushed to the trailing edge.
+/// A card row naming the control it holds: its leading title, an info button
+/// beside the title when the row has one, then the control.
 ///
 /// The title is the row's own, so ``applyGroupedFormRowEnabled(_:control:)``
 /// grays it with any control inside the row.
 @MainActor
 class GroupedFormControlRow: NSStackView {
     let titleLabel: NSTextField
+    /// The button opening the row's info popover; `nil` for a row without one.
+    let infoButton: InfoButtonView?
+    /// The title, with ``infoButton`` beside it when there is one: what a
+    /// ``GroupedFormFieldRow`` lines its control up after.
+    let labelColumn: NSView
 
     fileprivate init(
-        titleLabel: NSTextField, views: [NSView], alignment: NSLayoutConstraint.Attribute,
-        spacing: CGFloat
+        _ labelText: String, info: [InfoPopoverParagraph], trailing: [NSView],
+        alignment: NSLayoutConstraint.Attribute
     ) {
-        self.titleLabel = titleLabel
+        titleLabel = makeGroupedFormRowTitle(labelText)
+        if info.isEmpty {
+            infoButton = nil
+            labelColumn = titleLabel
+        } else {
+            let button = makeGroupedFormInfoButton(label: labelText, paragraphs: info)
+            infoButton = button
+            let column = NSStackView(views: [titleLabel, button])
+            column.orientation = .horizontal
+            column.alignment = .centerY
+            column.spacing = Spacing.small
+            column.setHuggingPriority(.defaultHigh, for: .horizontal)
+            labelColumn = column
+        }
         super.init(frame: .zero)
-        setViews(views, in: .leading)
+        setViews([labelColumn] + trailing, in: .leading)
         orientation = .horizontal
         self.alignment = alignment
-        self.spacing = spacing
+        spacing = Spacing.standard
     }
 
     @available(*, unavailable)
@@ -226,41 +244,38 @@ class GroupedFormControlRow: NSStackView {
     }
 }
 
-/// Builds a full-width card row: a leading label and a control/value pushed to
-/// the trailing edge — for steppers, switches, popups, and read-only values. An
-/// input that fills the row is a ``GroupedFormFieldRow``.
+/// Builds a full-width card row: a leading title, an info button beside it
+/// when `info` has paragraphs, and `control` pushed to the trailing edge — a
+/// stepper, switch, popup, a stack of controls, or a read-only value. An input
+/// that fills the row is a ``GroupedFormFieldRow``.
 @MainActor
 func makeGroupedFormCardRow(
     _ labelText: String,
     control: NSView,
+    info: [InfoPopoverParagraph] = [],
     alignment: NSLayoutConstraint.Attribute = .centerY
 ) -> GroupedFormControlRow {
-    let label = makeGroupedFormRowTitle(labelText)
-
     let spacer = NSView()
     spacer.translatesAutoresizingMaskIntoConstraints = false
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
     return GroupedFormControlRow(
-        titleLabel: label, views: [label, spacer, control], alignment: alignment,
-        spacing: Spacing.standard)
+        labelText, info: info, trailing: [spacer, control], alignment: alignment)
 }
 
 /// A card row whose control fills the space after its label — a text field or
 /// an editor — starting at the label column ``makeGroupedFormCard(rows:notes:)``
-/// gives its field rows.
+/// gives its field rows; an info button sits inside that column, beside the
+/// title.
 @MainActor
 final class GroupedFormFieldRow: GroupedFormControlRow {
     init(
-        _ labelText: String, control: NSView,
+        _ labelText: String, control: NSView, info: [InfoPopoverParagraph] = [],
         alignment: NSLayoutConstraint.Attribute = .centerY
     ) {
-        let titleLabel = makeGroupedFormRowTitle(labelText)
         control.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        super.init(
-            titleLabel: titleLabel, views: [titleLabel, control], alignment: alignment,
-            spacing: Spacing.standard)
+        super.init(labelText, info: info, trailing: [control], alignment: alignment)
     }
 }
 
@@ -294,19 +309,69 @@ final class GroupedFormCollapsibleRow: NSStackView, GroupedFormFullBleedRow {
     }
 }
 
+/// A row and the notes that describe it, stacked so each note sits
+/// ``GroupedFormStyle/cardStackSpacing`` under the row and takes its leading
+/// edge and width from it.
+///
+/// A note about one row is owned by that row, so it goes wherever the row goes:
+/// a card's top-level row, a ``GroupedFormSubOptionGroup``'s primary, or its
+/// sub-option, where it shares the indent and hides with the sub-option. A
+/// hidden note collapses, leaving no gap. ``makeGroupedFormCard(rows:notes:)``
+/// treats it as the row it wraps.
+@MainActor
+final class GroupedFormNotedRow: NSStackView {
+    let wrappedRow: NSView
+
+    init(_ row: NSView, notes: [GroupedFormStateNote]) {
+        wrappedRow = row
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = GroupedFormStyle.cardStackSpacing
+        translatesAutoresizingMaskIntoConstraints = false
+        // A full-bleed row spans to the card's trailing edge and insets its own
+        // content; its notes take the inset a row's content has.
+        let noteInset =
+            groupedFormJudgedRow(row) is GroupedFormFullBleedRow ? GroupedFormStyle.cardPadding : 0
+        for view in [row] + notes as [NSView] {
+            addArrangedSubview(view)
+            view.widthAnchor.constraint(
+                equalTo: widthAnchor, constant: view === row ? 0 : -noteInset
+            ).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("GroupedFormNotedRow does not support NSCoder")
+    }
+}
+
+/// The row ``makeGroupedFormCard(rows:notes:)`` infers layout from for `row`:
+/// the row inside any ``GroupedFormNotedRow``, since its notes change nothing
+/// about how the row sits in the card.
+@MainActor
+private func groupedFormJudgedRow(_ row: NSView) -> NSView {
+    guard let noted = row as? GroupedFormNotedRow else { return row }
+    return groupedFormJudgedRow(noted.wrappedRow)
+}
+
 /// Builds a card: hairline-separated rows on a rounded, filled background.
 ///
 /// Separators run from the label edge to the card's trailing edge — the
 /// asymmetry System Settings draws — so the content stack spans to that edge
 /// and every non-hairline row is inset back by ``GroupedFormStyle/cardPadding``.
-/// The ``GroupedFormFieldRow``s among `rows` share one label column, the width
-/// of their widest label, so their controls start at one edge.
+/// The ``GroupedFormFieldRow``s among `rows`, bare or in a
+/// ``GroupedFormNotedRow``, share one label column, the width of their widest
+/// title and info button, so their controls start at one edge.
 ///
-/// `notes` describe the card's current values and sit inside it under the
-/// rows, with no hairline, collapsing when hidden; text explaining the section
-/// as a whole stays a caption below the card.
+/// `notes` state the card's current state as a whole and sit inside it under
+/// the rows, at the rows' leading edge, with no hairline, collapsing when
+/// hidden; a note about one row is owned by that row as a
+/// ``GroupedFormNotedRow``. Text explaining what the section is or does goes in
+/// its header's info paragraphs, never on screen.
 @MainActor
-func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
+func makeGroupedFormCard(rows: [NSView], notes: [GroupedFormStateNote] = []) -> NSView {
     let content = NSStackView()
     content.orientation = .vertical
     content.alignment = .leading
@@ -317,10 +382,11 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
     for (index, row) in rows.enumerated() {
         // A collapsible row carries its own hairline, so that hiding it takes
         // the separator with it.
-        if index > 0, !(row is GroupedFormCollapsibleRow) {
+        let judged = groupedFormJudgedRow(row)
+        if index > 0, !(judged is GroupedFormCollapsibleRow) {
             arranged.append((GroupedFormCardSeparator(), true))
         }
-        arranged.append((row, row is GroupedFormFullBleedRow))
+        arranged.append((row, judged is GroupedFormFullBleedRow))
     }
     arranged += notes.map { ($0, false) }
     arranged.forEach { content.addArrangedSubview($0.view) }
@@ -348,15 +414,35 @@ func makeGroupedFormCard(rows: [NSView], notes: [NSView] = []) -> NSView {
             equalTo: content.widthAnchor, constant: entry.bleeds ? 0 : -pad
         ).isActive = true
     }
-    let fieldTitles = rows.compactMap { ($0 as? GroupedFormFieldRow)?.titleLabel }
-    for title in fieldTitles.dropFirst() {
-        title.widthAnchor.constraint(equalTo: fieldTitles[0].widthAnchor).isActive = true
+    let labelColumns = rows.compactMap {
+        (groupedFormJudgedRow($0) as? GroupedFormFieldRow)?.labelColumn
+    }
+    for column in labelColumns.dropFirst() {
+        column.widthAnchor.constraint(equalTo: labelColumns[0].widthAnchor).isActive = true
     }
     return container
 }
 
 /// Leading indent applied to a sub-option nested beneath its parent row.
 let groupedFormSubOptionIndent: CGFloat = 20
+
+/// Wraps `view` so it sits at the sub-option indent while its container
+/// still spans its stack — which leaves the stack's leading alignment
+/// satisfied and lets the stack hide it as a row.
+@MainActor
+func makeGroupedFormIndented(_ view: NSView) -> NSView {
+    let container = NSView()
+    view.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(view)
+    NSLayoutConstraint.activate([
+        view.topAnchor.constraint(equalTo: container.topAnchor),
+        view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        view.leadingAnchor.constraint(
+            equalTo: container.leadingAnchor, constant: groupedFormSubOptionIndent),
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+    ])
+    return container
+}
 
 /// A primary row and a dependent sub-option as a single grouped-form "row": the
 /// sub-option (and the hairline separating it) are indented beneath the primary
@@ -365,15 +451,16 @@ let groupedFormSubOptionIndent: CGFloat = 20
 /// Pass one to ``makeGroupedFormCard(rows:notes:)`` in place of two sibling rows, so
 /// the card's full-width separators land only *around* the pair.
 /// ``isSubOptionHidden`` collapses the sub-option and its hairline together,
-/// for a child that is meaningless until the parent is on.
+/// for a child that is meaningless until the parent is on. Either row may be a
+/// ``GroupedFormNotedRow``; a sub-option's notes are indented and hidden with it.
 @MainActor
 final class GroupedFormSubOptionGroup: NSStackView, GroupedFormFullBleedRow {
     private let hairlineRow: NSView
     private let subOptionRow: NSView
 
     init(primary: NSView, subOption: NSView) {
-        hairlineRow = Self.indented(makeGroupedFormHairline())
-        subOptionRow = Self.indented(subOption)
+        hairlineRow = makeGroupedFormIndented(makeGroupedFormHairline())
+        subOptionRow = makeGroupedFormIndented(subOption)
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -402,22 +489,6 @@ final class GroupedFormSubOptionGroup: NSStackView, GroupedFormFullBleedRow {
             hairlineRow.isHidden = newValue
             subOptionRow.isHidden = newValue
         }
-    }
-
-    /// Wraps `view` so it sits at the sub-option indent while its container
-    /// still spans the card, which is what lets the stack hide it as a row.
-    private static func indented(_ view: NSView) -> NSView {
-        let container = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.topAnchor.constraint(equalTo: container.topAnchor),
-            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            view.leadingAnchor.constraint(
-                equalTo: container.leadingAnchor, constant: groupedFormSubOptionIndent),
-            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-        ])
-        return container
     }
 }
 
@@ -512,14 +583,57 @@ func makeGroupedFormSectionHeader(_ text: String) -> NSTextField {
 }
 
 @MainActor
-func makeGroupedFormCaption(_ text: String) -> NSTextField {
-    let label = NSTextField(wrappingLabelWithString: text)
+private func applyGroupedFormCaptionStyle(_ label: NSTextField) {
     label.font = .preferredFont(forTextStyle: .caption1)
     label.textColor = .secondaryLabelColor
     label.maximumNumberOfLines = 0
     label.isSelectable = false
     label.setContentCompressionResistancePriority(.required, for: .vertical)
+}
+
+/// Caption-styled text that is the content of what holds it — an empty list's
+/// placeholder, an alert accessory's lead-in, the lead-in of a choice's
+/// controls — rather than a note about a control, which is a
+/// ``GroupedFormStateNote``.
+@MainActor
+func makeGroupedFormContentText(_ text: String) -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: text)
+    applyGroupedFormCaptionStyle(label)
     return label
+}
+
+/// On-screen caption text about a row, a card, or a section, shown only while
+/// the state it states holds: in a card's `notes`, a ``GroupedFormNotedRow``'s,
+/// or below a card.
+///
+/// `content` is the whole note: its text while the state holds, `nil` while it
+/// doesn't, which hides the note. ``refresh()`` re-reads it, so the owner calls
+/// that wherever it repaints what the note describes; the note is hidden until
+/// the first call.
+@MainActor
+final class GroupedFormStateNote: NSTextField {
+    private var content: @MainActor () -> String? = { nil }
+
+    convenience init(content: @escaping @MainActor () -> String?) {
+        self.init(wrappingLabelWithString: "")
+        self.content = content
+        applyGroupedFormCaptionStyle(self)
+        isHidden = true
+    }
+
+    /// A note reading `text` while `isShown` holds.
+    convenience init(_ text: String, shownWhen isShown: @escaping @MainActor () -> Bool) {
+        self.init(content: { isShown() ? text : nil })
+    }
+
+    func refresh() {
+        guard let text = content() else {
+            isHidden = true
+            return
+        }
+        stringValue = text
+        isHidden = false
+    }
 }
 
 /// A borderless button drawn in a fixed tint.
@@ -628,12 +742,15 @@ func makeGroupedFormBox(
     return container
 }
 
+/// A tinted banner: a symbol, `message`, then `trailingButtons` and, when
+/// `info` is given, an info button labeled `info.label` opening its paragraphs.
 @MainActor
 func makeGroupedFormBanner(
     symbolName: String,
     tint: NSColor,
     message: String,
-    trailingButtons: [NSButton] = []
+    trailingButtons: [NSButton] = [],
+    info: (label: String, paragraphs: [InfoPopoverParagraph])? = nil
 ) -> NSView {
     let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = tint
@@ -655,6 +772,9 @@ func makeGroupedFormBanner(
         button.setContentHuggingPriority(.required, for: .horizontal)
         views.append(button)
     }
+    if let info {
+        views.append(makeGroupedFormInfoButton(label: info.label, paragraphs: info.paragraphs))
+    }
 
     let row = NSStackView(views: views)
     row.orientation = .horizontal
@@ -673,7 +793,7 @@ func makeGroupedFormBanner(
 
 // MARK: - Form atoms shared by the settings panels
 
-/// Stacks a section's header, card and captions.
+/// Stacks a section's header, card, and the notes below it.
 @MainActor
 func makeGroupedFormSection(_ subviews: [NSView]) -> NSStackView {
     let stack = NSStackView(views: subviews)
@@ -687,10 +807,10 @@ func makeGroupedFormSection(_ subviews: [NSView]) -> NSStackView {
     return stack
 }
 
-/// An info affordance for a section header, or for a panel header that states a
-/// single-section category's name in its place.
+/// An info affordance for a row, a section header, a title, or a panel header
+/// that states a single-section category's name in its place.
 @MainActor
-func makeGroupedFormInfoButton(label: String, paragraphs: [InfoPopoverParagraph]) -> NSView {
+func makeGroupedFormInfoButton(label: String, paragraphs: [InfoPopoverParagraph]) -> InfoButtonView {
     let info = InfoButtonView()
     info.configure(label: label, paragraphs: paragraphs)
     return info
@@ -735,28 +855,6 @@ func makeGroupedFormSwitch(target: AnyObject, action: Selector) -> NSSwitch {
     toggle.target = target
     toggle.action = action
     return toggle
-}
-
-/// Builds a row: title, info button, and a trailing control.
-@MainActor
-func makeGroupedFormRowWithInfo(
-    _ title: String, control: NSControl, paragraphs: [InfoPopoverParagraph]
-) -> GroupedFormControlRow {
-    let label = NSTextField(labelWithString: title)
-    label.font = Typography.body
-    label.isSelectable = false
-    label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-    let info = InfoButtonView()
-    info.configure(label: title, paragraphs: paragraphs)
-
-    let spacer = NSView()
-    spacer.translatesAutoresizingMaskIntoConstraints = false
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-    return GroupedFormControlRow(
-        titleLabel: label, views: [label, info, spacer, control], alignment: .centerY,
-        spacing: Spacing.small)
 }
 
 /// A numeric field, its stepper, and the unit that follows them.

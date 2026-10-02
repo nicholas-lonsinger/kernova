@@ -13,6 +13,28 @@ struct IPSWSelectionContentViewControllerTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
+    /// The descriptions say what each source does, so the title carries no
+    /// popover repeating them.
+    @Test("The step shows its subtitle and each source's description, and no title popover")
+    func showsSubtitleAndDescriptions() {
+        let vc = IPSWSelectionContentViewController(creationVM: VMCreationViewModel())
+        vc.loadViewIfNeeded()
+
+        for text in [
+            "Choose how to obtain the macOS restore image (IPSW) for installation.",
+            "Download the latest compatible macOS restore image from Apple.",
+            "Browse every macOS release Apple still hosts, including older versions.",
+            "Install from a restore image at a URL you supply.",
+            "Select an IPSW file already on your Mac.",
+        ] {
+            #expect(findLabel(withText: text, in: vc.view) != nil, "\(text)")
+        }
+        #expect(
+            firstSubview(InfoButtonView.self, in: vc.view) {
+                $0.button.toolTip == "About macOS Restore Image"
+            } == nil)
+    }
+
     @Test("Defaults to Download Latest with the default destination shown")
     func defaultDownloadSelected() {
         let vm = VMCreationViewModel()  // macOS + downloadLatest, default download path
@@ -231,8 +253,10 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
     }
 
-    @Test("A pending pick shows a checking banner")
-    func pendingPickShowsCheckingBanner() async throws {
+    /// The nav bar owns why Next is disabled, so the step adds no banner saying
+    /// the same.
+    @Test("A pending pick leaves the checking message to the nav bar")
+    func pendingPickLeavesCheckingToNavBar() async throws {
         let inspector = SuspendingMockLocalRestoreImageInspector()
         let vm = VMCreationViewModel(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
@@ -242,7 +266,9 @@ struct IPSWSelectionContentViewControllerTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
 
-        #expect(findLabel(containing: "Checking this restore image", in: vc.view) != nil)
+        #expect(findLabel(containing: "Checking", in: vc.view) == nil)
+        vm.currentStep = .bootConfig
+        #expect(vm.validationMessage == "Checking the selected restore image\u{2026}")
 
         inspector.release()
         await vc.localFileInspectionTaskForTesting?.value

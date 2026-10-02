@@ -109,7 +109,7 @@ struct RemindersSettingsViewControllerTests {
         #expect(delivered)
     }
 
-    private func expectHeadersAndCaptionsVisible(in root: NSView) {
+    private func expectHeadersVisible(in root: NSView) {
         for text in ["App Reminders", "Virtual Machine Reminders"] {
             let header = findLabel(withText: text, in: root)
             #expect(header != nil, "header '\(text)' missing from the view tree")
@@ -117,38 +117,24 @@ struct RemindersSettingsViewControllerTests {
                 #expect(header.frame.height > 0, "header '\(text)' collapsed: \(header.frame)")
             }
         }
-        for fragment in [
-            "Appears when you quit",
-            "sidebar prompt to install",
-            "stop its own reminder",
-            "Turns every reminder above back on",
-        ] {
-            let caption = findLabel(containing: fragment, in: root)
-            #expect(caption != nil, "caption '\(fragment)…' missing from the view tree")
-            if let caption {
-                #expect(
-                    caption.frame.height > 0, "caption '\(fragment)…' collapsed: \(caption.frame)")
-            }
-        }
     }
 
     @Test("A VM list past the height cap scrolls instead of collapsing the text")
     func cappedPaneScrollsAndKeepsText() throws {
-        let controller = makeLaidOutController(vmCount: 9)
+        let controller = makeLaidOutController(vmCount: overflowingVMCount())
         defer { controller.viewDidDisappear() }
 
-        expectHeadersAndCaptionsVisible(in: controller.view)
+        expectHeadersVisible(in: controller.view)
 
         // The content must keep its natural height and overflow the capped
         // pane — a squeezed document exactly matching the pane's height is the
         // collapse bug, not scrolling.
-        let scrollView = try #require(controller.view as? NSScrollView)
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    /// Each governing switch owns a card, so its caption sits directly under it
-    /// and needs no "The <name> reminder…" prefix to say what it describes.
+    /// Each section's governing switch heads its own card.
     @Test("Each reminder switch is its own single-row card")
     func remindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
@@ -198,14 +184,15 @@ struct RemindersSettingsViewControllerTests {
         defer { controller.viewDidDisappear() }
 
         #expect(vmSwitches(in: controller).allSatisfy { $0.isEnabled })
-        let explanation = try #require(
-            findLabel(containing: "so these have no effect", in: controller.view))
-        #expect(explanation.isHidden)
+        // A state note holds no text while its state is off.
+        #expect(findLabel(containing: "No effect while the reminder above is off", in: controller.view) == nil)
 
         try setAppWideInstallReminder(on: false, in: controller)
 
         #expect(viewModel.agentInstallPromptDisabled == true)
         #expect(vmSwitches(in: controller).allSatisfy { !$0.isEnabled })
+        let explanation = try #require(
+            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
         #expect(!explanation.isHidden)
 
         try setAppWideInstallReminder(on: true, in: controller)
@@ -222,11 +209,11 @@ struct RemindersSettingsViewControllerTests {
     /// flash again.
     @Test("Revealing the override caption flashes the scroller again")
     func revealingOverrideCaptionRearmsFlash() throws {
-        let controller = makeShownPane(vmCount: 9)
+        let controller = makeShownPane(vmCount: overflowingVMCount())
         defer { controller.viewDidDisappear() }
         let indicator = try #require(controller.scrollMoreIndicatorForTesting)
 
-        // A 9-VM pane overflows the height cap, so appearing flashes — exactly
+        // The pane overflows the height cap, so appearing flashes — exactly
         // once, against the pane's settled geometry rather than the zero-height
         // frame the first row build runs under.
         #expect(indicator.flashCountForTesting == 1)
@@ -254,7 +241,7 @@ struct RemindersSettingsViewControllerTests {
     @Test("The first visit holds the flash for the arrival cue")
     func firstVisitHoldsFlashForArrivalCue() throws {
         let viewModel = makeViewModel()
-        for index in 1...9 {
+        for index in 1...overflowingVMCount() {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
         let controller = RemindersSettingsViewController(viewModel: viewModel)
@@ -281,10 +268,9 @@ struct RemindersSettingsViewControllerTests {
         #expect(indicator.flashCountForTesting == 1)
     }
 
-    /// Both captions describe the per-VM switches, so with none on screen they
-    /// point at nothing — "these have no effect" directly under "No macOS
-    /// virtual machines yet." reads as a bug.
-    @Test("Neither per-VM caption shows when there are no virtual machines")
+    /// The override note describes the per-VM switches, so with none on screen
+    /// it would point at nothing.
+    @Test("The override note does not show when there are no virtual machines")
     func perVMCaptionsHideWithoutVMs() throws {
         let controller = RemindersSettingsViewController(viewModel: makeViewModel())
         _ = controller.view
@@ -302,8 +288,7 @@ struct RemindersSettingsViewControllerTests {
         #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
         // The override caption is a note of the per-VM card, which the empty
         // state does not build.
-        #expect(findLabel(containing: "have no effect", in: controller.view) == nil)
-        #expect(!visible.contains { $0.contains("Turn a virtual machine off") })
+        #expect(findLabel(containing: "No effect", in: controller.view) == nil)
     }
 
     /// The disabled rows keep showing each VM's own setting, so turning the
@@ -371,16 +356,60 @@ struct RemindersSettingsViewControllerTests {
         #expect(findLabel(withText: "No macOS virtual machines yet.", in: controller.view) != nil)
     }
 
+    /// Seven VMs put the pane within a note's height of a fixed 520-point cap,
+    /// which is where a cap below the screen's would clip the note's growth.
+    @Test("The override note grows the Settings window by its full height")
+    func overrideNoteGrowsWindowByItsHeight() throws {
+        let viewModel = makeViewModel()
+        for index in 1...7 {
+            viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
+        }
+        let tabController = SettingsTabViewController(viewModel: viewModel)
+        let window = makeTestWindow(styleMask: [.titled, .closable])
+        window.contentViewController = tabController
+        window.orderFront(nil)
+        let item = try #require(
+            tabController.tabViewItems.first { $0.viewController is RemindersSettingsViewController })
+        tabController.tabView.selectTabViewItem(item)
+        let controller = try #require(item.viewController as? RemindersSettingsViewController)
+        defer { controller.viewDidDisappear() }
+        window.layoutIfNeeded()
+        let paneBefore = controller.preferredContentSize.height
+        let windowBefore = window.contentLayoutRect.height
+
+        try setAppWideInstallReminder(on: false, in: controller)
+        window.layoutIfNeeded()
+
+        let note = try #require(
+            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
+        #expect(note.frame.height > 0)
+        let growth = note.frame.height + GroupedFormStyle.cardStackSpacing
+        #expect(controller.preferredContentSize.height == paneBefore + growth)
+        #expect(window.contentLayoutRect.height == windowBefore + growth)
+
+        // Nothing overflows, so nothing scrolls.
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
+        let documentView = try #require(scrollView.documentView)
+        #expect(documentView.frame.height <= scrollView.frame.height)
+    }
+
     @Test("A short VM list hugs the content with the text laid out")
     func shortPaneHugsContentAndKeepsText() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
-        expectHeadersAndCaptionsVisible(in: controller.view)
+        expectHeadersVisible(in: controller.view)
 
         // Hugged: everything fits, so nothing scrolls.
-        let scrollView = try #require(controller.view as? NSScrollView)
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height <= scrollView.frame.height)
     }
+}
+
+/// Enough VMs that the Reminders pane outgrows the tallest window the screen
+/// can hold, at well under one row per 20 points of that height.
+@MainActor
+func overflowingVMCount() -> Int {
+    Int((SettingsPaneMetrics.maxHeight(in: nil) ?? 1_000) / 20)
 }

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -749,23 +750,24 @@ struct VMLibraryViewModelSnapshotTests {
 
     // MARK: - Sizes
 
-    @Test("On-disk sizes come back keyed by snapshot")
-    func onDiskSizesAreReported() async {
+    @Test("Snapshot sizes come back keyed by snapshot")
+    func snapshotSizesAreReported() async {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.snapshots.setSize(4_200_000_000, for: snapshot.id)
+        let size = SnapshotSize(bytes: 4_200_000_000, privateBytes: 200_000_000)
+        harness.snapshots.setSize(size, for: snapshot.id)
 
-        let sizes = await harness.viewModel.snapshotOnDiskBytes(for: instance)
+        let sizes = await harness.viewModel.snapshotSizes(for: instance)
 
-        #expect(sizes[snapshot.id] == 4_200_000_000)
+        #expect(sizes[snapshot.id] == size)
     }
 
     @Test("A VM with no snapshots reads no sizes")
-    func onDiskSizesEmptyWithoutSnapshots() async {
+    func snapshotSizesEmptyWithoutSnapshots() async {
         let harness = makeHarness()
-        let sizes = await harness.viewModel.snapshotOnDiskBytes(
+        let sizes = await harness.viewModel.snapshotSizes(
             for: makeInstance(in: harness.viewModel, files: harness.storage.files))
         #expect(sizes.isEmpty)
     }

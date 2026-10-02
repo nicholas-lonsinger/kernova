@@ -145,11 +145,6 @@ extension VMSettingsPanel {
     /// The figures this panel shares with the overview's cards, resolved once.
     var resolved: VMOverviewResolved { context.overview.resolved }
 
-    /// Whether the guest holds a session a configuration change waits out —
-    /// live, or suspended to disk — which a "takes effect on next start"
-    /// caption names.
-    var guestHoldsSession: Bool { instance.hasLiveVirtualMachine || instance.isSuspended }
-
     /// Whether a control writing `value` to `key` takes a change right now
     /// (``VMCapabilityCatalog/isAvailable(_:writing:on:)``) — the gate of a
     /// control no lock covers.
@@ -293,6 +288,25 @@ struct VMSettingsPanelChrome {
     var trailing: [NSView] = []
 }
 
+/// The VM states a settings section takes an edit in: the one condition its
+/// header's lock hint names while the pane is read-only.
+enum VMSettingsEditableStates {
+    /// Everything a live `VZVirtualMachine` or a saved state pins.
+    case stopped
+    /// Hot-plugged media, which a running guest still takes. Left out are a VM
+    /// mid-save, mid-capture, mid-restore, or paused to disk — each pins the
+    /// device set its saved state or its capture will be read back into.
+    case stoppedOrRunning
+
+    /// The lock hint's wording.
+    var lockHint: String {
+        switch self {
+        case .stopped: groupedFormLockHintText
+        case .stoppedOrRunning: "Editable when stopped or running"
+        }
+    }
+}
+
 /// A panel's record of what only a stopped VM can change.
 ///
 /// One registry per panel rather than one shared by the shell: a panel's
@@ -300,8 +314,7 @@ struct VMSettingsPanelChrome {
 /// a section that no longer exists.
 @MainActor
 struct VMSettingsLockRegistry {
-    /// "Editable when stopped" hints on lockable section headers; shown only
-    /// while read-only.
+    /// Lock hints on lockable section headers; shown only while read-only.
     private(set) var hints: [NSView] = []
     /// The controls of form rows only a stopped VM can change, disabled while
     /// read-only (per-row controls in the dynamic lists set their own enabled
@@ -321,10 +334,12 @@ struct VMSettingsLockRegistry {
         return row
     }
 
-    /// Section header; any lock hint it creates is registered here and toggled
-    /// by ``apply(isReadOnly:)``.
+    /// Section header, with a lock hint naming `editableWhen` when the section
+    /// has one; the hint is registered here and toggled by
+    /// ``apply(isReadOnly:)``. `paragraphs` are facts about the whole section —
+    /// a fact about one row goes in that row's info.
     mutating func makeHeader(
-        _ title: String, lockable: Bool = false, lockHintText: String = groupedFormLockHintText,
+        _ title: String, editableWhen: VMSettingsEditableStates? = nil,
         paragraphs: [InfoPopoverParagraph] = []
     ) -> NSView {
         var views: [NSView] = [makeGroupedFormSectionHeader(title)]
@@ -335,8 +350,8 @@ struct VMSettingsLockRegistry {
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         views.append(spacer)
-        if lockable {
-            views.append(makeLockHint(text: lockHintText))
+        if let editableWhen {
+            views.append(makeLockHint(editableWhen: editableWhen))
         }
 
         let header = NSStackView(views: views)
@@ -349,9 +364,9 @@ struct VMSettingsLockRegistry {
     /// A lock hint registered here, for a section header or the panel header a
     /// single-section category hands its chrome to.
     mutating func makeLockHint(
-        text: String = groupedFormLockHintText, sink: ((NSView) -> Void)? = nil
+        editableWhen: VMSettingsEditableStates = .stopped, sink: ((NSView) -> Void)? = nil
     ) -> NSView {
-        let hint = makeGroupedFormLockHint(text: text)
+        let hint = makeGroupedFormLockHint(text: editableWhen.lockHint)
         hint.isHidden = true
         hints.append(hint)
         sink?(hint)

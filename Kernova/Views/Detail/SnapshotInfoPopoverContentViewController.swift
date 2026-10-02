@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Popover content shown by a snapshot row's "Get Info" menu item.
 ///
@@ -13,18 +14,18 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     var onRequestClose: (() -> Void)?
 
     private let snapshot: VMSnapshot
-    /// Bytes the captured copies occupy, already formatted.
-    private let onDiskText: String
+    /// The snapshot's size, `nil` when it couldn't be read.
+    private let size: SnapshotSize?
     /// Whether the snapshot's note can be written right now.
     private let canEditNotes: Bool
     private var notesEditor: NotesEditorView?
 
     init(
-        snapshot: VMSnapshot, onDiskText: String, canEditNotes: Bool,
+        snapshot: VMSnapshot, size: SnapshotSize?, canEditNotes: Bool,
         onCommitNotes: @escaping (String) -> Void
     ) {
         self.snapshot = snapshot
-        self.onDiskText = onDiskText
+        self.size = size
         self.canEditNotes = canEditNotes
         self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
@@ -79,7 +80,12 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         grid.addRow(with: [
             keyLabel("Captured"), valueLabel(SnapshotKindCopy.capturedContents(snapshot.kind)),
         ])
-        grid.addRow(with: [keyLabel("On disk"), valueLabel(onDiskText)])
+        grid.addRow(with: [
+            keyLabel("Size"), valueLabel(size.map { DataFormatters.formatBytes($0.bytes) } ?? "\u{2014}"),
+        ])
+        if let privateBytes = size?.privateBytes {
+            grid.addRow(with: [keyLabel("Private"), valueLabel(DataFormatters.formatBytes(privateBytes))])
+        }
         grid.column(at: 0).xPlacement = .leading
         grid.column(at: 1).xPlacement = .leading
         return grid

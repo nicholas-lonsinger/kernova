@@ -13,6 +13,59 @@ protocol SettingsPaneScrollCueing: AnyObject {
     func rearmScrollMoreCue()
 }
 
+/// A Settings pane's root view: `content`, pinned to every edge.
+///
+/// The pane is measured through `content`, never the root: AppKit holds a
+/// view controller's view to its `preferredContentSize` with a priority-501
+/// `NSViewController.preferredContentSize.height` constraint, which outranks
+/// the fitting compression, so the root's own `fittingSize` never drops below
+/// the size last published.
+@MainActor
+final class SettingsPaneRootView: NSView {
+    let content: NSView
+
+    init(content: NSView) {
+        self.content = content
+        super.init(frame: .zero)
+        // The size flows from the content. With autoresizing-mask constraints,
+        // NSTabViewController frames the pane to the tab view's bounds, which
+        // collide with the content's explicit width (the logged "Conflicting
+        // constraints" warning) and stretch the content to the tab view's height.
+        translatesAutoresizingMaskIntoConstraints = false
+        addFullSizeSubview(content)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SettingsPaneRootView does not support NSCoder")
+    }
+}
+
+extension NSViewController {
+    /// Measures this Settings pane at ``SettingsPaneMetrics/width`` and
+    /// publishes the result as `preferredContentSize`, which
+    /// `SettingsTabViewController` resizes the window to whenever it changes.
+    ///
+    /// The pane's view is a ``SettingsPaneRootView``. A pane calls this on
+    /// appearance and after anything that changes what it shows, such as a
+    /// note appearing. A wrapping caption's height stays single-line until a
+    /// layout pass resolves its wrap width, so a pane not yet in a window is
+    /// laid out at the pane width, `layoutHeight` tall, before it is measured.
+    func publishSettingsPaneSize(layoutHeight: CGFloat = SettingsPaneMetrics.width) {
+        guard let root = view as? SettingsPaneRootView else {
+            assertionFailure("A Settings pane's view is a SettingsPaneRootView")
+            return
+        }
+        if root.window == nil {
+            root.setFrameSize(NSSize(width: SettingsPaneMetrics.width, height: layoutHeight))
+        }
+        root.layoutSubtreeIfNeeded()
+        let size = root.content.fittingSize
+        guard size != preferredContentSize else { return }
+        preferredContentSize = size
+    }
+}
+
 /// Layout tokens shared by every pane of the Settings window.
 ///
 /// Surface-specific, so they live here (next to the tab container that owns the
@@ -23,6 +76,28 @@ enum SettingsPaneMetrics {
     /// Each pane's root view pins to this explicitly instead of inheriting the
     /// tab view's bounds — see `SettingsTabViewController`'s sizing contract.
     static let width: CGFloat = 520
+
+    /// The tallest a pane can be while its window still fits the visible area
+    /// below the window's top edge — the window grows downward from a fixed
+    /// top — or the main screen's whole visible height before the window is
+    /// on a screen; `nil` with no screen at all.
+    ///
+    /// A pane taller than this scrolls; below it, the window follows the pane.
+    static func maxHeight(in window: NSWindow?) -> CGFloat? {
+        let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
+        if let window, let screen = window.screen {
+            return maxHeight(windowTop: window.frame.maxY, visibleFrame: screen.visibleFrame, chrome: chrome)
+        }
+        guard let screen = NSScreen.main else { return nil }
+        return maxHeight(windowTop: nil, visibleFrame: screen.visibleFrame, chrome: chrome)
+    }
+
+    /// The pane height that keeps a window whose top edge sits at `windowTop`
+    /// — or the top of `visibleFrame` when `nil` — inside `visibleFrame`.
+    static func maxHeight(windowTop: CGFloat?, visibleFrame: NSRect, chrome: CGFloat) -> CGFloat {
+        let top = min(windowTop ?? visibleFrame.maxY, visibleFrame.maxY)
+        return top - visibleFrame.minY - chrome
+    }
 }
 
 /// The toolbar-style tab container for the Settings window.
@@ -88,6 +163,7 @@ final class SettingsTabViewController: NSTabViewController {
     /// a taller pane clip. Each pane publishes its content height via
     /// `preferredContentSize` in `viewWillAppear()` (which runs before this
     /// delegate call), so the target size is already fresh here.
+    /// A later change is picked up by ``preferredContentSizeDidChange(for:)``.
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
         resizeWindow(toFit: tabViewItem?.viewController, animate: true)
@@ -109,6 +185,14 @@ final class SettingsTabViewController: NSTabViewController {
     override func viewWillAppear() {
         super.viewWillAppear()
         resizeWindow(toFit: tabView.selectedTabViewItem?.viewController, animate: false)
+    }
+
+    /// Resizes the window when the selected pane's content changes size while
+    /// it is on screen — a note appearing or going away.
+    override func preferredContentSizeDidChange(for viewController: NSViewController) {
+        super.preferredContentSizeDidChange(for: viewController)
+        guard viewController === tabView.selectedTabViewItem?.viewController else { return }
+        resizeWindow(toFit: viewController, animate: true)
     }
 
     /// Cues the pane the window opened on, once that window is on screen.

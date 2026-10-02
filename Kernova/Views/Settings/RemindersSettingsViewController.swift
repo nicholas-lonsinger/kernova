@@ -25,12 +25,13 @@ import KernovaLogging
 final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
-    /// Height at which the pane stops growing and starts scrolling — keeps a
-    /// long VM list from making the Settings window unreasonably tall.
-    private static let maxPaneHeight: CGFloat = 520
-
     private let viewModel: VMLibraryViewModel
     private var preferences: AppPreferences { viewModel.preferences }
+
+    /// Caps the pane at ``SettingsPaneMetrics/maxHeight(in:)``, past which a
+    /// long VM list scrolls; re-read on every publish, since the window may have
+    /// moved to another screen.
+    private var heightCap: NSLayoutConstraint?
 
     private let menuBarQuitSwitch = NSSwitch()
     private let agentInstallSwitch = NSSwitch()
@@ -44,8 +45,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// The label is grayed in step with a disabled switch.
     private var vmSwitches: [(instance: VMInstance, control: NSSwitch)] = []
     /// Explains the disabled per-VM rows while the app-wide switch is off.
-    private var vmCaption = NSTextField()
-    private var vmOverrideCaption = NSTextField()
+    private lazy var vmOverrideCaption = GroupedFormStateNote(
+        "No effect while the reminder above is off.",
+        shownWhen: { [unowned self] in viewModel.agentInstallPromptDisabled })
     /// Flashes the pane's scroller when its content overflows the viewport,
     /// signaling there's more below.
     private var scrollMoreIndicator: ScrollMoreIndicator?
@@ -77,110 +79,71 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
 
-        // One card per reminder, each with its own caption, so no description has
-        // to name the switch it belongs to.
         let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Menu bar quit reminder", control: menuBarQuitSwitch)
+            makeGroupedFormCardRow(
+                "Menu bar quit reminder", control: menuBarQuitSwitch,
+                info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")])
         ])
-        let menuBarCaption = makeGroupedFormCaption(
-            "Appears when you quit (⌘Q) and Kernova keeps running in the menu bar, reminding you "
-                + "it — and your virtual machines — are still going.")
 
         // The governing control of the Virtual Machine Reminders section, so it
         // heads that section rather than sitting with the app reminder above.
         let agentInstallCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Guest agent install reminder", control: agentInstallSwitch)
+            makeGroupedFormCardRow(
+                "Guest agent install reminder", control: agentInstallSwitch,
+                info: [
+                    .body(
+                        "The sidebar prompt to install the Kernova guest agent on a running macOS "
+                            + "virtual machine. Turn a virtual machine off below to stop only its "
+                            + "reminder. A virtual machine's reminder stops on its own once its "
+                            + "agent is installed.")
+                ])
         ])
-        let agentInstallCaption = makeGroupedFormCaption(
-            "The sidebar prompt to install the Kernova guest agent on a running macOS virtual "
-                + "machine.")
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
+        // Indented beneath the switch that governs them, the alignment Apple's
+        // guidance uses to show a control's subordinates.
         vmSection.orientation = .vertical
         vmSection.alignment = .leading
         vmSection.spacing = Spacing.none
-        vmCaption = makeGroupedFormCaption(
-            "Turn a virtual machine off to stop its own reminder. This has no effect once the "
-                + "agent is installed.")
-        vmOverrideCaption = makeGroupedFormCaption(
-            "The reminder above is off, so these have no effect. Turn it back on to choose per "
-                + "virtual machine.")
-        vmOverrideCaption.isHidden = true
-
-        // Indented beneath the switch that governs them, the alignment Apple's
-        // guidance uses to show a control's subordinates.
-        let vmSubordinates = NSStackView(views: [vmSection, vmCaption])
-        vmSubordinates.orientation = .vertical
-        vmSubordinates.alignment = .leading
-        vmSubordinates.spacing = Spacing.small
-        vmSubordinates.translatesAutoresizingMaskIntoConstraints = false
-        // A plain container, not an arranged subview of `content` directly: the
-        // content stack pins its members' leading edges to its own, which an
-        // inset applied out there would fight. Holding the inset inside keeps
-        // the container full-width and the stack's alignment satisfied.
-        let vmGroup = NSView()
-        vmGroup.addSubview(vmSubordinates)
-        NSLayoutConstraint.activate([
-            vmSubordinates.topAnchor.constraint(equalTo: vmGroup.topAnchor),
-            vmSubordinates.bottomAnchor.constraint(equalTo: vmGroup.bottomAnchor),
-            vmSubordinates.leadingAnchor.constraint(
-                equalTo: vmGroup.leadingAnchor, constant: groupedFormSubOptionIndent),
-            vmSubordinates.trailingAnchor.constraint(equalTo: vmGroup.trailingAnchor),
-        ])
-        for member in [vmSection, vmCaption] {
-            member.widthAnchor.constraint(equalTo: vmSubordinates.widthAnchor).isActive = true
-        }
+        vmSection.translatesAutoresizingMaskIntoConstraints = false
+        let vmGroup = makeGroupedFormIndented(vmSection)
 
         let resetButton = NSButton(
             title: "Reset All Reminders", target: self, action: #selector(resetAllReminders))
         resetButton.bezelStyle = .push
         resetButton.controlSize = .small
         resetButton.setContentHuggingPriority(.required, for: .horizontal)
-        let resetCaption = makeGroupedFormCaption(
-            "Turns every reminder above back on, including for all virtual machines.")
 
         let content = NSStackView(views: [
             makeGroupedFormSectionHeader("App Reminders"),
             menuBarCard,
-            menuBarCaption,
             makeGroupedFormSectionHeader("Virtual Machine Reminders"),
             agentInstallCard,
-            agentInstallCaption,
             vmGroup,
             resetButton,
-            resetCaption,
         ])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
-        // A caption closes its group, so the gap after one is what separates
-        // blocks. The governing switch's caption keeps the tighter step, so its
-        // subordinates read as continuing the same group rather than opening a
-        // new one.
-        content.setCustomSpacing(Spacing.section, after: menuBarCaption)
+        content.setCustomSpacing(Spacing.section, after: menuBarCard)
         content.setCustomSpacing(Spacing.section, after: vmGroup)
 
-        // Full-width members (cards and wrapping captions). The reset button is
-        // excluded so it hugs its intrinsic width at the leading edge.
-        for member in [
-            menuBarCard, menuBarCaption, agentInstallCard, agentInstallCaption,
-            vmGroup, resetCaption,
-        ] {
+        // Full-width members. The reset button is excluded so it hugs its
+        // intrinsic width at the leading edge.
+        for member in [menuBarCard, agentInstallCard, vmGroup] {
             member.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
 
         // Scroll when the VM list grows past the cap; hug content when short.
         let scrollView = makeGroupedFormScrollView(
             documentView: content, topInset: Spacing.large, bottomInset: Spacing.large)
-        // Let the pane's size flow from its content (see the General/Advanced
-        // panes for why the root must not use autoresizing-mask constraints).
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         // Flash-only (no chevron/fade overlays): this scroll view *is* the pane's
         // root, so it has no superview of its own to host them until the tab view
-        // adopts it. The window is sized once per tab selection, so content that
-        // grows while the pane is on screen — a VM added or removed, the override
-        // caption appearing — overflows in place; the flash is what says so.
+        // adopts it. The window follows the content only up to the height cap,
+        // so content that grows past it while the pane is on screen — a VM
+        // added, the override caption appearing — overflows in place; the flash
+        // is what says so.
         // Not armed at birth: the tab container cues every arrival explicitly,
         // and a born-armed flash fires from `viewWillAppear`'s layout churn — in
         // the already-visible window, behind the tab transition — so the first
@@ -195,31 +158,19 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let hugHeight = scrollView.heightAnchor.constraint(
             equalTo: content.heightAnchor, constant: Spacing.large * 2)
         hugHeight.priority = .defaultLow
+        let heightCap = scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: 0)
+        self.heightCap = heightCap
         NSLayoutConstraint.activate([
             scrollView.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
             hugHeight,
-            scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: Self.maxPaneHeight),
         ])
-        view = scrollView
+        view = SettingsPaneRootView(content: scrollView)
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        // Publishes the pane's size, clamped by the height cap.
         refreshVMRows()
-        // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height (clamped by the height cap) — the scroll view otherwise
-        // masks the document's intrinsic height. Must happen here, before the
-        // tab transition sizes the window: NSTabViewController reads the pane's
-        // preferredContentSize when switching and does not react to a later
-        // change (e.g. from viewDidLayout).
-        //
-        // Lay out at the pane's fixed width before measuring: a wrapping
-        // caption's intrinsic height stays single-line until a layout pass
-        // resolves its wrap width, so an unlaid-out fittingSize under-counts
-        // every caption and the pane comes up short.
-        view.setFrameSize(NSSize(width: SettingsPaneMetrics.width, height: Self.maxPaneHeight))
-        view.layoutSubtreeIfNeeded()
-        preferredContentSize = view.fittingSize
         startVMObservation()
     }
 
@@ -262,6 +213,14 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         if previousRowCount != vmSwitches.count { rearmScrollFlash() }
     }
 
+    /// Publishes the pane's size for the window to follow.
+    private func publishSize() {
+        let maxHeight = SettingsPaneMetrics.maxHeight(in: view.window)
+        if let maxHeight { heightCap?.constant = maxHeight }
+        heightCap?.isActive = maxHeight != nil
+        publishSettingsPaneSize(layoutHeight: maxHeight ?? SettingsPaneMetrics.width)
+    }
+
     /// Re-arms the flash for a fresh appearance, so arriving at an overflowing
     /// pane cues every visit rather than only the first.
     func rearmScrollMoreCue() {
@@ -271,10 +230,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// Re-arms the "more below" scroller flash after the pane's content height
     /// changes while it is on screen.
     ///
-    /// The window is sized once per tab selection, so content that grows
-    /// afterwards overflows in place with nothing to say so. Layout has to
-    /// settle first: overflow is measured against the document's real height,
-    /// and an un-laid-out subtree still reports the old one.
+    /// The window follows the content only up to the pane's height cap, so
+    /// content that grows past it overflows with nothing else to say so. Layout
+    /// has to settle first: overflow is measured against the document's real
+    /// height, and an un-laid-out subtree still reports the old one.
     ///
     /// Skipped before the pane has a height, which is where the first row build
     /// runs: every content height beats a zero-height viewport, so re-arming
@@ -299,7 +258,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             VMConfigurationKeyRegistry.agentInstallReminder.applies($0.configuration)
         }
         guard !reminded.isEmpty else {
-            let empty = makeGroupedFormCaption("No macOS virtual machines yet.")
+            let empty = makeGroupedFormContentText("No macOS virtual machines yet.")
             vmSection.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: vmSection.widthAnchor).isActive = true
             return
@@ -331,18 +290,15 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
-        // The caption talks about the per-VM switches. With no VMs the section
-        // is a lone "No virtual machines yet." row, so it would be describing
-        // controls that aren't on screen.
         let hasVMs = !vmSwitches.isEmpty
-        vmCaption.isHidden = !hasVMs
         let wasShowingOverrideCaption = !vmOverrideCaption.isHidden
-        vmOverrideCaption.isHidden = !overridden
+        vmOverrideCaption.refresh()
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
             applyGroupedFormRowEnabled(!overridden, control: toggle)
         }
+        publishSize()
 
         // The override caption is a note of the per-VM card, so it changes the
         // pane's height only while that card exists.

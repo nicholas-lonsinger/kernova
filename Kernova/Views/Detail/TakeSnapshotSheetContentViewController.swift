@@ -30,7 +30,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// shape afterwards.
     private let notesEditor = NotesEditorView(text: "", placeholder: "Optional")
     private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
-    private var captionLabel = NSTextField()
+    private lazy var captionLabel = GroupedFormStateNote { [unowned self] in captionText }
 
     /// The name the sheet would confirm with right now.
     var enteredName: String { nameField.stringValue }
@@ -60,11 +60,11 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         self.mode = mode
         guard isViewLoaded else { return }
         headerBodyLabel.stringValue = headerBodyText
-        captionLabel.stringValue = captionText
+        captionLabel.refresh()
     }
 
     override func loadView() {
-        captionLabel = makeGroupedFormCaption(captionText)
+        captionLabel.refresh()
         let stack = NSStackView(views: [
             makeHeader(), makeFormCard(), captionLabel, makeFooter(),
         ])
@@ -102,35 +102,25 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// What the capture takes, in outcome terms.
     var headerBodyText: String {
         switch mode {
-        case .live:
-            "The VM's current memory, disks, and settings are captured as a restore point you "
-                + "can revert to later."
-        case .suspended:
-            "The memory the VM is suspended on, its disks, and its settings are captured as a "
-                + "restore point you can revert to later."
-        case .stopped:
-            "The VM's disks and settings are captured as a restore point you can revert "
-                + "to later. There is no memory image, so reverting returns the VM powered off."
+        case .live: "Captures the virtual machine's memory, disks, and settings."
+        case .suspended: "Captures the suspended session, disks, and settings."
+        case .stopped: "Captures the virtual machine's disks and settings. Reverting returns it powered off."
         }
     }
 
-    /// The shared-blocks note, prefixed with what the capture costs the running
-    /// guest — nothing at all, when there isn't one.
-    var captionText: String {
-        let lead =
-            switch mode {
-            case .live:
-                "The VM pauses briefly while its state is written. "
-            case .suspended:
-                "The suspended session is copied as it stands, so the VM stays suspended and can "
-                    + "still be resumed. "
-            case .stopped: ""
-            }
-        return lead
-            + "Disks are copied on the same volume, so the copies share their blocks with the "
-            + "VM's disks and take almost no extra space until one side changes \u{2014} "
-            + "but the snapshot's listed size counts those shared blocks in full."
+    /// What the capture does to the running guest, or `nil` when there is none.
+    var captionText: String? {
+        switch mode {
+        case .live: "The virtual machine pauses briefly while its state is written."
+        case .suspended: "The virtual machine stays suspended."
+        case .stopped: nil
+        }
     }
+
+    /// Why a snapshot takes little space when it is taken.
+    static let sharedBlocksExplanation =
+        "Disks are copied on the same volume, so the copies share their blocks with the virtual machine's "
+        + "disks and take almost no extra space until one side changes."
 
     // MARK: - Header
 
@@ -142,11 +132,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
             pointSize: Self.heroPointSize, weight: .regular)
         icon.setContentHuggingPriority(.required, for: .vertical)
 
-        let title = NSTextField(labelWithString: "Take Snapshot of \u{201C}\(vmName)\u{201D}")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.alignment = .center
-        title.lineBreakMode = .byTruncatingMiddle
-        title.isSelectable = false
+        let title = makeSheetTitle(
+            "Take Snapshot of \u{201C}\(vmName)\u{201D}", info: [.body(Self.sharedBlocksExplanation)])
 
         let body = headerBodyLabel
         body.stringValue = headerBodyText
@@ -159,9 +146,8 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = Spacing.standard
-        for row in [title, body] {
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        title.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 

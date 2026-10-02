@@ -52,117 +52,106 @@ final class AdvancedSettingsViewController: NSViewController {
         cloneOutcomePopUp.target = self
         cloneOutcomePopUp.action = #selector(cloneOutcomeChosen)
 
-        let card = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Always show advanced options", control: alwaysShowSwitch)
-        ])
-        let caption = makeGroupedFormCaption(
-            "Advanced actions such as Start in Recovery Mode are normally revealed by holding the "
-                + "Option (⌥) key in a virtual machine's context menu. Turn this on to always show "
-                + "them.")
-
-        let duplicateIDCard = makeGroupedFormCard(rows: [
+        let optionsCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow(
-                "Offer to start duplicate machine IDs anyway", control: duplicateIDOverrideSwitch)
+                "Always show advanced options", control: alwaysShowSwitch,
+                info: [
+                    .body(
+                        "Advanced actions such as Start in Recovery Mode appear in a virtual "
+                            + "machine's context menu while you hold Option (⌥). With this on, they "
+                            + "always appear.")
+                ])
         ])
-        let duplicateIDCaption = makeGroupedFormCaption(
-            "Kernova never starts a virtual machine while another with the same machine ID is "
-                + "active. Turn this on to be asked each time whether to start it anyway. Apple "
-                + "documents running two virtual machines at once with the same identifier as "
-                + "undefined behavior in the guest operating system.")
 
-        let cloneCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow("Clone as", control: cloneOutcomePopUp)
+        let identityCard = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow(
+                "Offer to start duplicate machine IDs anyway", control: duplicateIDOverrideSwitch,
+                info: [
+                    .body(
+                        "Kernova never starts a virtual machine while another with the same machine "
+                            + "ID is active. Turn this on to be asked each time whether to start it "
+                            + "anyway."),
+                    .body(
+                        "Apple documents running two virtual machines at once with the same "
+                            + "identifier as undefined behavior in the guest operating system."),
+                ]),
+            makeGroupedFormCardRow(
+                "Clone as", control: cloneOutcomePopUp,
+                info: [
+                    .body(
+                        "A New Machine gets its own machine ID and MAC address, so it can run "
+                            + "alongside its source. An Exact Copy keeps both, so the two are the same "
+                            + "machine to their guests and networks: each is marked as sharing the "
+                            + "other\u{2019}s MAC address, they never run on the same network at once, "
+                            + "and they run at once only when you start one anyway."),
+                    .body(
+                        "An Exact Copy also carries its source\u{2019}s snapshots, Ephemeral Mode and "
+                            + "display preferences, but not start at launch; a New Machine starts "
+                            + "with none of these."),
+                    .body(
+                        "Where a virtual machine offers both, the second Clone item in the Virtual "
+                            + "Machine menu, or Option (⌥) over Clone in its context menu, makes the "
+                            + "other for one clone."),
+                ]),
         ])
-        let cloneCaption = makeGroupedFormCaption(
-            "A New Machine gets its own machine ID and MAC address, so it can run alongside its "
-                + "source. An Exact Copy keeps both, so the two are the same machine to their "
-                + "guests and networks: each is marked as sharing the other\u{2019}s MAC address, "
-                + "they never run on the same network at once, and they run at once only when "
-                + "you start one anyway. An Exact Copy also carries its source\u{2019}s snapshots, "
-                + "Ephemeral Mode and display preferences, but not start at launch; a New Machine "
-                + "starts with none of these. Where a "
-                + "virtual machine offers both, the second Clone item in the Virtual Machine menu, "
-                + "or Option (⌥) over Clone in its context menu, makes the other for one clone.")
 
         var rows: [NSView] = [
             makeGroupedFormSectionHeader("Advanced Options"),
-            card,
-            caption,
+            optionsCard,
             makeGroupedFormSectionHeader("Machine Identity"),
-            duplicateIDCard,
-            duplicateIDCaption,
-            cloneCard,
-            cloneCaption,
+            identityCard,
         ]
-        var fullWidthRows: [NSView] = [
-            card, caption, duplicateIDCard, duplicateIDCaption, cloneCard, cloneCaption,
-        ]
+        var cards: [NSView] = [optionsCard, identityCard]
         // Absent, not disabled, in a build with no group container: the tool
         // installed from there could reach no app.
-        let offersCommandLineTool = CommandLineToolInstaller.isAvailable
-        // The `PATH` callout closes the symlink row; the completions row is a
-        // separate setting and reads as one.
-        var pathHintRow: NSView?
-        if offersCommandLineTool {
+        if CommandLineToolInstaller.isAvailable {
             let installButton = NSButton(
                 title: "Install\u{2026}", target: self, action: #selector(installCommandLineTool))
             installButton.bezelStyle = .push
             let toolCard = makeGroupedFormCard(rows: [
-                makeGroupedFormCardRow("Command line tool", control: installButton)
+                makeGroupedFormCardRow(
+                    "Command line tool", control: installButton,
+                    info: [
+                        .body(
+                            "Links this copy's kernova tool into a folder you choose, so a shell can "
+                                + "drive your virtual machines. The tool drives the copy of Kernova it "
+                                + "links into, starting it when it isn't running."),
+                        .body("If the folder isn't on your PATH, add it:"),
+                        .code("export PATH=\"/usr/local/bin:$PATH\""),
+                    ]),
+                makeGroupedFormCardRow(
+                    "Shell completions", control: makeCompletionsButton(),
+                    info: [
+                        .body(
+                            "Writes a small file that loads completions from the tool itself, so "
+                                + "they stay current as Kernova updates. Tab then completes verbs and "
+                                + "flags, and your own virtual machines, snapshots, and setting keys."),
+                        .body(
+                            "bash needs the bash-completion package; the bash macOS ships is too old "
+                                + "for it."),
+                        .body("If the folder isn't on your fpath, add it to your ~/.zshrc:"),
+                        .code("fpath=(~/.zsh/completions $fpath)"),
+                    ]),
             ])
-            let toolCaption = makeGroupedFormCaption(
-                "Links this copy's kernova tool into a folder you choose, so a shell can drive "
-                    + "your virtual machines. The tool drives the copy of Kernova it links into, "
-                    + "starting that copy when it is not running. If the folder is not already "
-                    + "on your PATH, add it:")
-            let pathHint = makeCalloutCode("export PATH=\"/usr/local/bin:$PATH\"")
-            let completionsCard = makeGroupedFormCard(rows: [
-                makeGroupedFormCardRow("Shell completions", control: makeCompletionsButton())
-            ])
-            let completionsCaption = makeGroupedFormCaption(
-                "Writes a small file that loads completions from the tool itself, so they stay "
-                    + "current as Kernova updates. Tab then completes verbs and flags, and your "
-                    + "own virtual machines, snapshots, and setting keys. bash needs the "
-                    + "bash-completion package; the bash macOS ships is too old for it. If the "
-                    + "folder is not already on your fpath, add it to your ~/.zshrc:")
-            let fpathHint = makeCalloutCode("fpath=(~/.zsh/completions $fpath)")
-            rows.append(contentsOf: [
-                makeGroupedFormSectionHeader("Command Line Tool"), toolCard, toolCaption, pathHint,
-                completionsCard, completionsCaption, fpathHint,
-            ])
-            fullWidthRows.append(contentsOf: [
-                toolCard, toolCaption, pathHint, completionsCard, completionsCaption, fpathHint,
-            ])
-            pathHintRow = pathHint
+            rows.append(contentsOf: [makeGroupedFormSectionHeader("Command Line Tool"), toolCard])
+            cards.append(toolCard)
         }
 
         let section = NSStackView(views: rows)
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = Spacing.small
-        // Keep each caption tight to its card, but separate the groups so they
-        // read as distinct settings.
-        section.setCustomSpacing(Spacing.section, after: caption)
-        section.setCustomSpacing(Spacing.section, after: duplicateIDCaption)
-        if offersCommandLineTool {
-            section.setCustomSpacing(Spacing.section, after: cloneCaption)
-        }
-        if let pathHintRow {
-            section.setCustomSpacing(Spacing.section, after: pathHintRow)
+        // Separate the sections; a header stays tight to its card.
+        for card in cards.dropLast() {
+            section.setCustomSpacing(Spacing.section, after: card)
         }
         section.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView()
-        // Let the root's size flow from its content. Without this, NSTabViewController
-        // frames the installed pane to the tab view's bounds via autoresizing-mask
-        // constraints that both collide with the explicit width (the logged
-        // "Conflicting constraints" warning) and stretch the four-edge-pinned section
-        // to the tab view's height (the empty-card void).
-        root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(section)
         let pad = Spacing.large
-        // Every card and caption spans the column; the section headers do not.
-        var constraints = fullWidthRows.map {
+        // Every card spans the column; the section headers do not.
+        var constraints = cards.map {
             $0.widthAnchor.constraint(equalTo: section.widthAnchor)
         }
         constraints.append(contentsOf: [
@@ -173,16 +162,12 @@ final class AdvancedSettingsViewController: NSViewController {
             root.widthAnchor.constraint(equalToConstant: SettingsPaneMetrics.width),
         ])
         NSLayoutConstraint.activate(constraints)
-        view = root
+        view = SettingsPaneRootView(content: root)
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        // Drive NSTabViewController's per-tab window resize from the measured
-        // fitting height. Without this the window keeps whatever height it
-        // already has (e.g. a stale tall autosaved frame), and the four-edge
-        // section pin stretches the cards over the excess.
-        preferredContentSize = view.fittingSize
+        publishSettingsPaneSize()
         alwaysShowSwitch.state = preferences.alwaysShowAdvancedOptions ? .on : .off
         duplicateIDOverrideSwitch.state = preferences.allowsDuplicateMachineIDOverride ? .on : .off
         cloneOutcomePopUp.selectItem(at: CloneOutcome.allCases.firstIndex(of: preferences.cloneOutcome) ?? 0)
@@ -337,7 +322,7 @@ final class AdvancedSettingsViewController: NSViewController {
         _ failure: any Error, titled title: String, offering lead: String, command: String
     ) {
         let hint = NSStackView(views: [
-            makeGroupedFormCaption(lead),
+            makeGroupedFormContentText(lead),
             makeCalloutCode(command),
         ])
         hint.orientation = .vertical

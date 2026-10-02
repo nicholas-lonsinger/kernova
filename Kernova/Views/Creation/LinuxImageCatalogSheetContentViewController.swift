@@ -134,9 +134,7 @@ final class LinuxImageCatalogSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Choose a Distribution")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
+        let title = makeSheetTitle("Choose a Distribution")
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false

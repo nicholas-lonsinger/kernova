@@ -1013,10 +1013,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     private func makePassthroughRow() -> NSView {
-        let label = NSTextField(labelWithString: "Automatic passthrough")
+        let title = "Automatic passthrough"
+        let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         label.isSelectable = false
-        label.toolTip = ClipboardPassthroughConsent.prompt(vmName: instance.name).message
+        let info = makeGroupedFormInfoButton(
+            label: title, paragraphs: [.body(ClipboardPassthroughConsent.disclosure(vmName: instance.name))])
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -1025,7 +1027,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         passthroughSwitch.target = self
         passthroughSwitch.action = #selector(passthroughToggled)
 
-        let stack = NSStackView(views: [label, spacer, passthroughSwitch])
+        let stack = NSStackView(views: [label, info, spacer, passthroughSwitch])
         stack.orientation = .horizontal
         stack.spacing = Spacing.small
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 0, right: 12)

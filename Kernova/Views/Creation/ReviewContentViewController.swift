@@ -42,8 +42,6 @@ final class ReviewContentViewController: NSViewController {
 
     override func loadView() {
         let title = makeWizardTitle("Review Configuration")
-        let subtitle = makeWizardSubtitle(
-            "Review your virtual machine settings before creating it.")
 
         summary.orientation = .vertical
         summary.alignment = .leading
@@ -51,18 +49,15 @@ final class ReviewContentViewController: NSViewController {
         summary.translatesAutoresizingMaskIntoConstraints = false
         rebuildSummary()
 
-        let stack = NSStackView(views: [title, subtitle, summary])
+        let stack = NSStackView(views: [title, summary])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: title)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
-        NSLayoutConstraint.activate([
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            summary.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        summary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         view = scrollView
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)

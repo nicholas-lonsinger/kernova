@@ -464,7 +464,7 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     public var sentence: String {
         switch self {
         case .firstOrLastSharedDirectory:
-            "Adding the first shared directory or removing the last takes a stopped VM."
+            "Adding the first share or removing the last needs the virtual machine stopped."
         }
     }
 }

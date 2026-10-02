@@ -1,4 +1,6 @@
 import Foundation
+import KernovaKit
+import KernovaTestSupport
 
 @testable import Kernova
 
@@ -28,7 +30,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
-        var sizes: [UUID: UInt64] = [:]
+        var sizes: [UUID: SnapshotSize] = [:]
+        var sizeReads = 0
+        var sizeReadHold: DispatchSemaphore?
         var captureError: (any Error)?
         var stageError: (any Error)?
         var discardError: (any Error)?
@@ -53,9 +57,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
 
     // MARK: - Seeding
 
-    /// Seeds the on-disk size one snapshot reports.
-    func setSize(_ bytes: UInt64, for snapshotID: UUID) {
-        lock.withLock { state.sizes[snapshotID] = bytes }
+    /// Seeds the size one snapshot reports.
+    func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
+        lock.withLock { state.sizes[snapshotID] = size }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
@@ -177,12 +181,32 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking, @unchecked Sen
         }
     }
 
-    func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64] {
-        lock.withLock {
-            var sizes: [UUID: UInt64] = [:]
-            for id in snapshotIDs { sizes[id] = state.sizes[id] ?? 0 }
-            return sizes
+    func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
+        let (sizes, hold) = lock.withLock {
+            var sizes: [UUID: SnapshotSize] = [:]
+            for id in snapshotIDs { sizes[id] = state.sizes[id] ?? SnapshotSize(bytes: 0, privateBytes: nil) }
+            state.sizeReads += 1
+            let hold = state.sizeReadHold
+            state.sizeReadHold = nil
+            return (sizes, hold)
         }
+        sizeReadEntered.notify()
+        hold?.wait()
+        return sizes
+    }
+
+    /// How many size reads have taken their figures.
+    var sizeReads: Int { lock.withLock { state.sizeReads } }
+
+    /// Fires as each size read has taken its figures.
+    let sizeReadEntered = AsyncGate()
+
+    /// Holds the next size read, after it has taken its figures, until the
+    /// returned semaphore is signalled — so a test can land it after a later one.
+    func holdNextSizeRead() -> DispatchSemaphore {
+        let hold = DispatchSemaphore(value: 0)
+        lock.withLock { state.sizeReadHold = hold }
+        return hold
     }
 
     func removeSaveFile(bundleURL: URL) throws {

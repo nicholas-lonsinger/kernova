@@ -13,7 +13,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     let category = VMSettingsCategory.system
     private var lockRegistry = VMSettingsLockRegistry()
 
-    private let micPermissionPresenter = PopoverPresenter()
     private var systemSettings: SystemSettingsLink { context.systemSettings }
 
     private let panelStack = NSStackView()
@@ -64,7 +63,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     func prepareForDisappearance() {
-        if micPermissionPresenter.isShown { micPermissionPresenter.close() }
         serialLogProbe?.cancel()
         serialLogProbe = nil
         // Re-probe on the next pass: the cancelled read answered nothing, and
@@ -85,10 +83,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var displayHeightField = ModelValueField()
     private var displayHiDPISwitch = NSSwitch()
     private var displayAutoResizeSwitch = NSSwitch()
-    /// Caption naming the resolution the guest will boot at.
-    private var displayResolutionCaption = NSTextField()
-    /// Orange "takes effect on next start" caption, shown only while read-only.
-    private var displayRestartCaption = NSTextField()
+    /// Says the next cold start sizes the display, while the display is sized
+    /// to the window at startup and no save file stands in the way.
+    private var displayResolutionCaption: GroupedFormStateNote?
     /// Set while the user has explicitly chosen Custom, so the popup doesn't
     /// snap back to a preset the current size happens to match.
     private var displayResolutionIsCustom = false
@@ -119,6 +116,12 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     }
 
     private var renderedAudioWarning: MicWarningState?
+
+    /// The info paragraphs of the denied-microphone banner.
+    static let micPermissionInfo: [InfoPopoverParagraph] = [
+        .body("Kernova needs microphone permission to pass your mic input to virtual machines."),
+        .body("In System Settings › Privacy & Security › Microphone, turn on Kernova."),
+    ]
     // MARK: Resources
 
     private func buildResourcesSection() -> NSView {
@@ -137,22 +140,27 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         let card = makeGroupedFormCard(rows: [
             lockRegistry.lockable(
                 makeGroupedFormCardRow(
-                    "CPU cores", control: makeGroupedFormSteppedControl(cpuField, cpuStepper, unit: "")),
+                    "CPU cores", control: makeGroupedFormSteppedControl(cpuField, cpuStepper, unit: ""),
+                    info: [
+                        .body(
+                            "Cores are scheduled by the host. Assigning more than the host has is allowed but slows each core under load."
+                        )
+                    ]),
                 cpuField, cpuStepper),
+            // `VZVirtualMachineConfiguration.memorySize`'s header: "Not all
+            // memory is allocated on start, the virtual machine allocates memory
+            // on demand."
             lockRegistry.lockable(
                 makeGroupedFormCardRow(
-                    "Memory", control: makeGroupedFormSteppedControl(memoryField, memoryStepper, unit: "GB")),
+                    "Memory", control: makeGroupedFormSteppedControl(memoryField, memoryStepper, unit: "GB"),
+                    info: [
+                        .body(
+                            "The memory the guest sees. The virtual machine takes it from this Mac as the guest uses it, not all at start."
+                        )
+                    ]),
                 memoryField, memoryStepper),
         ])
-        return makeGroupedFormSection([
-            lockRegistry.makeHeader(
-                "Resources", lockable: true,
-                paragraphs: [
-                    .body(
-                        "Memory is committed to the VM up-front at start time — keep enough free on the host to avoid swap pressure. CPU cores are scheduled by the host; over-committing is fine but reduces per-core performance under load."
-                    )
-                ]), card,
-        ])
+        return makeGroupedFormSection([lockRegistry.makeHeader("Resources", editableWhen: .stopped), card])
     }
 
     // MARK: Display
@@ -187,13 +195,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         var rows: [NSView] = [
             // Not `lockable`: the flag lives on the display view, so
             // it is legal to flip while the VM runs.
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Automatically resize with window", control: displayAutoResizeSwitch,
-                paragraphs: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
+                info: Self.displayAutoResizeInfo(isMacOS: isMacOS)),
             lockRegistry.lockable(
-                makeGroupedFormRowWithInfo(
+                makeGroupedFormCardRow(
                     "Size display to fit window at startup", control: displayMatchWindowSwitch,
-                    paragraphs: [
+                    info: [
                         .body(
                             "Each cold start sizes the guest display to the window or screen it opens in, so the picture fills it without scaling."
                         ),
@@ -210,28 +218,38 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         if supportsDensity {
             rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormRowWithInfo(
+                    makeGroupedFormCardRow(
                         "HiDPI (Retina)", control: displayHiDPISwitch,
-                        paragraphs: [
+                        info: [
                             .body(
-                                "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above."
+                                "Doubles the pixel count and raises the reported pixel density, so the guest renders Retina-sharp at the size above: it boots at twice the width and height shown."
                             ),
                             .body(
                                 "While the display is sized to fit the window, it fills the window at your screen's Retina scale instead of 1×."
                             ),
                         ]), displayHiDPISwitch))
         }
-        displayResolutionCaption = makeGroupedFormCaption("")
-        let restart = makeGroupedFormCaption("Takes effect on next start.")
-        restart.textColor = .systemOrange
-        restart.isHidden = true
-        displayRestartCaption = restart
+        // A save file keeps the next start a resume at the saved size
+        // (`applyMatchWindowBootResolution` leaves it alone), so the note
+        // speaks only while the next start is a cold one.
+        let resolution = GroupedFormStateNote(
+            Self.displayNextColdStartNote,
+            shownWhen: { [weak self] in
+                guard let instance = self?.instance else { return false }
+                return instance.configuration.displaySizesToWindow && !instance.hasSaveFile
+            })
+        displayResolutionCaption = resolution
 
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Display", lockable: true),
-            makeGroupedFormCard(rows: rows, notes: [displayResolutionCaption, restart]),
+            lockRegistry.makeHeader("Display", editableWhen: .stopped),
+            makeGroupedFormCard(rows: rows, notes: [resolution]),
         ])
     }
+
+    /// The note under the Display card while the display is sized to the window
+    /// at startup and no save file stands in the way, saying why the size
+    /// fields are disabled.
+    static let displayNextColdStartNote = "The next cold start sizes the display to fit its window."
 
     /// Info copy for the auto-resize row, whose consequences differ by guest OS.
     private static func displayAutoResizeInfo(isMacOS: Bool) -> [InfoPopoverParagraph] {
@@ -239,15 +257,13 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             return [
                 .body(
                     "Lets the guest change its own resolution to match the window as you resize it, instead of scaling the boot resolution. Requires macOS 14 or later in the guest — earlier guests keep the resolution set at startup and scale it to fit."
-                ),
-                .body("Takes effect immediately, including while the VM is running."),
+                )
             ]
         }
         return [
             .body(
                 "Lets the guest change its own resolution to match the window as you resize it. Some guests may reset certain display settings (such as the scaling factor) whenever the resolution changes."
-            ),
-            .body("Takes effect immediately, including while the VM is running."),
+            )
         ]
     }
 
@@ -285,22 +301,25 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         audioWarningContainer.spacing = Spacing.small
         audioWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        var paragraphs: [InfoPopoverParagraph] = [
-            .body(
-                "Exposes a VirtioSound device with independent streams. Audio Input lets the guest capture from your Mac's audio input; Audio Output plays guest sound through your Mac."
-            )
-        ]
-        if instance.configuration.guestOS == .linux {
-            paragraphs.append(.body("Requires Linux kernel 5.14 or newer to detect the VirtioSound device."))
-        }
+        let paragraphs: [InfoPopoverParagraph] =
+            instance.configuration.guestOS == .linux
+            ? [.body("Needs Linux kernel 5.14 or newer in the guest.")] : []
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Audio", lockable: true, paragraphs: paragraphs),
+            lockRegistry.makeHeader("Audio", editableWhen: .stopped, paragraphs: paragraphs),
             makeGroupedFormCard(rows: [
                 lockRegistry.lockable(
-                    makeGroupedFormCardRow("Audio input", control: audioInputSwitch),
+                    makeGroupedFormCardRow(
+                        "Audio input", control: audioInputSwitch,
+                        info: [
+                            .body(
+                                "Lets the guest capture from your Mac's audio input. macOS asks for microphone permission the first time a virtual machine uses it."
+                            )
+                        ]),
                     audioInputSwitch),
                 lockRegistry.lockable(
-                    makeGroupedFormCardRow("Audio output", control: audioOutputSwitch),
+                    makeGroupedFormCardRow(
+                        "Audio output", control: audioOutputSwitch,
+                        info: [.body("Plays the guest's sound through your Mac.")]),
                     audioOutputSwitch),
             ]),
             audioWarningContainer,
@@ -319,7 +338,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     /// Info copy for the macOS-only input devices picker.
     private static let inputDevicesInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
-            "Chooses the virtual keyboard and pointing device the guest sees. Automatic picks by the guest's macOS version: the Mac devices for macOS 13 and later, the USB devices for earlier guests, which don't recognize the Mac ones. When the guest's version isn't known, Automatic picks the Mac devices — choose USB here if such a guest has no working input."
+            "Chooses the keyboard and pointing device the guest sees. Automatic picks the Mac devices for macOS 13 and later, and when the guest's version isn't known; USB for earlier guests, which don't recognize the Mac ones. Choose USB if a guest has no working input."
         ),
         .body(
             "The USB pointer reads as a mouse inside the guest, so macOS shows permanently visible scroll bars instead of trackpad-style overlay scroll bars."
@@ -346,7 +365,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         .body(
             "In Full Screen narrows that to a display filling a screen of its own, so the same keys keep acting on this Mac while the VM is in a window."
         ),
-        .body("Takes effect immediately, including while the VM is running."),
     ]
 
     private func buildInputSection() -> NSView {
@@ -357,24 +375,24 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         // Not `lockable`: the flag lives on the display view, so it
         // is legal to flip while the VM runs.
         var rows: [NSView] = [
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Send system keys to guest", control: systemKeysPopUp,
-                paragraphs: Self.systemKeysInfoParagraphs)
+                info: Self.systemKeysInfoParagraphs)
         ]
         if isMacOS {
             inputDevicesPopUp = makePopUp(
                 Self.inputDeviceChoices, action: #selector(inputDevicesChanged))
             rows.append(
                 lockRegistry.lockable(
-                    makeGroupedFormRowWithInfo(
+                    makeGroupedFormCardRow(
                         "Devices", control: inputDevicesPopUp,
-                        paragraphs: Self.inputDevicesInfoParagraphs), inputDevicesPopUp))
+                        info: Self.inputDevicesInfoParagraphs), inputDevicesPopUp))
         }
 
         return makeGroupedFormSection([
             // A Linux guest's section holds only the live row, so nothing in it
             // waits on a stop and the hint would name a lock that isn't there.
-            lockRegistry.makeHeader("Input", lockable: isMacOS),
+            lockRegistry.makeHeader("Input", editableWhen: isMacOS ? .stopped : nil),
             makeGroupedFormCard(rows: rows),
         ])
     }
@@ -403,9 +421,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             "Reveal serial.log in Finder", target: self, action: #selector(revealSerialLog))
         let socketPath = VMInstance.serialSocketPath(for: instance.id)
         let card = makeGroupedFormCard(rows: [
-            makeGroupedFormRowWithInfo(
+            makeGroupedFormCardRow(
                 "Expose serial socket", control: serialRelaySwitch,
-                paragraphs: [
+                info: [
                     .body(
                         "Exposes the running VM's serial port over a local UNIX socket so an external terminal can attach. Output is always captured to `serial.log` regardless of this setting; when it grows large it rolls to `serial.log.1` alongside."
                     ),
@@ -432,13 +450,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
     private var displayHiDPIIntent: Bool {
         instance.configuration.guestOS.supportsDisplayDensity
             && instance.configuration.displayHiDPI
-    }
-
-    /// Whether the stored resolution reads as HiDPI — the materialized
-    /// counterpart to `displayHiDPIIntent`; the two diverge only in match mode,
-    /// where the trio is the previous boot's artifact.
-    private var displayResolutionIsHiDPI: Bool {
-        instance.configuration.displayResolutionIsHiDPI
     }
 
     /// The "looks like" size shown in the Width/Height fields.
@@ -481,27 +492,7 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
             applyGroupedFormRowEnabled(manualEnabled, control: control)
         }
 
-        displayResolutionCaption.stringValue = displayResolutionCaptionText()
-        displayRestartCaption.isHidden = !guestHoldsSession
-    }
-
-    private func displayResolutionCaptionText() -> String {
-        let config = instance.configuration
-        var text = "Boots at \(config.displayWidth) × \(config.displayHeight) pixels"
-        if displayResolutionIsHiDPI {
-            let base = displayBaseSize
-            text += " (looks like \(base.width) × \(base.height))"
-        }
-        guard config.displaySizesToWindow else { return "\(text)." }
-        // The trio is the last boot's, at the density that boot used; a HiDPI
-        // change since then applies only when the next start recomputes it.
-        guard displayHiDPIIntent != displayResolutionIsHiDPI else {
-            return "\(text), until the next start resizes it to the window."
-        }
-        // HiDPI takes a Retina screen: a start on a 1× one stores standard
-        // density whatever the intent (`applyMatchWindowBootResolution`).
-        let density = displayHiDPIIntent ? ", with HiDPI on a Retina display" : " without HiDPI"
-        return "\(text), until the next start resizes it to the window\(density)."
+        displayResolutionCaption?.refresh()
     }
 
     private func refreshAudio() {
@@ -515,24 +506,15 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         switch warning {
         case .none:
             break
-        case .willPrompt:
-            let caption = makeGroupedFormCaption(
-                "macOS will ask for microphone permission the first time a VM uses it.")
-            addGroupedFormFullWidth(caption, to: audioWarningContainer)
         case .denied:
-            let info = NSButton(
-                image: .systemSymbol("info.circle", accessibilityDescription: "Microphone permission help"),
-                target: self, action: #selector(showMicPermissionInfo))
-            info.isBordered = false
-            info.imagePosition = .imageOnly
-            info.contentTintColor = .secondaryLabelColor
             let openSettings = NSButton(
                 title: "Open System Settings", target: self, action: #selector(openMicPermissionSettings))
             let banner = makeGroupedFormBanner(
                 symbolName: "exclamationmark.triangle.fill",
                 tint: .systemRed,
                 message: VMOverviewResolver.micPermissionDeniedWarning,
-                trailingButtons: [openSettings, info])
+                trailingButtons: [openSettings],
+                info: (label: "Microphone Permission", paragraphs: Self.micPermissionInfo))
             addGroupedFormFullWidth(banner, to: audioWarningContainer)
         }
     }
@@ -717,12 +699,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
 
     @objc private func revealSerialLog() {
         NSWorkspace.shared.activateFileViewerSelecting([instance.serialLogURL])
-    }
-
-    @objc private func showMicPermissionInfo(_ sender: NSButton) {
-        micPermissionPresenter.show(
-            content: MicrophonePermissionPopoverContentViewController(systemSettings: systemSettings),
-            from: sender, preferredEdge: .minY)
     }
 
     @objc private func openMicPermissionSettings() {

@@ -253,7 +253,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
                 makeBundledRow(
                     symbolName: "pause.circle",
                     label: "Saved State",
-                    detail: "In-bundle machine state"))
+                    detail: nil))
         }
         if snapshotCount > 0 {
             listStack.addArrangedSubview(
@@ -351,7 +351,7 @@ final class DeleteVMSheetContentViewController: NSViewController {
 
     /// Read-only row for an in-bundle file (no checkbox; it rides along with
     /// the bundle).
-    private func makeBundledRow(symbolName: String, label labelText: String, detail: String) -> NSView {
+    private func makeBundledRow(symbolName: String, label labelText: String, detail: String?) -> NSView {
         let icon = NSImageView(
             image: .systemSymbol(symbolName, accessibilityDescription: "")
         )
@@ -369,16 +369,20 @@ final class DeleteVMSheetContentViewController: NSViewController {
         label.isSelectable = false
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let subtitle = NSTextField(labelWithString: detail)
-        subtitle.font = .preferredFont(forTextStyle: .caption1)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byTruncatingMiddle
-        subtitle.maximumNumberOfLines = 1
-        subtitle.isSelectable = false
-        subtitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        var textViews: [NSView] = [label]
+        if let detail {
+            let subtitle = NSTextField(labelWithString: detail)
+            subtitle.font = .preferredFont(forTextStyle: .caption1)
+            subtitle.textColor = .secondaryLabelColor
+            subtitle.lineBreakMode = .byTruncatingMiddle
+            subtitle.maximumNumberOfLines = 1
+            subtitle.isSelectable = false
+            subtitle.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            textViews.append(subtitle)
+        }
 
-        let textStack = NSStackView(views: [label, subtitle])
+        let textStack = NSStackView(views: textViews)
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = Spacing.hairline

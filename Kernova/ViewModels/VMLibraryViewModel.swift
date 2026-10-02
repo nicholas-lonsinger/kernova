@@ -177,9 +177,9 @@ final class VMLibraryViewModel {
         capabilities.canDeleteSnapshot(snapshot, on: instance)
     }
 
-    func snapshotOnDiskBytes(for instance: VMInstance) async -> [UUID: UInt64] {
+    func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
-            return try await commands.snapshotOnDiskBytes(of: .id(instance.id))
+            return try await commands.snapshotSizes(of: .id(instance.id))
         } catch {
             #log(
                 Self.logger, .debug,

@@ -25,26 +25,32 @@ enum WizardStyle {
 
     /// Inset around the chrome rows (step indicator, navigation bar).
     static let chromePadding: CGFloat = 20
-
-    /// Font for a step's explanatory subtitle row.
-    static var subtitleFont: NSFont { .preferredFont(forTextStyle: .body) }
 }
 
+/// A step's title, followed by an info button holding `info` when it has
+/// paragraphs — the home for background about the step as a whole.
 @MainActor
-func makeWizardTitle(_ text: String) -> NSTextField {
+func makeWizardTitle(_ text: String, info: [InfoPopoverParagraph] = []) -> NSView {
     let label = NSTextField(labelWithString: text)
     label.font = Typography.title
     label.alignment = .left
     label.lineBreakMode = .byWordWrapping
     label.maximumNumberOfLines = 0
     label.isSelectable = false
-    return label
+    guard !info.isEmpty else { return label }
+
+    let row = NSStackView(views: [label, makeGroupedFormInfoButton(label: text, paragraphs: info)])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = Spacing.small
+    return row
 }
 
+/// A step's subtitle: what the step asks of the user, beneath its title.
 @MainActor
 func makeWizardSubtitle(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
-    label.font = WizardStyle.subtitleFont
+    label.font = .preferredFont(forTextStyle: .body)
     label.textColor = .secondaryLabelColor
     label.alignment = .left
     label.lineBreakMode = .byWordWrapping
@@ -55,16 +61,12 @@ func makeWizardSubtitle(_ text: String) -> NSTextField {
 
 // MARK: - Radio options
 
-/// Indent (radio circle + gap) so a radio option's description aligns under its
-/// title.
-let wizardRadioDescriptionIndent: CGFloat = 20
-
 /// Lays out a caller-supplied radio button as a native option row: a leading
 /// symbol icon, the radio (with its title), and a secondary description wrapped
 /// beneath the title.
 ///
 /// The caller creates the radio, so it owns target/action and can track it for
-/// selection state; this only arranges the icon/description around it.
+/// selection state; this only arranges the icon and description around it.
 @MainActor
 func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description descriptionText: String)
     -> NSView
@@ -85,6 +87,10 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
     description.isSelectable = false
     description.translatesAutoresizingMaskIntoConstraints = false
 
+    // The radio's circle and the gap after it, so the description starts under
+    // the radio's title.
+    let descriptionIndent: CGFloat = 20
+
     let option = NSView()
     option.addSubview(icon)
     option.addSubview(radio)
@@ -99,8 +105,7 @@ func makeWizardRadioOption(radio: NSButton, iconSymbol: String, description desc
         radio.trailingAnchor.constraint(lessThanOrEqualTo: option.trailingAnchor),
 
         description.topAnchor.constraint(equalTo: radio.bottomAnchor, constant: 2),
-        description.leadingAnchor.constraint(
-            equalTo: radio.leadingAnchor, constant: wizardRadioDescriptionIndent),
+        description.leadingAnchor.constraint(equalTo: radio.leadingAnchor, constant: descriptionIndent),
         description.trailingAnchor.constraint(equalTo: option.trailingAnchor),
         description.bottomAnchor.constraint(equalTo: option.bottomAnchor),
     ])

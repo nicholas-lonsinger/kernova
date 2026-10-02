@@ -416,10 +416,14 @@ struct VMSettingsGeneralPanelTests {
         #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.isEnabled == true)
     }
 
-    @Test("The Startup section says which order the marked VMs start in")
-    func startupSectionStatesTheStartOrder() {
+    @Test("The start order is the auto-start row's info, not a caption")
+    func startupRowInfoStatesTheStartOrder() {
+        let order = "Virtual machines start in the order they appear in the sidebar."
+        #expect(VMSettingsGeneralPanelViewController.autoStartInfo.contains(.body(order)))
+
         let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)
-        #expect(visibleLabel(VMSettingsGeneralPanelViewController.autoStartOrderCaption, in: vc.view))
+        #expect(infoButton(about: "Start when Kernova opens", in: vc.view) != nil)
+        #expect(findLabel(withText: order, in: vc.view) == nil)
     }
 
     // MARK: - Ephemeral Mode
@@ -650,10 +654,11 @@ struct VMSettingsGeneralPanelTests {
         #expect(firstSwitch(action: "ephemeralModeToggled", in: vc.view)?.isEnabled == true)
     }
 
-    @Test("The Startup card explains what an ephemeral VM does")
-    func ephemeralCaptionIsShown() {
+    @Test("What an ephemeral VM does is the Ephemeral Mode row's info, not a caption")
+    func ephemeralExplanationLivesInTheRowInfo() {
         let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
-        #expect(visibleLabel(EphemeralModeCopy.settingsCaption, in: vc.view))
+        #expect(infoButton(about: "Ephemeral Mode", in: vc.view) != nil)
+        #expect(findLabel(containing: "An ephemeral virtual machine", in: vc.view) == nil)
     }
 
     @Test("Each baseline entry is its snapshot's name")
@@ -710,6 +715,19 @@ struct VMSettingsGeneralPanelTests {
 
         #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
         #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
+    }
+
+    @Test("The baseline caption starts at the Baseline snapshot title's edge")
+    func ephemeralBaselineCaptionAlignsWithItsRow() throws {
+        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
+        vc.view.frame = NSRect(x: 0, y: 0, width: 700, height: 900)
+        vc.view.layoutSubtreeIfNeeded()
+
+        let caption = try #require(
+            findLabel(withText: EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
+        let title = try #require(findLabel(withText: "Baseline snapshot", in: vc.view))
+        let card = try #require(enclosingGroupedFormCard(of: caption))
+        #expect(try alignmentRect(of: caption, in: card).minX == alignmentRect(of: title, in: card).minX)
     }
 
     /// The caption is the selected baseline's, so moving the choice to a
@@ -777,7 +795,7 @@ struct VMSettingsGeneralPanelTests {
     /// expected — and the absence assertions are exactly where it is not.
     private func showsMacOSCapacityWarning(in view: NSView) -> Bool {
         firstSubview(NSTextField.self, in: view) {
-            $0.stringValue.contains("macOS allows at most two macOS virtual machines to run at once")
+            $0.stringValue.contains("but macOS runs at most two at once")
                 && isVisible($0, within: view)
         } != nil
     }
@@ -834,15 +852,14 @@ struct VMSettingsGeneralPanelTests {
         #expect((warning != nil) == testCase.warns)
         if let warning {
             // The vendor's claim, at the vendor's strength.
-            #expect(
-                warning.contains("macOS allows at most two macOS virtual machines to run at once"))
-            #expect(warning.contains("\(testCase.marked) macOS virtual machines"))
+            #expect(warning.contains("macOS runs at most two at once"))
+            #expect(warning.hasPrefix("\(testCase.marked) macOS virtual machines"))
         }
     }
 
     // MARK: - Machine ID
 
-    private static let sharedMachineIDCaption = "Same machine ID as \u{201C}Twin\u{201D}."
+    private static let sharedMachineIDNote = "Same machine ID as \u{201C}Twin\u{201D}."
 
     @Test("A VM with a machine ID shows its fingerprint, the whole digest in the tooltip")
     func machineIDRowShowsTheFingerprint() throws {
@@ -860,7 +877,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(isVisible(value, within: vc.view))
         #expect(value.toolTip == fingerprint.digest)
         #expect(value.font?.isFixedPitch == true)
-        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(!visibleLabel(Self.sharedMachineIDNote, in: vc.view))
         #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
@@ -872,7 +889,7 @@ struct VMSettingsGeneralPanelTests {
         #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
-    @Test("Another VM arriving with the same machine ID is named beneath the card")
+    @Test("Another VM arriving with the same machine ID is named under the Machine ID row")
     func sharedMachineIDFollowsTheLibrary() async throws {
         let identity = Data([2, 7, 1, 8])
         let viewModel = makeViewModel()
@@ -881,12 +898,16 @@ struct VMSettingsGeneralPanelTests {
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.general)
-        #expect(!visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(!visibleLabel(Self.sharedMachineIDNote, in: vc.view))
 
         viewModel.library.registerFixture(name: "Twin") { $0.genericMachineIdentifierData = identity }
         // The pane's repaint is the main-actor task the change enqueued.
         await drainMainQueue()
 
-        #expect(visibleLabel(Self.sharedMachineIDCaption, in: vc.view))
+        #expect(visibleLabel(Self.sharedMachineIDNote, in: vc.view))
+        let title = try #require(panelLabel("Machine ID", in: vc))
+        let owner = try #require(
+            sequence(first: title as NSView, next: \.superview).first { $0 is GroupedFormNotedRow })
+        #expect(visibleLabel(Self.sharedMachineIDNote, in: owner))
     }
 }

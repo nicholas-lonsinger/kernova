@@ -222,7 +222,7 @@ struct VMOverviewResolverTests {
 
         #expect(
             resolver.resolved.warnings[.network]
-                == "This MAC address is also used by \u{201C}Twin\u{201D}. Virtual machines with "
+                == "\u{201C}Twin\u{201D} also uses this MAC address. Virtual machines with "
                 + "the same MAC address can\u{2019}t run on the same network at once, but they can "
                 + "on separate networks.")
     }
@@ -290,15 +290,15 @@ struct VMOverviewResolverTests {
 
         let promptResolver = makeResolver(instance: listening, micPermission: .notDetermined)
         promptResolver.refresh()
-        #expect(promptResolver.resolved.micWarning == .willPrompt)
+        #expect(promptResolver.resolved.micWarning == MicWarningState.none)
         // Only a refusal is worth a card's warning glyph.
         #expect(promptResolver.resolved.warnings[.system] == nil)
     }
 
     // MARK: - Async reads and rebinding
 
-    @Test("The snapshots' footprint lands from an off-main read, keyed to its set")
-    func snapshotFootprintFollowsItsSet() async throws {
+    @Test("The snapshots' sizes land from an off-main read, measured once per state")
+    func snapshotSizesFollowTheirSet() async throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
@@ -308,14 +308,96 @@ struct VMOverviewResolverTests {
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
 
         resolver.refresh()
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        #expect(resolver.resolved.snapshotSizes.isEmpty)
         await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
         #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
 
         // A pass over the same set re-issues nothing.
         resolver.refresh()
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
+        #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
+    }
+
+    /// A resolver over a VM holding one snapshot whose size `files` reports.
+    private func makeMeasuredResolver(
+        _ files: MockVMBundleMachineFiles
+    ) -> (VMOverviewResolver, VMInstance, VMSnapshot) {
+        let viewModel = makeSettingsViewModel(preferences: preferences, machineFiles: files)
+        let instance = viewModel.library.admitFixture()
+        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
+        return (makeResolver(instance: instance, viewModel: viewModel), instance, snapshot)
+    }
+
+    @Test("A lifecycle change that keeps the same snapshots measures them again")
+    func aLifecycleChangeRemeasuresTheSameSnapshots() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, instance, snapshot) = makeMeasuredResolver(files)
+        let before = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
+        files.setSize(before, for: snapshot.id)
+        var repainted: [VMSettingsCategory] = []
+        resolver.onCategoryResolved = { repainted.append($0) }
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == before)
+
+        // A revert clones the snapshot back over the live disks, so its private
+        // bytes fall away while the manifest stays exactly as it was — and the
+        // VM rests where it started.
+        let after = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
+        files.setSize(after, for: snapshot.id)
+        instance.activity.placeForTesting(
+            .operating(
+                .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)), from: .stopped))
+        resolver.refresh()
+        instance.activity.placeForTesting(.stopped)
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == after)
+        #expect(repainted.filter { $0 == .snapshots }.count == 2)
+        #expect(files.sizeReads == 2)
+    }
+
+    @Test("Showing the sizes again measures them again, with nothing else changed")
+    func remeasuringReadsAgain() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, snapshot) = makeMeasuredResolver(files)
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        resolver.refresh()
+        #expect(files.sizeReads == 1)
+
+        let grown = SnapshotSize(bytes: 72_000_000_000, privateBytes: 9_000_000_000)
+        files.setSize(grown, for: snapshot.id)
+        resolver.remeasureSnapshotSizes()
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+
+        #expect(files.sizeReads == 2)
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == grown)
+    }
+
+    @Test("A measurement landing after a newer one never replaces it")
+    func aStaleMeasurementCannotOverwriteANewerOne() async throws {
+        let files = MockVMBundleMachineFiles()
+        let (resolver, _, snapshot) = makeMeasuredResolver(files)
+        let stale = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
+        files.setSize(stale, for: snapshot.id)
+        let hold = files.holdNextSizeRead()
+        resolver.refresh()
+        let staleRead = resolver.snapshotSizeTaskForTesting
+        try await files.sizeReadEntered.wait { files.sizeReads == 1 }
+
+        let fresh = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
+        files.setSize(fresh, for: snapshot.id)
+        resolver.remeasureSnapshotSizes()
+        resolver.refresh()
+        await resolver.snapshotSizeTaskForTesting?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
+
+        hold.signal()
+        await staleRead?.value
+        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
     }
 
     @Test("A size already read survives the re-read the next snapshot triggers")
@@ -338,13 +420,10 @@ struct VMOverviewResolverTests {
         resolver.refresh()
 
         #expect(resolver.resolved.snapshotSizes[first.id] == measured)
-        // The set is only part-measured, so no total is claimed — the same
-        // terms the panel's own readout falls back to the bare count on.
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        #expect(resolver.resolved.snapshotSizes[second.id] == nil)
 
         await resolver.snapshotSizeTaskForTesting?.value
         #expect(resolver.resolved.snapshotSizes.count == 2)
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
     }
 
     @Test("Deleting a snapshot drops its size and leaves the rest measured")
@@ -366,9 +445,6 @@ struct VMOverviewResolverTests {
 
         #expect(resolver.resolved.snapshotSizes[second.id] == nil)
         #expect(resolver.resolved.snapshotSizes[first.id] != nil)
-        // Everything left is measured, so the footprint stands without waiting
-        // for the re-read.
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
     }
 
     @Test("Binding to another VM drops what described the outgoing one")
@@ -383,13 +459,12 @@ struct VMOverviewResolverTests {
         resolver.refresh()
         await resolver.snapshotSizeTaskForTesting?.value
         await resolver.bootDiskTaskForTesting?.value
-        #expect(resolver.resolved.snapshotTotalBytes != nil)
+        #expect(!resolver.resolved.snapshotSizes.isEmpty)
 
         resolver.bind(instance: VMInstanceFixture.make(), viewModel: viewModel)
 
-        // Nothing of the previous VM's survives to be stated beside the new
-        // one's count.
-        #expect(resolver.resolved.snapshotTotalBytes == nil)
+        // Nothing of the previous VM's survives to be stated on the new one's
+        // rows.
         #expect(resolver.resolved.snapshotSizes.isEmpty)
         #expect(resolver.resolved.bootDiskBytes == nil)
         #expect(resolver.resolved.networkModeTitle == nil)

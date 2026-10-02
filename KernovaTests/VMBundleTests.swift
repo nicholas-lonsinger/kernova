@@ -525,7 +525,7 @@ struct VMBundleTests {
         #expect(plan.relativePaths == ["Disk.asif"])
         #expect(exists(layout.configURL))
         #expect(text(at: layout.diskImageURL) == "live-disk")
-        #expect((sizes[snapshot.id] ?? 0) > 0)
+        #expect((sizes[snapshot.id]?.bytes ?? 0) > 0)
     }
 
     @Test("A suspended capture clones the suspend slot and leaves it in place")

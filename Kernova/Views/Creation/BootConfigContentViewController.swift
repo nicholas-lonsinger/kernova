@@ -45,7 +45,13 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     override func loadView() {
-        let title = makeWizardTitle("Boot Configuration")
+        let title = makeWizardTitle(
+            "Boot Configuration",
+            info: [
+                .body(
+                    "Choose a Distribution… and Image URL… download their image when you first "
+                        + "start the virtual machine.")
+            ])
         let subtitle = makeWizardSubtitle("Choose how to boot your Linux virtual machine.")
 
         bootModeControl.selectedSegment = creationVM.selectedBootMode == .linuxKernel ? 1 : 0
@@ -112,7 +118,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         commandLineField.delegate = self
 
         addFullWidth(
-            makeGroupedFormCaption("Provide the kernel image and optional initrd/command line."))
+            makeGroupedFormContentText("Provide the kernel image and optional initrd/command line."))
         addFullWidth(
             makeGroupedFormCard(rows: [
                 makeFileRow(
@@ -150,7 +156,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         options.alignment = .leading
         options.spacing = Spacing.large
 
-        addFullWidth(makeGroupedFormCaption("Choose the installer image to boot from via EFI."))
+        addFullWidth(makeGroupedFormContentText("Choose the installer image to boot from via EFI."))
         addFullWidth(options)
 
         switch creationVM.linuxSelection {
@@ -176,14 +182,6 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
                     trailingButton: makeLinkButton(
                         "Change…", target: self, action: #selector(changeImageURL))
                 ))
-            if image.sha256 == nil {
-                addFullWidth(
-                    makeGroupedFormBanner(
-                        symbolName: "exclamationmark.triangle.fill",
-                        tint: .systemYellow,
-                        message: "This download won't be verified. Choose a host you trust."
-                    ))
-            }
         case .localISO(let path, _):
             conditionalContainer.addArrangedSubview(
                 makeWizardPathBadge(

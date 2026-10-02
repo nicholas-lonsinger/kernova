@@ -3,7 +3,7 @@ import KernovaLogging
 
 /// AppKit content view controller for the detail-pane "console" placeholder.
 ///
-/// Shows a centered empty-state (icon + title + description + optional action
+/// Shows a centered empty-state (icon + title + optional description + action
 /// buttons) for the non-inline display states, and falls back to an inert black
 /// fill while a live VM display is layered on top by
 /// `DetailContainerViewController`.
@@ -129,7 +129,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
             emptyState.configure(
                 symbolName: "arrow.up.left.and.arrow.down.right",
                 title: "Fullscreen",
-                description: "The virtual machine display is in fullscreen mode.",
+                description: nil,
                 actions: [
                     DisplayPlaceholderEmptyStateView.Action(
                         title: "Show Display",
@@ -146,7 +146,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
             emptyState.configure(
                 symbolName: "pip.exit",
                 title: "Popped Out",
-                description: "The virtual machine display is in a separate window.",
+                description: nil,
                 actions: [
                     DisplayPlaceholderEmptyStateView.Action(
                         title: "Show Display",
@@ -163,7 +163,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
             emptyState.configure(
                 symbolName: "eye.slash",
                 title: "Display Closed",
-                description: "The virtual machine is running without a display window.",
+                description: "The virtual machine is still running.",
                 actions: [
                     DisplayPlaceholderEmptyStateView.Action(
                         title: "Show Display",
@@ -188,7 +188,7 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
             emptyState.configure(
                 symbolName: "display",
                 title: "No Display",
-                description: "The virtual machine display is not available.",
+                description: nil,
                 actions: []
             )
         case .live:
@@ -199,8 +199,8 @@ final class VMDisplayPlaceholderContentViewController: NSViewController {
 
 // MARK: - DisplayPlaceholderEmptyStateView
 
-/// AppKit empty-state placeholder: a centered SF Symbol, title, description,
-/// and an optional row of action buttons.
+/// AppKit empty-state placeholder: a centered SF Symbol, title, an optional
+/// description, and an optional row of action buttons.
 ///
 /// Action buttons use `target = nil` so `NSControl`'s built-in responder-chain
 /// dispatch routes through `NSApp` to the configured selector.
@@ -278,13 +278,16 @@ private final class DisplayPlaceholderEmptyStateView: NSView {
         fatalError("DisplayPlaceholderEmptyStateView does not support NSCoder")
     }
 
-    func configure(symbolName: String, title: String, description: String, actions: [Action]) {
+    func configure(symbolName: String, title: String, description: String?, actions: [Action]) {
         // `NSImage.systemSymbol` already logs at `.fault` and asserts on miss;
         // no need to re-implement the defensive unwrap here.
         imageView.image = NSImage.systemSymbol(symbolName, accessibilityDescription: "")
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 44, weight: .regular))
         titleLabel.stringValue = title
-        descriptionLabel.stringValue = description
+        descriptionLabel.stringValue = description ?? ""
+        descriptionLabel.isHidden = description == nil
+        // Without a description the buttons take the gap it would have closed.
+        stack.setCustomSpacing(description == nil ? 16 : 4, after: titleLabel)
 
         // Only rebuild the button row when the action set actually changed;
         // titles/symbols above are cheap property writes, but recreating buttons

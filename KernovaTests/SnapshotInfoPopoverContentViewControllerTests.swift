@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -15,13 +16,14 @@ struct SnapshotInfoPopoverContentViewControllerTests {
 
     private func makeController(
         kind: VMSnapshotKind, name: String = "Before the update", notes: String = "",
-        canEditNotes: Bool = true, recorder: NoteRecorder = NoteRecorder()
+        canEditNotes: Bool = true, recorder: NoteRecorder = NoteRecorder(),
+        size: SnapshotSize? = SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
-            snapshot: snapshot, onDiskText: "2 GB", canEditNotes: canEditNotes,
+            snapshot: snapshot, size: size, canEditNotes: canEditNotes,
             onCommitNotes: { recorder.committed.append($0) })
         controller.loadViewIfNeeded()
         return controller
@@ -48,6 +50,24 @@ struct SnapshotInfoPopoverContentViewControllerTests {
         #expect(findLabel(withText: "Captured", in: controller.view) != nil)
         #expect(
             findLabel(withText: SnapshotKindCopy.capturedContents(.warm), in: controller.view) != nil)
+    }
+
+    @Test("The facts grid shows the size, and the private bytes only where they are known")
+    func sizeRowsFollowWhatIsKnown() {
+        let cloned = makeController(
+            kind: .warm, size: SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000))
+        #expect(findLabel(withText: "Size", in: cloned.view) != nil)
+        #expect(findLabel(withText: DataFormatters.formatBytes(72_000_000_000), in: cloned.view) != nil)
+        #expect(findLabel(withText: "Private", in: cloned.view) != nil)
+        #expect(findLabel(withText: DataFormatters.formatBytes(8_000_000_000), in: cloned.view) != nil)
+
+        let copied = makeController(kind: .warm, size: SnapshotSize(bytes: 72_000_000_000, privateBytes: nil))
+        #expect(findLabel(withText: "Size", in: copied.view) != nil)
+        #expect(findLabel(withText: "Private", in: copied.view) == nil)
+
+        let unread = makeController(kind: .warm, size: nil)
+        #expect(findLabel(withText: "\u{2014}", in: unread.view) != nil)
+        #expect(findLabel(withText: "Private", in: unread.view) == nil)
     }
 
     @Test("The facts grid says what a powered-off snapshot captured")

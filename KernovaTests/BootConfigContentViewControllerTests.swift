@@ -7,6 +7,60 @@ import Testing
 @Suite("BootConfigContentViewController Tests", .caseScoped)
 @MainActor
 struct BootConfigContentViewControllerTests {
+    @Test("EFI mode shows the subtitle, its lead-in, and each source's description")
+    func efiShowsSubtitleAndDescriptions() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .efi
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        for text in [
+            "Choose how to boot your Linux virtual machine.",
+            "Choose the installer image to boot from via EFI.",
+            "Download a Linux installer image after the virtual machine is created.",
+            "Download an installer image from a link you supply.",
+            "Boot an ISO image already on your Mac.",
+        ] {
+            #expect(findLabel(withText: text, in: vc.view) != nil, "\(text)")
+        }
+    }
+
+    /// The descriptions name what each source does; the popover keeps only
+    /// when a download happens, which they don't say.
+    @Test("The title popover says when a downloaded image is fetched")
+    func titlePopoverSaysWhenImagesDownload() throws {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        let info = try #require(
+            firstSubview(InfoButtonView.self, in: vc.view) {
+                $0.button.toolTip == "About Boot Configuration"
+            })
+        #expect(
+            info.paragraphs == [
+                .body(
+                    "Choose a Distribution… and Image URL… download their image when you first "
+                        + "start the virtual machine.")
+            ])
+    }
+
+    @Test("Linux Kernel mode shows its lead-in")
+    func linuxKernelShowsLeadIn() {
+        let vm = VMCreationViewModel()
+        vm.selectedOS = .linux
+        vm.selectedBootMode = .linuxKernel
+        let vc = BootConfigContentViewController(creationVM: vm)
+        vc.loadViewIfNeeded()
+
+        #expect(
+            findLabel(
+                withText: "Provide the kernel image and optional initrd/command line.", in: vc.view)
+                != nil)
+    }
+
     @Test("EFI mode offers all three image sources, with none picked to start")
     func efiShowsEveryImageSource() {
         let vm = VMCreationViewModel()
@@ -47,7 +101,9 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "Change…", in: vc.view) != nil)
     }
 
-    @Test("An unverified URL pick says so on the badge and in a banner")
+    /// The URL sheet already warned before the pick was made, so the step says
+    /// it once, on the badge.
+    @Test("An unverified URL pick says so on the badge alone")
     func unverifiedURLPickWarns() {
         let vm = VMCreationViewModel()
         vm.selectedOS = .linux
@@ -57,10 +113,7 @@ struct BootConfigContentViewControllerTests {
 
         #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
         #expect(findLabel(containing: "Checked after download", in: vc.view) == nil)
-        #expect(
-            findLabel(
-                containing: "This download won't be verified. Choose a host you trust.",
-                in: vc.view) != nil)
+        #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
     }
 
     @Test("A catalog pick lights its radio and names the image on a badge")

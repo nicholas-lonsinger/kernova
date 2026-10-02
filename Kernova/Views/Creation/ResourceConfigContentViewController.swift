@@ -34,22 +34,17 @@ final class ResourceConfigContentViewController: NSViewController {
 
     override func loadView() {
         let title = makeWizardTitle("Configure Resources")
-        let subtitle = makeWizardSubtitle(
-            "Set the name and resource allocation for your virtual machine.")
 
         let form = makeForm()
-        let stack = NSStackView(views: [title, subtitle, form])
+        let stack = NSStackView(views: [title, form])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: title)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
-        NSLayoutConstraint.activate([
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            form.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        form.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         view = scrollView
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
@@ -82,11 +77,14 @@ final class ResourceConfigContentViewController: NSViewController {
             ], to: form)
 
         addSectionHeader("Storage", to: form)
-        addCard([makeGroupedFormCardRow("Disk size", control: diskPopUp)], to: form)
-        let caption = makeGroupedFormCaption(
-            "Physical disk usage grows only as data is written (ASIF sparse format).")
-        form.addArrangedSubview(caption)
-        caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
+        addCard(
+            [
+                makeGroupedFormCardRow(
+                    "Disk size", control: diskPopUp,
+                    info: [
+                        .body("The disk is an ASIF sparse image: it takes physical space only as data is written.")
+                    ])
+            ], to: form)
 
         addSectionHeader("Network", to: form)
         addCard([makeGroupedFormCardRow("Networking", control: networkSwitch)], to: form)

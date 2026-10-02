@@ -94,8 +94,7 @@ final class VMSettingsOverviewViewController: NSViewController {
                 for: category, instance: instance, capabilities: capabilities),
             note: VMOverviewSummary.note(for: category, instance: instance, resolved: resolved),
             action: VMOverviewSummary.action(for: category, resolved: resolved),
-            headerSummary: VMOverviewSummary.headerSummary(
-                for: category, instance: instance, resolved: resolved),
+            headerSummary: VMOverviewSummary.headerSummary(for: category, instance: instance),
             warning: resolved.warnings[category])
     }
 

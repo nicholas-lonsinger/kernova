@@ -18,18 +18,14 @@ enum EphemeralModeCopy {
         ephemeralSessionRunning ? "\(name) (\(self.name))" : name
     }
 
-    /// The caption naming the state a shutdown comes to rest in, which the
-    /// baseline's kind decides: a warm baseline restores the guest's memory
-    /// along with the disks, so the VM lands suspended on that session instead
-    /// of stopped.
+    /// The note naming what every shutdown discards and where it leaves the
+    /// VM, which the baseline's kind decides: a warm baseline restores the
+    /// guest's memory along with the disks, so the VM lands suspended on that
+    /// session instead of stopped.
     static func baselineCaption(for kind: VMSnapshotKind) -> String {
         switch kind {
-        case .warm:
-            "Shutting down returns this virtual machine to the suspended session and settings "
-                + "the baseline captured, and starting it resumes from there."
-        case .cold:
-            "Shutting down returns this virtual machine to the baseline's disks and settings "
-                + "and leaves it stopped."
+        case .warm: "Each shutdown discards changes and leaves the virtual machine suspended at this snapshot."
+        case .cold: "Each shutdown discards changes and leaves the virtual machine stopped at this snapshot."
         }
     }
 
@@ -41,22 +37,13 @@ enum EphemeralModeCopy {
             "Suspending keeps the session — including when Kernova quits and suspends running VMs. The session still reverts at its next shutdown."
         ),
         .body(
-            "Discarding a suspended ephemeral session returns the VM to its baseline. The baseline snapshot cannot be deleted while Ephemeral Mode is on; turning the mode off clears the baseline choice."
+            "Discarding a suspended ephemeral session returns the virtual machine to its baseline. Turning the mode off clears the baseline choice."
         ),
     ]
 
-    /// The Startup card's caption for the toggle.
-    static let settingsCaption =
-        "An ephemeral virtual machine returns to its baseline snapshot every time it shuts down: "
-        + "the guest and the machine's settings go back to what the baseline captured. Its name "
-        + "and how Kernova handles it, like when it starts and where its display opens, stay as "
-        + "you left them. Suspending keeps the session."
-
-    /// The caption shown instead while the VM has no snapshot to stand as a
+    /// The note under the toggle while the VM has no snapshot to stand as a
     /// baseline.
-    static let noSnapshotsCaption =
-        "Take a snapshot of this virtual machine first — it becomes the baseline every shutdown "
-        + "returns to."
+    static let noSnapshotsCaption = "Take a snapshot first to use as the baseline."
 
     static let badgeHelpText = "Ephemeral: reverts to its baseline snapshot at every shutdown"
 }

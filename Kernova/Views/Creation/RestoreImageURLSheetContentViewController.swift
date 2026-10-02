@@ -125,9 +125,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
     private func makeHeader() -> NSView {
         let container = NSView()
 
-        let title = NSTextField(labelWithString: "Add a Restore Image by URL")
-        title.font = .preferredFont(forTextStyle: .headline)
-        title.isSelectable = false
+        let title = makeSheetTitle("Add a Restore Image by URL")
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -209,14 +207,6 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
     private func makeFooter() -> NSView {
         let container = NSView()
 
-        let note = NSTextField(
-            labelWithString: "Checked without downloading — about 150 KB read")
-        note.font = .preferredFont(forTextStyle: .caption1)
-        note.textColor = .tertiaryLabelColor
-        note.lineBreakMode = .byTruncatingTail
-        note.isSelectable = false
-        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -230,7 +220,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
         useButton.action = #selector(useTapped)
         useButton.bezelStyle = .push
 
-        let stack = NSStackView(views: [note, spacer, cancel, useButton])
+        let stack = NSStackView(views: [spacer, cancel, useButton])
         stack.orientation = .horizontal
         stack.spacing = Spacing.standard
         stack.alignment = .centerY
@@ -297,9 +287,7 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
         var rows: [NSView] = [
             makeWizardBadge(
                 symbolName: "checkmark.seal.fill",
-                text: image.version == nil
-                    ? "\(DataFormatters.formatBytes(image.sizeBytes)) · Installs in a virtual machine"
-                    : "\(image.versionSummary) · \(DataFormatters.formatBytes(image.sizeBytes)) · Installs in a virtual machine",
+                text: Self.badgeText(for: image),
                 secondaryText: wizardAbbreviateWithTilde(
                     VMCreationViewModel.downloadPath(forFilename: image.suggestedFilename))
             )
@@ -315,16 +303,14 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
                     message:
                         "The filename says macOS \(version), which is newer than this Mac. If that's right, the install will fail."
                 ))
-        } else if image.version == nil {
-            rows.append(
-                makeGroupedFormBanner(
-                    symbolName: "info.circle.fill",
-                    tint: .systemBlue,
-                    message:
-                        "The filename doesn't name a macOS version, so the version can't be shown before installing."
-                ))
         }
         setResult(rows)
+    }
+
+    /// The checked image's badge line, led by its version — or by the fact that
+    /// the filename names none.
+    static func badgeText(for image: ProbedRestoreImage) -> String {
+        "\(image.versionSummary) · \(DataFormatters.formatBytes(image.sizeBytes)) · Installs in a virtual machine"
     }
 
     // MARK: - Controls

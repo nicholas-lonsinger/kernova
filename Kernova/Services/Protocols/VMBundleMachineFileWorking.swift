@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Where a prepared snapshot's saved state belongs, and the bundle-relative
 /// files copied beside it.
@@ -93,12 +94,9 @@ protocol VMBundleMachineFileWorking: Sendable {
     /// failed partway.
     func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID)
 
-    /// Bytes each snapshot occupies on disk, keyed by snapshot id.
-    ///
-    /// The copies share their blocks with the bundle's live disks until either
-    /// side changes, so a snapshot's figure counts blocks the VM — and every
-    /// other snapshot cloned from the same disk — also counts.
-    func onDiskBytes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: UInt64]
+    /// The size of each snapshot, keyed by snapshot id; a snapshot
+    /// whose size can't be read has no entry.
+    func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize]
 
     // MARK: Suspend slot
 

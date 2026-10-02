@@ -624,9 +624,7 @@ extension VMCommandCore {
         return ConfirmationPrompt(
             kind: .deleteVM,
             title: "Move \(name) to the Trash?",
-            message:
-                "\(name) moves to the Trash with \(taken)\(externalsClause). Restore them with "
-                + "Finder's Put Back, or empty the Trash to delete them permanently.",
+            message: "\(name) moves to the Trash with \(taken)\(externalsClause).",
             confirmTitle: "Move to Trash",
             dismissTitle: "Cancel")
     }

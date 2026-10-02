@@ -16,11 +16,13 @@ func makeSettingsViewModel(
     storage: MockVMStorageService = MockVMStorageService(),
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
-    entitled: Bool = true
+    entitled: Bool = true,
+    machineFiles: (any VMBundleMachineFileWorking)? = nil
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: storage,
         diskImageService: MockDiskImageService(),
+        machineFiles: machineFiles,
         virtualizationService: MockVirtualizationService(),
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
@@ -131,12 +133,15 @@ func panelHeaderLockHints(in vc: VMSettingsViewController) -> [NSView] {
     return settingsLockHints(in: header)
 }
 
-/// The grouped-form row whose leading label reads `label`.
+/// The grouped-form row whose leading label reads `label`: the
+/// ``GroupedFormControlRow`` titled `label`, or else the stack holding that
+/// label directly.
 @MainActor
 func settingsRow(labeled label: String, in view: NSView) -> NSView? {
-    firstSubview(NSStackView.self, in: view) { stack in
-        stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
-    }
+    firstSubview(GroupedFormControlRow.self, in: view) { $0.titleLabel.stringValue == label }
+        ?? firstSubview(NSStackView.self, in: view) { stack in
+            stack.arrangedSubviews.contains { ($0 as? NSTextField)?.stringValue == label }
+        }
 }
 
 /// The title of `row` when it is a ``GroupedFormControlRow``, which is what
@@ -181,6 +186,13 @@ func visibleLabel(_ text: String, in view: NSView) -> Bool {
     firstSubview(NSTextField.self, in: view) {
         $0.stringValue == text && isVisible($0, within: view)
     } != nil
+}
+
+/// The info button whose popover is about `label` — a row's title, a section
+/// header, or a banner's subject.
+@MainActor
+func infoButton(about label: String, in view: NSView) -> InfoButtonView? {
+    firstSubview(InfoButtonView.self, in: view) { $0.button.toolTip == "About \(label)" }
 }
 
 /// The editable field in the grouped-form card row titled `label`, however

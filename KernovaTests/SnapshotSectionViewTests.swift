@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -92,10 +93,7 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
 
         #expect(findLabel(withText: "No snapshots", in: view) != nil)
-        let readout = firstSubview(NSTextField.self, in: view) {
-            $0.stringValue.contains("snapshot") && $0.stringValue.contains("\u{00B7}")
-        }
-        #expect(readout == nil)
+        #expect(view.countReadout.isHidden)
     }
 
     // MARK: - Rows
@@ -132,8 +130,8 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(withText: "2 snapshots", in: view) != nil)
     }
 
-    @Test("The header and rows read on-disk sizes once they land")
-    func sizesReachTheHeaderAndRows() {
+    @Test("Rows read their sizes once they land, and the header stays a count")
+    func sizesReachTheRowsNotTheHeader() {
         let (view, _) = makeSection()
         let first = makeSnapshot("One")
         let second = makeSnapshot("Two", offsetSeconds: 60)
@@ -141,10 +139,16 @@ struct SnapshotSectionViewTests {
             view, manifest: VMSnapshotManifest(snapshots: [first, second]),
             canTakeSnapshot: true, canRevert: true)
 
-        view.applySizes([first.id: 1_000_000_000, second.id: 3_000_000_000])
+        view.applySizes([
+            first.id: SnapshotSize(bytes: 1_000_000_000, privateBytes: nil),
+            second.id: SnapshotSize(bytes: 3_000_000_000, privateBytes: nil),
+        ])
 
-        #expect(findLabel(containing: "2 snapshots \u{00B7} 4 GB on disk", in: view) != nil)
-        #expect(findLabel(containing: "3 GB on disk", in: view) != nil)
+        #expect(findLabel(withText: "2 snapshots", in: view) != nil)
+        #expect(findLabel(containing: "3 GB", in: view) != nil)
+        #expect(findLabel(containing: "4 GB", in: view) == nil)
+        #expect(!view.countReadout.isHidden)
+        #expect(view.sizeInfoButton.paragraphs == SnapshotSectionView.sizeExplanation)
     }
 
     @Test("Every row names its state between its date and its size")
@@ -157,14 +161,49 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [cold, warm]),
             canTakeSnapshot: true, canRevert: true)
-        view.applySizes([cold.id: 2_000_000_000, warm.id: 2_000_000_000])
+        let size = SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)
+        view.applySizes([cold.id: size, warm.id: size])
 
         for (snapshot, kind) in [(cold, VMSnapshotKind.cold), (warm, .warm)] {
             #expect(
                 view.subtitleText(for: snapshot)
                     == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
-                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB on disk")
+                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB")
         }
+    }
+
+    @Test("On a cloning volume a row's size carries its private bytes in parentheses")
+    func cloningVolumeRowShowsPrivateBytes() {
+        let (view, _) = makeSection()
+        let snapshot = makeSnapshot("Cloned")
+        render(
+            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
+            canRevert: true)
+
+        view.applySizes([
+            snapshot.id: SnapshotSize(bytes: 72_400_000_000, privateBytes: 8_400_000_000)
+        ])
+
+        #expect(
+            view.subtitleText(for: snapshot)
+                == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
+                + "\(SnapshotKindCopy.stateLabel(snapshot.kind)) \u{00B7} "
+                + "\(DataFormatters.formatBytes(72_400_000_000)) "
+                + "(\(DataFormatters.formatBytes(8_400_000_000)) private)")
+    }
+
+    @Test("Without private bytes — a volume that can't clone, or a failed read — a row shows its size alone")
+    func rowWithoutPrivateBytesShowsSizeAlone() {
+        let (view, _) = makeSection()
+        let snapshot = makeSnapshot("Copied")
+        render(
+            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
+            canRevert: true)
+
+        view.applySizes([snapshot.id: SnapshotSize(bytes: 72_400_000_000, privateBytes: nil)])
+
+        #expect(view.subtitleText(for: snapshot).hasSuffix(DataFormatters.formatBytes(72_400_000_000)))
+        #expect(!view.subtitleText(for: snapshot).contains("private"))
     }
 
     @Test("A single snapshot reads in the singular")
@@ -175,9 +214,27 @@ struct SnapshotSectionViewTests {
         render(
             view, manifest: VMSnapshotManifest(snapshots: [only]), canTakeSnapshot: true,
             canRevert: true)
-        view.applySizes([only.id: 2_000_000_000])
+        view.applySizes([only.id: SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)])
 
-        #expect(findLabel(containing: "1 snapshot \u{00B7}", in: view) != nil)
+        #expect(findLabel(withText: "1 snapshot", in: view) != nil)
+    }
+
+    @Test("A snapshot whose size is unknown shows no size part")
+    func unknownSizeShowsNoSizePart() {
+        let (view, _) = makeSection()
+        let measured = makeSnapshot("Measured")
+        let unknown = makeSnapshot("Unknown", offsetSeconds: 60)
+        render(
+            view, manifest: VMSnapshotManifest(snapshots: [measured, unknown]),
+            canTakeSnapshot: true, canRevert: true)
+
+        view.applySizes([measured.id: SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)])
+
+        #expect(
+            view.subtitleText(for: unknown)
+                == "\(SnapshotDateFormat.string(from: unknown.createdAt)) \u{00B7} "
+                + "\(SnapshotKindCopy.stateLabel(unknown.kind))")
+        #expect(view.subtitleText(for: measured).hasSuffix("2 GB"))
     }
 
     @Test("Only the current snapshot's row shows the marker")

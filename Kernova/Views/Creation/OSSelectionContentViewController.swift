@@ -32,17 +32,9 @@ final class OSSelectionContentViewController: NSViewController {
     override func loadView() {
         let container = NSView()
 
-        let heading = NSTextField(labelWithString: "Choose Operating System")
-        heading.font = Typography.title
-        heading.isSelectable = false
-
-        let subtitle = NSTextField(
-            wrappingLabelWithString:
-                "Select the operating system you want to run in your virtual machine.")
-        subtitle.font = WizardStyle.subtitleFont
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.maximumNumberOfLines = 0
-        subtitle.isSelectable = false
+        let heading = makeWizardTitle("Choose Operating System")
+        let subtitle = makeWizardSubtitle(
+            "Select the operating system you want to run in your virtual machine.")
 
         let options = NSStackView(views: VMGuestOS.allCases.map(makeOSOption))
         options.orientation = .vertical

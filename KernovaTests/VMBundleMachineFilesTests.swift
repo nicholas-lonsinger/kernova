@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -579,8 +580,8 @@ struct VMBundleMachineFilesTests {
         #expect(!FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)))
     }
 
-    @Test("On-disk sizes count the captured files")
-    func onDiskBytesCountsCapturedFiles() throws {
+    @Test("Snapshot sizes count a captured snapshot's files, and a missing one measures zero")
+    func snapshotSizesCountCapturedFiles() throws {
         let fixture = try makeFixture()
         let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
         let captured = UUID()
@@ -592,11 +593,11 @@ struct VMBundleMachineFilesTests {
             bundleURL: fixture.bundleURL, snapshotID: captured,
             relativePaths: prepared.relativePaths)
 
-        let sizes = store.onDiskBytes(
+        let sizes = store.snapshotSizes(
             bundleURL: fixture.bundleURL, snapshotIDs: [captured, empty])
 
-        #expect((sizes[captured] ?? 0) > 0)
-        #expect(sizes[empty] == 0)
+        #expect((sizes[captured]?.bytes ?? 0) > 0)
+        #expect(sizes[empty] == SnapshotSize(bytes: 0, privateBytes: nil))
     }
 
     // MARK: - Suspend slot

@@ -23,6 +23,11 @@ enum CalloutStyle {
     /// Font for body rows.
     static var bodyFont: NSFont { .preferredFont(forTextStyle: .callout) }
 
+    /// Font for code: a code row, or a code span inside a body row.
+    static var codeFont: NSFont {
+        .monospacedSystemFont(ofSize: bodyFont.pointSize, weight: .regular)
+    }
+
     /// Default body-row text color.
     ///
     /// Use `.labelColor` for the lead body row, `.secondaryLabelColor`
@@ -99,10 +104,7 @@ extension NSViewController {
 @MainActor
 func makeCalloutCode(_ text: String) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
-    label.font = .monospacedSystemFont(
-        ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize,
-        weight: .regular
-    )
+    label.font = CalloutStyle.codeFont
     label.textColor = .labelColor
     label.preferredMaxLayoutWidth = CalloutStyle.bodyWidth
     label.lineBreakMode = .byCharWrapping

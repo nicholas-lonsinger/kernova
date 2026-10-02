@@ -1122,7 +1122,7 @@ struct VMCommandCoreAttachmentTests {
         ).message
         #expect(
             message
-                == "\u{201C}Single\u{201D} is running. Adding the first shared directory or removing the last takes a stopped VM."
+                == "\u{201C}Single\u{201D} is running. Adding the first share or removing the last needs the virtual machine stopped."
         )
         #expect(empty.configuration.sharedDirectories == nil)
         #expect(single.configuration.sharedDirectories == [only])

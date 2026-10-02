@@ -66,7 +66,7 @@ struct VMCommandEnvelopeTests {
             .info(selector),
             .ipAddress(selector),
             .snapshots(selector),
-            .snapshotOnDiskBytes(selector),
+            .snapshotSizes(selector),
             .sharedDirectories(selector),
             .usbAccessories(selector),
             .availableUSBAccessories,
@@ -222,7 +222,8 @@ struct VMCommandEnvelopeTests {
             .snapshot(snapshot),
             // A snapshot of a large guest exceeds what 32 bits can name, so the
             // width is part of what has to survive the trip.
-            .snapshotSizes([snapshotID: 12_884_901_888]),
+            .snapshotSizes([snapshotID: SnapshotSize(bytes: 12_884_901_888, privateBytes: 8_589_934_592)]),
+            .snapshotSizes([snapshotID: SnapshotSize(bytes: 12_884_901_888, privateBytes: nil)]),
             .snapshotSizes([:]),
             .sharedDirectories([
                 SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),

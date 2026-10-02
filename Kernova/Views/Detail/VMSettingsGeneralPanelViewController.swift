@@ -98,9 +98,9 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// machine identifier.
     private var machineIDRow: GroupedFormCollapsibleRow?
     private var machineIDValueLabel: NSTextField?
-    /// Names the other VMs holding this one's machine ID, hidden while there
-    /// are none.
-    private var sharedMachineIDCaption = NSTextField()
+    /// The Machine ID row's note naming the other VMs holding this one's
+    /// machine ID, hidden while there are none.
+    private var sharedMachineIDNote: GroupedFormStateNote?
 
     // Startup
     private var autoStartSwitch = NSSwitch()
@@ -112,11 +112,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// The Ephemeral Mode row and its Baseline snapshot sub-option, retained so
     /// the sub-option shows only while the mode is on.
     private var ephemeralGroup: GroupedFormSubOptionGroup?
-    /// Explains that a baseline needs a snapshot first; hidden once the VM has one.
-    private var ephemeralNoSnapshotsCaption = NSView()
+    /// Explains that a baseline needs a snapshot first, while the VM has none.
+    private var ephemeralNoSnapshotsCaption: GroupedFormStateNote?
     /// Names the state a shutdown comes to rest in, which the selected
-    /// baseline's kind decides; hidden while the mode is off.
-    private var ephemeralBaselineCaption = NSTextField()
+    /// baseline's kind decides, while a baseline resolves.
+    private var ephemeralBaselineCaption: GroupedFormStateNote?
     /// One entry of the Baseline snapshot menu, as rendered.
     private struct BaselineMenuItem: Equatable {
         let id: UUID
@@ -209,12 +209,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 control: makeGroupedFormValueLabel(
                     instance.configuration.createdAt.formatted(date: .abbreviated, time: .shortened))),
         ]
-        sharedMachineIDCaption = makeGroupedFormCaption("")
         refreshMachineID()
-        return makeGroupedFormSection([
-            lockRegistry.makeHeader("General"),
-            makeGroupedFormCard(rows: rows, notes: [sharedMachineIDCaption]),
-        ])
+        return makeGroupedFormSection([lockRegistry.makeHeader("General"), makeGroupedFormCard(rows: rows)])
     }
 
     /// The Machine ID row, empty until `refreshMachineID()` fills it.
@@ -222,7 +218,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let label = makeGroupedFormValueLabel("")
         label.font = .monospacedSystemFont(ofSize: Typography.body.pointSize, weight: .regular)
         machineIDValueLabel = label
-        let row = GroupedFormCollapsibleRow(row: makeGroupedFormCardRow("Machine ID", control: label))
+        let note = GroupedFormStateNote(content: { [weak self] in self?.resolved.sharedMachineIDNote })
+        sharedMachineIDNote = note
+        let row = GroupedFormCollapsibleRow(
+            row: GroupedFormNotedRow(makeGroupedFormCardRow("Machine ID", control: label), notes: [note]))
         machineIDRow = row
         return row
     }
@@ -272,12 +271,18 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
 
     // MARK: Startup
 
-    /// Caption under the Startup card: the launch pass walks the library in
-    /// sidebar order, so that is the order the marked VMs come up in.
-    static let autoStartOrderCaption =
-        "Virtual machines start in the order they appear in the sidebar."
+    /// The info paragraphs of the "Start when Kernova opens" row. The launch
+    /// pass walks the library in sidebar order, so that is the order the marked
+    /// VMs come up in.
+    static let autoStartInfo: [InfoPopoverParagraph] = [
+        .body(
+            "Starts this virtual machine each time Kernova opens. A suspended virtual machine resumes from its saved state; one that has not finished its initial setup is left alone."
+        ),
+        .body("Virtual machines start in the order they appear in the sidebar."),
+        .body("Turn on Open at Login in Settings → General to have it running after you log in."),
+    ]
 
-    /// The Startup card's two toggles, their captions, and the capacity banner's
+    /// The Startup card's two toggles, their notes, and the capacity banner's
     /// container.
     ///
     /// Not `lockable`: the auto-start flag is read once at app launch, the
@@ -288,38 +293,42 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         ephemeralSwitch = makeGroupedFormSwitch(target: self, action: #selector(ephemeralModeToggled))
         ephemeralBaselinePopUp = makeEphemeralBaselinePopUp()
         renderedEphemeralBaselines = nil
-        let ephemeralGroup = makeGroupedFormSubOptionGroup(
-            primary: makeGroupedFormRowWithInfo(
-                "Ephemeral Mode", control: ephemeralSwitch,
-                paragraphs: EphemeralModeCopy.popoverParagraphs),
-            subOption: makeGroupedFormCardRow(
-                "Baseline snapshot", control: ephemeralBaselinePopUp))
-        self.ephemeralGroup = ephemeralGroup
 
-        let noSnapshots = makeGroupedFormCaption(EphemeralModeCopy.noSnapshotsCaption)
-        noSnapshots.isHidden = true
+        let noSnapshots = GroupedFormStateNote(
+            EphemeralModeCopy.noSnapshotsCaption,
+            shownWhen: { [weak self] in
+                guard let self else { return false }
+                return !VMConfigurationKeyRegistry.ephemeral.accepts(
+                    "true", for: instance, entitlements: viewModel.entitlements)
+            })
         ephemeralNoSnapshotsCaption = noSnapshots
 
-        // Empty until a baseline resolves — the text is the selected snapshot's,
-        // and the mode is off as often as not.
-        let baselineCaption = makeGroupedFormCaption("")
-        baselineCaption.isHidden = true
+        // Reads the resolved baseline rather than the popup's selection, so the
+        // caption is never the outgoing VM's while the menu is being rebuilt.
+        let baselineCaption = GroupedFormStateNote(content: { [weak self] in
+            self?.instance.ephemeralBaselineSnapshot.map {
+                EphemeralModeCopy.baselineCaption(for: $0.kind)
+            }
+        })
         ephemeralBaselineCaption = baselineCaption
+
+        let ephemeralGroup = makeGroupedFormSubOptionGroup(
+            primary: GroupedFormNotedRow(
+                makeGroupedFormCardRow(
+                    "Ephemeral Mode", control: ephemeralSwitch,
+                    info: EphemeralModeCopy.popoverParagraphs),
+                notes: [noSnapshots]),
+            subOption: GroupedFormNotedRow(
+                makeGroupedFormCardRow("Baseline snapshot", control: ephemeralBaselinePopUp),
+                notes: [baselineCaption]))
+        self.ephemeralGroup = ephemeralGroup
 
         let card = makeGroupedFormCard(
             rows: [
-                makeGroupedFormRowWithInfo(
-                    "Start when Kernova opens", control: autoStartSwitch,
-                    paragraphs: [
-                        .body(
-                            "Starts this virtual machine each time Kernova opens. A suspended VM resumes from its saved state; one that has not finished its initial setup is left alone."
-                        ),
-                        .body(
-                            "Turn on Open at Login in Settings → General to have it running after you log in."
-                        ),
-                    ]),
+                makeGroupedFormCardRow(
+                    "Start when Kernova opens", control: autoStartSwitch, info: Self.autoStartInfo),
                 ephemeralGroup,
-            ], notes: [baselineCaption, noSnapshots])
+            ])
 
         autoStartWarningContainer = NSStackView()
         autoStartWarningContainer.orientation = .vertical
@@ -328,10 +337,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         autoStartWarningContainer.translatesAutoresizingMaskIntoConstraints = false
 
         return makeGroupedFormSection([
-            lockRegistry.makeHeader("Startup"), card,
-            makeGroupedFormCaption(Self.autoStartOrderCaption),
-            makeGroupedFormCaption(EphemeralModeCopy.settingsCaption),
-            autoStartWarningContainer,
+            lockRegistry.makeHeader("Startup"), card, autoStartWarningContainer,
         ])
     }
 
@@ -376,9 +382,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         machineIDRow?.isHidden = fingerprint == nil
         machineIDValueLabel?.stringValue = fingerprint?.short ?? ""
         machineIDValueLabel?.toolTip = fingerprint?.digest
-        let note = resolved.sharedMachineIDNote
-        sharedMachineIDCaption.stringValue = note ?? ""
-        sharedMachineIDCaption.isHidden = note == nil
+        sharedMachineIDNote?.refresh()
     }
 
     /// Renders the install record — built or revised while the pane is open,
@@ -447,8 +451,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
                 VMConfigurationKeyRegistry.ephemeralBaseline,
                 writing: instance.hostState.ephemeralBaselineSnapshotID?.uuidString ?? ""),
             control: ephemeralBaselinePopUp)
-        ephemeralNoSnapshotsCaption.isHidden = key.accepts(
-            "true", for: instance, entitlements: viewModel.entitlements)
+        ephemeralNoSnapshotsCaption?.refresh()
         ephemeralGroup?.isSubOptionHidden = !enabled
 
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
@@ -467,15 +470,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             }
             ephemeralBaselinePopUp.menu = menu
         }
-        // Reads the resolved baseline rather than the popup's selection, so the
-        // caption is never the outgoing VM's while the menu is being rebuilt.
-        if let baseline = instance.ephemeralBaselineSnapshot {
-            ephemeralBaselineCaption.stringValue = EphemeralModeCopy.baselineCaption(
-                for: baseline.kind)
-            ephemeralBaselineCaption.isHidden = false
-        } else {
-            ephemeralBaselineCaption.isHidden = true
-        }
+        ephemeralBaselineCaption?.refresh()
         guard
             let index = ephemeralBaselinePopUp.itemArray.firstIndex(where: {
                 ($0.representedObject as? UUID) == instance.hostState.ephemeralBaselineSnapshotID

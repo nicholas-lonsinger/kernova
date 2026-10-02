@@ -90,8 +90,8 @@ final class MockVMCommanding: VMCommanding {
     /// Fires as a waited clone or import begins waiting, so a test can act
     /// against a verb that is provably running.
     let outcomeEntered = AsyncGate()
-    /// What `snapshotOnDiskBytes(of:)` answers with.
-    var snapshotBytes: [UUID: UInt64] = [:]
+    /// What `snapshotSizes(of:)` answers with.
+    var answeredSnapshotSizes: [UUID: SnapshotSize] = [:]
     /// What `sharedDirectories(of:)` answers per VM.
     var sharedDirectoriesByVM: [UUID: [SharedDirectorySummary]] = [:]
     /// What `usbAccessories(of:)` answers per VM.
@@ -114,7 +114,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var infoSelectors: [VMSelector] = []
     private(set) var ipAddressSelectors: [VMSelector] = []
     private(set) var snapshotsSelectors: [VMSelector] = []
-    private(set) var snapshotOnDiskBytesSelectors: [VMSelector] = []
+    private(set) var snapshotSizesSelectors: [VMSelector] = []
     private(set) var sharedDirectoriesSelectors: [VMSelector] = []
     private(set) var usbAccessoriesSelectors: [VMSelector] = []
     private(set) var availableUSBAccessoriesCallCount = 0
@@ -205,7 +205,7 @@ final class MockVMCommanding: VMCommanding {
     var setConfigurationError: (any Error)?
     var ipAddressError: (any Error)?
     var snapshotsError: (any Error)?
-    var snapshotOnDiskBytesError: (any Error)?
+    var snapshotSizesError: (any Error)?
     var sharedDirectoriesError: (any Error)?
     var usbAccessoriesError: (any Error)?
     var availableUSBAccessoriesError: (any Error)?
@@ -334,11 +334,11 @@ final class MockVMCommanding: VMCommanding {
         return snapshotsByVM[try resolve(selector).id] ?? []
     }
 
-    func snapshotOnDiskBytes(of selector: VMSelector) async throws -> [UUID: UInt64] {
-        snapshotOnDiskBytesSelectors.append(selector)
-        if let snapshotOnDiskBytesError { throw snapshotOnDiskBytesError }
+    func snapshotSizes(of selector: VMSelector) async throws -> [UUID: SnapshotSize] {
+        snapshotSizesSelectors.append(selector)
+        if let snapshotSizesError { throw snapshotSizesError }
         _ = try resolve(selector)
-        return snapshotBytes
+        return answeredSnapshotSizes
     }
 
     func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {

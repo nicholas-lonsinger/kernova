@@ -37,23 +37,17 @@ final class GuestAccountContentViewController: NSViewController {
 
     override func loadView() {
         let title = makeWizardTitle("Set Up macOS Automatically")
-        let subtitle = makeWizardSubtitle(
-            "macOS skips its setup questions and creates this account when the "
-                + "installation finishes.")
 
         let form = makeForm()
-        let stack = NSStackView(views: [title, subtitle, form])
+        let stack = NSStackView(views: [title, form])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(20, after: subtitle)
+        stack.setCustomSpacing(20, after: title)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = makeGroupedFormScrollView(documentView: stack)
-        NSLayoutConstraint.activate([
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            form.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        form.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         view = scrollView
         scrollMoreIndicator = ScrollMoreIndicator(scrollView: scrollView)
@@ -75,14 +69,15 @@ final class GuestAccountContentViewController: NSViewController {
             [
                 GroupedFormFieldRow("Full name", control: fullNameField),
                 GroupedFormFieldRow("Account name", control: usernameField),
-                GroupedFormFieldRow("Password", control: passwordField),
+                GroupedFormFieldRow(
+                    "Password", control: passwordField,
+                    info: [
+                        .body(
+                            "Kernova doesn\u{2019}t save this password. If Kernova quits before the "
+                                + "account is created, you\u{2019}ll be asked for it again.")
+                    ]),
                 GroupedFormFieldRow("Verify", control: verifyField),
             ], to: form)
-        let caption = makeGroupedFormCaption(
-            "Kernova doesn\u{2019}t save this password. If Kernova quits before the account is "
-                + "created, you\u{2019}ll be asked for it again.")
-        form.addArrangedSubview(caption)
-        caption.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
 
         addSectionHeader("Options", to: form)
         addCard(

@@ -291,13 +291,8 @@ final class IPSWSelectionContentViewController: NSViewController {
                     changeAction: #selector(changeLocalFile)
                 )
             case .pending:
+                // The nav bar says the check is what Next waits on.
                 addLocalFilePathBadge(path: image.path)
-                addFullWidthBanner(
-                    makeGroupedFormBanner(
-                        symbolName: "magnifyingglass.circle.fill",
-                        tint: .systemBlue,
-                        message: "Checking this restore image…"
-                    ))
             case .unusable(let error):
                 addLocalFilePathBadge(path: image.path)
                 guard let message = error.errorDescription else {
@@ -337,17 +332,17 @@ final class IPSWSelectionContentViewController: NSViewController {
         conditionalContainer.addArrangedSubview(header)
         conditionalContainer.setCustomSpacing(Spacing.small, after: header)
 
-        let card = makeGroupedFormCard(
-            rows: [makeGroupedFormCardRow("Set up macOS automatically", control: toggle)])
+        let card = makeGroupedFormCard(rows: [
+            makeGroupedFormCardRow(
+                "Set up macOS automatically", control: toggle,
+                info: [
+                    .body(
+                        "macOS skips its setup questions and creates the account you enter on the "
+                            + "Account step when the installation finishes.")
+                ])
+        ])
         conditionalContainer.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
-        conditionalContainer.setCustomSpacing(Spacing.small, after: card)
-
-        let caption = makeGroupedFormCaption(
-            "macOS skips its setup questions and creates the account you enter "
-                + "on the Account step.")
-        conditionalContainer.addArrangedSubview(caption)
-        caption.widthAnchor.constraint(equalTo: conditionalContainer.widthAnchor).isActive = true
     }
 
     /// Reads the sender rather than a held reference: this card is rebuilt
@@ -411,8 +406,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                 makeGroupedFormBanner(
                     symbolName: "exclamationmark.triangle.fill",
                     tint: .systemYellow,
-                    message: subject.map { "\($0) is already downloaded. It will be replaced when downloading." }
-                        ?? "A file already exists at this location. It will be replaced when downloading.",
+                    message: subject.map { "\($0) is already downloaded." } ?? "A file is already at this location.",
                     trailingButtons: [useExisting, replace]
                 ))
         } else if creationVM.hasResumableDownload {
@@ -420,10 +414,8 @@ final class IPSWSelectionContentViewController: NSViewController {
                 makeGroupedFormBanner(
                     symbolName: "arrow.clockwise.circle.fill",
                     tint: .systemBlue,
-                    message: subject.map {
-                        "A previous download of \($0) was interrupted. It will resume when the install starts."
-                    }
-                        ?? "A previous download was interrupted at this location. It will resume when the install starts."
+                    message: subject.map { "An interrupted download of \($0) will resume when the install starts." }
+                        ?? "An interrupted download at this location will resume when the install starts."
                 ))
         }
     }

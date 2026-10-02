@@ -413,6 +413,7 @@ extension VMSettingsViewController {
         // Drilling into a category is the other coarse re-ask, and the one that
         // covers a deletion made while Kernova stayed frontmost.
         panelContext.fileMonitor.revalidate()
+        panelContext.overview.remeasureSnapshotSizes()
     }
 
     /// Takes the open panel's view out of the form, leaving its controller — and

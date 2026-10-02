@@ -34,6 +34,10 @@ final class VMActivity {
 
     private(set) var phase: VMLifecyclePhase
 
+    /// Counts every write of ``phase``, so a reader can tell the VM moved
+    /// even when an operation left it in the phase it started from.
+    private(set) var phaseCommits = 0
+
     /// Everything scoped to the current `VZVirtualMachine`'s lifetime, bound to
     /// the session ``VMLifecyclePhase/sessionID`` names.
     private(set) var sessionContext: VMSessionContext?
@@ -987,6 +991,7 @@ final class VMActivity {
     private func setPhase(_ new: VMLifecyclePhase) {
         let wasAttachable = attachableSessionID != nil
         phase = new
+        phaseCommits &+= 1
         guard !wasAttachable, attachableSessionID != nil else { return }
         enqueue(onSessionBecameAttachable?() ?? [])
     }

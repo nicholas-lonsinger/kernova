@@ -290,12 +290,11 @@ struct VMOverviewSummaryTests {
 
     // MARK: - Header summary
 
-    @Test("The Snapshots header counts them and states what they occupy")
-    func snapshotHeaderSummaryCountsAndSizes() {
+    @Test("The Snapshots header counts them")
+    func snapshotHeaderSummaryCounts() {
         let instance = makeInstance()
-        func summary(_ resolved: VMOverviewResolved = VMOverviewResolved()) -> String? {
-            VMOverviewSummary.headerSummary(
-                for: .snapshots, instance: instance, resolved: resolved)
+        func summary() -> String? {
+            VMOverviewSummary.headerSummary(for: .snapshots, instance: instance)
         }
         #expect(summary() == nil)
 
@@ -303,12 +302,7 @@ struct VMOverviewSummaryTests {
         let two = VMSnapshot(name: "Later", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [one, two], currentID: two.id))
 
-        // The size read lands after the count, so the count stands on its own
-        // until it does.
         #expect(summary() == "2")
-        #expect(
-            summary(VMOverviewResolved(snapshotTotalBytes: 3_000_000_000))
-                == "2 \u{00B7} \(DataFormatters.formatBytes(3_000_000_000))")
     }
 
     @Test("Only Snapshots states a header summary")
@@ -319,8 +313,7 @@ struct VMOverviewSummaryTests {
             VMSnapshotManifest(
                 snapshots: [snapshot], currentID: snapshot.id))
         for category in VMSettingsCategory.allCases {
-            let summary = VMOverviewSummary.headerSummary(
-                for: category, instance: instance, resolved: VMOverviewResolved())
+            let summary = VMOverviewSummary.headerSummary(for: category, instance: instance)
             #expect((summary != nil) == (category == .snapshots))
         }
     }
