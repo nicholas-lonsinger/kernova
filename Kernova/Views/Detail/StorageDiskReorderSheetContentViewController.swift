@@ -184,8 +184,6 @@ final class StorageDiskReorderSheetContentViewController: NSViewController {
         scrollView.drawsBackground = false
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsetsZero
-        scrollView.contentView.automaticallyAdjustsContentInsets = false
-        scrollView.contentView.contentInsets = NSEdgeInsetsZero
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView()
