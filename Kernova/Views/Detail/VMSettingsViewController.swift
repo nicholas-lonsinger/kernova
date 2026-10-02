@@ -230,7 +230,9 @@ final class VMSettingsViewController: NSViewController {
         modelObservation = observeRecurring(
             track: { [weak self] in
                 guard let self else { return }
-                _ = self.instance.configuration
+                // The session's overlay too: the guest OS version the header
+                // shows is the agent's report whether or not its write landed.
+                _ = self.instance.effectiveConfiguration
                 _ = self.instance.hostState
                 _ = self.instance.status
                 // The header names the hold, and every control another copy's

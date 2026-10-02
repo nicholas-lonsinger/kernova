@@ -350,10 +350,27 @@ struct VMSettingsLockRegistry {
         _ title: String, editableWhen: VMSettingsEditableStates? = nil,
         paragraphs: [InfoPopoverParagraph] = []
     ) -> NSView {
+        makeHeader(
+            title, editableWhen: editableWhen,
+            info: paragraphs.isEmpty ? nil : makeGroupedFormInfoButton(label: title, paragraphs: paragraphs))
+    }
+
+    /// ``makeHeader(_:editableWhen:paragraphs:)`` for section facts that follow
+    /// state the panel was built before: `paragraphs` is read on each click.
+    mutating func makeHeader(
+        _ title: String, editableWhen: VMSettingsEditableStates? = nil,
+        paragraphs: @escaping @MainActor () -> [InfoPopoverParagraph]
+    ) -> NSView {
+        let info = InfoButtonView()
+        info.configure(label: title, paragraphs: paragraphs)
+        return makeHeader(title, editableWhen: editableWhen, info: info)
+    }
+
+    private mutating func makeHeader(
+        _ title: String, editableWhen: VMSettingsEditableStates?, info: InfoButtonView?
+    ) -> NSView {
         var views: [NSView] = [makeGroupedFormSectionHeader(title)]
-        if !paragraphs.isEmpty {
-            views.append(makeGroupedFormInfoButton(label: title, paragraphs: paragraphs))
-        }
+        if let info { views.append(info) }
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
