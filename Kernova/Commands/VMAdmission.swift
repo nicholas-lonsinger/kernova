@@ -166,7 +166,8 @@ enum VMAdmission {
         case .start, .resume, .operation:
             return true
         case .edit(let classes):
-            return classes.contains(.hotPlugMedia) && owesMediaReconcile(phase)
+            return !classes.isDisjoint(with: [.hotPlugMedia, .removableMediaRemoval])
+                && owesMediaReconcile(phase)
         case .affordance(.guestAgentDisk):
             return owesMediaReconcile(phase)
         case .sessionAction, .cancel, .evict, .affordance:

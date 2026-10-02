@@ -481,6 +481,20 @@ struct DetailAlertsPresenterTests {
                 "Removing it also discards this virtual machine's saved state."))
     }
 
+    /// A saved state restores with removable media removed, so its removal
+    /// costs nothing more than the item.
+    @Test("Removing removable media from a suspended VM does not claim to discard its saved state")
+    func startFailedAlertOnRemovableMediaWithASavedStateKeepsIt() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notFound, message: "Removable media 'Archive' was not found.", verb: .resume,
+                kind: .removableMedia),
+            holdsSavedState: true)
+
+        #expect(!message.contains("saved state"))
+        #expect(message.hasSuffix("you can re-attach it later in Settings."))
+    }
+
     /// Read Only does not make a folder a disk image, and nothing here knows
     /// what the framework objected to — so neither case invents a step.
     @Test(

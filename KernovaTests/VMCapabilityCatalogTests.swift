@@ -81,6 +81,7 @@ struct VMCapabilityCatalogTests {
         .createStorageDisk: .operation(.creatingStorageDisk),
         .trashStorageDisk: .operation(.removingStorageDisk),
         .editRemovableMedia: .edit(.hotPlugMedia),
+        .removeRemovableMedia: .edit(.removableMediaRemoval),
         .createRemovableMedia: .operation(.creatingRemovableMedia),
         .editSharedDirectories: .edit(.machineKeys),
         .editLiveSharedDirectories: .edit(.liveShares),
@@ -261,6 +262,9 @@ struct VMCapabilityCatalogTests {
             #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
             #expect(harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
             #expect(harness.catalog.isApplicable(.discardSavedState, to: instance), "\(phase)")
+            // A saved state restores across a removal of removable media.
+            #expect(
+                harness.catalog.isApplicable(.removeRemovableMedia, to: instance), "\(phase)")
             // A clone carries the slot rather than being pinned out by it.
             #expect(harness.catalog.isApplicable(.clone, to: instance), "\(phase)")
             // Delete keeps working: the slot is a file inside the bundle and

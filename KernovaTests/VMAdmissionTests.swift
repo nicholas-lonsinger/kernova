@@ -137,6 +137,8 @@ struct VMAdmissionTests {
         (.edit(.machineKeys), "AAAIIIR"),
         (.edit(.liveKeys), "AAAAAAR"),
         (.edit(.hotPlugMedia), "AAAIAAR"),
+        // A saved state restores across a removal of removable media.
+        (.edit(.removableMediaRemoval), "AAAAAAR"),
         (.edit(.networkAttachment), "AAAIAAR"),
         // A saved state pins membership unless it restores across the move.
         (.edit(.networkMembership), "AAAIAAR"),
@@ -256,6 +258,7 @@ struct VMAdmissionTests {
         (.operation(.saving), "IIIIAAR"),
         (.edit(.machineKeys), "OOOIIIR"),
         (.edit(.hotPlugMedia), "OOOIAAR"),
+        (.edit(.removableMediaRemoval), "OOOOAAR"),
         (.evict, "AAAAIIR"),
         (.sessionAction(.forceStop), "IIIIAAR"),
         (.affordance(.inspect), "AAAAAAR"),
@@ -323,6 +326,7 @@ struct VMAdmissionTests {
         // A hot-plug edit commits the media reconcile only on a live VM; at
         // rest it is a write like any other.
         (.edit(.hotPlugMedia), "AAAITTR"),
+        (.edit(.removableMediaRemoval), "AAAATTR"),
         (.affordance(.guestAgentDisk), "IIIITTR"),
         (.edit(.machineKeys), "AAAIIIR"),
         (.edit(.liveKeys), "AAAAAAR"),

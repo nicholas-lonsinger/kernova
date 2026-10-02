@@ -2361,29 +2361,50 @@ struct VMLibraryViewModelTests {
         #expect(fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("removeStartFailedAttachmentAndStart discards the saved state along with the attachment")
+    @Test("removeStartFailedAttachmentAndStart discards the saved state along with a storage disk")
     func removeStartFailedAttachmentDiscardsSaveFile() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let disk = StorageDisk(path: "/tmp/stale.img", label: "Stale", isInternal: false)
+        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
+        let instance = viewModel.library.admitFixture { $0.storageDisks = [disk, keeper] }
+        // A failed cold resume leaves the VM here, save file intact.
+        instance.activity.placeForTesting(.failed(message: "Test failure"))
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        let failure = StartFailedAttachment(
+            verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
+            label: disk.label, message: "test")
+        await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
+
+        // A save file does not restore with a storage disk removed, so the
+        // confirmed repair discards it and the retried start cold-boots.
+        #expect(!instance.hasSaveFile)
+        #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartRoute != .restoredSavedState)
+        #expect(instance.status == .running)
+    }
+
+    @Test("removeStartFailedAttachmentAndStart keeps the saved state when removable media goes")
+    func removeStartFailedRemovableMediaKeepsSaveFile() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let item = RemovableMediaItem(path: "/tmp/stale.iso", readOnly: true, label: "Stale ISO")
         let instance = viewModel.library.admitFixture { $0.removableMedia = [item] }
-        // A failed cold resume leaves the VM here, save file intact.
         instance.activity.placeForTesting(.failed(message: "Test failure"))
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        FileManager.default.createFile(
-            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
-            contents: Data("fake save".utf8))
+        try VMInstanceFixture.writeSaveFile(for: instance)
 
         let failure = StartFailedAttachment(
-            verb: .start, kind: .removableMedia, reason: .attachRefused, id: item.id,
+            verb: .resume, kind: .removableMedia, reason: .notFound, id: item.id,
             label: item.label, message: "test")
         await viewModel.removeStartFailedAttachmentAndStart(failure, on: instance)
 
-        // The confirmed repair discards the save, and the retried start
-        // cold-boots.
-        #expect(!instance.hasSaveFile)
+        // A save file restores with removable media removed, so the retried
+        // start restores it over the configuration without the item.
         #expect(virtService.startCallCount == 1)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
+        let started = try #require(virtService.configurationAtStart)
+        #expect((started.removableMedia ?? []).isEmpty)
         #expect(instance.status == .running)
     }
 

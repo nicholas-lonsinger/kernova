@@ -295,7 +295,8 @@ enum VMSettingsEditableStates {
     case stopped
     /// Hot-plugged media, which a running guest still takes. Left out are a VM
     /// mid-save, mid-capture, mid-restore, or paused to disk — each pins the
-    /// device set its saved state or its capture will be read back into.
+    /// device set its saved state or its capture will be read back into, all
+    /// but a removal (``VMEditClasses/removableMediaRemoval``).
     case stoppedOrRunning
 
     /// The lock hint's wording.

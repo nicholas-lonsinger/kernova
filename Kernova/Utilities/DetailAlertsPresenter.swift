@@ -806,13 +806,13 @@ final class DetailAlertsPresenter: NSObject {
     ) -> AlertConfiguration {
         // The heading names the bring-up that failed; the button names what the
         // recovery does, which is a start either way — a resume's saved state is
-        // discarded along with the attachment.
+        // discarded along with a storage disk.
         //
         // Laid out as ``AlertConfiguration/init(confirming:confirm:alternative:dismiss:)``
         // lays a destructive confirmation out: the action on the trailing edge
         // taking no Return, the dismiss on Escape. The removal edits the
-        // configuration and, for a VM holding one, destroys a saved state — so
-        // no keystroke performs it.
+        // configuration and, taking a storage disk from a VM holding one,
+        // destroys a saved state — so no keystroke performs it.
         AlertConfiguration(
             title: "Couldn't \(failure.verb == .resume ? "Resume" : "Start") “\(vm.name)”",
             message: Self.startFailedAttachmentMessage(
@@ -872,7 +872,10 @@ final class DetailAlertsPresenter: NSObject {
             "\(failure.message)\n\n\(remedy)\(offer) “\(failure.label)” from this virtual "
             + "machine and start without it — the file itself is not deleted, and you can "
             + "re-attach it later in Settings."
-        if holdsSavedState {
+        // A saved state restores with removable media removed
+        // (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
+        // and not with a storage disk removed.
+        if holdsSavedState, case .storageDisk = failure.kind {
             message +=
                 " Removing it also discards this virtual machine's saved state."
         }

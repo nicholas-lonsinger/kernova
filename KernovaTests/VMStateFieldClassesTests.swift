@@ -102,6 +102,34 @@ struct VMStateFieldClassesTests {
                 == ["macAddress"])
     }
 
+    /// A saved state restores with removable media removed and with none added
+    /// or changed (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md).
+    @Test("Only a removal of removable media is open to the removal's own class")
+    func aRemovableMediaRemovalIsItsOwnClass() {
+        let a = RemovableMediaItem(path: "/tmp/a.iso")
+        let b = RemovableMediaItem(path: "/tmp/b.iso")
+        let c = RemovableMediaItem(path: "/tmp/c.iso")
+        var renamed = b
+        renamed.label = "Renamed"
+        var old = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
+        old.removableMedia = [a, b, c]
+        let classes = VMConfiguration.fieldClasses
+        func refusedToTheRemoval(_ media: [RemovableMediaItem]?) -> Bool {
+            var new = old
+            new.removableMedia = media
+            #expect(classes.refused(from: old, to: new, by: .edit(.hotPlugMedia)) == [])
+            return classes.refused(from: old, to: new, by: .edit(.removableMediaRemoval))
+                == ["removableMedia"]
+        }
+        #expect(!refusedToTheRemoval([a, c]))
+        #expect(!refusedToTheRemoval([b]))
+        #expect(!refusedToTheRemoval(nil))
+        #expect(refusedToTheRemoval([a, b, c, RemovableMediaItem(path: "/tmp/d.iso")]))
+        #expect(refusedToTheRemoval([a, renamed]))
+        #expect(refusedToTheRemoval([c, a]))
+        #expect(refusedToTheRemoval([a, RemovableMediaItem(path: "/tmp/d.iso")]))
+    }
+
     @Test("Clipboard sharing is hardware on a Linux guest and a live setting on a macOS one")
     func clipboardSharingIsClassifiedByGuest() {
         let classes = VMConfiguration.fieldClasses

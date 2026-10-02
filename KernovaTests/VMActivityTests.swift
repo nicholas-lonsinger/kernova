@@ -262,7 +262,7 @@ struct VMActivityTests {
     /// One class at a time, so a table row names the class admission refused.
     private static let singleEditClasses: [VMEditClasses] = [
         .machineKeys, .liveKeys, .hotPlugMedia, .networkAttachment, .hostPresentation,
-        .snapshotMetadata, .pairingRules, .rename, .observations,
+        .snapshotMetadata, .pairingRules, .rename, .observations, .removableMediaRemoval,
     ]
 
     @Test("An edit's permit is minted exactly where admission admits the edit, naming its own VM")

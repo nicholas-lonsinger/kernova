@@ -136,6 +136,38 @@ struct VMSettingsStoragePanelTests {
             Set(visibleLockHints(in: suspended.view)) == [groupedFormLockHintText, hintText])
     }
 
+    @Test("A suspended VM's removable media can be ejected while its other edits stay locked")
+    func aSuspendedVMsMediaEjects() throws {
+        let viewModel = makeViewModel()
+        let item = RemovableMediaItem(path: "/tmp/installer.dmg", readOnly: true, label: "Installer")
+        let instance = viewModel.library.registerFixture(guestOS: .macOS, phase: .suspended) {
+            $0.removableMedia = [item]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: true)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.storage)
+        let panel = try #require(vc.panelForTesting(.storage))
+
+        let eject = try #require(
+            firstSubview(NSButton.self, in: panel) {
+                $0.action.map(NSStringFromSelector) == "removableEjectTapped:"
+            })
+        #expect(eject.isEnabled)
+        let readOnly = try #require(
+            firstSubview(NSSwitch.self, in: panel) {
+                $0.action.map(NSStringFromSelector) == "removableReadOnlyToggled:"
+            })
+        #expect(!readOnly.isEnabled)
+
+        eject.performClick(nil)
+
+        // A saved state restores across the removal, so it stays.
+        #expect((instance.configuration.removableMedia ?? []).isEmpty)
+        #expect(instance.hasSaveFile)
+    }
+
     /// The tooltip of every lock hint currently on screen.
     private func visibleLockHints(in view: NSView) -> [String] {
         allSubviews(NSStackView.self, in: view) {
