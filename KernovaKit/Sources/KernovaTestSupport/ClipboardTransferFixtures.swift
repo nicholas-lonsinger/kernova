@@ -187,11 +187,26 @@ public struct ReceivedTransfer: Sendable {
 ///
 /// Buffers the payload whole, so it is for a fixture-sized transfer.
 public func receiveTransfer(fd: Int32) throws -> ReceivedTransfer {
-    defer { ClipboardDataConnection.end(fd: fd) }
-    let frame = try ClipboardDataConnection.readFrame(fd: fd)
-    guard case .clipboardTransferReply(let reply) = frame.payload else {
-        throw TestFailure("A data connection opened with \(String(describing: frame.payload))")
+    let reply: Kernova_V1_ClipboardTransferReply
+    do {
+        let frame = try ClipboardDataConnection.readFrame(fd: fd)
+        guard case .clipboardTransferReply(let read) = frame.payload else {
+            throw TestFailure("A data connection opened with \(String(describing: frame.payload))")
+        }
+        reply = read
+    } catch {
+        ClipboardDataConnection.end(fd: fd)
+        throw error
     }
+    return try receiveTransfer(fd: fd, after: reply)
+}
+
+/// Reads the rest of a transfer whose `reply` the caller already took off `fd`
+/// — the payload and the trailer — and closes it.
+public func receiveTransfer(
+    fd: Int32, after reply: Kernova_V1_ClipboardTransferReply
+) throws -> ReceivedTransfer {
+    defer { ClipboardDataConnection.end(fd: fd) }
     var rest = try readToEnd(fd: fd)
     guard rest.count >= ClipboardTransferTrailer.byteCount else {
         return ReceivedTransfer(reply: reply, payload: rest, trailer: nil)
