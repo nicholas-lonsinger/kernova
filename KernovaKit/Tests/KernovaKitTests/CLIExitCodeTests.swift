@@ -15,7 +15,7 @@ struct CLIExitCodeTests {
         id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
 
     @Test("Every verb refusal takes its own code")
-    func everyCommandErrorMaps() {
+    func everyCommandErrorMaps() throws {
         let expected: [(CommandErrorDTO, CLIExitCode)] = [
             (.notFound(selector: .idOrName("Alpha")), .notFound),
             // A VM that answered, naming something on it that did not, reads to
@@ -60,6 +60,16 @@ struct CLIExitCodeTests {
             (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),
             (
                 .operationFailed(verb: .start, title: nil, message: "no disk", recovery: nil),
+                .operationFailed
+            ),
+            // The removal happened and a file it was asked to take stayed: the
+            // verb ran and did not complete all it was asked.
+            (
+                .filesKept(
+                    try #require(
+                        FilesKept(
+                            .attachment(label: "Data", vm: "Alpha"),
+                            kept: [FilesKept.File(path: "/tmp/data.img", reason: "Locked.")]))),
                 .operationFailed
             ),
         ]

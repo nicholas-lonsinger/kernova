@@ -70,8 +70,7 @@ final class VMCommandCore: VMCommanding {
     var revealInFinder: ((VMInstance) -> Void)?
 
     /// Receives every failure raised with no command call waiting on it — an
-    /// Ephemeral baseline revert a power-off started, an external file that
-    /// could not be trashed after its VM was deleted, the boot chained off a
+    /// Ephemeral baseline revert a power-off started, the boot chained off a
     /// finished install, a create, clone or import nobody waits on.
     ///
     /// Typed rather than flattened to a title and a message, so a failure that
@@ -527,16 +526,16 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// Runs `body` as the operation `kind` on `instance`, which rests where it
-    /// started once `body` ends, and answers any refusal or failure in the
-    /// command vocabulary under `verb` (``failure(_:verb:on:)``).
-    func perform(
+    /// started once `body` ends, answering what `body` returned, and answers
+    /// any refusal or failure in the command vocabulary under `verb`
+    /// (``failure(_:verb:on:)``).
+    func perform<T>(
         _ kind: VMNonBringUpKind, on instance: VMInstance, verb: VMVerb,
-        _ body: (borrowing VMOperationContext) async throws -> Void
-    ) async throws {
+        _ body: (borrowing VMOperationContext) async throws -> T
+    ) async throws -> T {
         do {
-            try await instance.activity.perform(kind) { context in
-                try await body(context)
-                return .rest(.asStarted, ())
+            return try await instance.activity.perform(kind) { context in
+                .rest(.asStarted, try await body(context))
             }
         } catch {
             throw failure(error, verb: verb, on: instance)

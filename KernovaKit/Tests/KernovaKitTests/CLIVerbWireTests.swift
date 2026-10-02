@@ -262,6 +262,43 @@ struct CLIVerbWireTests {
             ])
     }
 
+    @Test("A removal whose file stayed exits as a verb that did not complete, naming the file")
+    func filesKeptExitsNamingTheFile() throws {
+        let kept = try #require(
+            FilesKept(
+                .attachment(label: "Data", vm: "Alpha"),
+                kept: [
+                    FilesKept.File(
+                        path: "/Volumes/Archive/data.img",
+                        reason:
+                            "\u{201C}data.img\u{201D} couldn\u{2019}t be moved to the trash because the volume \u{201C}Archive\u{201D} doesn\u{2019}t have one."
+                    )
+                ]))
+        // Across the wire and back, as the tool receives it.
+        let answer = try JSONDecoder().decode(
+            VMCommandResponse.self,
+            from: JSONEncoder().encode(VMCommandResponse(result: .failure(.filesKept(kept)))))
+
+        do {
+            _ = try answer.payload()
+            Issue.record("expected the files-kept outcome")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .operationFailed)
+            #expect(
+                failure.message
+                    == "\u{201C}Data\u{201D} was removed from \u{201C}Alpha\u{201D}. "
+                    + "\u{201C}/Volumes/Archive/data.img\u{201D} was not moved to the Trash: "
+                    + "\u{201C}data.img\u{201D} couldn\u{2019}t be moved to the trash because the "
+                    + "volume \u{201C}Archive\u{201D} doesn\u{2019}t have one.")
+        }
+    }
+
+    @Test("A removal that kept no file does not decode")
+    func filesKeptNamingNoFileDoesNotDecode() {
+        let json = Data(#"{"removal":{"vm":{"name":"Alpha","permanently":false}},"files":[]}"#.utf8)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(FilesKept.self, from: json) }
+    }
+
     @Test("reveal crosses as the Finder verb, not as the app's own bring-up")
     func revealSendsTheFinderVerb() throws {
         let exchanged = try CLIWire.exchange(

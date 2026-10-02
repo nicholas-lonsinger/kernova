@@ -20,7 +20,7 @@ extension CommandError {
         case .invalidState, .changeTakesStoppedVM, .unsupported, .unsupportedByBuild, .conflict,
             .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired, .busy,
             .heldByAnotherCopy,
-            .terminating, .operationFailed:
+            .terminating, .operationFailed, .filesKept:
             Int(errAEEventFailed)
         }
     }

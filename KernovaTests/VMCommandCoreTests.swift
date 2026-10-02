@@ -2533,6 +2533,56 @@ struct VMCommandCoreTests {
         #expect(harness.storage.permanentlyDeleteVMBundleCallCount == 1)
     }
 
+    @Test(
+        "A delete answers every external that stayed once the VM is gone, and success when one is missing",
+        arguments: [false, true])
+    func deleteAnswersTheExternalsThatStayed(permanently: Bool) async throws {
+        let harness = makeHarness()
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let paths = ["first.img", "second.iso"].map {
+            scratch.url.appendingPathComponent("\(UUID().uuidString)-\($0)")
+                .path(percentEncoded: false)
+        }
+        let disk = StorageDisk(path: paths[0], label: "First", isInternal: false)
+        let media = RemovableMediaItem(path: paths[1], readOnly: true)
+        let setUp: (inout VMConfiguration) -> Void = {
+            $0.storageDisks = [disk]
+            $0.removableMedia = [media]
+        }
+        let fail = { (error: CocoaError?) in
+            if permanently {
+                harness.fileSystem.removeError = error
+            } else {
+                harness.fileSystem.trashError = error
+            }
+        }
+
+        let ghostly = makeInstance(in: harness, name: "Ghostly", mutate: setUp)
+        fail(CocoaError(.fileNoSuchFile))
+        try await harness.core.delete(
+            .id(ghostly.id), permanently: permanently, alsoRemoving: [disk.id, media.id],
+            consent: .all)
+
+        let target = makeInstance(in: harness, name: "Target", mutate: setUp)
+        fail(CocoaError(.fileWriteNoPermission))
+        let failure = await commandError {
+            try await harness.core.delete(
+                .id(target.id), permanently: permanently, alsoRemoving: [disk.id, media.id],
+                consent: .all)
+        }
+
+        // The VM went; one failed file never stops the next from being tried.
+        #expect(harness.library.instances.isEmpty)
+        guard case .filesKept(let kept) = failure else {
+            Issue.record("expected the files-kept outcome, got \(String(describing: failure))")
+            return
+        }
+        #expect(kept.removal == .vm(name: "Target", permanently: permanently))
+        #expect(Set(kept.files.map(\.path)) == Set(paths))
+        #expect(reported.isEmpty)
+    }
+
     /// A `.kernova`-shaped source with its `config.json` on disk, under a
     /// per-call parent, because the import copies real files.
     @Test("An import takes the bundle the authority answered with, not the path asked about")

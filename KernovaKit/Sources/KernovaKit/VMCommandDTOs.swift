@@ -499,6 +499,96 @@ public struct MACAddressRemedyPrompt: Codable, Sendable, Hashable {
     }
 }
 
+/// A removal that happened, and the files it was asked to take that stayed.
+///
+/// Neither a success nor a refusal: what the verb was mainly asked to remove
+/// is gone, so repeating it names nothing.
+public struct FilesKept: Codable, Sendable, Hashable {
+    /// What the verb removed.
+    public enum Removal: Codable, Sendable, Hashable {
+        /// A virtual machine, moved to the Trash or, `permanently`, deleted.
+        case vm(name: String, permanently: Bool)
+        /// An attachment's entry, dropped from the virtual machine `vm`; its
+        /// file was to be moved to the Trash.
+        case attachment(label: String, vm: String)
+
+        /// Whether the files were to be deleted rather than moved to the
+        /// Trash.
+        var deletes: Bool {
+            if case .vm(_, permanently: true) = self { return true }
+            return false
+        }
+    }
+
+    /// One file a removal could not take.
+    public struct File: Codable, Sendable, Hashable {
+        /// The path the removal addressed.
+        public let path: String
+        /// Why the file could not be removed, in the system's words.
+        public let reason: String
+
+        /// Names one file that stayed.
+        public init(path: String, reason: String) {
+            self.path = path
+            self.reason = reason
+        }
+    }
+
+    /// What the verb removed.
+    public let removal: Removal
+    /// The files that stayed, never empty.
+    public let files: [File]
+
+    /// Describes a removal that kept `files`, or `nil` when it kept none — a
+    /// removal that took every file it was asked to is a success.
+    public init?(_ removal: Removal, kept files: [File]) {
+        guard !files.isEmpty else { return nil }
+        self.removal = removal
+        self.files = files
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case removal, files
+    }
+
+    /// Decodes a removal that kept files, refusing one that names none.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let removal = try container.decode(Removal.self, forKey: .removal)
+        let files = try container.decode([File].self, forKey: .files)
+        guard let kept = FilesKept(removal, kept: files) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .files, in: container, debugDescription: "A removal that kept no file.")
+        }
+        self = kept
+    }
+
+    /// The heading a surface shows this outcome under.
+    var title: String {
+        let action = removal.deletes ? "Delete" : "Move"
+        let object = files.count == 1 ? "a File" : "\(files.count) Files"
+        let destination = removal.deletes ? "" : " to the Trash"
+        return "Couldn\u{2019}t \(action) \(object)\(destination)"
+    }
+
+    /// What happened, then each file that stayed and why.
+    var message: String {
+        let done =
+            switch removal {
+            case .vm(let name, let permanently):
+                "\u{201C}\(name)\u{201D} was \(permanently ? "deleted" : "moved to the Trash")."
+            case .attachment(let label, let vm):
+                "\u{201C}\(label)\u{201D} was removed from \u{201C}\(vm)\u{201D}."
+            }
+        let missed = removal.deletes ? "was not deleted" : "was not moved to the Trash"
+        let sentences = files.map { file in
+            let ending = file.reason.last.map { ".!?".contains($0) } == true ? "" : "."
+            return "\u{201C}\(file.path)\u{201D} \(missed): \(file.reason)\(ending)"
+        }
+        return ([done] + sentences).joined(separator: " ")
+    }
+}
+
 /// A command failure, as it crosses a wire.
 ///
 /// The in-process vocabulary carries one payload this cannot: a recovery a
@@ -557,6 +647,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// names for itself, `nil` when it has none of its own.
     case operationFailed(
         verb: VMVerb, title: String?, message: String, recovery: CommandRecoveryDTO?)
+    /// The verb removed what it was mainly asked to, and the files it names
+    /// stayed.
+    case filesKept(FilesKept)
 }
 
 /// What a verb does that only a stopped VM takes, though the verb itself is
@@ -626,6 +719,8 @@ extension CommandErrorDTO {
             reason.title
         case .operationFailed(_, let title, _, _):
             title ?? "Error"
+        case .filesKept(let kept):
+            kept.title
         }
     }
 
@@ -707,6 +802,8 @@ extension CommandErrorDTO {
                 + "unsaved inside it."
         case .operationFailed(_, _, let message, _):
             message
+        case .filesKept(let kept):
+            kept.message
         }
     }
 
