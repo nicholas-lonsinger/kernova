@@ -68,7 +68,8 @@ struct VMLibraryAdoptionTests {
         let instance = try await storage.withAfterPublish({ files.setConfiguration(onDisk, at: destination) }) {
             let arrival = library.beginArrival(
                 kind: .creating, configuration: config, destination: destination,
-                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+                staged: try VMStagedBundle.mint(in: storage), source: nil,
+                write: writing(config))
             return try await arrival.settled.value
         }
 
@@ -88,7 +89,8 @@ struct VMLibraryAdoptionTests {
         }) {
             let arrival = library.beginArrival(
                 kind: .creating, configuration: config, destination: destination,
-                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+                staged: try VMStagedBundle.mint(in: storage), source: nil,
+                write: writing(config))
             return (arrival, try await arrival.settled.value)
         }
 
@@ -244,7 +246,8 @@ struct VMLibraryAdoptionTests {
         }) {
             let arrival = library.beginArrival(
                 kind: .creating, configuration: config, destination: destination,
-                staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+                staged: try VMStagedBundle.mint(in: storage), source: nil,
+                write: writing(config))
             arrivalRef.value = arrival
             await #expect(throws: CancellationError.self) { try await arrival.settled.value }
             return arrival
@@ -264,7 +267,8 @@ struct VMLibraryAdoptionTests {
         let arrival = library.beginArrival(
             kind: .creating, configuration: config,
             destination: try storage.bundleURL(for: config),
-            staged: try VMStagedBundle.mint(in: storage), write: writing(config))
+            staged: try VMStagedBundle.mint(in: storage), source: nil,
+            write: writing(config))
         let instance = try await arrival.settled.value
 
         #expect(arrival.requestCancel() == .adopted)

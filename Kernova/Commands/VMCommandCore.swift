@@ -805,20 +805,11 @@ final class VMCommandCore: VMCommanding {
         report(failure, on: instance)
     }
 
-    /// The failure `arrival` settled with, or `nil` when it was cancelled —
-    /// a cancel the user took is no failure to report, and the pipeline
-    /// throws every outcome of one as `CancellationError`.
-    func arrivalFailure(_ error: any Error, of arrival: VMArrival) -> CommandError? {
-        guard !(error is CancellationError) else { return nil }
-        return error as? CommandError
-            ?? .operationFailed(verb: arrival.kind.verb, message: error.localizedDescription)
-    }
-
     /// Puts an arrival's failure on the event stream, waited or not, while its
     /// row is still in the library: the diff in ``emitLibraryChanges()`` only
     /// ever sees the row vanish, and reports that after this.
     private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
-        guard let failure = arrivalFailure(error, of: arrival) else { return }
+        guard let failure = arrival.failure(for: error) else { return }
         broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
     }
 }

@@ -20,7 +20,8 @@ extension VMLibrary {
             preconditionFailure("A test arrival's destination could not be derived: \(error)")
         }
         return beginArrival(
-            kind: kind, configuration: configuration, destination: destination, staged: staged
+            kind: kind, configuration: configuration, destination: destination, staged: staged,
+            source: nil
         ) { staged in
             try await gate.pass()
             try storage.createVMBundle(at: staged.url)
@@ -50,7 +51,8 @@ extension VMArrival {
             id: configuration.id, kind: kind, configuration: configuration,
             destinationURL: VMInstanceFixture.bundleURL(for: configuration.id),
             staged: VMStagedBundle.fixtureForTesting(
-                at: VMInstanceFixture.bundleURL(for: UUID()), access: InMemoryVMBundleFiles())
+                at: VMInstanceFixture.bundleURL(for: UUID()), access: InMemoryVMBundleFiles()),
+            source: nil
         ) { _ in throw CancellationError() }
     }
 

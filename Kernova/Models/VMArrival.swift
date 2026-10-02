@@ -82,6 +82,15 @@ final class VMArrival {
 
         var cancelAlertTitle: String { "Cancel \(displayNoun)?" }
 
+        /// The verb the failure alert's title names ("Couldn't Import ...").
+        var titleVerb: String {
+            switch self {
+            case .creating: "Create"
+            case .cloning: "Clone"
+            case .importing: "Import"
+            }
+        }
+
         /// The verb whose failure this arrival's failure is.
         var verb: VMVerb {
             switch self {
@@ -89,6 +98,22 @@ final class VMArrival {
             case .cloning: .clone
             case .importing: .importVM
             }
+        }
+    }
+
+    /// The bundle a clone or import copies its files from.
+    struct Source: Sendable, Equatable {
+        let bundleURL: URL
+        /// How the user knows the bundle: the path an import was given, or the
+        /// name of the VM a clone copies.
+        let label: String
+
+        /// An import's source, labelled by its path.
+        static func importing(_ bundleURL: URL) -> Source {
+            // From the components, so a directory URL's trailing slash is not shown.
+            Source(
+                bundleURL: bundleURL,
+                label: NSString.path(withComponents: bundleURL.pathComponents))
         }
     }
 
@@ -120,6 +145,9 @@ final class VMArrival {
     /// Where the write's tree sits until publication.
     let staged: VMStagedBundle
 
+    /// What the write copies from — `nil` for a create, which copies nothing.
+    let source: Source?
+
     private(set) var stage: Stage = .writing
 
     var name: String { configuration.name }
@@ -144,13 +172,14 @@ final class VMArrival {
     /// arrival in the same synchronous segment does so before it.
     init(
         id: UUID, kind: Kind, configuration: VMConfiguration, destinationURL: URL,
-        staged: VMStagedBundle, run: @escaping @MainActor (VMArrival) async throws -> VMInstance
+        staged: VMStagedBundle, source: Source?, run: @escaping @MainActor (VMArrival) async throws -> VMInstance
     ) {
         self.id = id
         self.kind = kind
         self.configuration = configuration
         self.destinationURL = destinationURL
         self.staged = staged
+        self.source = source
         self.run = run
         _ = settled
     }
