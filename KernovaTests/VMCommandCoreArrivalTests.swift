@@ -646,7 +646,7 @@ struct VMCommandCoreArrivalTests {
             #expect(
                 error.message
                     == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
-                    + "Cloning a virtual machine with a writable external disk takes a stopped VM.")
+                    + "Cloning a virtual machine with a writable external disk needs it stopped.")
         }
         #expect(storage.cloneVMBundleCallCount == 0)
         #expect(harness.library.entries.map(\.id) == [source.id])
