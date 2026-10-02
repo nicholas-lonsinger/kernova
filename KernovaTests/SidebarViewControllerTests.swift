@@ -670,6 +670,19 @@ struct SidebarViewControllerTests {
         #expect(actual == expected, "\(phase)")
     }
 
+    @Test("A running VM whose guest can write an external disk lists Take Snapshot dimmed")
+    func contextMenuDimsTakeSnapshotWithAWritableExternalDisk() {
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.admitFixture(phase: .running(sessionID: UUID())) {
+            $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
+        }
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        #expect(menuItem("Take Snapshot\u{2026}", in: menu)?.isEnabled == false)
+    }
+
     @Test("A capture of a stopped VM offers no Force Stop — there is no VM to terminate")
     func contextMenuNoForceStopDuringAColdCapture() {
         let viewModel = makeViewModel()

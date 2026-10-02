@@ -65,16 +65,12 @@ struct RevertToSnapshotIntent: AppIntent {
         return .result()
     }
 
-    /// The confirmation's accept action, or the refusal for a VM that cannot
-    /// take the checkpoint this action was configured to take.
+    /// The confirmation's accept action, or a refusal for a prompt that offers
+    /// no checkpoint when this action was configured to take one.
     ///
-    /// The refusal is raised here rather than left to the capture: the core
-    /// takes the checkpoint after consent, and what it throws then is an
-    /// invalid-state refusal that lists Revert to Snapshot among the verbs the
-    /// VM does accept and never names the checkpoint as what blocked it. The
-    /// state this covers is real — a VM that failed to start can be reverted
-    /// but cannot be captured, and reverting is how a user gets out of it — so
-    /// the refusal has to name the toggle that is in the way.
+    /// The core refuses a checkpoint Take Snapshot would refuse before it asks
+    /// (``VMCommandCore``'s `checkpointRefusal(on:)`), naming the reason; this
+    /// names the toggle for any prompt that still arrives without one.
     private func checkpointAwareConfirmation(
         _ prompt: ConfirmationPrompt
     ) throws -> (title: String, isDestructive: Bool) {

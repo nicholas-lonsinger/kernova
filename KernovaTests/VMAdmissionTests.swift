@@ -197,10 +197,14 @@ struct VMAdmissionTests {
         (.sharedNetwork, .edit(.networkAttachment), "AAAIAAR"),
         (.sharedNetwork, .edit(.machineKeys), "AAAIIIR"),
         // A disk outside the bundle is not copied, so only a stopped VM is
-        // cloned while its guest can write one.
+        // cloned or snapshotted while its guest can write one: a capture with
+        // memory would resume over the disk as written since.
         (.writesOutsideBundle, .operation(.copyingOut(.stopped)), "AAAIIIR"),
         (.writesOutsideBundle, .operation(.copyingOut(.suspended)), "IIISIIR"),
         (.writesOutsideBundle, .operation(.copyingOut(.live)), "IIIISSR"),
+        (.writesOutsideBundle, .operation(.capturingSnapshot(.stopped)), "AIIIIIR"),
+        (.writesOutsideBundle, .operation(.capturingSnapshot(.suspended)), "IIISIIR"),
+        (.writesOutsideBundle, .operation(.capturingSnapshot(.live)), "IIIISSR"),
         // A Linux guest's shares ride a device each, so no swap keeps its
         // devices.
         (.linux, .edit(.liveShares), "IIIIIIR"),

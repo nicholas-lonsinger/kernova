@@ -177,6 +177,25 @@ struct MainMenuValidationTests {
             "\(phase)")
     }
 
+    @Test("Take Snapshot is greyed for a running VM whose guest can write an external disk, and enabled once stopped")
+    func takeSnapshotValidationWithAWritableExternalDisk() {
+        let writable: (inout VMConfiguration) -> Void = {
+            $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
+        }
+        let item = makeMenuItem(#selector(AppDelegate.takeSnapshot(_:)))
+
+        // Each fixture is held for the validation: the controller's host is weak.
+        let running = makeMenuInstance(phase: .running(sessionID: UUID()), mutate: writable)
+        let runningFixture = makeFixture(instance: running)
+        #expect(
+            runningFixture.viewModel.capabilities.decision(.takeSnapshot, on: running, posture: .offer)
+                == .refuse(.takesStoppedVM(.snapshotWritingOutsideBundle)))
+        #expect(!runningFixture.controller.validate(item))
+        let stopped = makeMenuInstance(phase: .stopped, mutate: writable)
+        let stoppedFixture = makeFixture(instance: stopped)
+        #expect(stoppedFixture.controller.validate(item))
+    }
+
     @Test("Clone is greyed for a running VM whose guest can write an external disk, and enabled once stopped")
     func cloneValidationWithAWritableExternalDisk() {
         let writable: (inout VMConfiguration) -> Void = {

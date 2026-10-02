@@ -268,11 +268,13 @@ struct VMCapabilityCatalog {
     ///
     /// An operation holding the VM is no reason to hide one: a VM that can be
     /// snapshotted still shows Take Snapshot while another operation runs,
-    /// dimmed. Nor is the app's termination, or another copy of Kernova
-    /// holding the VM.
+    /// dimmed. Nor is the app's termination, another copy of Kernova
+    /// holding the VM, or a rule that takes the VM stopped.
     func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
-        case .admit, .join, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy): true
+        case .admit, .join, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
+            .refuse(.takesStoppedVM):
+            true
         case .refuse, nil: false
         }
     }

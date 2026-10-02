@@ -532,6 +532,8 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     case firstOrLastSharedDirectory
     /// Cloning a VM whose guest can write to a disk outside its bundle.
     case cloneWritingOutsideBundle
+    /// Snapshotting a VM whose guest can write to a disk outside its bundle.
+    case snapshotWritingOutsideBundle
 
     /// The rule, as every surface states it.
     public var sentence: String {
@@ -540,6 +542,8 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
             "Adding the first share or removing the last needs the virtual machine stopped."
         case .cloneWritingOutsideBundle:
             "Cloning a virtual machine with a writable external disk needs it stopped."
+        case .snapshotWritingOutsideBundle:
+            "Taking a snapshot of a virtual machine with a writable external disk needs it stopped."
         }
     }
 }

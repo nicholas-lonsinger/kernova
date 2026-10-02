@@ -153,7 +153,8 @@ final class SnapshotSectionView: NSView {
                         + "reverting returns the VM powered off."
                 ),
                 .body(
-                    "Disks attached from outside the bundle are not captured — reverting leaves them as they are."
+                    "Disks attached from outside the bundle are not captured — reverting leaves them as they are. "
+                        + "A VM with a writable external disk takes a snapshot only while it is stopped."
                 ),
                 .body(
                     "Unlike Suspend, reverting keeps the snapshot, so the same restore point can be used again."
