@@ -109,11 +109,10 @@ final class USBAccessoryService: USBAccessoryProviding {
     ///
     /// Each shape is a `.warning` with the same consequence: what comes back
     /// after a detach cannot be recognised as this unit, so a stale record of
-    /// it cannot be reconciled and a saved state holding it cannot hand it
-    /// back on restore. A node that answers while carrying neither a serial
-    /// index nor a receptacle is also the shape a denied property read takes
-    /// — `IORegistryEntryCreateCFProperties` reports success with the keys
-    /// missing.
+    /// it cannot be reconciled. A node that answers while carrying neither a
+    /// serial index nor a receptacle is also the shape a denied property read
+    /// takes — `IORegistryEntryCreateCFProperties` reports success with the
+    /// keys missing.
     private func logIdentityGaps(
         _ registryID: UInt64, node: USBAccessoryNodeProperties?, identity: USBAccessoryIdentity?
     ) {
@@ -176,20 +175,6 @@ final class USBAccessoryService: USBAccessoryProviding {
             "Attached USB accessory \(info.displayName, privacy: .public) to '\(instance.name, privacy: .public)' as \(deviceID.uuidString, privacy: .public)"
         )
         return AttachedUSBAccessory(deviceID: deviceID, accessory: info)
-    }
-
-    func restoration(
-        of reservation: borrowing VMAccessoryReservation, as deviceID: UUID
-    ) -> USBPassthroughRestoration? {
-        let registryID = reservation.registryID
-        guard let accessory = held[registryID],
-            let info = accessories.first(where: { $0.registryID == registryID })
-        else { return nil }
-        let configuration = VZUSBPassthroughDeviceConfiguration(device: accessory)
-        configuration.uuid = deviceID
-        return USBPassthroughRestoration(
-            registryID: registryID, attached: AttachedUSBAccessory(deviceID: deviceID, accessory: info),
-            configuration: configuration)
     }
 
     func detach(deviceID: UUID, from instance: VMInstance) async throws {

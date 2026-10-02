@@ -1,6 +1,5 @@
 import Foundation
 import KernovaTestSupport
-import Virtualization
 
 @testable import Kernova
 
@@ -107,22 +106,6 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         if let detachError { throw detachError }
     }
 
-    /// Accessories `restoration(of:as:)` was asked for, in order.
-    var restoredRegistryIDs: [UInt64] = []
-
-    func restoration(
-        of reservation: borrowing VMAccessoryReservation, as deviceID: UUID
-    ) -> USBPassthroughRestoration? {
-        let registryID = reservation.registryID
-        guard let info = accessories.first(where: { $0.registryID == registryID }) else {
-            return nil
-        }
-        restoredRegistryIDs.append(registryID)
-        return USBPassthroughRestoration(
-            registryID: registryID, attached: AttachedUSBAccessory(deviceID: deviceID, accessory: info),
-            configuration: StubUSBDeviceConfiguration(uuid: deviceID))
-    }
-
     /// One accessory, built from the identifiers every surface names it by.
     ///
     /// `serial` present gives it the strong identity form; `nil` leaves it
@@ -147,15 +130,5 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         return USBAccessoryInfo.make(
             registryID: registryID, descriptor: descriptor, configurationDescriptor: nil,
             node: node, claimedBy: held)
-    }
-}
-
-/// Stands in for the `VZUSBPassthroughDeviceConfiguration` a restoration
-/// carries, which needs an assigned `AAUSBAccessory`; never handed to VZ.
-final class StubUSBDeviceConfiguration: NSObject, VZUSBDeviceConfiguration {
-    var uuid: UUID
-
-    init(uuid: UUID) {
-        self.uuid = uuid
     }
 }

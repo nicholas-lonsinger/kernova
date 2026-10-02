@@ -15,16 +15,8 @@ final class VirtualizationService {
 
     private let configBuilder: ConfigurationBuilder
 
-    /// What a restore asks for the accessories its saved state holds; `nil`
-    /// when this build cannot pass accessories through.
-    private let usbAccessories: (any USBAccessoryProviding)?
-
-    init(
-        vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService,
-        usbAccessories: (any USBAccessoryProviding)?
-    ) {
+    init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
         configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
-        self.usbAccessories = usbAccessories
     }
 
     // MARK: - Start
@@ -280,7 +272,7 @@ final class VirtualizationService {
         guard context.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         do {
             try await session.pauseIfRunning()
-            try await saveMachineState(instance, session: session, to: context.bundle.saveFileURL)
+            try await session.saveMachineState(to: context.bundle.saveFileURL)
         } catch {
             #log(
                 logger, .error,
@@ -308,6 +300,10 @@ final class VirtualizationService {
             )
             return .rest(.afterSessionEnd, ())
         }
+        // No sidecar metadata is needed beside the save file: removable media
+        // carry stable UUIDs and storage disks stable virtio block identifiers
+        // in `config`, and VZ matches both on restore. Passthrough devices
+        // need none: the restore leaves them out (`restoreFromSaveFileAttempt`).
         context.endSession()
         #log(logger, .notice, "Saved state for VM '\(instance.name, privacy: .public)'")
         return .rest(.atRest(.stopped), ())
@@ -411,7 +407,8 @@ final class VirtualizationService {
     /// The one body every capture from a live VM runs: `prepare` lays down
     /// the destination before the guest is touched, then inside one pause the
     /// guest's memory is written where `savingStateTo` says and `copy` copies
-    /// the disks beside it.
+    /// the disks beside it. Passthrough accessories stay on the guest
+    /// throughout.
     ///
     /// Answers the guest put back the way it was found, or — on a failure,
     /// which leaves whatever `prepare` laid down for the caller to discard —
@@ -430,8 +427,7 @@ final class VirtualizationService {
         do {
             let prepared = try await prepare()
             try await captureLiveState(
-                instance, session: session, wasRunning: wasRunning,
-                saveFileURL: saveFileURL(prepared)
+                session: session, wasRunning: wasRunning, saveFileURL: saveFileURL(prepared)
             ) {
                 try await copy(prepared)
             }
@@ -542,41 +538,17 @@ final class VirtualizationService {
     /// restarts a guest the user paused before asking for the snapshot, while
     /// the VM is reported as paused.
     static func captureLiveState(
-        _ instance: VMInstance,
         session: any VMSnapshotSessionOperating,
         wasRunning: Bool,
         saveFileURL: URL,
         captureDisks: () async throws -> Void
     ) async throws {
         try await session.pauseIfRunning()
-        try await saveMachineState(instance, session: session, to: saveFileURL)
+        try await session.saveMachineState(to: saveFileURL)
         try await captureDisks()
         if wasRunning {
             try await session.resumeIfPaused()
         }
-    }
-
-    /// Writes the paused guest's state into `url` and records on the file
-    /// (``SavedUSBPassthroughDevices``) the passthrough devices it holds — the
-    /// one way any path writes a saved state.
-    ///
-    /// The record names what the controller still holds once the write is
-    /// done, of what `instance`'s guest is recorded as holding: a device VZ
-    /// dropped before the write is in neither the state nor the record. A
-    /// record that cannot be written fails the save, since the file could
-    /// still carry one from an earlier state.
-    static func saveMachineState(
-        _ instance: VMInstance, session: any VMSnapshotSessionOperating, to url: URL
-    ) async throws {
-        try await session.saveMachineState(to: url)
-        let onController = await session.usbDeviceIDs()
-        let held = instance.liveUSBAccessories.filter { onController.contains($0.deviceID) }
-        try SavedUSBPassthroughDevices.record(held, onSaveFileAt: url)
-        guard !held.isEmpty else { return }
-        #log(
-            logger, .notice,
-            "Saved '\(instance.name, privacy: .public)' holding \(held.count, privacy: .public) USB accessory(ies): \(held.map(\.accessory.displayName).joined(separator: ", "), privacy: .public)"
-        )
     }
 
     /// Where a live guest is left after a warm capture failed.
@@ -777,8 +749,7 @@ final class VirtualizationService {
     /// first creating the EFI variable store an EFI boot reads when the bundle
     /// holds none.
     private func buildConfiguration(
-        for instance: VMInstance, _ context: borrowing VMOperationContext,
-        usbPassthrough: [USBPassthroughRestoration] = []
+        for instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> ConfigurationBuilder.BuildResult {
         let builder = configBuilder
         let config = instance.effectiveConfiguration
@@ -787,7 +758,7 @@ final class VirtualizationService {
             try await context.bundle.ensureEFIVariableStore()
         }
         return try await Task.detached {
-            try builder.build(from: config, bundleURL: bundleURL, usbPassthrough: usbPassthrough)
+            try builder.build(from: config, bundleURL: bundleURL)
         }.value
     }
 
@@ -835,112 +806,39 @@ final class VirtualizationService {
     /// One restore attempt: build, attach, restore, resume. A configuration
     /// build failure propagates as-is (the caller's attachment explainers match
     /// on it); a restore or resume failure is wrapped in `restoreFailed`.
+    ///
+    /// The configuration names no USB passthrough device, though the saved
+    /// state may hold one: VZ restores such a save with the device absent, and
+    /// the guest sees it unplugged. Naming it under the `uuid` it was saved
+    /// with would restore it too — VZ checks only that `uuid`
+    /// (`docs/research/2026-10-02-vz-restore-matches-usb-passthrough-devices.md`)
+    /// — but the drive may have been used on the Mac or by another VM while
+    /// this one was suspended, and a guest resuming onto it would act on its
+    /// stale view of the filesystem.
     private func restoreFromSaveFileAttempt(
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
         instance.beginSessionContext(context)
-        let restorations = Self.reserveSavedUSBAccessories(
-            instance, context, service: usbAccessories)
-        let result = try await buildConfiguration(
-            for: instance, context.operation, usbPassthrough: restorations)
+        let result = try await buildConfiguration(for: instance, context.operation)
         guard let session = await instance.bringUpSession(context, with: result) else {
             throw VirtualizationError.noVirtualMachine
         }
-        try await Self.restoreSavedState(
-            instance, context, holding: restorations, session: session)
+        try await Self.restoreSavedState(instance, context.operation, session: session)
     }
 
-    /// Reserves for `instance` each accessory the bundle's saved state holds
-    /// that can go back to it, answering the devices that put them back.
-    ///
-    /// One goes back only when the record names its unit by serial number,
-    /// `service` holds an accessory answering to that key, and no VM holds
-    /// that accessory; every other device the state holds is left out, and
-    /// the guest loses it as it would to an unplug.
-    static func reserveSavedUSBAccessories(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
-        service: (any USBAccessoryProviding)?
-    ) -> [USBPassthroughRestoration] {
-        let saved = SavedUSBPassthroughDevices.devices(
-            onSaveFileAt: context.operation.bundle.saveFileURL)
-        var restorations: [USBPassthroughRestoration] = []
-        for device in saved {
-            switch restoration(of: device, context, service: service) {
-            case .success(let restoration):
-                restorations.append(restoration)
-                #log(
-                    logger, .notice,
-                    "Putting USB accessory \(device.displayName, privacy: .public) back on '\(instance.name, privacy: .public)' as \(device.deviceID.uuidString, privacy: .public)"
-                )
-            case .failure(let leftOut):
-                #log(
-                    logger, .notice,
-                    "Leaving USB accessory \(device.displayName, privacy: .public) off '\(instance.name, privacy: .public)': \(leftOut.reason, privacy: .public)"
-                )
-            }
-        }
-        return restorations
-    }
-
-    /// Why a device a saved state holds stays off the restored guest.
-    private enum SavedAccessoryLeftOut: Error {
-        case unsupported
-        case unitUnknown
-        case notAssigned
-        case heldElsewhere
-
-        var reason: String {
-            switch self {
-            case .unsupported: "this build cannot pass accessories through"
-            case .unitUnknown: "nothing identifies the unit it was"
-            case .notAssigned: "it is not assigned to Kernova"
-            case .heldElsewhere: "another virtual machine holds it"
-            }
-        }
-    }
-
-    /// The reservation and the device that put `device` back, or why it stays
-    /// off.
-    private static func restoration(
-        of device: SavedUSBPassthroughDevices.Device, _ context: borrowing VMBringUpContext,
-        service: (any USBAccessoryProviding)?
-    ) -> Result<USBPassthroughRestoration, SavedAccessoryLeftOut> {
-        guard let service else { return .failure(.unsupported) }
-        guard let unitKey = device.unitKey else { return .failure(.unitUnknown) }
-        guard
-            let accessory = service.accessories.first(where: {
-                $0.identity?.form == .serialNumber && $0.identity?.key == unitKey
-            })
-        else { return .failure(.notAssigned) }
-        guard let reservation = context.reserveAccessory(accessory.registryID) else {
-            return .failure(.heldElsewhere)
-        }
-        guard let restoration = service.restoration(of: reservation, as: device.deviceID) else {
-            return .failure(.notAssigned)
-        }
-        return .success(restoration)
-    }
-
-    /// Records `restorations` as the guest's, loads the bundle's suspend slot
-    /// into `session`, which was configured with them, resumes the guest, and
-    /// drops the slot — over the VZ operations it needs rather than a concrete
-    /// session, like ``save(_:_:session:)``, so the slot it reads and the one
+    /// Loads the bundle's suspend slot into `session`, resumes the guest, and
+    /// drops the slot, over the VZ operations it needs rather than a concrete
+    /// session — like ``save(_:_:session:)``, so the slot it reads and the one
     /// it drops are reachable without a real `VZVirtualMachine`.
     static func restoreSavedState(
-        _ instance: VMInstance, _ context: borrowing VMBringUpContext,
-        holding restorations: [USBPassthroughRestoration] = [],
+        _ instance: VMInstance, _ context: borrowing VMOperationContext,
         session: any VMSnapshotSessionOperating
     ) async throws {
-        // Before the restore captures them, so a disconnect VZ reports from
-        // then on finds the record it drops.
-        for restoration in restorations {
-            _ = context.hold(restoration)
-        }
         #log(logger, .debug, "restoreFromSaveFile: attempting restore from save file")
         do {
-            try await session.restoreMachineState(from: context.operation.bundle.saveFileURL)
+            try await session.restoreMachineState(from: context.bundle.saveFileURL)
             try await session.resume()
-            context.operation.bundle.removeSaveFile()
+            context.bundle.removeSaveFile()
         } catch {
             let nsError = error as NSError
             let hostLocked = !NSApplication.shared.isProtectedDataAvailable

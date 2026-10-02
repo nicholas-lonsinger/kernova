@@ -5,11 +5,10 @@ import Foundation
 /// holder.
 ///
 /// Written only by ``VMActivity``: an accessory is reserved in the admission
-/// of the operation that attaches it, or by the restore that puts it back in
-/// the configuration it builds; settled as that attach lands, or once the
-/// restore's machine exists; and released at the operation's ending when it
-/// never settled, by a detach, by an unplug, and by the teardown of the
-/// holder's session. Every write takes an ``AccessoryHoldersKey``, which only
+/// of the operation that attaches it, settled as that attach lands, and
+/// released at the operation's ending when it never landed, by a detach, by an
+/// unplug, and by the teardown of the holder's session — a suspend's among
+/// them. Every write takes an ``AccessoryHoldersKey``, which only
 /// `VMActivity.swift` can make.
 @MainActor
 @Observable

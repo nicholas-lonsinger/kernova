@@ -178,6 +178,9 @@ final class VMLifecycleCoordinator {
     }
 
     /// Suspends the VM to disk.
+    ///
+    /// Passthrough accessories stay attached through the write; the session's
+    /// end releases them, and the restore leaves them out.
     func save(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
         try await instance.activity.perform(.saving, origin: origin) { context in
             try await virtualizationService.save(instance, context)
@@ -189,8 +192,9 @@ final class VMLifecycleCoordinator {
     /// Captures `snapshot` in `mode` and lists it with `record`, inside one
     /// capture operation, which ends once the snapshot's files are written.
     ///
-    /// A `record` that throws leaves nothing behind: unlisted files are files
-    /// no surface can reach or remove, so the capture is undone.
+    /// A warm capture leaves passthrough accessories on the guest. A `record`
+    /// that throws leaves nothing behind: unlisted files are files no surface
+    /// can reach or remove, so the capture is undone.
     func takeSnapshot(
         _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
@@ -946,10 +950,9 @@ final class VMLifecycleCoordinator {
     /// session `sessionID` names, inside an operation holding the VM whose
     /// admission reserved the accessory for it.
     ///
-    /// The operation is what keeps the accessories a saved state is recorded
-    /// as holding (``VirtualizationService/saveMachineState(_:session:to:)``)
-    /// from changing under the write: a save or a snapshot cannot start while
-    /// this is in flight, and this cannot start while one of those is.
+    /// The operation serializes the attach against the save paths: a save or
+    /// a snapshot cannot start while this is in flight, and this cannot start
+    /// while one of those is.
     ///
     /// `whileHeld` runs once the accessory is the guest's, as a write of the
     /// operation still holding the VM.
@@ -1019,8 +1022,7 @@ final class VMLifecycleCoordinator {
     ///
     /// A device VZ no longer holds is a success, not a failure: a surprise
     /// unplug may have got there first, and the outcome the caller asked for
-    /// already holds. The release happens either
-    /// way.
+    /// already holds. The release happens either way.
     ///
     /// `whileHeld` runs once the device is off, as a write of the operation
     /// still holding the VM.

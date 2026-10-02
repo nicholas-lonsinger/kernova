@@ -104,15 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.copyClaim = copyClaim
         let entitlements = EntitlementService(reader: ProcessEntitlementReader())
         let vmnetNetworks = VmnetNetworkService(operations: HostVmnetNetworkOperator())
-        let usbAccessories = USBAccessorySupport.makeService(entitlements: entitlements)
         let viewModel = VMLibraryViewModel(
             storageService: VMStorageService(libraryDirectory: VMStorageService.productionLibraryDirectory),
             virtualizationService: VirtualizationService(
-                vmnetNetworks: vmnetNetworks, entitlements: entitlements,
-                usbAccessories: usbAccessories),
+                vmnetNetworks: vmnetNetworks, entitlements: entitlements),
             installService: MacOSInstallService(
                 vmnetNetworks: vmnetNetworks, entitlements: entitlements),
-            usbAccessoryService: usbAccessories,
+            usbAccessoryService: USBAccessorySupport.makeService(entitlements: entitlements),
             systemSleep: SystemSleepWatcher(),
             fileSystem: FileManager.default,
             downloadsDirectory: FileManager.default.urls(

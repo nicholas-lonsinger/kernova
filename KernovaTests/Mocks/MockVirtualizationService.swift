@@ -194,7 +194,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         let foundPaused = instance.phase.operation?.startedFrom == .livePaused(sessionID: sessionID)
         let session =
             liveCopySession
-            ?? MockSnapshotSession(guestState: foundPaused ? .paused : .running)
+            ?? MockSnapshotSession(guestState: foundPaused ? .paused : .running, writesStateFile: true)
         return await VirtualizationService.captureWarm(
             instance, context, session: session, prepare: prepare,
             savingStateTo: { saveFileURL }, copy: copy)

@@ -46,15 +46,9 @@ struct ConfigurationBuilder: Sendable {
 
     let entitlements: EntitlementService
 
-    /// Builds a validated `VZVirtualMachineConfiguration` from the given VM
-    /// configuration and bundle URL, with `usbPassthrough` on the XHCI
-    /// controller — what a restore puts back.
-    func build(
-        from config: VMConfiguration, bundleURL: URL,
-        usbPassthrough: [USBPassthroughRestoration] = []
-    ) throws -> BuildResult {
-        try assemble(
-            from: config, bundleURL: bundleURL, usbPassthrough: usbPassthrough, validate: true)
+    /// Builds a validated `VZVirtualMachineConfiguration` from the given VM configuration and bundle URL.
+    func build(from config: VMConfiguration, bundleURL: URL) throws -> BuildResult {
+        try assemble(from: config, bundleURL: bundleURL, validate: true)
     }
 
     /// Assembles the `BuildResult` with optional VZ validation.
@@ -63,10 +57,7 @@ struct ConfigurationBuilder: Sendable {
     /// `vzConfig.validate()` throws `VZErrorDomain Code=2` ("Virtualization is
     /// not available on this hardware") — GitHub's macOS runners are themselves
     /// nested VMs without virtualization support.
-    func assemble(
-        from config: VMConfiguration, bundleURL: URL,
-        usbPassthrough: [USBPassthroughRestoration] = [], validate: Bool
-    ) throws -> BuildResult {
+    func assemble(from config: VMConfiguration, bundleURL: URL, validate: Bool) throws -> BuildResult {
         let vzConfig = VZVirtualMachineConfiguration()
 
         #log(
@@ -88,13 +79,12 @@ struct ConfigurationBuilder: Sendable {
             try configureLinuxKernelBoot(vzConfig, config: config)
         }
 
-        // configureUSBControllers must run before configureRemovableMedia and
-        // configureUSBPassthrough so the XHCI controller exists for them.
+        // configureUSBControllers must run before configureRemovableMedia so the
+        // XHCI controller exists for items to attach to.
         configureUSBControllers(vzConfig)
         try configureStorageDisks(vzConfig, config: config, bundleURL: bundleURL)
         let guestAgentDiskAttached = configureGuestAgentDisk(vzConfig, config: config, bundleURL: bundleURL)
         let coldRemovableMedia = try configureRemovableMedia(vzConfig, config: config)
-        configureUSBPassthrough(vzConfig, usbPassthrough)
         let sessionNetworks = vmnetNetworks.sessionNetworks(ownedBy: config.id)
         try configureNetwork(vzConfig, config: config, vmnetNetworks: sessionNetworks)
         configureEntropy(vzConfig)
@@ -537,17 +527,6 @@ struct ConfigurationBuilder: Sendable {
         }
         xhci.usbDevices = attached
         return infos
-    }
-
-    /// Appends each of `restorations` to the XHCI controller's `usbDevices`.
-    private func configureUSBPassthrough(
-        _ vzConfig: VZVirtualMachineConfiguration, _ restorations: [USBPassthroughRestoration]
-    ) {
-        guard !restorations.isEmpty else { return }
-        guard let xhci = vzConfig.usbControllers.first else {
-            preconditionFailure("USB controller must be configured before passthrough devices")
-        }
-        xhci.usbDevices += restorations.map(\.configuration)
     }
 
     /// Synthesizes the guest-agent installer's disk entry.

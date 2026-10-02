@@ -120,12 +120,11 @@ struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
 /// A passthrough device a running guest currently holds, and the accessory
 /// behind it.
 ///
-/// Runtime-only: the attachment lives no longer than the session. A saved
-/// state keeps its own record of the devices it holds
-/// (``SavedUSBPassthroughDevices``), from which a restore makes new ones.
+/// Runtime-only: the attachment lives no longer than the session, and nothing
+/// re-creates it on restore.
 struct AttachedUSBAccessory: Sendable, Equatable, Identifiable {
-    /// The `VZUSBDevice.uuid` VZ minted for the attachment — or, restored, the
-    /// one the saved state holds it by — and what a detach names.
+    /// The `VZUSBDevice.uuid` VZ minted for the attachment, and what a detach
+    /// names.
     let deviceID: UUID
     let accessory: USBAccessoryInfo
     let attachedAt: Date

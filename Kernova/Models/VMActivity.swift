@@ -1347,9 +1347,9 @@ struct VMUSBAttachContext: ~Copyable, Sendable {
 /// so no accessory is passed through to a guest unless it is reserved for
 /// that guest's VM.
 ///
-/// Minted only once the reservation is written — by an attach's admission,
-/// or by ``VMBringUpContext/reserveAccessory(_:)``. Non-copyable and passed
-/// borrowed, so it cannot outlive the operation that reserved it.
+/// Minted only by an attach's admission, once the reservation is written.
+/// Non-copyable and passed borrowed, so it cannot outlive the operation that
+/// reserved it.
 struct VMAccessoryReservation: ~Copyable, Sendable {
     let registryID: UInt64
     /// The VM the accessory is reserved for.
@@ -1371,9 +1371,8 @@ struct VMAccessoryReservation: ~Copyable, Sendable {
 
 /// What every write to ``VMAccessoryHolders`` asks for, so only this file —
 /// ``VMActivity``'s admission, operation endings, session teardown and
-/// unplugs, a restore's bring-up, and the reservations it mints — writes the
-/// holder map. The initializer is `fileprivate`, which `@testable import`
-/// does not open.
+/// unplugs, and the reservations it mints — writes the holder map. The
+/// initializer is `fileprivate`, which `@testable import` does not open.
 struct AccessoryHoldersKey {
     fileprivate init() {}
 }
@@ -1387,27 +1386,6 @@ struct VMBringUpContext: ~Copyable, Sendable {
 
     fileprivate init(operation: consuming VMOperationContext) {
         self.operation = operation
-    }
-
-    /// Reserves the accessory `registryID` names for the VM this bring-up
-    /// holds, for a restore to put back in the configuration it builds —
-    /// `nil`, reserving nothing, while any VM holds it.
-    @MainActor func reserveAccessory(_ registryID: UInt64) -> VMAccessoryReservation? {
-        let instance = operation.instance
-        guard let holders = instance.peers?.accessoryHolders,
-            (try? holders.reserve(registryID, for: instance, AccessoryHoldersKey())) != nil
-        else { return nil }
-        return VMAccessoryReservation(registryID: registryID, instance: instance)
-    }
-
-    /// Records `restoration`'s accessory as the guest's once the machine
-    /// configured with it exists, answering whether this VM still held the
-    /// reservation ``reserveAccessory(_:)`` made.
-    @MainActor func hold(_ restoration: USBPassthroughRestoration) -> Bool {
-        let instance = operation.instance
-        return instance.peers?.accessoryHolders.settle(
-            restoration.registryID, as: restoration.attached, for: instance,
-            AccessoryHoldersKey()) ?? false
     }
 
     #if DEBUG

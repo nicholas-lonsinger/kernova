@@ -12,9 +12,6 @@ protocol VMSnapshotSessionOperating: Sendable {
     func saveMachineState(to url: URL) async throws
     func restoreMachineState(from url: URL) async throws
     func resume() async throws
-    /// The `uuid` of every device on the USB controller, empty when the
-    /// machine has none.
-    func usbDeviceIDs() async -> Set<UUID>
 }
 
 extension VMSession: VMSnapshotSessionOperating {}

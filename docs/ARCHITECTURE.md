@@ -74,8 +74,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 - VZ-facing: `ConfigurationBuilder` (the one `VZVirtualMachineConfiguration`
   translation), `VirtualizationService`, `MacOSInstallService`,
   `RemovableMediaDeviceService`, `LiveDirectoryShareService`, and
-  `USBAccessoryService` (macOS 27; optional on `VMLifecycleCoordinator` and
-  `VirtualizationService` — `nil` is the capability's absence).
+  `USBAccessoryService` (macOS 27; optional on `VMLifecycleCoordinator` — `nil`
+  is the capability's absence).
 - Network: `VmnetNetworkService` (process-wide) and the `VmnetSessionNetworks`
   view each session attaches through and `NetworkAttachmentCoordinator` (one
   of each per session, held by `VMSessionContext`), and `GuestAddressObserver`

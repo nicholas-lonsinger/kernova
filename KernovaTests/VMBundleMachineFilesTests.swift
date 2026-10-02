@@ -247,43 +247,6 @@ struct VMBundleMachineFilesTests {
         #expect(!fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
     }
 
-    @Test(
-        "A warm revert lands the snapshot's own USB passthrough record, never the replaced slot's",
-        arguments: [false, true])
-    @MainActor
-    func warmRevertCarriesOnlyTheSnapshotsRecord(snapshotHoldsADevice: Bool) throws {
-        let fixture = try makeFixture()
-        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
-        let snapshotID = UUID()
-        let prepared = try store.prepareSnapshot(
-            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
-            configuration: fixture.configuration)
-        try store.captureDisks(
-            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
-            relativePaths: prepared.relativePaths)
-        try Data("saved-state".utf8).write(to: prepared.saveFileURL)
-        let snapshotDevice = AttachedUSBAccessory(
-            deviceID: UUID(), accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "AAA"))
-        try SavedUSBPassthroughDevices.record(
-            snapshotHoldsADevice ? [snapshotDevice] : [], onSaveFileAt: prepared.saveFileURL)
-        // The VM's own suspend, holding a different device.
-        try Data("own-suspend".utf8).write(to: fixture.layout.saveFileURL)
-        try SavedUSBPassthroughDevices.record(
-            [
-                AttachedUSBAccessory(
-                    deviceID: UUID(),
-                    accessory: MockUSBAccessoryService.accessory(registryID: 2, serial: "BBB"))
-            ], onSaveFileAt: fixture.layout.saveFileURL)
-
-        let plan = try store.planRestore(
-            bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
-        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
-
-        let landed = SavedUSBPassthroughDevices.devices(onSaveFileAt: fixture.layout.saveFileURL)
-        #expect(landed.map(\.deviceID) == (snapshotHoldsADevice ? [snapshotDevice.deviceID] : []))
-        #expect(fixture.layout.saveFileIsCopyOfSnapshot(id: snapshotID))
-    }
-
     @Test("A bundle with no suspend slot is not holding the snapshot's copy")
     func noSuspendSlotIsNotTheCapturedCopy() throws {
         let fixture = try makeFixture()

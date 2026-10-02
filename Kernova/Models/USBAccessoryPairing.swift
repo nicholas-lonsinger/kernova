@@ -4,9 +4,10 @@ import Foundation
 /// answers to, and enough of its description to name it in a list while the
 /// device itself is in a drawer.
 ///
-/// A preference about what to attach, never part of the VM's configuration:
-/// what a restore puts back is what its saved state records holding
-/// (``SavedUSBPassthroughDevices``), paired or not.
+/// A preference about what to attach, never part of the VM's configuration: a
+/// restore names no passthrough device, for the reason
+/// `VirtualizationService.restoreFromSaveFileAttempt` states, and a paired
+/// accessory goes back by a fresh attach once the restored guest runs.
 struct USBAccessoryPairing: Codable, Sendable, Equatable, Identifiable {
     /// ``USBAccessoryIdentity/key``.
     let key: String

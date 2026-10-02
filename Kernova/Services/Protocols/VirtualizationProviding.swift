@@ -83,7 +83,8 @@ protocol VirtualizationProviding: Sendable {
 
     /// Copies a live VM into a clone as a warm capture: `prepare` lays down
     /// the clone's bundle, then one pause writes the guest's memory into
-    /// `saveFileURL` and runs `copy`, so the disks and the memory describe one instant. Leaves the
+    /// `saveFileURL` and runs `copy`, so the disks and the memory describe one
+    /// instant. Leaves the
     /// guest as it was found: running stays running, paused stays paused.
     func copyLive(
         _ instance: VMInstance, _ context: borrowing VMCaptureContext,
