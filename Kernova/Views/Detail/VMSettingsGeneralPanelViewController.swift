@@ -298,8 +298,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             guard let self, instance.snapshotManifest.defaultEphemeralBaseline(preferring: nil) == nil
             else { return nil }
             return EphemeralModeCopy.noSnapshotsCaption(
-                capturesBaseline: !instance.hostState.ephemeralModeEnabled
-                    && viewModel.capabilities.ephemeralModeEnable(on: instance) == .capturingBaseline)
+                capturesBaseline: viewModel.capabilities.ephemeralModeEnable(on: instance)
+                    == .capturingBaseline)
         })
         ephemeralNoSnapshotsCaption = noSnapshots
 

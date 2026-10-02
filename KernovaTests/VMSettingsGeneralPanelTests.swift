@@ -579,12 +579,12 @@ struct VMSettingsGeneralPanelTests {
                     toggle.isEnabled
                         == (ephemeral
                             ? key.accepts("false", for: instance, entitlements: .entitled)
-                            : enable != nil),
+                            : viewModel.capabilities.isEphemeralModeEnableAvailable(on: instance)),
                     "\(label)")
                 #expect(
                     visibleLabel(
                         EphemeralModeCopy.noSnapshotsCaption(
-                            capturesBaseline: !ephemeral && enable == .capturingBaseline),
+                            capturesBaseline: enable == .capturingBaseline),
                         in: vc.view) == !hasSnapshots, "\(label)")
             }
         }

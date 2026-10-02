@@ -74,7 +74,7 @@ struct VMOverviewSummaryTests {
                 let offered =
                     ephemeral
                     ? key.accepts("false", for: instance, entitlements: .entitled)
-                    : VMCapabilityCatalog(library: library).ephemeralModeEnable(on: instance) != nil
+                    : VMCapabilityCatalog(library: library).isEphemeralModeEnableAvailable(on: instance)
                 #expect(state.isEnabled == offered, "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
             }
         }

@@ -361,6 +361,24 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.showError)
     }
 
+    /// The snapshot stands as a restore point either way, so a baseline
+    /// write that fails keeps it listed and says the mode stayed off.
+    @Test("A baseline write that fails keeps the snapshot and reports the mode off")
+    func failedBaselineWriteKeepsTheSnapshot() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+        instance.fixtureBundleFiles.setReplaceError(
+            VMStorageError.bundleNotFound(URL(filePath: "/tmp")),
+            for: VMBundleLayout.hostStateRelativePath)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Kept", for: .ephemeralBaseline).value
+
+        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Kept"])
+        #expect(instance.manifestOnDisk == instance.snapshotManifest)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(presenter.showError)
+    }
+
     @Test("A restore point leaves Ephemeral Mode alone")
     func restorePointLeavesTheModeAlone() async {
         let harness = makeHarness()

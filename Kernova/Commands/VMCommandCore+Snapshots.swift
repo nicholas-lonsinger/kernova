@@ -18,10 +18,12 @@ extension VMCommandCore {
     // MARK: - Take
 
     @discardableResult
-    func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
-        -> SnapshotSummary
-    {
-        try await takeSnapshot(try resolve(selector), name: name, notes: notes)
+    func takeSnapshot(
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
+    ) async throws -> SnapshotSummary {
+        try await takeSnapshot(
+            try resolve(selector), name: name, notes: notes,
+            asEphemeralBaseline: asEphemeralBaseline)
     }
 
     /// Captures a snapshot and lists it in the manifest.
@@ -30,21 +32,47 @@ extension VMCommandCore {
     /// last looked: a sheet gathers a name and notes, and the VM can start,
     /// stop, or suspend while it is up.
     @discardableResult
-    func takeSnapshot(_ instance: VMInstance, name: String, notes: String) async throws
-        -> SnapshotSummary
-    {
+    func takeSnapshot(
+        _ instance: VMInstance, name: String, notes: String, asEphemeralBaseline: Bool = false
+    ) async throws -> SnapshotSummary {
         try require(.takeSnapshot, on: instance)
-        let snapshot = try await captureSnapshot(instance, name: name, notes: notes)
+        var baselineFailure: (any Error)?
+        let snapshot = try await captureSnapshot(instance, name: name, notes: notes) {
+            permit, captured in
+            guard asEphemeralBaseline else { return }
+            // The snapshot stands as a restore point whether or not the mode
+            // turns on, so this failure is reported rather than undoing it.
+            do {
+                try permit.bundle.commitHostState {
+                    $0.applyEphemeralMode(enabled: true, baseline: captured.id)
+                }
+            } catch {
+                baselineFailure = error
+            }
+        }
+        if let baselineFailure {
+            #log(
+                Self.logger, .error,
+                "Took a snapshot of '\(instance.name, privacy: .public)' but could not make it the Ephemeral baseline: \(baselineFailure.localizedDescription, privacy: .public)"
+            )
+            throw CommandError.operationFailed(
+                verb: .takeSnapshot,
+                message:
+                    "The snapshot \u{201C}\(snapshot.name)\u{201D} was taken, but Ephemeral Mode "
+                    + "could not be turned on: \(baselineFailure.localizedDescription)")
+        }
         return snapshotSummary(snapshot, on: instance)
     }
 
     /// The capture itself, listed in the manifest inside the same capture
-    /// operation, answering the snapshot that landed.
+    /// operation, answering the snapshot that landed; `alsoRecord` writes
+    /// beside that listing under the same permit.
     ///
     /// Throws rather than reporting a nil, so a caller chaining off it (the
     /// revert's check-point) stops rather than proceeding on a lost checkpoint.
     private func captureSnapshot(
-        _ instance: VMInstance, name: String, notes: String
+        _ instance: VMInstance, name: String, notes: String,
+        alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
     ) async throws -> VMSnapshot {
         // Stamped at confirm time, not when the caller decided: the VM can
         // start, stop, or suspend in between.
@@ -66,6 +94,7 @@ extension VMCommandCore {
             return try await lifecycle.takeSnapshot(instance, mode: mode, snapshot: snapshot) {
                 permit, captured in
                 try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
+                alsoRecord(permit, captured)
             }
         } catch {
             #log(

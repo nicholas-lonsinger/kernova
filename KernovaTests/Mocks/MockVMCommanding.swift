@@ -511,9 +511,9 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Snapshots
 
-    func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
-        -> SnapshotSummary
-    {
+    func takeSnapshot(
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
+    ) async throws -> SnapshotSummary {
         takeSnapshotCalls.append((selector, name, notes))
         if let takeSnapshotError { throw takeSnapshotError }
         return snapshotToReturn

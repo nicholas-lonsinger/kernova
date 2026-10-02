@@ -38,7 +38,7 @@ enum VMOverviewToggle: String, Sendable {
         from isOn: Bool, on instance: VMInstance, capabilities: VMCapabilityCatalog
     ) -> Bool {
         if self == .ephemeralMode, !isOn {
-            return capabilities.ephemeralModeEnable(on: instance) != nil
+            return capabilities.isEphemeralModeEnableAvailable(on: instance)
         }
         return capabilities.isAvailable(key, writing: String(!isOn), on: instance)
     }
