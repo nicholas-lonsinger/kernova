@@ -21,18 +21,13 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
 
     var saveError: (any Error)?
 
-    /// Whether a save lays a stand-in file at the URL it was handed, as VZ
-    /// lays the saved state — for a caller that reads the file's presence.
-    private let writesStateFile: Bool
-
     /// Runs once the state has been written, before the disks are copied — the
     /// seam a test lands a mid-capture guest failure through, so the capture
     /// finds its session gone at exactly the point a real one would.
     private var afterSave: (@Sendable () async -> Void)?
 
-    init(guestState: GuestState, writesStateFile: Bool = false) {
+    init(guestState: GuestState) {
         self.guestState = guestState
-        self.writesStateFile = writesStateFile
     }
 
     func setSaveError(_ error: any Error) {
@@ -70,11 +65,10 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         calls.append("saveMachineState")
         savedStateURLs.append(url)
         if let saveError { throw saveError }
-        if writesStateFile {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data("saved-state".utf8).write(to: url)
-        }
+        // A stand-in file at the URL, as VZ lays the saved state.
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("saved-state".utf8).write(to: url)
         await afterSave?()
     }
 

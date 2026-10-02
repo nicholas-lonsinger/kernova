@@ -20,7 +20,7 @@ struct VirtualizationServiceTests {
 
         try await VirtualizationService.captureLiveState(
             VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: true,
-            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+            saveFileURL: scratch.url.appendingPathComponent("save.vzvmsave")
         ) {
             stateWhileCapturing = await session.guestState
         }
@@ -38,7 +38,7 @@ struct VirtualizationServiceTests {
 
         try await VirtualizationService.captureLiveState(
             VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: false,
-            saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+            saveFileURL: scratch.url.appendingPathComponent("save.vzvmsave")
         ) {}
 
         let finalState = await session.guestState
@@ -56,7 +56,7 @@ struct VirtualizationServiceTests {
         await #expect(throws: VMSnapshotError.self) {
             try await VirtualizationService.captureLiveState(
                 VMInstanceFixture.make(phase: .running(sessionID: UUID())), session: session, wasRunning: true,
-                saveFileURL: URL(filePath: "/tmp/save.vzvmsave")
+                saveFileURL: scratch.url.appendingPathComponent("save.vzvmsave")
             ) { captured = true }
         }
 
@@ -97,7 +97,7 @@ struct VirtualizationServiceTests {
             MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0"),
             MockUSBAccessoryService.accessory(registryID: 2, receptacle: "hub/Port-A@1"),
         ])
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .running)
         await session.setUSBDeviceIDs(Set(fixture.attached.map(\.deviceID)))
 
         try await suspend(fixture.instance, over: session)
@@ -117,7 +117,7 @@ struct VirtualizationServiceTests {
             MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0"),
             MockUSBAccessoryService.accessory(registryID: 2, serial: "SER1"),
         ])
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .running)
         await session.setUSBDeviceIDs([fixture.attached[1].deviceID])
 
         try await suspend(fixture.instance, over: session)
@@ -127,12 +127,33 @@ struct VirtualizationServiceTests {
         #expect(saved.map(\.deviceID) == [fixture.attached[1].deviceID])
     }
 
+    @Test("A suspend holding no accessory leaves no record, even over a file that carried one")
+    func suspendHoldingNothingClearsAnEarlierRecord() async throws {
+        let fixture = try await instanceHolding([])
+        // A slot an earlier save left, which VZ writes the new state over.
+        try VMInstanceFixture.writeSaveFile(for: fixture.instance)
+        try SavedUSBPassthroughDevices.record(
+            [
+                AttachedUSBAccessory(
+                    deviceID: UUID(),
+                    accessory: MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0"))
+            ], onSaveFileAt: fixture.instance.bundleLayout.saveFileURL)
+
+        try await suspend(fixture.instance, over: MockSnapshotSession(guestState: .running))
+
+        #expect(fixture.instance.hasSaveFile)
+        #expect(
+            SavedUSBPassthroughDevices.devices(
+                onSaveFileAt: fixture.instance.bundleLayout.saveFileURL
+            ).isEmpty)
+    }
+
     @Test("A warm capture leaves every accessory on the guest and records them on its saved state")
     func warmCaptureKeepsItsAccessories() async throws {
         let fixture = try await instanceHolding([
             MockUSBAccessoryService.accessory(registryID: 1, serial: "SER0")
         ])
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .running)
         await session.setUSBDeviceIDs([fixture.attached[0].deviceID])
         let saveFileURL = scratch.url.appendingPathComponent("Snapshot.vzvmsave")
 

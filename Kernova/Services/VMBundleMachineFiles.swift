@@ -246,13 +246,17 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     ///
     /// `replaceItemAt` rather than a remove followed by a copy: it renames the
     /// replacement in, so `destination` resolves to the old file or the new one
-    /// and never to nothing.
+    /// and never to nothing. With the new item's metadata only, since by
+    /// default it carries the replaced file's extended attributes across — and
+    /// a saved state's record of what it holds is one.
     private func swapIntoPlace(staged: URL, destination: URL) throws {
         let manager = FileManager.default
         try manager.createDirectory(
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: destination.path(percentEncoded: false)) {
-            _ = try manager.replaceItemAt(destination, withItemAt: staged)
+            _ = try manager.replaceItemAt(
+                destination, withItemAt: staged, backupItemName: nil,
+                options: .usingNewMetadataOnly)
         } else {
             // `replaceItemAt` needs an original to replace — a disk the VM lost
             // since the capture has none.

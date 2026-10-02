@@ -562,29 +562,21 @@ final class VirtualizationService {
     ///
     /// The record names what the controller still holds once the write is
     /// done, of what `instance`'s guest is recorded as holding: a device VZ
-    /// dropped before the write is in neither the state nor the record, since
-    /// a restore that configures a device its state lacks fails. A record that
-    /// cannot be written is logged and the save stands — a restore leaves the
-    /// devices out, and the guest loses them as it would to an unplug.
+    /// dropped before the write is in neither the state nor the record. A
+    /// record that cannot be written fails the save, since the file could
+    /// still carry one from an earlier state.
     static func saveMachineState(
         _ instance: VMInstance, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
         try await session.saveMachineState(to: url)
         let onController = await session.usbDeviceIDs()
         let held = instance.liveUSBAccessories.filter { onController.contains($0.deviceID) }
+        try SavedUSBPassthroughDevices.record(held, onSaveFileAt: url)
         guard !held.isEmpty else { return }
-        do {
-            try SavedUSBPassthroughDevices.record(held, onSaveFileAt: url)
-            #log(
-                logger, .notice,
-                "Saved '\(instance.name, privacy: .public)' holding \(held.count, privacy: .public) USB accessory(ies): \(held.map(\.accessory.displayName).joined(separator: ", "), privacy: .public)"
-            )
-        } catch {
-            #log(
-                logger, .warning,
-                "Could not record the USB accessories '\(instance.name, privacy: .public)' was saved holding, so a restore will leave them out: \(error.localizedDescription, privacy: .public)"
-            )
-        }
+        #log(
+            logger, .notice,
+            "Saved '\(instance.name, privacy: .public)' holding \(held.count, privacy: .public) USB accessory(ies): \(held.map(\.accessory.displayName).joined(separator: ", "), privacy: .public)"
+        )
     }
 
     /// Where a live guest is left after a warm capture failed.

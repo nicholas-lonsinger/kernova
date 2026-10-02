@@ -571,7 +571,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.running(sessionID: sessionID), in: harness)
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .running)
         harness.virtualization.liveCopySession = session
         let hold = DispatchSemaphore(value: 0)
         storage.cloneHold = hold
@@ -616,7 +616,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.livePaused(sessionID: sessionID), in: harness)
-        let session = MockSnapshotSession(guestState: .paused, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .paused)
         harness.virtualization.liveCopySession = session
 
         let row = try await harness.core.clone(
@@ -636,7 +636,7 @@ struct VMCommandCoreArrivalTests {
         let harness = makeHarness()
         let sessionID = UUID()
         let source = register(.running(sessionID: sessionID), in: harness)
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        let session = MockSnapshotSession(guestState: .running)
         await session.setSaveError(CocoaError(.fileWriteOutOfSpace))
         harness.virtualization.liveCopySession = session
 
