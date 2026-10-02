@@ -92,8 +92,6 @@ final class VMLibraryViewModel {
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
-    func refreshFromOtherCopies() { library.refreshFromOtherCopies() }
-
     func abandonArrivalsForTermination() { library.abandonArrivalsForTermination() }
 
     func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {

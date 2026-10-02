@@ -221,6 +221,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     var directoryWatcher: VMDirectoryWatcher?
 
+    /// Where the directory watcher observes app activation.
+    let activationCenter: NotificationCenter
+
     // MARK: - Initialization
 
     init(
@@ -233,9 +236,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         entitlements: EntitlementService,
         networks: VMNetworkDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
-            InMemoryGuestAccountPasswordStore()
+            InMemoryGuestAccountPasswordStore(),
+        activationCenter: NotificationCenter = .default
     ) {
         self.storageService = storageService
+        self.activationCenter = activationCenter
         self.networks = networks
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle

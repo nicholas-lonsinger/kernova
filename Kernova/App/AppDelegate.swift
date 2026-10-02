@@ -246,12 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         lifecycle.noteDidUnhide()
     }
 
-    /// Catches the library up with what another copy of Kernova did while this
-    /// one was in the background — the moment the user looks at it again.
-    func applicationDidBecomeActive(_ notification: Notification) {
-        viewModel.refreshFromOtherCopies()
-    }
-
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool)
         -> Bool
     {

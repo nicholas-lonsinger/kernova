@@ -81,7 +81,8 @@ func makeWiredLibrary(
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitlements: EntitlementService = .entitled,
     networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
-    guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore()
+    guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore(),
+    activationCenter: NotificationCenter = NotificationCenter()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -92,7 +93,8 @@ func makeWiredLibrary(
         arpTable: arpTable,
         entitlements: entitlements,
         networks: networks,
-        guestAccountPasswords: guestAccountPasswords)
+        guestAccountPasswords: guestAccountPasswords,
+        activationCenter: activationCenter)
     return library
 }
 
