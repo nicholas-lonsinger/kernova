@@ -431,7 +431,7 @@ enum VMAdmission {
             admitted = cloneMode(phase: phase, facts: facts) == mode
         }
         guard admitted else { return .refuse(.invalidState) }
-        if facts.writesOutsideBundle, let change = memoryCapture(kind) {
+        if let change = outsideBundleRule(kind, facts: facts) {
             return .refuse(.takesStoppedVM(change))
         }
         if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
@@ -443,12 +443,16 @@ enum VMAdmission {
         return .admit
     }
 
-    /// The rule `kind` breaks on a VM that writes outside its bundle, or `nil`
-    /// when it breaks none: a capture of a live or suspended VM carries its
-    /// memory, and only the bundle's own disks are copied, so that memory
-    /// would resume over an outside disk the guest has written since.
-    private static func memoryCapture(_ kind: VMOperationKind) -> StoppedVMChange? {
-        switch kind {
+    /// The rule `kind` breaks on a VM with `facts`, or `nil` when it breaks
+    /// none: a capture of a live or suspended VM carries its memory, and only
+    /// the bundle's own disks are copied, so while the guest can write a disk
+    /// outside the bundle that memory would resume over the disk as written
+    /// since.
+    private static func outsideBundleRule(
+        _ kind: VMOperationKind, facts: Facts
+    ) -> StoppedVMChange? {
+        guard facts.writesOutsideBundle else { return nil }
+        return switch kind {
         case .capturingSnapshot(let mode) where mode != .stopped: .snapshotWritingOutsideBundle
         case .copyingOut(let mode) where mode != .stopped: .cloneWritingOutsideBundle
         default: nil

@@ -2131,12 +2131,15 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Cold"])
     }
 
-    @Test("A revert of a running VM whose guest can write an external disk offers no check-point, and refuses one")
-    func writableExternalDiskRevertTakesNoCheckPoint() async throws {
+    @Test(
+        "A revert of a VM whose guest can write an external disk offers no check-point, and refuses one before consent",
+        arguments: [VMLifecyclePhase.suspended, .running(sessionID: UUID())])
+    func writableExternalDiskRevertTakesNoCheckPoint(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
+        let instance = makeInstance(in: harness, phase: phase) {
             $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
         }
+        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
         let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
@@ -2145,15 +2148,23 @@ struct VMCommandCoreTests {
         #expect(prompt.alternatives.isEmpty)
         #expect(!prompt.message.contains("take a snapshot first"))
 
+        // Refused with no consent at all: the check-point is decided before
+        // the confirmation, so no surface confirms a revert it then refuses.
         let error = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .all)
+                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .none)
             })
-        guard case .changeTakesStoppedVM(_, _, .snapshotWritingOutsideBundle) = error else {
-            Issue.record("expected a stopped-VM refusal, got \(error)")
+        guard case .operationFailed(.revertToSnapshot, _, let message, _) = error else {
+            Issue.record("expected the check-point refusal, got \(error)")
             return
         }
+        #expect(
+            message
+                == "\u{201C}Core VM\u{201D} is \(instance.status.phrase(heldByAnotherCopy: false)). "
+                + "Taking a snapshot of a virtual machine with a writable external disk needs it stopped. "
+                + "Revert without taking a snapshot first to go back anyway; everything changed "
+                + "inside the guest since the snapshot will be lost.")
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Clean"])
     }

@@ -59,7 +59,8 @@ extension KernovaCommand.Snapshot {
             abstract: "Take a snapshot of a virtual machine.",
             discussion: "A snapshot captures the VM's disks and settings. A running guest's "
                 + "memory is captured with them, and it pauses briefly while the state is "
-                + "written; a stopped one is captured with no memory. Without "
+                + "written; a stopped one is captured with no memory. A VM whose guest can "
+                + "write to an external disk is snapshotted only while stopped. Without "
                 + "--name Kernova names the snapshot the way its own sheet proposes: "
                 + "\u{201C}Snapshot\u{201D}, then \u{201C}Snapshot 2\u{201D}, and so on. Prints "
                 + "the new snapshot as one row of `snapshot list`.")
@@ -106,7 +107,8 @@ extension KernovaCommand.Snapshot {
             commandName: "revert",
             abstract: "Return a virtual machine to one of its snapshots.",
             discussion: "The state the virtual machine is in now is captured as a check-point "
-                + "first, so the revert is undoable; --no-checkpoint discards it instead. "
+                + "first, so the revert is undoable; --no-checkpoint discards it instead. A "
+                + "virtual machine that cannot take a snapshot now refuses the check-point. "
                 + "Refuses without --yes, because everything since the snapshot goes.")
 
         /// Which virtual machine, by name or identifier.

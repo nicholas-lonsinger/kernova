@@ -342,9 +342,7 @@ final class DetailAlertsPresenter: NSObject {
         isSnapshotSheetQueued = false
         // The request may have queued behind another alert, so re-check the VM
         // is still snapshottable rather than showing a sheet that can't confirm.
-        guard let window, viewModel.capabilities.isAvailable(.takeSnapshot, on: instance),
-            let mode = instance.snapshotCaptureMode
-        else { return }
+        guard let window, let mode = instance.snapshotCaptureMode else { return }
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
             mode: mode)
@@ -357,8 +355,7 @@ final class DetailAlertsPresenter: NSObject {
         snapshotSheetKindObservation?.cancel()
         snapshotSheetKindObservation = observeRecurring(
             track: { [weak instance] in
-                _ = instance?.status
-                _ = instance?.hasLiveVirtualMachine
+                _ = instance?.snapshotCaptureMode
             },
             apply: { [weak content, weak instance] in
                 guard let content, let instance, let mode = instance.snapshotCaptureMode else {
