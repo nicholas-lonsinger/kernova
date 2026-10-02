@@ -455,6 +455,24 @@ struct ClipboardEndpointTests {
 
     // MARK: - Bounding accepted data connections
 
+    @Test("an accepted data connection is bounded by the configured socket timeout")
+    func acceptedConnectionTakesTheConfiguredTimeout() throws {
+        let harness = try RawPeerHarness(dataSocketTimeout: 7)
+        defer { harness.tearDown() }
+        let (peerEnd, endpointEnd) = try makeRawSocketPair()
+        // The endpoint's header read parks on the silent peer, so the
+        // descriptor is still open to read back.
+        harness.endpoint.acceptDataConnection(fd: endpointEnd)
+        defer { ClipboardDataConnection.end(fd: peerEnd) }
+
+        var window = timeval()
+        var length = socklen_t(MemoryLayout<timeval>.size)
+        #expect(getsockopt(endpointEnd, SOL_SOCKET, SO_SNDTIMEO, &window, &length) == 0)
+        #expect(window.tv_sec == 7)
+        #expect(getsockopt(endpointEnd, SOL_SOCKET, SO_RCVTIMEO, &window, &length) == 0)
+        #expect(window.tv_sec == 7)
+    }
+
     /// A wedged or compromised guest is in scope — the guest is untrusted — and
     /// each accepted connection's opening frame is read on a blocking worker —
     /// so what a peer that connects and then says nothing costs the host is a

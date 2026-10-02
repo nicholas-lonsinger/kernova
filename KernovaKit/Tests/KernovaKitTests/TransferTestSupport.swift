@@ -275,7 +275,7 @@ final class TransferHarness: @unchecked Sendable {
 
     init(
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
-        socketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
+        socketTimeout: TimeInterval = testWaitBackstop,
         maxResidentInlineBytes: Int = ClipboardStreamTuning.maxResidentInlineBytes,
         minimumExtractAllowance: Int = ClipboardStreamTuning.minimumExtractAllowance,
         extractPacingBytes: Int = ClipboardStreamTuning.extractPacingBytes

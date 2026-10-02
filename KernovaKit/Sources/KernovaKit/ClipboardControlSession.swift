@@ -70,6 +70,7 @@ public final class ClipboardControlSession {
     private let staging: ClipboardFileStaging?
 
     nonisolated private let dataLink: DataLink
+    nonisolated let dataSocketTimeout: TimeInterval
 
     /// The inbox, held where a thread that is not the main one can reach it.
     ///
@@ -105,7 +106,8 @@ public final class ClipboardControlSession {
     /// send-only and passes none.
     public init(
         channel: VsockChannel, role: Role, kind: Kind, label: String,
-        staging: ClipboardFileStaging? = nil, dataLink: DataLink = .accepts
+        staging: ClipboardFileStaging? = nil, dataLink: DataLink = .accepts,
+        dataSocketTimeout: TimeInterval
     ) {
         self.channel = channel
         self.role = role
@@ -113,6 +115,7 @@ public final class ClipboardControlSession {
         self.label = label
         self.staging = staging
         self.dataLink = dataLink
+        self.dataSocketTimeout = dataSocketTimeout
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
         if Self.receives(role: role, kind: kind), staging == nil {
             #log(
@@ -200,6 +203,7 @@ public final class ClipboardControlSession {
 
         if Self.sends(role: role, kind: kind) {
             outboxStorage = ClipboardTransferOutbox(
+                socketTimeout: dataSocketTimeout,
                 // The only measured throughput number for what this side sends,
                 // so it logs at `.notice` (persisted) rather than `.debug`.
                 onTransferTimed: { metrics in
@@ -211,7 +215,7 @@ public final class ClipboardControlSession {
         }
         if let staging, Self.receives(role: role, kind: kind) {
             inboxHolder.value = ClipboardTransferInbox(
-                staging: staging,
+                staging: staging, socketTimeout: dataSocketTimeout,
                 onTransferTimed: { metrics in
                     #log(
                         Self.logger, .notice,

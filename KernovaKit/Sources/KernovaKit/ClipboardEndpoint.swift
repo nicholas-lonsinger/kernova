@@ -95,6 +95,9 @@ public final class ClipboardEndpoint {
         /// How each transfer's data connection is obtained: the guest dials the
         /// kind's data port, the host takes what its listener accepted.
         public var dataLink: DataLink
+        /// Every data connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`: a read or
+        /// write that reaches it is the transfer's stall.
+        public var dataSocketTimeout: TimeInterval
         /// The generation this connection's first offer carries, so a counter
         /// outliving the channel is never reused.
         public var firstGeneration: UInt64
@@ -118,6 +121,7 @@ public final class ClipboardEndpoint {
             progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
             clock: any EngineClock = makePlatformEngineClock(),
             dataLink: DataLink = .accepts,
+            dataSocketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
             firstGeneration: UInt64 = 1
         ) {
             self.role = role
@@ -133,6 +137,7 @@ public final class ClipboardEndpoint {
             self.progressIdleGap = progressIdleGap
             self.clock = clock
             self.dataLink = dataLink
+            self.dataSocketTimeout = dataSocketTimeout
             self.firstGeneration = firstGeneration
         }
     }
@@ -198,7 +203,8 @@ public final class ClipboardEndpoint {
         let session = ClipboardControlSession(
             channel: channel, role: configuration.role, kind: configuration.kind,
             label: configuration.label, staging: configuration.staging,
-            dataLink: configuration.dataLink)
+            dataLink: configuration.dataLink,
+            dataSocketTimeout: configuration.dataSocketTimeout)
         self.session = session
         self.outbound = ClipboardOutboundOffers(
             session: session, reporter: reporter, peerName: configuration.peerName,
@@ -480,7 +486,7 @@ public final class ClipboardEndpoint {
             ClipboardDataConnection.end(fd: fd)
             return
         }
-        ClipboardDataConnection.applySocketOptions(fd: fd)
+        ClipboardDataConnection.applySocketOptions(fd: fd, timeout: session.dataSocketTimeout)
         dataAccepts.submit { [weak self] in
             guard let frame = try? ClipboardDataConnection.readFrame(fd: fd) else {
                 ClipboardDataConnection.end(fd: fd)
