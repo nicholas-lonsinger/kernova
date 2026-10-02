@@ -565,10 +565,13 @@ final class VMInstance {
     /// found it, however that failure was classified.
     var holdsSuspendedSession: Bool { isAtRest && hasSaveFile }
 
-    /// How a capture started right now would be taken, or `nil` when the VM is
-    /// in no state to capture — see ``VMAdmission/captureMode(phase:facts:)``.
+    /// How a capture started right now would be taken, or `nil` when the VM
+    /// would refuse one — see ``VMAdmission/captureMode(phase:facts:)``.
     var snapshotCaptureMode: VMCaptureMode? {
-        VMAdmission.captureMode(phase: phase, facts: admissionFacts)
+        guard let mode = VMAdmission.captureMode(phase: phase, facts: admissionFacts),
+            activity.decide(.operation(.capturingSnapshot(mode)), posture: .offer) == .admit
+        else { return nil }
+        return mode
     }
 
     // MARK: - Wire Projection
