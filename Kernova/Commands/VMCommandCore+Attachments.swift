@@ -357,7 +357,7 @@ extension VMCommandCore {
         _ selector: VMSelector, item id: UUID, trashFile: Bool, consent: Consent
     ) async throws {
         let instance = try resolve(selector)
-        try require(.removeRemovableMedia, on: instance)
+        try require(.editRemovableMedia, on: instance)
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
@@ -373,7 +373,7 @@ extension VMCommandCore {
             // media is hot-pluggable, so the gate refuses the states a live
             // session doesn't cover — a start still bringing the VM up, above
             // all.
-            try require(.removeRemovableMedia, on: instance)
+            try require(.editRemovableMedia, on: instance)
             guard let current = removableMediaItem(id: id, on: instance),
                 current.path == item.path, current.bookmark == item.bookmark
             else {
@@ -417,7 +417,7 @@ extension VMCommandCore {
     /// No consent: nothing is destroyed, and re-attaching is one click away.
     func ejectRemovableMedia(_ selector: VMSelector, item id: UUID) throws {
         let instance = try resolve(selector)
-        try require(.removeRemovableMedia, on: instance)
+        try require(.editRemovableMedia, on: instance)
         guard let item = removableMediaItem(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editRemovableMedia)
         }
@@ -704,7 +704,7 @@ extension VMCommandCore {
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
         let write: VMLibrary.SettingsWrite
         do {
-            write = try instance.activity.edit(.removableMediaRemoval) { permit in
+            write = try instance.activity.edit(.hotPlugMedia) { permit in
                 library.updateConfiguration(permit) { config in
                     let pruned = (config.removableMedia ?? []).filter { $0.path != path }
                     config.removableMedia = pruned.isEmpty ? nil : pruned
@@ -745,27 +745,15 @@ extension VMCommandCore {
     /// rather than as that verb's stale-attachment refusal — and keeps its
     /// saved state, which a confirmation landing late must not destroy.
     ///
-    /// Removable media goes as the plain removal, and a saved state stays for
+    /// Removable media goes as a plain removal, and a saved state stays for
     /// that Start to restore: a save file restores with removable media removed
     /// (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
     /// and a restore that fails keeps it, so Discard Saved State is still
-    /// there.
+    /// there. The item is the one the bring-up failed on, so the VM resumed
+    /// with it no other way.
     ///
-    /// A storage disk takes the VM's saved state with it — a save file does not
-    /// restore with one removed. The removal is then a write of the discard
-    /// operation itself, committed *before* the saved state goes — the step
-    /// nothing can undo: the alert is window-modal and every other door stays
-    /// live behind it, so a bring-up or a copy can take the VM between the
-    /// offer and the click — and the configuration write can refuse or fail
-    /// to reach disk. Every one of those leaves the VM with both its session
-    /// and its disk, and tells the caller why. A VM holding no saved state — a
-    /// bring-up consumed it while the alert was up — gets the plain edit.
-    ///
-    /// The edit's gate refuses while a saved state is on disk, so it is asked
-    /// of the VM as it will stand once the discard lands; the removal is the
-    /// same change the public verb makes — on these arguments (`trashFile:
-    /// false`, already-confirmed, entry re-checked above) that verb adds
-    /// nothing else.
+    /// A storage disk takes the VM's saved state with it
+    /// (``removeStartFailedStorageDisk(_:from:)``).
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -795,7 +783,23 @@ extension VMCommandCore {
     }
 
     /// ``removeStartFailedAttachment(_:attachment:)``'s storage-disk half,
-    /// which discards a saved state the VM holds.
+    /// which discards a saved state the VM holds — a save file does not restore
+    /// with a storage disk removed.
+    ///
+    /// The removal is then a write of the discard operation itself, committed
+    /// *before* the saved state goes — the step nothing can undo: the alert is
+    /// window-modal and every other door stays live behind it, so a bring-up or
+    /// a copy can take the VM between the offer and the click — and the
+    /// configuration write can refuse or fail to reach disk. Every one of those
+    /// leaves the VM with both its session and its disk, and tells the caller
+    /// why. A VM holding no saved state — a bring-up consumed it while the
+    /// alert was up — gets the plain edit.
+    ///
+    /// The edit's gate refuses while a saved state is on disk, so it is asked
+    /// of the VM as it will stand once the discard lands; the removal is the
+    /// same change the public verb makes — on these arguments (`trashFile:
+    /// false`, already-confirmed, entry re-checked by the caller) that verb
+    /// adds nothing else.
     private func removeStartFailedStorageDisk(
         _ failure: StartFailedAttachment, from instance: VMInstance
     ) throws {
@@ -1087,7 +1091,7 @@ extension VMCommandCore {
     /// Drops one removable medium's entry, leaving its file alone.
     private func detachRemovableMedia(_ id: UUID, from instance: VMInstance) throws {
         try writeConfiguration(
-            of: instance, as: .removeRemovableMedia, verb: .editRemovableMedia,
+            of: instance, as: .editRemovableMedia, verb: .editRemovableMedia,
             Self.dropRemovableMedia(id))
     }
 

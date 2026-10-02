@@ -805,8 +805,9 @@ final class DetailAlertsPresenter: NSObject {
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
         // The heading names the bring-up that failed; the button names what the
-        // recovery does, which is a start either way — a resume's saved state is
-        // discarded along with a storage disk.
+        // recovery does: a resume where the saved state survives the removal,
+        // and otherwise a start — a resume's saved state is discarded along
+        // with a storage disk.
         //
         // Laid out as ``AlertConfiguration/init(confirming:confirm:alternative:dismiss:)``
         // lays a destructive confirmation out: the action on the trailing edge
@@ -818,7 +819,11 @@ final class DetailAlertsPresenter: NSObject {
             message: Self.startFailedAttachmentMessage(
                 failure, holdsSavedState: vm.hasSaveFile),
             buttons: [
-                AlertButton("Remove and Start", role: .destructive) { [weak self] in
+                AlertButton(
+                    Self.startFailedRecoveryResumes(failure, holdsSavedState: vm.hasSaveFile)
+                        ? "Remove and Resume" : "Remove and Start",
+                    role: .destructive
+                ) { [weak self] in
                     guard let self else { return }
                     Task { await self.viewModel.removeStartFailedAttachmentAndStart(failure, on: vm) }
                 },
@@ -868,9 +873,12 @@ final class DetailAlertsPresenter: NSObject {
         }
         // "also" only where something was offered before it.
         let offer = remedy.isEmpty ? "You can remove" : "You can also remove"
+        let next =
+            startFailedRecoveryResumes(failure, holdsSavedState: holdsSavedState)
+            ? "resume" : "start"
         var message =
             "\(failure.message)\n\n\(remedy)\(offer) “\(failure.label)” from this virtual "
-            + "machine and start without it — the file itself is not deleted, and you can "
+            + "machine and \(next) without it — the file itself is not deleted, and you can "
             + "re-attach it later in Settings."
         // A saved state restores with removable media removed
         // (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md),
@@ -880,6 +888,15 @@ final class DetailAlertsPresenter: NSObject {
                 " Removing it also discards this virtual machine's saved state."
         }
         return message
+    }
+
+    /// Whether the recovery's removal leaves a saved state for its Start to
+    /// restore: one survives a removal of removable media, not of a storage
+    /// disk.
+    private static func startFailedRecoveryResumes(
+        _ failure: StartFailedAttachment, holdsSavedState: Bool
+    ) -> Bool {
+        holdsSavedState && failure.kind == .removableMedia
     }
 
     /// The Settings section an attachment's Read Only switch lives in, so the

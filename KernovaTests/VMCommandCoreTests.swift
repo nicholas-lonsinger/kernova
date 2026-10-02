@@ -745,7 +745,7 @@ struct VMCommandCoreTests {
             ])
     }
 
-    @Test("A VM holding a saved state reports the discard as its stop, and no settings edit but a media removal")
+    @Test("A VM holding a saved state reports the discard as its stop, and no settings edit")
     func allowedVerbsForASuspendedVM() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended)
@@ -754,15 +754,14 @@ struct VMCommandCoreTests {
         // No live VM to terminate and no graceful stop, but the discard rides
         // the same verb — named once, in the same slot. `start` is named too:
         // it restores the saved state rather than booting over it, and only the
-        // *offer* narrows to Resume. The removable-media verb is named for its
-        // removals, which a saved state restores across.
+        // *offer* narrows to Resume.
         #expect(!instance.activity.admits(.sessionAction(.requestStop)))
         #expect(!instance.activity.admits(.sessionAction(.forceStop)))
         #expect(
             harness.core.allowedVerbs(for: instance) == [
                 .info, .ipAddress, .snapshots, .start, .stop, .resume, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .setConfiguration, .clone, .rename, .delete, .showInFinder,
+                .setConfiguration, .clone, .rename, .delete, .showInFinder,
             ])
     }
 

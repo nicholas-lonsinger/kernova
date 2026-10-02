@@ -108,8 +108,7 @@ struct VMCapabilityAgreementTests {
         case .createStorageDisk: try await core.createStorageDisk(vm, sizeInGB: 1)
         case .trashStorageDisk:
             try await core.removeStorageDisk(vm, disk: UUID(), trashFile: true, consent: .none)
-        case .editRemovableMedia: try core.renameRemovableMedia(vm, item: UUID(), to: "Label")
-        case .removeRemovableMedia: try core.ejectRemovableMedia(vm, item: UUID())
+        case .editRemovableMedia: try core.ejectRemovableMedia(vm, item: UUID())
         case .createRemovableMedia:
             try await core.createRemovableMedia(
                 vm, sizeInGB: 1,
@@ -150,7 +149,8 @@ struct VMCapabilityAgreementTests {
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)
         case .showInFinder: try core.showInFinder(vm)
         case .toggleGuestAgentDisk: _ = try core.mountGuestAgentDisk(vm)
-        case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleSettingsPane:
+        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen,
+            .showClipboard, .toggleSettingsPane:
             Issue.record("\(capability) has no verb to call")
         }
     }

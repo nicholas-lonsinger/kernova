@@ -99,13 +99,6 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         viewModel.capabilities.isAvailable(.editRemovableMedia, on: instance)
     }
 
-    /// Whether this VM's removable media can be ejected or removed right now —
-    /// wider than ``canEditRemovableMedia``, since a saved state restores
-    /// across a removal.
-    private var canRemoveRemovableMedia: Bool {
-        viewModel.capabilities.isAvailable(.removeRemovableMedia, on: instance)
-    }
-
     private var fileMonitorLoop: ObservationLoop?
 
     private let reorderSheetPresenter = SheetPresenter()
@@ -300,7 +293,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
                 controlsEnabled: canEditRemovableMedia,
-                ejectEnabled: canRemoveRemovableMedia)
+                ejectEnabled: canEditRemovableMedia)
         }
         removableList?.update(
             models,
@@ -559,13 +552,12 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let readOnly: Bool
         let busText: String
         let notes: String
-        /// Rename / Read Only gating, read from the capability the verb behind
-        /// each of them refuses on.
+        /// Rename / Read Only / Eject gating, read from the capability the
+        /// verb behind each of them refuses on.
         let editable: Bool
-        /// Remove… and Eject gating: a storage disk's removal can trash its
-        /// file, so it reads the trashing removal's capability, which admits
-        /// only where the entry-only removal does too; removable media reads
-        /// the removal's own, which a saved state leaves open.
+        /// Remove… gating: a storage disk's removal can trash its file, so it
+        /// reads the trashing removal's capability, which admits only where
+        /// the entry-only removal does too.
         let removable: Bool
         /// The VM's only storage disk, which the removal verb refuses — so its
         /// row offers no Remove….
@@ -588,7 +580,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             return AttachmentInfo(
                 id: item.id, label: item.label, path: item.path, isInternal: false,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
-                editable: canEditRemovableMedia, removable: canRemoveRemovableMedia,
+                editable: canEditRemovableMedia, removable: canEditRemovableMedia,
                 isSoleStorageDisk: false)
         }
     }
@@ -643,7 +635,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         // file-trashing Remove…; storage disks get Remove… only.
         if ref.kind == .removable {
             let eject = attachmentMenuItem("Eject", #selector(menuAttachmentEject(_:)), ref)
-            eject.isEnabled = info.removable
+            eject.isEnabled = info.editable
             menu.addItem(eject)
         }
         // No Remove… on a VM's only disk: the verb refuses, and an item that

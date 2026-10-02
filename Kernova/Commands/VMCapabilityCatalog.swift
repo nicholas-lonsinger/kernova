@@ -39,8 +39,9 @@ enum VMCapability: CaseIterable, Hashable {
     /// unless another VM still references the file, which keeps it.
     case trashStorageDisk
     case editRemovableMedia
-    /// Drop removable media entries — wider than ``editRemovableMedia``: a
-    /// saved state restores across a removal, so a suspended VM takes one.
+    /// Drop the removable medium a bring-up failed on — wider than
+    /// ``editRemovableMedia``: a saved state restores across a removal, so a
+    /// suspended VM takes one. Reached only from that failure's recovery.
     case removeRemovableMedia
     /// Write a new disk image where the user chose and attach it as
     /// removable media.
@@ -93,7 +94,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .renameSnapshot: .renameSnapshot
         case .setSnapshotNotes: .setSnapshotNotes
         case .editStorageDisks, .createStorageDisk, .trashStorageDisk: .editStorageDisk
-        case .editRemovableMedia, .removeRemovableMedia, .createRemovableMedia: .editRemovableMedia
+        case .editRemovableMedia, .createRemovableMedia: .editRemovableMedia
         case .editSharedDirectories, .editLiveSharedDirectories: .editSharedDirectory
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
@@ -105,7 +106,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .delete: .delete
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
-        case .startInRecovery, .togglePopOut, .toggleFullscreen, .showClipboard,
+        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
             .toggleSettingsPane:
             nil
         }
