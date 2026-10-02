@@ -520,4 +520,28 @@ struct VMSettingsSharingPanelTests {
         remove.sendAction(remove.action, to: remove.target)
         #expect(instance.configuration.sharedDirectories?.count == 1)
     }
+
+    // MARK: - Shared Directories info
+
+    @Test(
+        "The resume note joins the Shared Directories info only for a guest known to run macOS 13",
+        arguments: [
+            (VMGuestOS.macOS, "Version 13.7.8 (Build 22H730)" as String?, true),
+            (VMGuestOS.macOS, "Version 14.8.9 (Build 23J100)", false),
+            (VMGuestOS.macOS, "Version 27.0 (Build 26A428)", false),
+            (VMGuestOS.macOS, nil, false),
+            (VMGuestOS.linux, "13.7.8", false),
+        ])
+    func resumeNoteOnlyForMacOS13(guestOS: VMGuestOS, reported: String?, noted: Bool) {
+        let configuration = VMConfiguration(
+            name: "Shares", guestOS: guestOS, bootMode: guestOS == .macOS ? .macOS : .efi,
+            lastSeenGuestOSVersion: reported)
+        let paragraphs = VMSettingsSharingPanelViewController.sharedDirectoriesInfoParagraphs(
+            for: configuration)
+        let mentionsResume = paragraphs.contains {
+            if case .body(let text) = $0 { return text.contains("resumes from Suspend") }
+            return false
+        }
+        #expect(mentionsResume == noted)
+    }
 }

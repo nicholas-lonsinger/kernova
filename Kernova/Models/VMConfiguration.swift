@@ -922,6 +922,16 @@ extension VMConfiguration {
         return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
     }
 
+    /// Whether the guest is known to run macOS 13, where a shared directory can
+    /// become unreadable in the guest after a resume until the guest restarts:
+    /// observed on 13.7.8 with one and with two shares, and not on 14.8.9 or
+    /// 27.0.0, in #1440.
+    var sharedDirectoriesBreakOnResume: Bool {
+        guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return false }
+        return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
+            && !version.isAtLeast(MacOSVersion(major: 14, minor: 0))
+    }
+
     /// Whether the guest can write to a disk outside the bundle: an external
     /// storage disk or removable media not marked read-only — files no
     /// snapshot or clone copies (``VMBundleMachineFiles/capturedRelativePaths(for:layout:)``).

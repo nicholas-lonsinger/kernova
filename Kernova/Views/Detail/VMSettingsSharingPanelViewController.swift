@@ -166,27 +166,40 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             shownWhen: { [weak self] in self?.showsSharingDeviceRule ?? false })
         sharingDeviceCaptionView = caption
 
-        let paragraphs: [InfoPopoverParagraph] =
-            instance.configuration.guestOS == .linux
-            ? [
-                .body(
-                    "Exposed as virtiofs mounts. Each share gets a numbered tag (`share0`, `share1`, …) in list order. Mount with:"
-                ),
-                .code("mount -t virtiofs share0 /mnt/myshare"),
-                .body(
-                    "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
-                ),
-            ]
-            : [
-                .body("Auto-mounts at `/Volumes/My Shared Files/` in the guest."),
-                .body(
-                    "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
-                ),
-            ]
+        let paragraphs = Self.sharedDirectoriesInfoParagraphs(for: instance.effectiveConfiguration)
         return makeGroupedFormSection([
             lockRegistry.makeHeader("Shared Directories", editableWhen: .stopped, paragraphs: paragraphs), card,
             caption,
         ])
+    }
+
+    /// The Shared Directories header's info for `configuration`'s guest.
+    static func sharedDirectoriesInfoParagraphs(
+        for configuration: VMConfiguration
+    ) -> [InfoPopoverParagraph] {
+        let virtioFSLimits = InfoPopoverParagraph.body(
+            "VirtioFS has known framework limitations — files may intermittently appear missing, and host/guest permission mapping can differ."
+        )
+        guard configuration.guestOS == .macOS else {
+            return [
+                .body(
+                    "Exposed as virtiofs mounts. Each share gets a numbered tag (`share0`, `share1`, …) in list order. Mount with:"
+                ),
+                .code("mount -t virtiofs share0 /mnt/myshare"),
+                virtioFSLimits,
+            ]
+        }
+        var paragraphs: [InfoPopoverParagraph] = [
+            .body("Auto-mounts at `/Volumes/My Shared Files/` in the guest."),
+            virtioFSLimits,
+        ]
+        if configuration.sharedDirectoriesBreakOnResume {
+            paragraphs.append(
+                .body(
+                    "On macOS 13, a shared directory can become unreadable in the guest after the virtual machine resumes from Suspend. Restarting the guest makes it readable again."
+                ))
+        }
+        return paragraphs
     }
 
     // MARK: Remembered USB Accessories
