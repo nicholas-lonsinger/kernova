@@ -812,14 +812,13 @@ struct ConfigurationBuilder: Sendable {
                     entries.append(entry)
                     continue
                 }
-                var atServedFolder = directory
-                atServedFolder.path =
+                let servedPath =
                     (entry.url.path(percentEncoded: false) as NSString)
                     .standardizingPath
                 entries.append(
                     MacOSDirectoryShare.Entry(
                         id: entry.id, name: entry.name,
-                        url: try resolveSharedDirectory(atServedFolder),
+                        url: try resolveSharedDirectory(directory, at: servedPath),
                         readOnly: directory.readOnly))
                 continue
             }
@@ -838,16 +837,21 @@ struct ConfigurationBuilder: Sendable {
         return MacOSDirectoryShare(entries: entries)
     }
 
-    /// Validates one shared directory and returns its resolved URL (symlinks
-    /// followed).
-    private static func resolveSharedDirectory(_ directory: SharedDirectory) throws -> URL {
-        try Self.resolveDirectory(
-            at: directory.path, context: "Shared directory",
+    /// Validates one shared directory at `path` — by default its own — and
+    /// returns the resolved URL (symlinks followed); a failure names
+    /// `directory`'s entry, as the Sharing pane lists it.
+    private static func resolveSharedDirectory(
+        _ directory: SharedDirectory, at path: String? = nil
+    ) throws -> URL {
+        let path = path ?? directory.path
+        let (id, label) = (directory.id, directory.displayName)
+        return try Self.resolveDirectory(
+            at: path, context: "Shared directory",
             requireReadable: true, requireWritable: !directory.readOnly,
-            notFound: .sharedDirectoryNotFound(directory.path),
-            notADirectory: .sharedDirectoryNotADirectory(directory.path),
-            notReadable: .sharedDirectoryNotReadable(directory.path),
-            notWritable: .sharedDirectoryNotWritable(directory.path)
+            notFound: .sharedDirectoryNotFound(id: id, path: path, label: label),
+            notADirectory: .sharedDirectoryNotADirectory(id: id, path: path, label: label),
+            notReadable: .sharedDirectoryNotReadable(id: id, path: path, label: label),
+            notWritable: .sharedDirectoryNotWritable(id: id, path: path, label: label)
         ).url
     }
 
@@ -998,10 +1002,10 @@ enum ConfigurationBuilderError: LocalizedError {
     /// The configuration is on a network this build cannot attach
     /// (``EntitlementService/canAttach(_:)``).
     case networkNotEntitled(VMJoinedNetwork)
-    case sharedDirectoryNotFound(String)
-    case sharedDirectoryNotADirectory(String)
-    case sharedDirectoryNotReadable(String)
-    case sharedDirectoryNotWritable(String)
+    case sharedDirectoryNotFound(id: UUID, path: String, label: String)
+    case sharedDirectoryNotADirectory(id: UUID, path: String, label: String)
+    case sharedDirectoryNotReadable(id: UUID, path: String, label: String)
+    case sharedDirectoryNotWritable(id: UUID, path: String, label: String)
 
     var errorDescription: String? {
         switch self {
@@ -1042,14 +1046,14 @@ enum ConfigurationBuilderError: LocalizedError {
                 + (network.isCommon
                     ? "Switch the VM's network mode to Shared Network."
                     : "Move the VM to its mode\u{2019}s common network in its Network settings.")
-        case .sharedDirectoryNotFound(let path):
-            "Shared directory not found at \(path)."
-        case .sharedDirectoryNotADirectory(let path):
-            "Shared path is not a directory: \(path)."
-        case .sharedDirectoryNotReadable(let path):
-            "Shared directory is not readable: \(path)."
-        case .sharedDirectoryNotWritable(let path):
-            "Shared directory is not writable: \(path)."
+        case .sharedDirectoryNotFound(_, let path, let label):
+            "Shared folder '\(label)' not found at \(path)."
+        case .sharedDirectoryNotADirectory(_, let path, let label):
+            "Shared item '\(label)' is not a folder: \(path)."
+        case .sharedDirectoryNotReadable(_, let path, let label):
+            "Shared folder '\(label)' is not readable: \(path)."
+        case .sharedDirectoryNotWritable(_, let path, let label):
+            "Shared folder '\(label)' is not writable: \(path)."
         }
     }
 
@@ -1061,15 +1065,17 @@ enum ConfigurationBuilderError: LocalizedError {
     /// through to the bare alert.
     var attachmentReason: StartFailedAttachment.Reason? {
         switch self {
-        case .storageDiskNotFound, .removableMediaNotFound: .notFound
+        case .storageDiskNotFound, .removableMediaNotFound, .sharedDirectoryNotFound: .notFound
         case .storageDiskPathIsDirectory, .removableMediaPathIsDirectory: .pathIsDirectory
-        case .storageDiskNotWritable, .removableMediaNotWritable: .notWritable
+        case .sharedDirectoryNotADirectory: .notADirectory
+        case .sharedDirectoryNotReadable: .notReadable
+        case .storageDiskNotWritable, .removableMediaNotWritable, .sharedDirectoryNotWritable:
+            .notWritable
         case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
         case .invalidHardwareModel, .invalidMachineIdentifier, .efiVariableStoreMissing,
             .missingKernelPath,
             .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,
-            .networkNotEntitled, .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-            .sharedDirectoryNotReadable, .sharedDirectoryNotWritable:
+            .networkNotEntitled:
             nil
         }
     }

@@ -529,6 +529,96 @@ struct DetailAlertsPresenterTests {
         #expect(!message.contains("Read Only"), "\(reason)")
     }
 
+    /// A shared folder's removal discards a saved state, as a storage disk's
+    /// does, so the recovery always ends in a Start.
+    @Test("The removal offer for a shared folder starts, saved state or not")
+    func startFailedAlertOnASharedFolderStarts() throws {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        let failure = makeStartFailure(
+            .notFound, message: "gone", verb: .resume, kind: .sharedDirectory)
+
+        let stopped = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+        try VMInstanceFixture.writeSaveFile(for: vm)
+        let suspended = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+
+        #expect(stopped.buttons.map(\.title) == ["Remove and Start", "Cancel"])
+        #expect(suspended.buttons.map(\.title) == ["Remove and Start", "Cancel"])
+    }
+
+    @Test("A shared folder that isn't there names reconnecting, and calls itself a folder")
+    func startFailedAlertOnAMissingSharedFolder() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notFound, message: "Shared folder 'Archive' not found at /Volumes/Ext/Archive.",
+                kind: .sharedDirectory),
+            holdsSavedState: false)
+
+        #expect(
+            message
+                == "Shared folder 'Archive' not found at /Volumes/Ext/Archive.\n\n"
+                + "If it’s on a disk that isn’t connected, connect it and try again. You can also "
+                + "remove “Archive” from this virtual machine and start without it — the folder "
+                + "itself is not deleted, and you can share it again later in Settings.")
+    }
+
+    @Test("An unwritable shared folder names the Read Only switch under Shared Directories")
+    func startFailedAlertOnAnUnwritableSharedFolderNamesReadOnly() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Shared folder 'Archive' is not writable: /tmp/Archive.",
+                kind: .sharedDirectory),
+            holdsSavedState: false)
+
+        #expect(
+            message.contains(
+                "Turn on Read Only for it in Settings, under Shared Directories, to start without "
+                    + "writing to it. If the folder or the disk it’s on is locked or read-only, "
+                    + "making it writable works too."))
+        #expect(message.contains("the folder itself is not deleted"))
+        #expect(!message.contains("file"))
+        #expect(!message.contains("saved state"))
+    }
+
+    @Test("An unwritable shared folder on a suspended VM is not sent to Settings, and says the state goes")
+    func startFailedAlertOnAnUnwritableSharedFolderWithASavedState() {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                .notWritable, message: "Shared folder 'Archive' is not writable: /tmp/Archive.",
+                verb: .resume, kind: .sharedDirectory),
+            holdsSavedState: true)
+
+        #expect(!message.contains("Turn on Read Only"))
+        #expect(
+            message.contains(
+                "If the folder or the disk it’s on is locked or read-only, make it writable and "
+                    + "try again."))
+        #expect(message.contains("and start without it"))
+        #expect(
+            message.hasSuffix(
+                "Removing it also discards this virtual machine's saved state."))
+    }
+
+    /// Read Only does not make a file a folder, and a share is read whether it
+    /// is Read Only or not — so neither case invents a step.
+    @Test(
+        "A shared path that is no folder, or that cannot be read, names no remedy",
+        arguments: [StartFailedAttachment.Reason.notADirectory, .notReadable])
+    func startFailedAlertOnAnUnusableSharedFolderNamesNoRemedy(
+        reason: StartFailedAttachment.Reason
+    ) {
+        let message = DetailAlertsPresenter.startFailedAttachmentMessage(
+            makeStartFailure(
+                reason, message: "Shared folder 'Archive' is not readable: /tmp/Archive.",
+                kind: .sharedDirectory),
+            holdsSavedState: false)
+
+        #expect(message.contains("You can remove “Archive”"), "\(reason)")
+        #expect(!message.contains("try again."), "\(reason)")
+        #expect(!message.contains("Read Only"), "\(reason)")
+        #expect(message.contains("the folder itself is not deleted"), "\(reason)")
+    }
+
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()

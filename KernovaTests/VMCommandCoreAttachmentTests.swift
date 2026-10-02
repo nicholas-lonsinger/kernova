@@ -1741,6 +1741,88 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.virtualization.startCallCount == 0)
     }
 
+    @Test("A start-failed removal of a shared folder drops only that share")
+    func removeStartFailedSharedFolderOnAStoppedVM() async throws {
+        let harness = makeHarness()
+        let missing = SharedDirectory(path: externalPath("Gone"))
+        let keeper = SharedDirectory(path: externalPath("Kept"))
+        let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed.")) {
+            $0.sharedDirectories = [missing, keeper]
+        }
+
+        try await harness.core.removeStartFailedAttachment(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                verb: .start, kind: .sharedDirectory, reason: .notFound, id: missing.id,
+                label: missing.displayName, message: "not found"))
+
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
+    @Test("A resume-failed removal of a shared folder discards the saved state")
+    func removeStartFailedSharedFolderDiscardsTheSavedState() async throws {
+        let harness = makeHarness()
+        let missing = SharedDirectory(path: externalPath("Gone"))
+        let keeper = SharedDirectory(path: externalPath("Kept"))
+        let instance = makeInstance(in: harness, phase: .suspended) {
+            $0.sharedDirectories = [missing, keeper]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        #expect(!harness.core.capabilities.accepts(.editSharedDirectories, on: instance))
+
+        try await harness.core.removeStartFailedAttachment(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                verb: .resume, kind: .sharedDirectory, reason: .notWritable, id: missing.id,
+                label: missing.displayName, message: "not writable"))
+
+        #expect(!instance.hasSaveFile)
+        #expect(instance.phase == .stopped)
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
+    @Test("A start-failed removal of the last shared folder stores no list")
+    func removeStartFailedLastSharedFolder() async throws {
+        let harness = makeHarness()
+        let missing = SharedDirectory(path: externalPath("Gone"))
+        let instance = makeInstance(in: harness, phase: .suspended) {
+            $0.sharedDirectories = [missing]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        try await harness.core.removeStartFailedAttachment(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                verb: .resume, kind: .sharedDirectory, reason: .notFound, id: missing.id,
+                label: missing.displayName, message: "not found"))
+
+        #expect(instance.configuration.sharedDirectories == nil)
+        #expect(!instance.hasSaveFile)
+    }
+
+    @Test("A start-failed removal naming a shared folder that is already gone keeps the saved state")
+    func removeStartFailedSharedFolderAlreadyGone() async throws {
+        let harness = makeHarness()
+        let keeper = SharedDirectory(path: externalPath("Kept"))
+        let instance = makeInstance(in: harness, phase: .suspended) {
+            $0.sharedDirectories = [keeper]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+
+        try await harness.core.removeStartFailedAttachment(
+            .id(instance.id),
+            attachment: StartFailedAttachment(
+                verb: .resume, kind: .sharedDirectory, reason: .notFound, id: UUID(),
+                label: "Gone", message: "not found"))
+
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
+        #expect(instance.hasSaveFile)
+        #expect(instance.isSuspended)
+    }
+
     @Test("A start-failed removal that refuses leaves the saved state alone")
     func aRefusedStartFailedRemovalKeepsTheSavedState() async throws {
         let harness = makeHarness()

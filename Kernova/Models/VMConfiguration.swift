@@ -996,7 +996,7 @@ struct SharedDirectory: Codable, Sendable, Equatable {
             mountName: try c.decodeIfPresent(String.self, forKey: .mountName))
     }
 
-    /// The last path component, used as the display name in the UI and as the share name in VirtioFS.
+    /// The last path component, which names the share in the UI.
     var displayName: String {
         URL(fileURLWithPath: path).lastPathComponent
     }

@@ -718,6 +718,33 @@ struct VMCommandCoreTests {
         #expect(instance.isSuspended)
     }
 
+    @Test("A failed resume over a shared folder offers that share's removal")
+    func resumeFailureOverASharedFolderCarriesTheRecovery() async throws {
+        let harness = makeHarness()
+        let share = SharedDirectory(path: "/Volumes/Ext/Projects")
+        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
+            $0.sharedDirectories = [share]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        harness.virtualization.startError = ConfigurationBuilderError.sharedDirectoryNotReadable(
+            id: share.id, path: share.path, label: share.displayName)
+
+        let error = try #require(await commandError { try await harness.core.resume(.id(instance.id), consent: .none) })
+
+        guard case .operationFailed(let verb, _, _, let recovery) = error,
+            case .removeStartFailedAttachment(let offered) = recovery
+        else {
+            Issue.record("expected a removable-attachment recovery, got \(error)")
+            return
+        }
+        #expect(verb == .resume)
+        #expect(offered.kind == .sharedDirectory)
+        #expect(offered.reason == .notReadable)
+        #expect(offered.id == share.id)
+        #expect(offered.label == "Projects")
+        #expect(instance.hasSaveFile)
+    }
+
     // MARK: - Allowed verbs
 
     @Test("allowedVerbs reads out in a fixed order, reads first")

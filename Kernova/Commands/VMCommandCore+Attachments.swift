@@ -571,10 +571,8 @@ extension VMCommandCore {
         of instance: VMInstance, as capability: VMCapability,
         _ change: @escaping (inout [SharedDirectory]) -> Void
     ) throws {
-        let changed: (VMConfiguration) -> [SharedDirectory]? = { config in
-            var directories = config.sharedDirectories ?? []
-            change(&directories)
-            return directories.isEmpty ? nil : directories
+        let changed: (VMConfiguration) -> [SharedDirectory]? = {
+            Self.sharedDirectories(of: $0, changedBy: change)
         }
         let held = instance.configuration.sharedDirectories
         let directories = changed(instance.configuration)
@@ -756,8 +754,8 @@ extension VMCommandCore {
     /// there. The item is the one the bring-up failed on, so the VM resumed
     /// with it no other way.
     ///
-    /// A storage disk takes the VM's saved state with it
-    /// (``removeStartFailedStorageDisk(_:from:)``).
+    /// A storage disk or a shared folder takes the VM's saved state with it
+    /// (``removeStartFailedEntryDiscardingSavedState(_:from:as:removal:)``).
     func removeStartFailedAttachment(
         _ selector: VMSelector, attachment failure: StartFailedAttachment
     ) async throws {
@@ -782,30 +780,48 @@ extension VMCommandCore {
                 Self.dropRemovableMedia(failure.id))
             logStartFailedRemoval(failure, from: instance)
         case .storageDisk:
-            try removeStartFailedStorageDisk(failure, from: instance)
+            if let disk = storageDisk(id: failure.id, on: instance) {
+                try refuseSoleStorageDiskRemoval(of: disk, on: instance)
+            }
+            // The public verb's removal on `trashFile: false`, already
+            // confirmed and with the entry re-checked above: it adds nothing
+            // else.
+            try removeStartFailedEntryDiscardingSavedState(
+                failure, from: instance, as: .editStorageDisks,
+                removal: Self.dropStorageDisk(
+                    failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL)))
+        case .sharedDirectory:
+            try removeStartFailedEntryDiscardingSavedState(
+                failure, from: instance, as: .editSharedDirectories,
+                removal: Self.dropSharedDirectory(failure.id))
         }
     }
 
-    /// ``removeStartFailedAttachment(_:attachment:)``'s storage-disk half,
-    /// which discards a saved state the VM holds — a save file does not restore
-    /// with a storage disk removed.
+    /// ``removeStartFailedAttachment(_:attachment:)``'s half for an entry whose
+    /// removal discards a saved state the VM holds: `removal`, admitted as
+    /// `capability`.
+    ///
+    /// A save file does not restore with a storage disk removed, and a share
+    /// edit inside a macOS guest's one directory-sharing device was observed
+    /// restoring only on macOS 13
+    /// (docs/research/2026-09-30-vz-restore-matches-machine-shape-and-device-set.md);
+    /// a Linux guest's share is a device of its own. So a shared folder's
+    /// removal discards the saved state too.
     ///
     /// The removal is then a write of the discard operation itself, committed
     /// *before* the saved state goes — the step nothing can undo: the alert is
     /// window-modal and every other door stays live behind it, so a bring-up or
     /// a copy can take the VM between the offer and the click — and the
     /// configuration write can refuse or fail to reach disk. Every one of those
-    /// leaves the VM with both its session and its disk, and tells the caller
+    /// leaves the VM with both its session and the entry, and tells the caller
     /// why. A VM holding no saved state — a bring-up consumed it while the
     /// alert was up — gets the plain edit.
     ///
     /// The edit's gate refuses while a saved state is on disk, so it is asked
-    /// of the VM as it will stand once the discard lands; the removal is the
-    /// same change the public verb makes — on these arguments (`trashFile:
-    /// false`, already-confirmed, entry re-checked by the caller) that verb
-    /// adds nothing else.
-    private func removeStartFailedStorageDisk(
-        _ failure: StartFailedAttachment, from instance: VMInstance
+    /// of the VM as it will stand once the discard lands.
+    private func removeStartFailedEntryDiscardingSavedState(
+        _ failure: StartFailedAttachment, from instance: VMInstance,
+        as capability: VMCapability, removal: @escaping (inout VMConfiguration) -> Void
     ) throws {
         // Decided as the VM will stand once the discard lands, so only the term
         // that discard clears is lifted and every other blocker — a bring-up in
@@ -813,17 +829,12 @@ extension VMCommandCore {
         // the verb.
         // The refusal names what this VM really accepts rather than what it
         // would accept after a discard that is not going to happen.
-        guard capabilities.acceptsAsIfSavedStateDiscarded(.editStorageDisks, on: instance) else {
-            throw refusal(for: [.editStorageDisks], on: instance)
+        guard capabilities.acceptsAsIfSavedStateDiscarded(capability, on: instance) else {
+            throw refusal(for: [capability], on: instance)
         }
-        if let disk = storageDisk(id: failure.id, on: instance) {
-            try refuseSoleStorageDiskRemoval(of: disk, on: instance)
-        }
-        let removal = Self.dropStorageDisk(
-            failure.id, layout: VMBundleLayout(bundleURL: instance.bundleURL))
         guard instance.holdsSuspendedSession else {
             try writeConfiguration(
-                of: instance, as: .editStorageDisks, verb: failure.verb, removal)
+                of: instance, as: capability, verb: failure.verb, removal)
             logStartFailedRemoval(failure, from: instance)
             return
         }
@@ -846,7 +857,7 @@ extension VMCommandCore {
         logStartFailedRemoval(failure, from: instance)
         #log(
             Self.logger, .notice,
-            "Discarded saved state for '\(instance.name, privacy: .public)' along with the disk its bring-up failed on"
+            "Discarded saved state for '\(instance.name, privacy: .public)' along with the attachment its bring-up failed on"
         )
     }
 
@@ -866,6 +877,8 @@ extension VMCommandCore {
             storageDisk(id: failure.id, on: instance) != nil
         case .removableMedia:
             removableMediaItem(id: failure.id, on: instance) != nil
+        case .sharedDirectory:
+            sharedDirectory(id: failure.id, on: instance) != nil
         }
     }
 
@@ -1034,7 +1047,7 @@ extension VMCommandCore {
 
     /// The shared directory `id` names, or `nil` when the VM no longer carries
     /// it.
-    private func sharedDirectory(id: UUID, on instance: VMInstance) -> SharedDirectory? {
+    func sharedDirectory(id: UUID, on instance: VMInstance) -> SharedDirectory? {
         (instance.configuration.sharedDirectories ?? []).first { $0.id == id }
     }
 
@@ -1121,6 +1134,23 @@ extension VMCommandCore {
         try writeConfiguration(
             of: instance, as: .editRemovableMedia, verb: .editRemovableMedia,
             Self.dropRemovableMedia(id))
+    }
+
+    /// The configuration change that drops shared directory `id`'s entry.
+    private static func dropSharedDirectory(_ id: UUID) -> (inout VMConfiguration) -> Void {
+        { config in
+            config.sharedDirectories = sharedDirectories(of: config) { $0.removeAll { $0.id == id } }
+        }
+    }
+
+    /// `config`'s shared-directory list as `change` leaves it, an emptied list
+    /// stored as none.
+    private static func sharedDirectories(
+        of config: VMConfiguration, changedBy change: (inout [SharedDirectory]) -> Void
+    ) -> [SharedDirectory]? {
+        var directories = config.sharedDirectories ?? []
+        change(&directories)
+        return directories.isEmpty ? nil : directories
     }
 
     /// The configuration change that drops removable medium `id`'s entry.

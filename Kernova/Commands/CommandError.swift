@@ -4,8 +4,8 @@ import KernovaKit
 /// A way out of a failure that a caller performs by acting on the app's own
 /// model, offered as data rather than as a presenter call.
 enum CommandRecovery: Sendable, Equatable {
-    /// The start failed opening one attachment. Removing that attachment (the
-    /// file is untouched) and starting again is the offered way out.
+    /// A start or resume failed on one attachment. Removing that entry (the
+    /// file or folder is untouched) and starting again is the offered way out.
     case removeStartFailedAttachment(StartFailedAttachment)
 
     /// How this recovery names itself to a caller that cannot hold the object

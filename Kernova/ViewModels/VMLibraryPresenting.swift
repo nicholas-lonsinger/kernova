@@ -21,9 +21,10 @@ enum TakeSnapshotPurpose: Equatable, Sendable {
     case ephemeralBaseline
 }
 
-/// A bring-up that failed because one attachment couldn't be used, where
-/// removing that attachment (detach only — the file is untouched) is a valid
-/// way to get the VM running again.
+/// A bring-up that failed because one attachment — a storage disk, a
+/// removable medium, or a shared folder — couldn't be used, where removing
+/// that entry (detach only — the file or folder is untouched) is a valid way to
+/// get the VM running again.
 ///
 /// Never built for a bundle-internal storage disk: no verb re-creates an
 /// internal entry — ``VMCommanding/attachStorageDisks(_:paths:)`` adds external
@@ -34,21 +35,28 @@ struct StartFailedAttachment: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case storageDisk
         case removableMedia
+        case sharedDirectory
     }
 
     /// What was wrong with the attachment, for the sentences the alert adds
     /// about getting it working again.
     ///
-    /// Two of these are what `PathValidation.resolveFile` could see rather than
-    /// what is actually wrong, so neither names a cause: ``notFound`` comes from
-    /// a `fileExists` miss, which a deleted file and an unmounted volume reach
-    /// alike, and ``notWritable`` from `FileManager.isWritableFile(atPath:)`,
-    /// which is equally false for a read-only volume, a file the Finder or
-    /// `chflags uchg` locked, and a write the sandbox denies. Copy about either
+    /// The file-system reasons are what `PathValidation` could see rather than
+    /// what is actually wrong, so none names a cause: ``notFound`` comes from a
+    /// `fileExists` miss, which a deleted item and an unmounted volume reach
+    /// alike, and ``notWritable`` and ``notReadable`` from `FileManager`'s
+    /// `isWritableFile(atPath:)` and `isReadableFile(atPath:)`, each equally
+    /// false for a permission the item lacks, a read-only volume or a locked
+    /// item (writing), and an access the sandbox denies. Copy about any of them
     /// names a condition the user can check instead.
     enum Reason: Equatable, Sendable {
         case notFound
+        /// A disk image's path names a folder.
         case pathIsDirectory
+        /// A shared folder's path names something other than a folder.
+        case notADirectory
+        /// A shared folder the VM cannot read.
+        case notReadable
         case notWritable
         /// The file is there and `VZDiskImageStorageDeviceAttachment` refused
         /// it; its own description carries what little is known.
