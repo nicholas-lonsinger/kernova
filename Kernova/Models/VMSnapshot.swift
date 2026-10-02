@@ -11,10 +11,12 @@ enum VMSnapshotKind: String, Codable, Sendable {
     case cold
 }
 
-/// How a capture started right now would be taken, which decides both the
-/// work it does and the ``VMSnapshotKind`` it produces.
-enum VMSnapshotCaptureMode: Sendable, Equatable {
-    /// A live `VZVirtualMachine` writes a fresh saved state (running or live-paused).
+/// How a capture — a snapshot, or a clone's copy — started right now would be
+/// taken, which decides the work it does and, for a snapshot, the
+/// ``VMSnapshotKind`` it produces.
+enum VMCaptureMode: Sendable, Equatable {
+    /// A live `VZVirtualMachine` (running or live-paused) is paused while its
+    /// disks are copied, and may write a fresh saved state inside that pause.
     case live
     /// The bundle's suspend slot is cloned — no VZ work, and the slot stays in place.
     case suspended
@@ -25,7 +27,7 @@ enum VMSnapshotCaptureMode: Sendable, Equatable {
 }
 
 /// What a capture is asked to take. The kind is not part of it: the capture
-/// operation's ``VMSnapshotCaptureMode`` decides it.
+/// operation's ``VMCaptureMode`` decides it.
 struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
     var id: UUID
     var name: String
@@ -41,7 +43,7 @@ struct VMSnapshotCaptureRequest: Sendable, Equatable, Identifiable {
     }
 
     /// The manifest record of this request captured in `mode`.
-    func record(capturedIn mode: VMSnapshotCaptureMode) -> VMSnapshotRecord {
+    func record(capturedIn mode: VMCaptureMode) -> VMSnapshotRecord {
         VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: mode.kind)
     }
 }

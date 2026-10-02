@@ -26,8 +26,9 @@ extension KernovaCommand {
             case .newMachine:
                 ArgumentHelp(
                     "Give the clone its own machine identity and MAC address, so both can run at once, "
-                        + "with no snapshots and Ephemeral Mode off. Not offered for a guest running "
-                        + "macOS 12 or earlier.")
+                        + "with no snapshots and Ephemeral Mode off. One made from a suspended, paused "
+                        + "or running virtual machine starts as if after a power loss. Not offered "
+                        + "for a guest running macOS 12 or earlier.")
             case .exactCopy:
                 ArgumentHelp(
                     "Keep the source's machine identity and MAC address, and carry its snapshots, "

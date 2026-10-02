@@ -24,7 +24,7 @@ struct TakeSnapshotSheetContentViewControllerTests {
 
     private func makeSheet(
         vmName: String = "Dev Mac", suggestedName: String = "Snapshot",
-        mode: VMSnapshotCaptureMode = .live
+        mode: VMCaptureMode = .live
     ) -> (TakeSnapshotSheetContentViewController, Recorder) {
         let recorder = Recorder()
         let sheet = TakeSnapshotSheetContentViewController(

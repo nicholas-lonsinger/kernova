@@ -177,6 +177,17 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
                 network: VMCapturedNetwork(instance.configuration)))
     }
 
+    func copyLive(
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        savingStateTo saveFileURL: URL,
+        prepare: () async throws -> Void,
+        copy: () async throws -> Void
+    ) async throws -> VMOperationEnding<Void> {
+        try await prepare()
+        try await copy()
+        return .rest(.asStarted, ())
+    }
+
     func revertToSnapshot(
         _ instance: VMInstance, _ context: borrowing VMRevertContext,
         commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void

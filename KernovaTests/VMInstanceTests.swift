@@ -72,9 +72,9 @@ struct VMInstanceTests {
             #expect(VMInstanceFixture.make(phase: phase).snapshotCaptureMode == .live, "phase \(phase)")
         }
         #expect(VMInstanceFixture.make(phase: .stopped).snapshotCaptureMode == .stopped)
-        #expect(VMSnapshotCaptureMode.live.kind == .warm)
-        #expect(VMSnapshotCaptureMode.suspended.kind == .warm)
-        #expect(VMSnapshotCaptureMode.stopped.kind == .cold)
+        #expect(VMCaptureMode.live.kind == .warm)
+        #expect(VMCaptureMode.suspended.kind == .warm)
+        #expect(VMCaptureMode.stopped.kind == .cold)
     }
 
     @Test("A revert needs a snapshot to go back to")

@@ -4003,7 +4003,7 @@ struct VMLibraryViewModelTests {
             VMLifecyclePhase.operating(
                 .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
-            .operating(.copyingOut, from: .stopped),
+            .operating(.copyingOut(.stopped), from: .stopped),
             live, .suspended, .stopped,
         ] {
             instance.activity.placeForTesting(phase)
@@ -5088,11 +5088,12 @@ struct VMLibraryViewModelTests {
         #expect(storage.discardedStagedURLs == [staged])
     }
 
-    @Test("cloneVM is skipped when VM is running")
-    func cloneVMSkippedWhenRunning() async {
+    @Test("cloneVM is skipped while another operation holds the VM")
+    func cloneVMSkippedWhileAnOperationHoldsTheVM() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture(name: "Running VM")
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(
+            .operating(.saving, from: .running(sessionID: UUID())))
 
         viewModel.cloneVM(instance)
 

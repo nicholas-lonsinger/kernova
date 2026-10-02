@@ -191,9 +191,12 @@ extension VMCommandCore {
     /// Holds the source for a clone's copy and registers the clone's arrival,
     /// with no suspension point between the decision and the registration.
     ///
-    /// ``VMOperationKind/copyingOut`` holds the source only while its files and
-    /// state are copied into the staged bundle; the arrival's write then lays
-    /// down the clone's configuration.
+    /// ``VMOperationKind/copyingOut(_:)`` holds the source only while its files
+    /// and state are copied into the staged bundle, in the mode the source's
+    /// phase admits (``VMAdmission/cloneMode(phase:facts:)``); the arrival's
+    /// write then lays down the clone's configuration. An Exact Copy of a
+    /// suspended or live source arrives suspended on the source's saved
+    /// state, and every other clone arrives stopped.
     private func registerClone(
         _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMArrival {
@@ -262,20 +265,55 @@ extension VMCommandCore {
 
         let machineIdentifier = clonedConfig.guestOS == .macOS ? clonedConfig.machineIdentifierData : nil
         let storage = storageService
+        let virtualization = lifecycle.virtualizationService
+        // The settled mode, as the catalog offers Clone in: an operation in
+        // flight then refuses the copy as busy.
+        let mode =
+            VMAdmission.settledCloneMode(phase: instance.phase, facts: instance.admissionFacts)
+            ?? .stopped
         // Run directly rather than on the bounded `copyQueue`: the source is
         // held for as long as the copy takes, and an APFS clone takes
         // milliseconds where a queued import copy can take minutes.
         let copied: VMOutcome
         do {
-            copied = try instance.activity.launch(.copyingOut) { context in
+            copied = try instance.activity.launchCopyOut(mode) { context in
                 let copy = CloneCopy(
-                    of: context.instance.bundle, outcome: resolved,
+                    of: context.operation.instance.bundle, outcome: resolved, mode: context.mode,
                     machineIdentifier: machineIdentifier)
-                let source = context.bundle.url
+                let source = context.operation.bundle.url
+                guard context.mode == .live else {
+                    try await Task.detached {
+                        try Self.copyOut(
+                            copy, .settledAndGuestWritten, from: source, into: staged,
+                            storage: storage)
+                    }.value
+                    return .rest(.asStarted, ())
+                }
+                // Only what the guest writes is copied inside the pause, so
+                // the freeze does not grow with the snapshots an Exact Copy
+                // carries.
+                let ending = try await virtualization.copyLive(
+                    context.operation.instance, context,
+                    savingStateTo: staged.layout.saveFileURL,
+                    prepare: {
+                        try await Task.detached {
+                            try Self.copyOut(
+                                copy, .settled, from: source, into: staged, storage: storage)
+                        }.value
+                    },
+                    copy: {
+                        try await Task.detached {
+                            try Self.copyOut(
+                                copy, .guestWritten, from: source, into: staged, storage: storage)
+                        }.value
+                    })
+                guard case .rest = ending, !copy.carriesSavedState else { return ending }
+                // A New Machine boots cold: the state saved with its disks does
+                // not restore under a new machine identifier.
                 try await Task.detached {
-                    try Self.copyOut(copy, from: source, into: staged, storage: storage)
+                    try FileManager.default.removeItem(at: staged.layout.saveFileURL)
                 }.value
-                return .rest(.asStarted, ())
+                return ending
             }
         } catch {
             throw failure(error, verb: .clone, on: instance)
@@ -295,6 +333,9 @@ extension VMCommandCore {
     /// committed state while the clone holds it.
     private struct CloneCopy: Sendable {
         let outcome: CloneOutcome
+        /// How the copy is taken, which says where the source's saved state
+        /// is: in its suspend slot, in a live guest's memory, or nowhere.
+        let mode: VMCaptureMode
         /// The source's configuration, which names the disks to copy.
         let configuration: VMConfiguration
         /// The macOS machine identifier the clone boots as, written over any
@@ -306,8 +347,12 @@ extension VMCommandCore {
         let snapshotManifest: VMSnapshotManifest
 
         @MainActor
-        init(of source: VMBundle, outcome: CloneOutcome, machineIdentifier: Data?) {
+        init(
+            of source: VMBundle, outcome: CloneOutcome, mode: VMCaptureMode,
+            machineIdentifier: Data?
+        ) {
             self.outcome = outcome
+            self.mode = mode
             configuration = source.configuration
             self.machineIdentifier = machineIdentifier
             switch outcome {
@@ -322,13 +367,23 @@ extension VMCommandCore {
             }
         }
 
-        /// The bundle-relative files and directories to copy out of `source`:
-        /// its machine files for both outcomes, and for an Exact Copy its
-        /// machine identifier and every snapshot the manifest lists.
-        func relativePaths(in source: VMBundleLayout) -> [String] {
-            var paths =
-                VMBundleMachineFiles.capturedRelativePaths(for: configuration, layout: source)
-                + [VMBundleLayout.hardwareModelRelativePath]
+        /// Whether the clone arrives on its source's saved state: an Exact
+        /// Copy of a suspended or live source. A New Machine arrives without
+        /// one, as a saved state does not restore under a new machine
+        /// identifier.
+        var carriesSavedState: Bool { outcome == .exactCopy && mode != .stopped }
+
+        /// The bundle-relative files a running guest writes: its internal
+        /// disks and firmware state — what a live copy takes inside its pause.
+        func guestWrittenPaths(in source: VMBundleLayout) -> [String] {
+            VMBundleMachineFiles.capturedRelativePaths(for: configuration, layout: source)
+        }
+
+        /// The bundle-relative files nothing writes while the clone holds its
+        /// source: the hardware model for both outcomes, and for an Exact Copy
+        /// its machine identifier and every snapshot the manifest lists.
+        func settledPaths() -> [String] {
+            var paths = [VMBundleLayout.hardwareModelRelativePath]
             if outcome == .exactCopy {
                 paths.append(VMBundleLayout.machineIdentifierRelativePath)
                 paths += snapshotManifest.snapshots.map {
@@ -339,14 +394,41 @@ extension VMCommandCore {
         }
     }
 
-    /// Clones what `copy` names out of the bundle at `source` into `staged`.
+    /// Which of a clone's files one ``copyOut(_:_:from:into:storage:)`` takes.
+    private enum CloneCopyPart {
+        /// The files and state files nothing writes under the hold
+        /// (``CloneCopy/settledPaths()``), plus a suspended source's slot.
+        case settled
+        /// The files a running guest writes (``CloneCopy/guestWrittenPaths(in:)``).
+        case guestWritten
+        /// Both, for a source with no guest running.
+        case settledAndGuestWritten
+    }
+
+    /// Clones `part` of what `copy` names out of the bundle at `source` into
+    /// `staged`, creating `staged` first if it is not there yet.
     nonisolated private static func copyOut(
-        _ copy: CloneCopy, from source: URL, into staged: VMStagedBundle,
+        _ copy: CloneCopy, _ part: CloneCopyPart, from source: URL, into staged: VMStagedBundle,
         storage: any VMStorageProviding
     ) throws {
-        try storage.cloneVMBundle(
-            from: source, to: staged.url,
-            relativePaths: copy.relativePaths(in: VMBundleLayout(bundleURL: source)))
+        let sourceLayout = VMBundleLayout(bundleURL: source)
+        let paths: [String] =
+            switch part {
+            case .settled: copy.settledPaths()
+            case .guestWritten: copy.guestWrittenPaths(in: sourceLayout)
+            case .settledAndGuestWritten:
+                copy.guestWrittenPaths(in: sourceLayout) + copy.settledPaths()
+            }
+        try storage.cloneVMBundle(from: source, to: staged.url, relativePaths: paths)
+        guard part != .guestWritten else { return }
+        // A live copy's saved state is written into the clone by VZ; a
+        // suspended one's is the slot, which admission found on disk and the
+        // hold keeps there.
+        if copy.carriesSavedState, copy.mode == .suspended {
+            try VMBundleMachineFiles.copyItems(
+                [VMBundleLayout.saveFileRelativePath], from: source, to: staged.url,
+                ifMissing: .unchecked)
+        }
         if let machineIdentifier = copy.machineIdentifier {
             try machineIdentifier.write(to: staged.layout.machineIdentifierURL, options: .atomic)
         }

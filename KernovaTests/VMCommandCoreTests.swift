@@ -741,7 +741,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: running) == [
                 .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .setConfiguration, .rename, .showInFinder,
+                .editRemovableMedia, .setConfiguration, .clone, .rename, .showInFinder,
             ])
     }
 
@@ -761,7 +761,7 @@ struct VMCommandCoreTests {
             harness.core.allowedVerbs(for: instance) == [
                 .info, .ipAddress, .snapshots, .start, .stop, .resume, .open, .reveal,
                 .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .setConfiguration, .rename, .delete, .showInFinder,
+                .setConfiguration, .clone, .rename, .delete, .showInFinder,
             ])
     }
 
@@ -2250,7 +2250,7 @@ struct VMCommandCoreTests {
         await arrival.settle()
     }
 
-    @Test("clone registers a copying row and refuses a VM that is not at rest")
+    @Test("clone registers a copying row and refuses a VM another operation holds as busy")
     func cloneRegistersAnArrival() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
@@ -2262,12 +2262,13 @@ struct VMCommandCoreTests {
         #expect(harness.library.instances.contains { $0.id == summary.id })
         #expect(harness.library.arrivals.isEmpty)
 
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.activity.placeForTesting(
+            .operating(.pausing, from: .running(sessionID: UUID())))
         #expect(
             await commandError {
                 _ = try await harness.core.clone(
                     .id(instance.id), outcome: .newMachine, waitForOutcome: false)
-            }?.isInvalidState == true)
+            }?.isBusy == true)
         #expect(harness.library.arrivals.isEmpty)
     }
 
@@ -2287,7 +2288,7 @@ struct VMCommandCoreTests {
         #expect(arrival.id == summary.id)
         #expect(arrival.kind == .cloning)
         // Held in the step that registered the arrival, before the copy began.
-        #expect(instance.phase.operation?.kind == .copyingOut)
+        #expect(instance.phase.operation?.kind == .copyingOut(.stopped))
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
         #expect(
             await commandError { try await harness.core.start(.id(instance.id), recovery: false, consent: .none) }?

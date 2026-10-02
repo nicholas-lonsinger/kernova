@@ -515,6 +515,7 @@ final class VMInstance {
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbSupported: peers?.supportsUSBAccessories ?? false,
+            writesOutsideBundle: configuration.writesOutsideBundle,
             identityConflict: nil,
             accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false,
@@ -566,7 +567,7 @@ final class VMInstance {
 
     /// How a capture started right now would be taken, or `nil` when the VM is
     /// in no state to capture — see ``VMAdmission/captureMode(phase:facts:)``.
-    var snapshotCaptureMode: VMSnapshotCaptureMode? {
+    var snapshotCaptureMode: VMCaptureMode? {
         VMAdmission.captureMode(phase: phase, facts: admissionFacts)
     }
 

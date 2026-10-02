@@ -92,7 +92,8 @@ struct VMFollowUp {
         case .invalidState:
             guard case .session = scope else { return true }
             return false
-        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .heldByAnotherCopy:
+        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .heldByAnotherCopy,
+            .takesStoppedVM:
             return true
         }
     }

@@ -34,7 +34,7 @@ struct VMActivityTests {
         var hookProbe: Task<Void, Never>?
         var whenEndedResult: Result<Void, any Error>?
         var guestStart: VMGuestStartKind?
-        var captureMode: VMSnapshotCaptureMode?
+        var captureMode: VMCaptureMode?
         var revertedTo: (snapshotID: UUID, resumesAfter: Bool)?
     }
 
@@ -680,7 +680,7 @@ struct VMActivityTests {
         let (instance, _) = makeInstance(.stopped)
         let order = FollowUpOrder()
         let gate = GatedStep()
-        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
 
         instance.activity.follow(owed)
 
@@ -699,7 +699,7 @@ struct VMActivityTests {
         let holdGate = GatedStep()
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
         let gate = GatedStep()
-        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
 
         instance.activity.follow(owed)
         #expect(order.admitted.isEmpty)
@@ -709,7 +709,7 @@ struct VMActivityTests {
         holdGate.release()
         try await hold.value()
         #expect(order.admitted == ["copy"])
-        #expect(instance.phase.operation?.kind == .copyingOut)
+        #expect(instance.phase.operation?.kind == .copyingOut(.stopped))
         expectQueueHeldByAnOperation(instance)
         gate.release()
         try await owed.outcome.value()
@@ -723,7 +723,7 @@ struct VMActivityTests {
         let holdGate = GatedStep()
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
         let gate = GatedStep()
-        let owed = followUp("copy", .copyingOut, on: instance, gate: gate, order: order)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, gate: gate, order: order)
         instance.activity.follow(owed)
 
         holdGate.release()
@@ -731,8 +731,8 @@ struct VMActivityTests {
 
         #expect(
             instance.activity.decide(.start(recovery: false), posture: .commit)
-                == .refuse(.busy(.copyingOut)))
-        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut))) {
+                == .refuse(.busy(.copyingOut(.stopped))))
+        await #expect(throws: VMAdmissionRefusal(refusal: .busy(.copyingOut(.stopped)))) {
             try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 .rest(.asStarted, ())
             }.value()
@@ -753,12 +753,12 @@ struct VMActivityTests {
         // read: ungated, it can end and drain the next before this resumes.
         let revertGate = GatedStep()
         let owed = [
-            followUp("first", .copyingOut, on: instance, order: order),
-            followUp("second", .copyingOut, on: instance, order: order),
+            followUp("first", .copyingOut(.stopped), on: instance, order: order),
+            followUp("second", .copyingOut(.stopped), on: instance, order: order),
             followUp(
                 "revert", .bringUp(.reverting(snapshotID: snapshotID, resumesAfter: false)),
                 on: instance, rank: .restoration, gate: revertGate, order: order),
-            followUp("third", .copyingOut, on: instance, order: order),
+            followUp("third", .copyingOut(.stopped), on: instance, order: order),
         ]
 
         for item in owed { instance.activity.follow(item) }
@@ -782,7 +782,7 @@ struct VMActivityTests {
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
         // A pause asks for a live guest, which a VM at rest is not.
         let refused = followUp("pause", .pausing, on: instance, order: order)
-        let admitted = followUp("copy", .copyingOut, on: instance, order: order)
+        let admitted = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(refused)
         instance.activity.follow(admitted)
 
@@ -806,7 +806,7 @@ struct VMActivityTests {
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
         try await holdGate.waitUntilEntered()
         let scoped = followUp("pause", .pausing, on: instance, scope: .session(session), order: order)
-        let unscoped = followUp("copy", .copyingOut, on: instance, order: order)
+        let unscoped = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(scoped)
         instance.activity.follow(unscoped)
 
@@ -836,7 +836,7 @@ struct VMActivityTests {
         let gate = GatedStep()
         let deletion = Task { try await instance.activity.delete { _ in try await gate.pass() } }
         try await gate.waitUntilEntered()
-        let owed = followUp("copy", .copyingOut, on: instance, order: order)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(owed)
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
@@ -847,7 +847,7 @@ struct VMActivityTests {
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
             try await owed.outcome.value()
         }
-        let late = followUp("late", .copyingOut, on: instance, order: order)
+        let late = followUp("late", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(late)
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
             try await late.outcome.value()
@@ -862,7 +862,7 @@ struct VMActivityTests {
         let order = FollowUpOrder()
         let holdGate = GatedStep()
         let hold = try launchGated(.deletingSnapshot, on: instance, gate: holdGate)
-        let owed = followUp("copy", .copyingOut, on: instance, order: order)
+        let owed = followUp("copy", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(owed)
 
         #expect(instance.activity.withdraw(owed))

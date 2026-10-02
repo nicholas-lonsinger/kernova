@@ -89,7 +89,7 @@ struct VMCapabilityCatalogTests {
         .editLiveConfiguration: .edit(.liveKeys),
         .switchNetworkMode: .edit(.networkAttachment),
         .switchNetworkMembership: .edit(.networkMembership),
-        .clone: .operation(.copyingOut),
+        .clone: .operation(.copyingOut(.stopped)),
         .rename: .edit(.rename),
         .delete: .operation(.deleting),
         .showInFinder: .affordance(.inspect),
@@ -128,7 +128,7 @@ struct VMCapabilityCatalogTests {
         "Take Snapshot asks for the capture the VM's settled phase takes, dimmed rather than lost during an operation")
     func takeSnapshotRequestFollowsTheSettledPhase() throws {
         let live = VMLifecyclePhase.running(sessionID: UUID())
-        let cases: [(VMLifecyclePhase, VMSnapshotCaptureMode?)] = [
+        let cases: [(VMLifecyclePhase, VMCaptureMode?)] = [
             (.stopped, .stopped),
             (live, .live),
             (.livePaused(sessionID: UUID()), .live),
@@ -151,6 +151,33 @@ struct VMCapabilityCatalogTests {
         #expect(
             VMCapability.takeSnapshot.request(on: suspended)
                 == .operation(.capturingSnapshot(.suspended)))
+    }
+
+    @Test("Clone asks for the copy the VM's settled phase takes, dimmed rather than lost during an operation")
+    func cloneRequestFollowsTheSettledPhase() throws {
+        let live = VMLifecyclePhase.running(sessionID: UUID())
+        let cases: [(VMLifecyclePhase, VMCaptureMode)] = [
+            (.stopped, .stopped),
+            (.failed(message: "Boot failed."), .stopped),
+            (.initialBoot, .stopped),
+            (live, .live),
+            (.livePaused(sessionID: UUID()), .live),
+            (.operating(.pausing, from: live), .live),
+            (.operating(.deleting, from: .stopped), .stopped),
+        ]
+        for (phase, mode) in cases {
+            let harness = makeHarness()
+            let instance = makeInstance(in: harness, phase: phase)
+            #expect(
+                VMCapability.clone.request(on: instance) == .operation(.copyingOut(mode)),
+                "\(phase)")
+        }
+
+        let harness = makeHarness()
+        let suspended = makeInstance(in: harness, phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+        #expect(VMCapability.clone.request(on: suspended) == .operation(.copyingOut(.suspended)))
+        #expect(harness.catalog.isAvailable(.clone, on: suspended))
     }
 
     // MARK: - The three levels
@@ -204,7 +231,7 @@ struct VMCapabilityCatalogTests {
     /// configuration it was written under.
     private static let pinnedBySavedState: Set<VMCapability> = [
         .editStorageDisks, .editRemovableMedia, .editSharedDirectories,
-        .editConfiguration, .switchNetworkMode, .clone,
+        .editConfiguration, .switchNetworkMode,
     ]
 
     @Test("A saved state pins an at-rest VM's settings and trades its Start for Resume")
@@ -234,6 +261,8 @@ struct VMCapabilityCatalogTests {
             #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
             #expect(harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
             #expect(harness.catalog.isApplicable(.discardSavedState, to: instance), "\(phase)")
+            // A clone carries the slot rather than being pinned out by it.
+            #expect(harness.catalog.isApplicable(.clone, to: instance), "\(phase)")
             // Delete keeps working: the slot is a file inside the bundle and
             // goes with it.
             #expect(harness.catalog.isApplicable(.delete, to: instance), "\(phase)")

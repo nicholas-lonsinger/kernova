@@ -97,7 +97,8 @@ extension VMInstance {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
         case .stopped: return .systemGray
-        case .starting, .suspended, .saving, .snapshotting, .restoring, .installing, .initialBoot:
+        case .starting, .suspended, .saving, .snapshotting, .cloning, .restoring, .installing,
+            .initialBoot:
             return StatusColor.warning
         case .running: return StatusColor.running
         case .paused: return StatusColor.pausedInMemory

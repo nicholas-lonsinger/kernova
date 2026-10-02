@@ -156,7 +156,8 @@ extension VMCommandCore {
         switch refused.refusal {
         case .invalidState, .removed, .heldByAnotherCopy:
             return true
-        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating:
+        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating,
+            .takesStoppedVM:
             return false
         }
     }

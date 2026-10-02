@@ -104,6 +104,7 @@ enum VMScriptState: CaseIterable {
     case suspended
     case saving
     case snapshotting
+    case cloning
     case restoring
     case installing
     case initialBoot
@@ -134,6 +135,7 @@ enum VMScriptState: CaseIterable {
         case .suspended: self = .suspended
         case .saving: self = .saving
         case .snapshotting: self = .snapshotting
+        case .cloning: self = .cloning
         case .restoring: self = .restoring
         case .installing: self = .installing
         case .initialBoot: self = .initialBoot
@@ -151,6 +153,7 @@ enum VMScriptState: CaseIterable {
         case .suspended: "suspended"
         case .saving: "saving"
         case .snapshotting: "snapshotting"
+        case .cloning: "cloning"
         case .restoring: "restoring"
         case .installing: "installing"
         case .initialBoot: "initial boot"
@@ -169,6 +172,7 @@ enum VMScriptState: CaseIterable {
         case .suspended: FourCharCode(scriptingCode: "KsSu")
         case .saving: FourCharCode(scriptingCode: "KsSv")
         case .snapshotting: FourCharCode(scriptingCode: "KsSn")
+        case .cloning: FourCharCode(scriptingCode: "KsCl")
         case .restoring: FourCharCode(scriptingCode: "KsRs")
         case .installing: FourCharCode(scriptingCode: "KsIn")
         case .initialBoot: FourCharCode(scriptingCode: "KsIb")

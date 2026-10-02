@@ -73,6 +73,12 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// Snapshots passed to `takeSnapshot`, in call order.
     private(set) var takenSnapshots: [VMSnapshotRecord] = []
+    /// The session a live clone's copy drives: the real capture body runs
+    /// over it. `nil` drives a fresh one, found as the clone found the guest,
+    /// that writes a stand-in saved state.
+    var liveCopySession: MockSnapshotSession?
+    private(set) var copyLiveCallCount = 0
+
     /// Snapshots passed to `revertToSnapshot`, in call order.
     private(set) var revertedSnapshots: [VMSnapshot] = []
 
@@ -184,6 +190,26 @@ final class MockVirtualizationService: VirtualizationProviding {
         }
         takenSnapshots.append(snapshot)
         return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+    }
+
+    /// Runs the real live-capture body over ``liveCopySession``.
+    func copyLive(
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        savingStateTo saveFileURL: URL,
+        prepare: () async throws -> Void,
+        copy: () async throws -> Void
+    ) async throws -> VMOperationEnding<Void> {
+        copyLiveCallCount += 1
+        guard let sessionID = context.operation.sessionID else {
+            throw VirtualizationError.noVirtualMachine
+        }
+        let foundPaused = instance.phase.operation?.startedFrom == .livePaused(sessionID: sessionID)
+        let session =
+            liveCopySession
+            ?? MockSnapshotSession(guestState: foundPaused ? .paused : .running, writesStateFile: true)
+        return await VirtualizationService.captureWarm(
+            instance, context, session: session, prepare: prepare,
+            savingStateTo: { saveFileURL }, copy: copy)
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn

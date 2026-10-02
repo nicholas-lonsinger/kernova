@@ -356,7 +356,7 @@ enum VMOperationKind: Sendable, Equatable {
     /// A hot resume of a live-paused VM.
     case resuming
     case saving
-    case capturingSnapshot(VMSnapshotCaptureMode)
+    case capturingSnapshot(VMCaptureMode)
     case deletingSnapshot
     case attachingUSB(registryID: UInt64)
     case detachingUSB(deviceID: UUID)
@@ -377,8 +377,12 @@ enum VMOperationKind: Sendable, Equatable {
     /// removable media — hot-plugged into a live guest before the operation
     /// ends.
     case creatingRemovableMedia
-    /// A clone copying the VM's files out of its bundle.
-    case copyingOut
+    /// A clone copying the VM's files out of its bundle in `mode`: a live
+    /// copy pauses the guest once to copy its disks — and, for an Exact Copy,
+    /// to write its memory into the clone's bundle first — then puts it back
+    /// as found; a suspended copy clones the suspend slot beside the disks
+    /// for an Exact Copy and leaves it out for a New Machine.
+    case copyingOut(VMCaptureMode)
 
     /// The operations a cancel request names.
     enum Family: Sendable, Equatable {
@@ -404,7 +408,7 @@ enum VMNonBringUpKind: Sendable, Equatable {
     case pausing
     case resuming
     case saving
-    case capturingSnapshot(VMSnapshotCaptureMode)
+    case capturingSnapshot(VMCaptureMode)
     case deletingSnapshot
     case attachingUSB(registryID: UInt64)
     case detachingUSB(deviceID: UUID)
@@ -415,7 +419,7 @@ enum VMNonBringUpKind: Sendable, Equatable {
     case creatingStorageDisk
     case removingStorageDisk
     case creatingRemovableMedia
-    case copyingOut
+    case copyingOut(VMCaptureMode)
 
     /// `kind`, unless it is a bring-up.
     init?(_ kind: VMOperationKind) {
@@ -435,7 +439,7 @@ enum VMNonBringUpKind: Sendable, Equatable {
         case .creatingStorageDisk: self = .creatingStorageDisk
         case .removingStorageDisk: self = .removingStorageDisk
         case .creatingRemovableMedia: self = .creatingRemovableMedia
-        case .copyingOut: self = .copyingOut
+        case .copyingOut(let mode): self = .copyingOut(mode)
         }
     }
 
@@ -455,7 +459,7 @@ enum VMNonBringUpKind: Sendable, Equatable {
         case .creatingStorageDisk: .creatingStorageDisk
         case .removingStorageDisk: .removingStorageDisk
         case .creatingRemovableMedia: .creatingRemovableMedia
-        case .copyingOut: .copyingOut
+        case .copyingOut(let mode): .copyingOut(mode)
         }
     }
 }
@@ -711,10 +715,15 @@ extension VMOperationKind {
                 status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
                 toleratedSessionActions: stoppable,
                 edits: .baseExcept(.machineKeys), joinedBy: [])
-        case .copyingOut:
+        case .copyingOut(.stopped), .copyingOut(.suspended):
             return .init(
                 status: .base, holdsIdentity: .never, quit: .interrupt, display: .base,
                 toleratedSessionActions: [], edits: .baseExcept(.machineKeys), joinedBy: [])
+        case .copyingOut(.live):
+            return .init(
+                status: .shows(.cloning), holdsIdentity: .always, quit: .waitOut,
+                display: .shown, toleratedSessionActions: [],
+                edits: .only(.presentationAndMetadata), joinedBy: [])
         }
     }
 }

@@ -11,6 +11,7 @@ extension VMStatus {
         switch self {
         case .saving: "Suspending\u{2026}"
         case .snapshotting: "Taking Snapshot\u{2026}"
+        case .cloning: "Cloning\u{2026}"
         case .restoring: "Restoring\u{2026}"
         default: nil
         }
