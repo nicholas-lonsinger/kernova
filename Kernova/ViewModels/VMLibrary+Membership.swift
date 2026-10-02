@@ -6,8 +6,8 @@ import KernovaLogging
 /// directory-watched reconcile, and the arrival pipeline that publishes a
 /// create, clone or import. Every path ends in ``VMLibrary/adopt(_:)``.
 extension VMLibrary {
-    /// Fills the library from disk, then starts watching the VMs directory for
-    /// changes made outside the app.
+    /// Fills the library from disk, then starts reconciling it with the VMs
+    /// directory as ``VMDirectoryWatcher`` triggers.
     ///
     /// Called once, from `applicationWillFinishLaunching`. Not part of `init`:
     /// everything the initializer does runs before `NSApplication.run()`, so a
@@ -209,7 +209,7 @@ extension VMLibrary {
             return
         }
 
-        let watcher = VMDirectoryWatcher { [weak self] in
+        let watcher = VMDirectoryWatcher(activationCenter: activationCenter) { [weak self] in
             self?.reconcileWithDisk()
         }
         watcher.start(directory: vmsDir)

@@ -1,8 +1,14 @@
-import Foundation
+import AppKit
 import KernovaLogging
 
-/// Watches the VMs directory for external file system changes (e.g., Trash restore via Finder "Put Back")
-/// and triggers a reconciliation callback after a debounce period.
+/// Triggers a reconciliation when something outside the app may have changed
+/// the VMs directory: after a write to the directory itself (a bundle added,
+/// removed or renamed, Finder's "Put Back" among them) settles, and at once
+/// each time the app becomes active.
+///
+/// A write inside a bundle raises no event on the directory, so a bundle copied
+/// in by hand is listed only once its configuration lands, which nothing
+/// watched reports; activation is when the user looks again.
 @MainActor
 final class VMDirectoryWatcher {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDirectoryWatcher")
@@ -11,19 +17,38 @@ final class VMDirectoryWatcher {
     /// be cancelled in `deinit` (which is nonisolated); safe because it is only
     /// written in `start()` and read in `deinit`.
     nonisolated(unsafe) private var directorySource: DispatchSourceFileSystemObject?
+    /// `nonisolated(unsafe)` for the same reason as ``directorySource``.
+    nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
     private var debounceTask: Task<Void, Never>?
+    private let activationCenter: NotificationCenter
     private let onReconcile: @MainActor () -> Void
 
-    init(onReconcile: @MainActor @escaping () -> Void) {
+    /// `activationCenter` is where the app-activation trigger is observed, so
+    /// a test can post into its own center.
+    init(activationCenter: NotificationCenter, onReconcile: @MainActor @escaping () -> Void) {
+        self.activationCenter = activationCenter
         self.onReconcile = onReconcile
     }
 
     deinit {
         directorySource?.cancel()
+        if let activationObserver {
+            activationCenter.removeObserver(activationObserver)
+        }
     }
 
-    /// Starts watching the given directory for file system write events.
+    /// Starts both triggers. The activation trigger starts even when the
+    /// directory cannot be opened for monitoring.
     func start(directory: URL) {
+        activationObserver = activationCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // `queue: .main` delivers on the main thread.
+            MainActor.assumeIsolated {
+                self?.reconcileNow()
+            }
+        }
+
         let fd = open(directory.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else {
             #log(
@@ -64,5 +89,12 @@ final class VMDirectoryWatcher {
             guard !Task.isCancelled else { return }
             onReconcile()
         }
+    }
+
+    /// Reconciles at once, absorbing a pass a directory write had scheduled.
+    private func reconcileNow() {
+        debounceTask?.cancel()
+        debounceTask = nil
+        onReconcile()
     }
 }

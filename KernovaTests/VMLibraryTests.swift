@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import Foundation
 import KernovaTestSupport
@@ -24,7 +25,8 @@ struct VMLibraryTests {
         downloadService: MockDownloadService = MockDownloadService(),
         downloadsDirectory: URL? = nil,
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
-        arpTable: ScriptedARPTable = ScriptedARPTable()
+        arpTable: ScriptedARPTable = ScriptedARPTable(),
+        activationCenter: NotificationCenter = NotificationCenter()
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
         let library = makeWiredLibrary(
             storage: storageService,
@@ -39,7 +41,8 @@ struct VMLibraryTests {
             fileSystem: fileSystem,
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
-            arpTable: arpTable)
+            arpTable: arpTable,
+            activationCenter: activationCenter)
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
@@ -587,6 +590,22 @@ struct VMLibraryTests {
 
         #expect(library.instances.count == 1)
         #expect(library.instances.first?.name == "Discovered VM")
+    }
+
+    @Test("Becoming active adopts a bundle that arrived without a write to the VMs directory")
+    func activationAdoptsBundleTheDirectoryNeverReported() async throws {
+        let center = NotificationCenter()
+        let (library, storage, _, _) = makeLibrary(activationCenter: center)
+        await library.startLibrary()
+        #expect(library.instances.isEmpty)
+
+        // Listed only once its configuration lands, which a hand copy writes
+        // inside the bundle, where the directory watch sees nothing.
+        let config = VMConfiguration(name: "Hand Copied", guestOS: .linux, bootMode: .efi)
+        storage.bundles[try storage.bundleURL(for: config)] = config
+        center.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+
+        try await waitForChange { library.instances.map(\.name) == ["Hand Copied"] }
     }
 
     @Test("reconcileWithDisk removes stopped VMs whose bundles are gone")
