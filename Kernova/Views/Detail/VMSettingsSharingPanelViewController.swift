@@ -166,11 +166,13 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             shownWhen: { [weak self] in self?.showsSharingDeviceRule ?? false })
         sharingDeviceCaptionView = caption
 
-        let paragraphs = Self.sharedDirectoriesInfoParagraphs(for: instance.effectiveConfiguration)
-        return makeGroupedFormSection([
-            lockRegistry.makeHeader("Shared Directories", editableWhen: .stopped, paragraphs: paragraphs), card,
-            caption,
-        ])
+        // Read on each click: the guest's macOS version, which decides the
+        // resume note, arrives with the agent after the panel is built.
+        let header = lockRegistry.makeHeader("Shared Directories", editableWhen: .stopped) { [weak self] in
+            guard let self else { return [] }
+            return Self.sharedDirectoriesInfoParagraphs(for: self.instance.effectiveConfiguration)
+        }
+        return makeGroupedFormSection([header, card, caption])
     }
 
     /// The Shared Directories header's info for `configuration`'s guest.

@@ -15,7 +15,7 @@ final class InfoButtonView: NSView {
     private let coordinator = Coordinator()
 
     /// The paragraphs the popover renders on the next click.
-    var paragraphs: [InfoPopoverParagraph] { coordinator.paragraphs }
+    var paragraphs: [InfoPopoverParagraph] { coordinator.paragraphs() }
 
     init() {
         super.init(frame: .zero)
@@ -52,6 +52,12 @@ final class InfoButtonView: NSView {
     /// Safe to call repeatedly; `label` is the section or control name, rendered
     /// as "About \(label)".
     func configure(label: String, paragraphs: [InfoPopoverParagraph]) {
+        configure(label: label, paragraphs: { paragraphs })
+    }
+
+    /// ``configure(label:paragraphs:)`` for info that follows state the view
+    /// was built before: `paragraphs` is read on each click.
+    func configure(label: String, paragraphs: @escaping @MainActor () -> [InfoPopoverParagraph]) {
         let about = "About \(label)"
         let config = NSImage.SymbolConfiguration(scale: .small)
         button.image = NSImage.systemSymbol(
@@ -63,18 +69,18 @@ final class InfoButtonView: NSView {
         coordinator.paragraphs = paragraphs
     }
 
-    /// Owns the per-button ``PopoverPresenter`` and the latest paragraph
-    /// snapshot to render when the button is clicked.
+    /// Owns the per-button ``PopoverPresenter`` and the source of the
+    /// paragraphs to render when the button is clicked.
     @MainActor
     private final class Coordinator {
         let presenter = PopoverPresenter()
         /// Wrapper `NSView` used as the popover's positioning view.
         weak var anchor: NSView?
-        var paragraphs: [InfoPopoverParagraph] = []
+        var paragraphs: @MainActor () -> [InfoPopoverParagraph] = { [] }
 
         @objc func buttonClicked(_: NSButton) {
             guard let anchor else { return }
-            let vc = InfoPopoverContentViewController(paragraphs: paragraphs)
+            let vc = InfoPopoverContentViewController(paragraphs: paragraphs())
             presenter.show(content: vc, from: anchor, preferredEdge: .minY)
         }
     }

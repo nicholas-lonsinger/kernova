@@ -30,10 +30,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var ipAddressRow: GroupedFormCollapsibleRow?
     private var ipAddressValueLabel: NSTextField?
     private var ipAddressCopyButton: CopyValueButton?
-    /// The Mode row's info button, re-pointed whenever the IP address row
-    /// changes, since its Shared paragraph names that row only while it shows
-    /// an address.
-    private var modeInfoButton: InfoButtonView?
     /// Holds the banner naming the other VMs sharing this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
@@ -118,7 +114,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkModePopUp = makeNetworkModePopUp()
         let modeRow = makeGroupedFormCardRow(
             "Mode", control: networkModePopUp, info: modeInfoParagraphs())
-        modeInfoButton = modeRow.infoButton
+        // Read on each click: the Shared paragraph names the IP address row
+        // only while it shows an address.
+        modeRow.infoButton?.configure(label: "Mode") { [weak self] in self?.modeInfoParagraphs() ?? [] }
 
         let rows: [NSView] = [modeRow, makeIPAddressRow(), makeMACAddressRow()]
         networkWarningContainer = NSStackView()
@@ -160,7 +158,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         ipAddressRow?.isHidden = address.displayText == nil
         ipAddressCopyButton?.value = address.address
         ipAddressValueLabel?.stringValue = address.displayText ?? ""
-        modeInfoButton?.configure(label: "Mode", paragraphs: modeInfoParagraphs())
     }
 
     /// The Mode info for this VM as the panel shows it now.

@@ -538,10 +538,29 @@ struct VMSettingsSharingPanelTests {
             lastSeenGuestOSVersion: reported)
         let paragraphs = VMSettingsSharingPanelViewController.sharedDirectoriesInfoParagraphs(
             for: configuration)
-        let mentionsResume = paragraphs.contains {
+        #expect(Self.mentionsResume(paragraphs) == noted)
+    }
+
+    private static func mentionsResume(_ paragraphs: [InfoPopoverParagraph]) -> Bool {
+        paragraphs.contains {
             if case .body(let text) = $0 { return text.contains("resumes from Suspend") }
             return false
         }
-        #expect(mentionsResume == noted)
+    }
+
+    @Test("The Shared Directories info follows a guest version the agent reports after the panel is built")
+    func resumeNoteFollowsAReportAfterBuild() throws {
+        let (vc, instance) = makeSharingController([], guestOS: .macOS)
+        let panel = try #require(vc.panelForTesting(.sharing))
+        let info = try #require(infoButton(about: "Shared Directories", in: panel))
+        #expect(!Self.mentionsResume(info.paragraphs))
+
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 13.7.8 (Build 22H730)"))
+        #expect(Self.mentionsResume(info.paragraphs))
+
+        instance.recordObservedAgentInfo(
+            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 14.8.9 (Build 23J100)"))
+        #expect(!Self.mentionsResume(info.paragraphs))
     }
 }
