@@ -547,8 +547,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     private struct AttachmentInfo {
         let id: UUID
         let label: String
-        let path: String
-        let isInternal: Bool
+        let image: DiskImageReference
         let readOnly: Bool
         let busText: String
         let notes: String
@@ -569,7 +568,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         case .storage:
             guard let disk = currentStorageDisks.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
-                id: disk.id, label: disk.label, path: disk.path, isInternal: disk.isInternal,
+                id: disk.id, label: disk.label, image: disk.imageReference,
                 readOnly: disk.readOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
                 notes: disk.notes, editable: canEditStorageDisks,
@@ -578,7 +577,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         case .removable:
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
-                id: item.id, label: item.label, path: item.path, isInternal: false,
+                id: item.id, label: item.label, image: item.imageReference,
                 readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
                 editable: canEditRemovableMedia, removable: canEditRemovableMedia,
                 isSoleStorageDisk: false)
@@ -592,7 +591,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// Absolute URL backing an attachment, via the single resolution rule in
     /// ``VMBundleLayout/diskURL(forRelativePath:isInternal:)``.
     private func attachmentURL(_ info: AttachmentInfo) -> URL {
-        instance.bundleLayout.diskURL(forRelativePath: info.path, isInternal: info.isInternal)
+        instance.bundleLayout.diskURL(forRelativePath: info.image.path, isInternal: info.image.isInternal)
     }
 
     /// Builds the right-click menu for an attachment row, lazily at click time so
@@ -618,7 +617,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let showInFinder = attachmentMenuItem(
             "Show in Finder", #selector(menuAttachmentShowInFinder(_:)), ref)
         // Nothing to reveal when an external file is missing (in-bundle always exists).
-        showInFinder.isEnabled = info.isInternal || context.fileMonitor.exists(info.path)
+        showInFinder.isEnabled = info.image.isInternal || context.fileMonitor.exists(info.image.path)
         menu.addItem(showInFinder)
         menu.addItem(attachmentMenuItem("Copy Path", #selector(menuAttachmentCopyPath(_:)), ref))
         menu.addItem(
@@ -725,14 +724,13 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     ) {
         let url = attachmentURL(info)
         let layout = instance.bundleLayout
-        let path = info.path
-        let isInternal = info.isInternal
+        let image = info.image
         Task { [weak self] in
             let snapshot = await Task.detached {
-                () -> (VMBundleLayout.DiskSizes, Date?) in
-                let sizes = layout.diskSizes(forRelativePath: path, isInternal: isInternal)
-                let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-                return (sizes, created)
+                layout.withDiskImage(image) { url -> (VMBundleLayout.DiskSizes, Date?) in
+                    let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+                    return (VMBundleLayout.diskSizes(at: url), created)
+                }
             }.value
             // Don't present onto a settings pane the user has navigated away from
             // while the off-main read was in flight (the VC is reused across

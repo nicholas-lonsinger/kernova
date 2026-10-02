@@ -180,63 +180,87 @@ struct VMBundleLayout: Sendable {
         var capacityBytes: UInt64?
     }
 
-    /// Reads a disk image's on-disk footprint and virtual capacity in one pass.
+    /// Runs `body` on the disk image's URL, inside the image's bookmark scope
+    /// when it has one — outside a running session nothing else holds that
+    /// scope, and the sandbox denies opening an out-of-container file without
+    /// it.
     ///
-    /// One `resourceValues` yields `totalFileAllocatedSizeKey` (the true sparse
-    /// footprint, not the grown apparent size) and `fileSizeKey` (the apparent
-    /// size, which *is* the capacity for a non-sparse format). Sparse **ASIF**
-    /// images instead record their capacity in the header — a 100 GB disk
-    /// holding 27 GB has a ~27 GB apparent size — so it is parsed out.
-    func diskSizes(forRelativePath path: String, isInternal: Bool) -> DiskSizes {
-        let url = diskURL(forRelativePath: path, isInternal: isInternal)
-        let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileSizeKey])
-        let onDisk = values?.totalFileAllocatedSize.map(UInt64.init)
-        let capacity: UInt64?
-        switch asifCapacity(at: url) {
-        case .capacity(let bytes):
-            capacity = bytes
-        case .malformedASIF:
-            // Do *not* guess from the apparent size: for an ASIF it tracks the
-            // grown footprint, not capacity.
-            capacity = nil
-        case .notASIF:
-            // Raw `.img` / `.iso` / `.dmg`: apparent size *is* the capacity.
-            capacity = values?.fileSize.map(UInt64.init)
-        }
-        return DiskSizes(onDiskBytes: onDisk, capacityBytes: capacity)
+    /// Advisory: the readouts this feeds are never worth mounting a volume or
+    /// showing system UI for.
+    func withDiskImage<T>(_ image: DiskImageReference, _ body: (URL) -> T) -> T {
+        SecurityScopedBookmark.withResolvedURL(
+            bookmark: image.bookmark,
+            fallback: diskURL(forRelativePath: image.path, isInternal: image.isInternal),
+            options: SecurityScopedBookmark.advisoryResolution, body)
     }
 
-    /// Outcome of inspecting a file's ASIF header for its virtual capacity.
-    private enum ASIFCapacity {
-        case capacity(UInt64)
-        /// Magic matched but the capacity failed the sanity bounds.
-        case malformedASIF
-        /// No `shdw` magic, or the file couldn't be opened.
-        case notASIF
+    /// Reads a disk image's on-disk footprint and virtual capacity in one pass,
+    /// inside its bookmark scope.
+    func diskSizes(of image: DiskImageReference) -> DiskSizes {
+        withDiskImage(image, Self.diskSizes(at:))
     }
 
-    /// Reads the virtual capacity recorded in an ASIF image's header.
+    /// Reads the on-disk footprint and virtual capacity of the file at `url`.
+    ///
+    /// `totalFileAllocatedSizeKey` is the true sparse footprint, not the grown
+    /// apparent size. Capacity comes from the opened file alone: a sparse
+    /// **ASIF** image records it in its header — a 100 GB disk holding 27 GB has
+    /// a ~27 GB apparent size — and any other format's apparent size *is* its
+    /// capacity. A file that cannot be opened has no capacity reading at all.
+    static func diskSizes(at url: URL) -> DiskSizes {
+        let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+        return DiskSizes(
+            onDiskBytes: values?.totalFileAllocatedSize.map(UInt64.init),
+            capacityBytes: capacity(at: url))
+    }
+
+    /// The virtual capacity of the file at `url`, or `nil` when it cannot be
+    /// opened or is an ASIF whose recorded capacity fails the sanity bounds.
     // ASIF's on-disk layout is undocumented; its `shdw` container records the
     // virtual size at byte offset 0x30 as a big-endian `UInt64` count of 512-byte
     // sectors (verified exact on 50 and 100 GB disks: 97_656_250 and 195_312_500
     // sectors).
-    private func asifCapacity(at url: URL) -> ASIFCapacity {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return .notASIF }
+    private static func capacity(at url: URL) -> UInt64? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard
             let header = try? handle.read(upToCount: 0x38), header.count >= 0x38,
             header.prefix(4) == Data("shdw".utf8)
         else {
-            return .notASIF
+            // Raw `.img` / `.iso` / `.dmg`: the apparent size of the file this
+            // handle opened is the capacity.
+            return try? handle.seekToEnd()
         }
         let sectors = header[0x30..<0x38].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
         // Checked multiply: a hostile header could otherwise wrap a huge sector
         // count back into the sanity window and report a fabricated capacity.
         let (bytes, overflowed) = sectors.multipliedReportingOverflow(by: 512)
-        // Sanity bounds: 1 MB … 1 PB.
+        // Sanity bounds: 1 MB … 1 PB. Out of bounds is unknown, never the
+        // apparent size, which for an ASIF tracks the grown footprint.
         guard !overflowed, (1_000_000...1_000_000_000_000_000).contains(bytes) else {
-            return .malformedASIF
+            return nil
         }
-        return .capacity(bytes)
+        return bytes
+    }
+}
+
+/// A disk image file a VM references: where it is, and the bookmark that
+/// grants access to it when it lives outside the bundle.
+struct DiskImageReference: Sendable, Equatable {
+    /// Bundle-relative when `isInternal`, absolute otherwise.
+    var path: String
+    var isInternal: Bool
+    var bookmark: Data?
+}
+
+extension StorageDisk {
+    var imageReference: DiskImageReference {
+        DiskImageReference(path: path, isInternal: isInternal, bookmark: bookmark)
+    }
+}
+
+extension RemovableMediaItem {
+    var imageReference: DiskImageReference {
+        DiskImageReference(path: path, isInternal: false, bookmark: bookmark)
     }
 }

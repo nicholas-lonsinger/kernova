@@ -130,16 +130,18 @@ struct VMBundleLayoutTests {
 
     // MARK: - diskSizes.onDiskBytes
 
-    private func mainDiskOnDiskBytes(_ layout: VMBundleLayout) -> UInt64? {
+    private func mainDiskSizes(_ layout: VMBundleLayout) -> VMBundleLayout.DiskSizes {
         layout.diskSizes(
-            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true
-        ).onDiskBytes
+            of: DiskImageReference(
+                path: layout.diskImageURL.lastPathComponent, isInternal: true))
+    }
+
+    private func mainDiskOnDiskBytes(_ layout: VMBundleLayout) -> UInt64? {
+        mainDiskSizes(layout).onDiskBytes
     }
 
     private func mainDiskCapacityBytes(_ layout: VMBundleLayout) -> UInt64? {
-        layout.diskSizes(
-            forRelativePath: layout.diskImageURL.lastPathComponent, isInternal: true
-        ).capacityBytes
+        mainDiskSizes(layout).capacityBytes
     }
 
     @Test("onDiskBytes is nil when the disk image does not exist")
@@ -219,9 +221,46 @@ struct VMBundleLayoutTests {
         let layout = VMBundleLayout(bundleURL: scratch.url)
         #expect(
             layout.diskSizes(
-                forRelativePath: fileURL.path(percentEncoded: false), isInternal: false
+                of: DiskImageReference(
+                    path: fileURL.path(percentEncoded: false), isInternal: false)
             )
             .capacityBytes == 2048)
+    }
+
+    @Test("capacityBytes is unknown for a file that cannot be opened, never its apparent size")
+    func diskCapacityBytesNilForUnopenableFile() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let path = layout.diskImageURL.path(percentEncoded: false)
+        // A raw image whose apparent size would read as a capacity if the file
+        // opened; with no read permission it stands for the sandbox's denial.
+        try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        }
+
+        let sizes = mainDiskSizes(layout)
+        #expect(sizes.onDiskBytes != nil)
+        #expect(sizes.capacityBytes == nil)
+    }
+
+    @Test("an external image is read through its bookmark, which tracks a moved file")
+    func diskSizesReadThroughBookmark() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let original = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
+        try Data(repeating: 0xCD, count: 2048).write(to: original)
+        let bookmark = try #require(SecurityScopedBookmark.make(for: original))
+        let moved = scratch.url.appendingPathComponent("\(UUID().uuidString).img")
+        try FileManager.default.moveItem(at: original, to: moved)
+
+        let layout = VMBundleLayout(bundleURL: scratch.url)
+        let sizes = layout.diskSizes(
+            of: DiskImageReference(
+                path: original.path(percentEncoded: false), isInternal: false,
+                bookmark: bookmark))
+        #expect(sizes.capacityBytes == 2048)
     }
 
     @Test("capacityBytes is nil for a missing file")

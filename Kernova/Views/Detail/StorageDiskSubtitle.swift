@@ -45,7 +45,7 @@ func populateDiskSubtitle(
     animated: Bool = true
 ) {
     populateDiskSubtitle(
-        field, id: disk.id, path: disk.path, isInternal: disk.isInternal,
+        field, id: disk.id, image: disk.imageReference,
         bundleLayout: bundleLayout, isMissing: isMissing, animated: animated)
 }
 
@@ -56,7 +56,7 @@ func populateDiskSubtitle(
     isMissing: Bool, animated: Bool = true
 ) {
     populateDiskSubtitle(
-        field, id: item.id, path: item.path, isInternal: false,
+        field, id: item.id, image: item.imageReference,
         bundleLayout: bundleLayout, isMissing: isMissing, animated: animated)
 }
 
@@ -70,7 +70,7 @@ func populateDiskSubtitle(
 /// prior in-flight read so reads don't accumulate under churn.
 @MainActor
 func populateDiskSubtitle(
-    _ field: NSTextField, id: UUID, path: String, isInternal: Bool,
+    _ field: NSTextField, id: UUID, image: DiskImageReference,
     bundleLayout: VMBundleLayout, isMissing: Bool, animated: Bool = true
 ) {
     let fieldKey = ObjectIdentifier(field)
@@ -80,7 +80,7 @@ func populateDiskSubtitle(
         // Clearing the token also makes any in-flight read from a prior binding
         // ignore its late result.
         field.identifier = nil
-        applyAttachmentSubtitle(to: field, path: path, isMissing: true)
+        applyAttachmentSubtitle(to: field, path: image.path, isMissing: true)
         return
     }
 
@@ -91,14 +91,14 @@ func populateDiskSubtitle(
         // Seed the best value known synchronously so a recycled cell never
         // flashes a stale size: an external file shows its path; an in-bundle
         // file clears to empty, invisible for the sub-ms read that follows.
-        applyAttachmentSubtitle(to: field, path: isInternal ? "" : path, isMissing: false)
+        applyAttachmentSubtitle(to: field, path: image.isInternal ? "" : image.path, isMissing: false)
     }
 
     diskSubtitleReadGeneration += 1
     let generation = diskSubtitleReadGeneration
     let task = Task { [weak field] in
         let text = await Task.detached {
-            diskSubtitle(path: path, isInternal: isInternal, bundleLayout: bundleLayout)
+            diskSubtitle(of: image, bundleLayout: bundleLayout)
         }.value
         // Clear our own entry only — a newer bind may have replaced it.
         if diskSubtitleReads[fieldKey]?.generation == generation {

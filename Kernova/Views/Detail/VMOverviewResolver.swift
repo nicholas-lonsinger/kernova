@@ -170,8 +170,7 @@ final class VMOverviewResolver {
 
     private struct BootDiskKey: Equatable {
         let instanceID: UUID
-        let path: String
-        let isInternal: Bool
+        let image: DiskImageReference
     }
 
     init(
@@ -299,7 +298,7 @@ final class VMOverviewResolver {
     /// issued for the previous one.
     private func refreshBootDisk() {
         let key = instance.effectiveStorageDisks.first.map {
-            BootDiskKey(instanceID: instance.id, path: $0.path, isInternal: $0.isInternal)
+            BootDiskKey(instanceID: instance.id, image: $0.imageReference)
         }
         guard key != bootDiskKey else { return }
         bootDiskKey = key
@@ -310,7 +309,7 @@ final class VMOverviewResolver {
         let bundleLayout = instance.bundleLayout
         bootDiskTask = Task { [weak self] in
             let sizes = await Task.detached {
-                bundleLayout.diskSizes(forRelativePath: key.path, isInternal: key.isInternal)
+                bundleLayout.diskSizes(of: key.image)
             }.value
             guard !Task.isCancelled, let self, self.bootDiskKey == key else { return }
             self.resolved.bootDiskBytes = sizes.capacityBytes
