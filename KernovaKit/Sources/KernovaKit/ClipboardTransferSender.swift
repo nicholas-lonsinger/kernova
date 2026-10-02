@@ -148,8 +148,8 @@ final class ClipboardTransferSender: @unchecked Sendable {
     ///
     /// Safe from any thread and idempotent — the first reason wins. The reason
     /// is honored before the next socket write, so a peer that is reading sees
-    /// it immediately; one that has stopped reading sees it when the send
-    /// timeout releases the parked write, having not been waiting for it.
+    /// it in the trailer; one that stopped reading until the send timeout
+    /// released the parked write gets no trailer, only the close.
     func cancel(_ code: ClipboardStreamAbortCode) {
         lock.withLock { if retiredAs == nil { retiredAs = code } }
     }

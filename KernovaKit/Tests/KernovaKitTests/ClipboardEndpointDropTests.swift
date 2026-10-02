@@ -147,7 +147,9 @@ struct ClipboardEndpointDropTests {
 
     @Test("cancelling the drop releases it to the peer and stops its readout")
     func hostCancelReleasesTheDrop() async throws {
-        let harness = try RawPeerHarness(kind: .drop, receives: false)
+        // Unbounded, so the parked write below is released by this side's read
+        // and never by the stall timeout, which would end it with no trailer.
+        let harness = try RawPeerHarness(kind: .drop, receives: false, dataSocketTimeout: 0)
         defer { harness.tearDown() }
         // Incompressible and larger than the connection's send buffer, so the
         // item is still streaming when the Cancel lands: a peer that opens the

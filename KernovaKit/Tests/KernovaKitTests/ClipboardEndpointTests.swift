@@ -417,7 +417,9 @@ struct ClipboardEndpointTests {
 
     @Test("the readout's Cancel stops the wave, and later requests are refused stale")
     func readoutCancelRefusesLaterRequests() async throws {
-        let harness = try RawPeerHarness()
+        // Unbounded, so the parked write below is released by this side's read
+        // and never by the stall timeout, which would end it with no trailer.
+        let harness = try RawPeerHarness(dataSocketTimeout: 0)
         defer { harness.tearDown() }
         // Larger than the connection's send buffer, so the transfer is still in
         // flight while its readout is on screen: a peer that reads the reply and

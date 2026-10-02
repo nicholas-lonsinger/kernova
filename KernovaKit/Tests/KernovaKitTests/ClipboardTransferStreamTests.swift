@@ -587,7 +587,9 @@ struct ClipboardTransferStreamTests {
 
     @Test("a second connection for a transfer already streaming is closed, and announces nothing")
     func duplicateTransferIDClosesItsConnection() async throws {
-        let harness = TransferHarness()
+        // Unbounded, so the parked send below is released by the drain and
+        // never by the stall timeout, which would cut its payload short.
+        let harness = TransferHarness(socketTimeout: 0)
         defer { harness.tearDown() }
         let collector = harness.collector
         let transferID: UInt64 = 0x181
