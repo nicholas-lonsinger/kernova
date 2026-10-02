@@ -148,7 +148,8 @@ extension VMCommandCore {
         // it refuses the removal; the disk is read again under the operation,
         // since one detached, re-pointed or left the VM's last in the gap is
         // not the removal this call resolved sharing for.
-        try await perform(.removingStorageDisk, on: instance, verb: .editStorageDisk) { context in
+        let kept = try await perform(.removingStorageDisk, on: instance, verb: .editStorageDisk) {
+            context -> FilesKept.File? in
             let current = try removableStorageDisk(id, on: instance)
             guard current.path == disk.path, current.bookmark == disk.bookmark else {
                 throw staleAttachment(id, on: instance, verb: .editStorageDisk)
@@ -162,21 +163,22 @@ extension VMCommandCore {
                     Self.logger, .notice,
                     "Kept shared disk '\(disk.label, privacy: .public)' — still used by another VM; removed entry only"
                 )
-                return
+                return nil
             }
             guard disk.isInternal else {
-                await trashExternalFile(
+                return await trashExternalFile(
                     at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark,
-                    label: disk.label, vmName: instance.name, verb: .editStorageDisk)
-                return
+                    label: disk.label, vmName: instance.name)
             }
-            await reportFileRemoval(
-                of: context.bundle.url.appendingPathComponent(disk.path), label: disk.label,
-                vmName: instance.name, verb: .editStorageDisk
+            return await removeFile(
+                at: context.bundle.url.appendingPathComponent(disk.path), label: disk.label,
+                vmName: instance.name
             ) {
                 try await context.bundle.trashInternalDisk(atRelativePath: disk.path)
             }
         }
+        try Self.requireRemoved(
+            [kept].compactMap { $0 }, after: .attachment(label: disk.label, vm: instance.name))
     }
 
     /// The storage disk `id` names, refusing when the VM no longer carries it
@@ -406,9 +408,11 @@ extension VMCommandCore {
             )
             return
         }
-        await trashExternalFile(
+        let kept = await trashExternalFile(
             at: URL(fileURLWithPath: item.path), bookmark: item.bookmark, label: item.label,
-            vmName: instance.name, verb: .editRemovableMedia)
+            vmName: instance.name)
+        try Self.requireRemoved(
+            [kept].compactMap { $0 }, after: .attachment(label: item.label, vm: instance.name))
     }
 
     /// Detaches a removable medium and keeps its file — what a running guest
@@ -926,61 +930,85 @@ extension VMCommandCore {
     // MARK: - Trashing
 
     /// Trashes one file an attachment or a deleted VM referenced outside any
-    /// bundle, to the Trash or immediately depending on `permanently`.
+    /// bundle, to the Trash or immediately depending on `permanently`, and
+    /// answers the file when it stayed (``removeFile(at:label:vmName:_:)``).
     ///
     /// The blocking call runs off the main actor: `trashItem` can hang for
     /// seconds on a slow or unresponsive volume.
     func trashExternalFile(
-        at url: URL, bookmark: Data?, label: String, vmName: String, verb: VMVerb,
-        permanently: Bool = false
-    ) async {
+        at url: URL, bookmark: Data?, label: String, vmName: String, permanently: Bool = false
+    ) async -> FilesKept.File? {
         let fileSystem = fileSystem
-        await reportFileRemoval(of: url, label: label, vmName: vmName, verb: verb) {
+        return await removeFile(at: url, label: label, vmName: vmName) {
             try await Task.detached(priority: .userInitiated) {
                 try SecurityScopedBookmark.withResolvedURL(bookmark: bookmark, fallback: url) {
                     target in
-                    if permanently {
-                        try fileSystem.removeItem(at: target)
-                    } else {
-                        try fileSystem.trashItem(at: target)
+                    do {
+                        if permanently {
+                            try fileSystem.removeItem(at: target)
+                        } else {
+                            try fileSystem.trashItem(at: target)
+                        }
+                    } catch {
+                        throw FileRemovalFailure(target: target, underlying: error)
                     }
                 }
             }.value
         }
     }
 
+    /// The file a removal addressed once a bookmark resolved it, which a
+    /// bookmark that followed a move puts somewhere other than the path the
+    /// attachment records.
+    private struct FileRemovalFailure: Error {
+        let target: URL
+        let underlying: any Error
+    }
+
     /// Runs `remove` for the file at `url` an attachment or a deleted VM
-    /// referenced, and says how it went.
+    /// referenced, answering the file when it stayed and `nil` when it went.
     ///
-    /// Missing files are swallowed at `.notice` — the source may have been
-    /// moved or deleted out of band, and there is nothing for the user to act
-    /// on; every other failure logs `.warning` and surfaces one error.
-    private func reportFileRemoval(
-        of url: URL, label: String, vmName: String, verb: VMVerb,
-        _ remove: () async throws -> Void
-    ) async {
+    /// A missing file answers `nil`, logged at `.notice` — the source may have
+    /// been moved or deleted out of band, and nothing was left behind.
+    private func removeFile(
+        at url: URL, label: String, vmName: String, _ remove: () async throws -> Void
+    ) async -> FilesKept.File? {
         do {
             try await remove()
             #log(
                 Self.logger, .notice,
                 "Removed the file behind '\(label, privacy: .public)' for VM '\(vmName, privacy: .public)'"
             )
-        } catch let error as CocoaError
-            where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile
-        {
-            #log(
-                Self.logger, .notice,
-                "File already gone for '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping"
-            )
+            return nil
         } catch {
-            let message = error.localizedDescription
+            let failure = error as? FileRemovalFailure
+            let target = failure?.target ?? url
+            let cause = failure?.underlying ?? error
+            if let cocoa = cause as? CocoaError,
+                cocoa.code == .fileNoSuchFile || cocoa.code == .fileReadNoSuchFile
+            {
+                #log(
+                    Self.logger, .notice,
+                    "File already gone for '\(label, privacy: .public)' (\(target.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)'; skipping"
+                )
+                return nil
+            }
+            let reason = cause.localizedDescription
             #log(
                 Self.logger, .warning,
-                "Failed to remove the file behind '\(label, privacy: .public)' (\(url.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)': \(message, privacy: .public)"
+                "Failed to remove the file behind '\(label, privacy: .public)' (\(target.lastPathComponent, privacy: .public)) on VM '\(vmName, privacy: .public)': \(reason, privacy: .public)"
             )
-            // Instance-less: the VM delete that shares this helper has evicted
-            // its instance by the time the externals run.
-            report(.operationFailed(verb: verb, message: message), on: nil)
+            return FilesKept.File(path: target.path(percentEncoded: false), reason: reason)
+        }
+    }
+
+    /// Throws ``CommandError/filesKept(_:)`` naming `kept` when any file
+    /// stayed after `removal`.
+    static func requireRemoved(
+        _ kept: [FilesKept.File], after removal: FilesKept.Removal
+    ) throws {
+        if let filesKept = FilesKept(removal, kept: kept) {
+            throw CommandError.filesKept(filesKept)
         }
     }
 

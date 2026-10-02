@@ -813,6 +813,44 @@ struct VMLibraryViewModelTests {
         #expect(!presenter.showError)
     }
 
+    @Test("deleteVM alerts once, naming the selected external that stayed")
+    func deleteVMAlertsOnceForAnExternalThatStayed() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let lockedID = UUID()
+        let lockedPath = scratch.url
+            .appendingPathComponent("kernova-locked.iso")
+            .path(percentEncoded: false)
+        let instance = viewModel.library.admitFixture {
+            $0.removableMedia = [RemovableMediaItem(id: lockedID, path: lockedPath, readOnly: true)]
+        }
+        storage.bundles[instance.bundleURL] = instance.configuration
+
+        await viewModel.delete(instance, deletingExternalIDs: [lockedID])
+
+        #expect(viewModel.instances.isEmpty)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errorTitle == "Couldn\u{2019}t Move a File to the Trash")
+        #expect(presenter.errorMessage?.contains("\u{201C}\(lockedPath)\u{201D}") == true)
+    }
+
+    @Test("A removable-media removal whose file stayed alerts once, naming the file")
+    func removeRemovableMediaAlertsOnceForAFileThatStayed() async {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let lockedPath = scratch.url
+            .appendingPathComponent("kernova-locked.img")
+            .path(percentEncoded: false)
+        let item = RemovableMediaItem(path: lockedPath, readOnly: true)
+        let instance = viewModel.library.admitFixture { $0.removableMedia = [item] }
+
+        await viewModel.removeRemovableMedia(item.id, from: instance, trashFile: true)
+
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(presenter.errors.count == 1)
+        #expect(presenter.errorMessage?.contains("\u{201C}\(lockedPath)\u{201D}") == true)
+    }
+
     @Test("deleteVM ignores a repeat confirm for an already-removed VM")
     func deleteVMIgnoresStaleRepeatConfirm() async {
         let (viewModel, storage, _, _, _) = makeViewModel()

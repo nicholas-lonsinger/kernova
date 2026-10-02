@@ -622,8 +622,9 @@ extension VMCommandCore {
         // so nothing can start the VM, or be decided against it, while its
         // files go — and a Start that landed while the externals resolved is
         // what refuses it here.
+        let kept: [FilesKept.File]
         do {
-            try await instance.activity.delete { context in
+            kept = try await instance.activity.delete { context -> [FilesKept.File] in
                 do {
                     if permanently {
                         try storageService.permanentlyDeleteVMBundle(at: context.bundle.url)
@@ -651,23 +652,28 @@ extension VMCommandCore {
                 // Externals go *after* the bundle, so a failure here leaves no
                 // VM naming files that are gone.
                 let vmName = instance.name
+                var kept: [FilesKept.File] = []
                 for attachment in toDelete {
-                    await trashExternalFile(
+                    if let file = await trashExternalFile(
                         at: URL(fileURLWithPath: attachment.path),
                         bookmark: attachment.reference.bookmark,
                         label: attachment.label,
                         vmName: vmName,
-                        verb: .delete,
                         permanently: permanently)
+                    {
+                        kept.append(file)
+                    }
                 }
                 // Dropped in the step that removes the VM, with nothing
                 // suspending in between.
                 library.evict(instance)
                 library.persistOrder()
+                return kept
             }
         } catch {
             throw failure(error, verb: .delete, on: instance)
         }
+        try Self.requireRemoved(kept, after: .vm(name: instance.name, permanently: permanently))
     }
 
     /// The refusal a VM delete raises, and the copy the delete sheet renders.

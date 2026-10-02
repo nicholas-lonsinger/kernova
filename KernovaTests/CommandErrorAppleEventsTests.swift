@@ -60,6 +60,22 @@ struct CommandErrorAppleEventsTests {
         }
     }
 
+    @Test("A removal whose file stayed is an event that failed, naming the file")
+    func filesKeptIsEventFailedNamingTheFile() throws {
+        let kept = try #require(
+            FilesKept(
+                .attachment(label: "Data", vm: "Alpha"),
+                kept: [FilesKept.File(path: "/Volumes/Archive/data.img", reason: "Locked.")]))
+        let outcome = CommandError.filesKept(kept)
+
+        #expect(outcome.appleEventErrorNumber == Int(errAEEventFailed))
+        #expect(
+            outcome.appleEventErrorString
+                == "\u{201C}Data\u{201D} was removed from \u{201C}Alpha\u{201D}. "
+                + "\u{201C}/Volumes/Archive/data.img\u{201D} was not moved to the Trash: Locked.")
+        #expect(outcome.alertTitle == "Couldn\u{2019}t Move a File to the Trash")
+    }
+
     @Test("A deadline that expired is a timeout")
     func aDeadlineIsATimeout() {
         let refusal = CommandError.timedOut(vm: makeSummary(), verb: .stop, seconds: 30)

@@ -56,7 +56,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .busy, .heldByAnotherCopy: self = .busy
         case .terminating: self = .unavailable
         case .timedOut: self = .timedOut
-        case .operationFailed: self = .operationFailed
+        case .operationFailed, .filesKept: self = .operationFailed
         }
     }
 

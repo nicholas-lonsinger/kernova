@@ -165,7 +165,7 @@ struct VMCapabilityAgreementTests {
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .macAddressRemedyRequired, .invalidArgument, .unsupported,
             .timedOut,
-            .operationFailed:
+            .operationFailed, .filesKept:
             false
         }
     }

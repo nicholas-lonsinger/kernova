@@ -592,26 +592,28 @@ final class VMActivity {
     /// Deletes the VM: admits and commits ``VMOperationKind/deleting``, runs
     /// `body` under its context, and moves the VM to
     /// ``VMLifecyclePhase/removed`` once the body returns — the only ending
-    /// that removes a VM.
+    /// that removes a VM — answering what the body returned.
     ///
     /// A body that throws rests the VM where the kind's
     /// ``VMOperationKind/restAfterFailure(_:)`` says.
-    func delete(_ body: (borrowing VMOperationContext) async throws -> Void) async throws {
+    func delete<T>(_ body: (borrowing VMOperationContext) async throws -> T) async throws -> T {
         let outcome = VMOutcome()
         let owner = try admit(.deleting, origin: .newWork, outcome: outcome)
         let context = VMOperationContext(activity: self, kind: .deleting, owner: owner)
+        let value: T
         do {
-            try await body(context)
+            value = try await body(context)
         } catch {
-            let ending = VMOperationEnding<Void>.failed(
+            let ending = VMOperationEnding<T>.failed(
                 VMOperationKind.deleting.restAfterFailure(error), error)
             return try finish(ending, outcome: outcome).get()
         }
-        guard endingOperation(outcome) != nil else { return }
+        guard endingOperation(outcome) != nil else { return value }
         if sessionContext != nil { releaseSession() }
         setPhase(.removed)
         outcome.resolve(.success(()))
         settled(poweredOff: false)
+        return value
     }
 
     /// The one admission step every operation takes, in one synchronous step:

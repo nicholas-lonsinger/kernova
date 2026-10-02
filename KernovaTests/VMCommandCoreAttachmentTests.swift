@@ -439,30 +439,48 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("A missing file is swallowed, and any other trash failure is reported")
-    func removeStorageDiskTrashFailures() async throws {
+    @Test(
+        "A missing file answers success, and any other trash failure answers the file that stayed",
+        arguments: [true, false])
+    func removeStorageDiskTrashFailures(isInternal: Bool) async throws {
         let harness = makeHarness()
-        var failures: [CommandError] = []
-        harness.core.onFailure = { failure, _ in failures.append(failure) }
-        let ghost = StorageDisk(path: externalPath("ghost.img"), label: "Ghost")
-        let doomed = StorageDisk(path: externalPath("locked.img"), label: "Locked")
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let disk = { (name: String) in
+            isInternal
+                ? StorageDisk(path: "AdditionalDisks/\(name)", label: name, isInternal: true)
+                : StorageDisk(path: self.externalPath(name), label: name, isInternal: false)
+        }
+        let ghost = disk("ghost.img")
+        let locked = disk("locked.img")
         let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [ghost, doomed, keeper] }
+        let instance = makeInstance(in: harness) { $0.storageDisks = [ghost, locked, keeper] }
 
         harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
         try await harness.core.removeStorageDisk(
             .id(instance.id), disk: ghost.id, trashFile: true, consent: .all)
-        #expect(failures.isEmpty)
 
         harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
-        try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: doomed.id, trashFile: true, consent: .all)
+        let failure = await commandError {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: locked.id, trashFile: true, consent: .all)
+        }
 
-        // The entry goes either way; only the second failure is worth telling
-        // the user about.
+        // The entry goes either way; the caller is told which file stayed.
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        #expect(failures.count == 1)
-        #expect(failures.first?.isOperationFailure == true)
+        let path =
+            isInternal
+            ? instance.bundleURL.appendingPathComponent(locked.path).path(percentEncoded: false)
+            : locked.path
+        guard case .filesKept(let kept) = failure else {
+            Issue.record("expected the files-kept outcome, got \(String(describing: failure))")
+            return
+        }
+        #expect(kept.removal == .attachment(label: "locked.img", vm: instance.name))
+        #expect(kept.files.map(\.path) == [path])
+        #expect(failure?.message.contains("\u{201C}\(path)\u{201D}") == true)
+        // Told to the caller alone, never again as an unattended failure.
+        #expect(reported.isEmpty)
     }
 
     @Test("The synthesized main disk is a VM's only disk, so its removal is refused")
@@ -765,6 +783,35 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.fileSystem.trashedURLs == [URL(fileURLWithPath: path)])
+    }
+
+    @Test("A removable medium whose file stays answers that file; a missing one answers success")
+    func removeRemovableMediaTrashFailures() async throws {
+        let harness = makeHarness()
+        var reported: [CommandError] = []
+        harness.core.onFailure = { failure, _ in reported.append(failure) }
+        let ghost = RemovableMediaItem(path: externalPath("ghost.iso"), readOnly: true)
+        let locked = RemovableMediaItem(path: externalPath("locked.iso"), readOnly: true)
+        let instance = makeInstance(in: harness) { $0.removableMedia = [ghost, locked] }
+
+        harness.fileSystem.trashError = CocoaError(.fileNoSuchFile)
+        try await harness.core.removeRemovableMedia(
+            .id(instance.id), item: ghost.id, trashFile: true, consent: .all)
+
+        harness.fileSystem.trashError = CocoaError(.fileWriteNoPermission)
+        let failure = await commandError {
+            try await harness.core.removeRemovableMedia(
+                .id(instance.id), item: locked.id, trashFile: true, consent: .all)
+        }
+
+        #expect(instance.configuration.removableMedia == nil)
+        guard case .filesKept(let kept) = failure else {
+            Issue.record("expected the files-kept outcome, got \(String(describing: failure))")
+            return
+        }
+        #expect(kept.removal == .attachment(label: locked.label, vm: instance.name))
+        #expect(kept.files.map(\.path) == [locked.path])
+        #expect(reported.isEmpty)
     }
 
     @Test("The bundled Guest Agent installer is detached but never trashed")

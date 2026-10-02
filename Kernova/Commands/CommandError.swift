@@ -18,7 +18,8 @@ enum CommandRecovery: Sendable, Equatable {
     }
 }
 
-/// Why a command did not run, in the one vocabulary every front door inherits.
+/// Why a command did not run, or did not do all it was asked, in the one
+/// vocabulary every front door inherits.
 ///
 /// Each case is a refusal a surface renders in its own idiom — an AppKit alert
 /// in process, a ``CommandErrorDTO`` on the wire. The mapping belongs to each
@@ -79,6 +80,9 @@ enum CommandError: Error, Sendable, Equatable {
     /// failure names its own; `recovery` is what the caller can do about it.
     case operationFailed(
         verb: VMVerb, title: String? = nil, message: String, recovery: CommandRecovery? = nil)
+    /// The verb removed what it was mainly asked to, and the files it names
+    /// stayed.
+    case filesKept(FilesKept)
 }
 
 extension CommandError {
@@ -165,6 +169,8 @@ extension CommandError {
         case .operationFailed(let verb, let title, let message, let recovery):
             .operationFailed(
                 verb: verb, title: title, message: message, recovery: recovery?.dto)
+        case .filesKept(let kept):
+            .filesKept(kept)
         }
     }
 }

@@ -280,7 +280,8 @@ protocol VMCommanding: AnyObject {
     /// Deletes the VM's bundle and the external files named in `alsoRemoving`.
     ///
     /// `permanently` bypasses the Trash. Files shared with another VM are never
-    /// deleted even when their id is passed.
+    /// deleted even when their id is passed. Once the VM is gone, any named file
+    /// that stayed throws ``CommandError/filesKept(_:)``.
     func delete(
         _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws
@@ -328,6 +329,8 @@ protocol VMCommanding: AnyObject {
     /// A file another VM still references is never trashed, however `trashFile`
     /// is set. A VM's only storage disk is refused, whichever file backs it: a
     /// VM keeps at least one. Any disk with a sibling goes, `Disk.asif` included.
+    /// A file that stays once the entry is gone throws
+    /// ``CommandError/filesKept(_:)``.
     func removeStorageDisk(
         _ selector: VMSelector, disk: UUID, trashFile: Bool, consent: Consent
     ) async throws
@@ -365,7 +368,8 @@ protocol VMCommanding: AnyObject {
     /// it.
     ///
     /// The bundled Guest Agent installer and files shared with another VM are
-    /// never trashed.
+    /// never trashed. A file that stays once the entry is gone throws
+    /// ``CommandError/filesKept(_:)``.
     func removeRemovableMedia(
         _ selector: VMSelector, item: UUID, trashFile: Bool, consent: Consent
     ) async throws
