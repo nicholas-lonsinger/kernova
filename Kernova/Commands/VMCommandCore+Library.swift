@@ -78,7 +78,7 @@ extension VMCommandCore {
         do {
             return try await arrival.settled.value
         } catch {
-            guard let failure = arrivalFailure(error, of: arrival) else {
+            guard let failure = arrival.failure(for: error) else {
                 throw CommandError.operationFailed(
                     verb: arrival.kind.verb,
                     message: "The \(arrival.kind.displayNoun.lowercased()) was cancelled.")
@@ -98,7 +98,7 @@ extension VMCommandCore {
                 let instance = try await arrival.settled.value
                 await onSettled?(instance)
             } catch {
-                guard let self, let failure = self.arrivalFailure(error, of: arrival) else { return }
+                guard let self, let failure = arrival.failure(for: error) else { return }
                 self.report(failure, on: nil)
             }
         }
@@ -144,7 +144,7 @@ extension VMCommandCore {
         }
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,
-            staged: staged,
+            staged: staged, source: nil,
             write: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
                 // multi-gigabyte `copyItem` calls import makes: this write is
@@ -321,7 +321,8 @@ extension VMCommandCore {
 
         let config = clonedConfig
         return library.beginArrival(
-            kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged
+            kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
+            source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name)
         ) { staged in
             // The copy's failure is the clone's.
             try await copied.value()
@@ -525,6 +526,7 @@ extension VMCommandCore {
                     kind: .importing, configuration: config,
                     destination: library.reserveDestination(for: sourceURL, in: vmsDir),
                     staged: try VMStagedBundle.mint(in: storageService),
+                    source: .importing(sourceURL),
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)

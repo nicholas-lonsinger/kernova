@@ -113,6 +113,39 @@ struct VMCommandCoreArrivalTests {
         try await events.changed.wait { events.failures.count == 1 }
     }
 
+    @Test("An import whose source holds an unreadable file names that file in the source, never the staging directory")
+    func importOfUnreadableSourceFileNamesTheSourceFile() async throws {
+        let harness = makeHarness()
+        let (events, recording) = recordFailureEvents(of: harness.core)
+        defer { recording.cancel() }
+        let source = scratch.url.appendingPathComponent(
+            "Locked.\(VMBundleFormat.fileExtension)", isDirectory: true)
+        let disk = source.appendingPathComponent("Disk.asif")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("disk".utf8).write(to: disk)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: disk.path)
+        storage.files.seed(
+            VMConfiguration(name: "Locked", guestOS: .linux, bootMode: .efi),
+            hostState: VMHostState(), snapshots: VMSnapshotManifest(),
+            pairings: USBAccessoryPairingSet(), at: source)
+
+        let thrown = await #expect(throws: CommandError.self) {
+            try await harness.core.importVM(from: source, waitForOutcome: true)
+        }
+
+        let failure = try #require(thrown)
+        #expect(failure.alertTitle == "Couldn\u{2019}t Import \u{201C}Locked\u{201D}")
+        #expect(
+            failure.message
+                == "\u{201C}Disk.asif\u{201D} in \u{201C}\(NSString.path(withComponents: source.pathComponents))\u{201D} could not be copied: Permission denied."
+        )
+        let staged = try #require(storage.stagedBundleURLs.first)
+        #expect(!failure.message.contains(staged.lastPathComponent))
+        #expect(!failure.message.contains(".Staging"))
+        try await events.changed.wait { events.failures.count == 1 }
+        #expect(events.failures.first?.message == failure.message)
+    }
+
     @Test("A failed clone nobody waits on is reported once")
     func failedUnwaitedCloneReportsOnce() async throws {
         let harness = makeHarness()
