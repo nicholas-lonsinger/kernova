@@ -168,7 +168,7 @@ struct VMCommandCoreArrivalTests {
         let arrival = try #require(harness.library.arrivals.first)
         try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
         // The copy cannot be interrupted, so its source stays held until it ends.
-        #expect(source.phase.operation?.kind == .copyingOut)
+        #expect(source.phase.operation?.kind == .copyingOut(.stopped))
         hold.signal()
 
         let outcome = await waiter.result
@@ -478,5 +478,167 @@ struct VMCommandCoreArrivalTests {
             try harness.core.beginClone(.id(source.id), outcome: .newMachine)
         }
         #expect(harness.library.entries.map(\.id) == [source.id])
+    }
+
+    // MARK: - A Clone of a Suspended or Live VM
+
+    private func register(
+        _ phase: VMLifecyclePhase, in harness: Harness,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        RegisteredVMInstanceFixture.register(
+            name: "Source", phase: phase, guestOS: .linux, library: harness.library,
+            preferences: preferences, mutate: mutate)
+    }
+
+    @Test("An Exact Copy of a suspended VM arrives suspended on its saved state, and the source keeps its own")
+    func exactCopyOfASuspendedVMCarriesItsSavedState() async throws {
+        let harness = makeHarness()
+        let source = register(.suspended, in: harness)
+        try VMInstanceFixture.writeSaveFile(for: source)
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .suspended)
+        #expect(clone.hasSaveFile)
+        #expect(source.phase == .suspended)
+        #expect(source.hasSaveFile)
+        #expect(harness.virtualization.copyLiveCallCount == 0)
+    }
+
+    @Test("A New Machine of a suspended VM arrives stopped, and the source keeps its saved state")
+    func newMachineOfASuspendedVMBootsCold() async throws {
+        let harness = makeHarness()
+        let source = register(.suspended, in: harness)
+        try VMInstanceFixture.writeSaveFile(for: source)
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .stopped)
+        #expect(!clone.hasSaveFile)
+        #expect(source.phase == .suspended)
+        #expect(source.hasSaveFile)
+    }
+
+    @Test(
+        "An Exact Copy of a running VM saves its state and copies its disks inside one pause, then resumes it")
+    func exactCopyOfARunningVMCopiesInsideOnePause() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let source = register(.running(sessionID: sessionID), in: harness)
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        harness.virtualization.liveCopySession = session
+        let hold = DispatchSemaphore(value: 0)
+        storage.cloneHold = hold
+
+        let waiter = Task {
+            try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
+        }
+        try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
+        // The disks copy while the guest is paused on the state just written.
+        #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
+        #expect(await session.guestState == .paused)
+        #expect(source.status == .cloning)
+        hold.signal()
+        let row = try await waiter.value
+
+        #expect(await session.calls == ["pauseIfRunning", "saveMachineState", "resumeIfPaused"])
+        #expect(await session.guestState == .running)
+        #expect(source.phase == .running(sessionID: sessionID))
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .suspended)
+        #expect(clone.hasSaveFile)
+    }
+
+    @Test("A New Machine of a paused VM copies inside a pause with no saved state, and leaves it paused")
+    func newMachineOfAPausedVMSavesNothing() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let source = register(.livePaused(sessionID: sessionID), in: harness)
+        let session = MockSnapshotSession(guestState: .paused, writesStateFile: true)
+        harness.virtualization.liveCopySession = session
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+
+        #expect(await session.calls == ["pauseIfRunning"])
+        #expect(await session.guestState == .paused)
+        #expect(source.phase == .livePaused(sessionID: sessionID))
+        #expect(storage.cloneVMBundleCallCount == 1)
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .stopped)
+        #expect(!clone.hasSaveFile)
+    }
+
+    @Test("A live clone whose save fails copies nothing, discards the staged bundle and puts the source back running")
+    func failedLiveSaveDiscardsTheCloneAndResumesTheSource() async throws {
+        let harness = makeHarness()
+        let sessionID = UUID()
+        let source = register(.running(sessionID: sessionID), in: harness)
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+        await session.setSaveError(CocoaError(.fileWriteOutOfSpace))
+        harness.virtualization.liveCopySession = session
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
+        }
+
+        #expect(storage.cloneVMBundleCallCount == 0)
+        #expect(storage.discardedStagedURLs.count == 1)
+        #expect(await session.guestState == .running)
+        #expect(source.phase == .running(sessionID: sessionID))
+        #expect(harness.library.instances.map(\.id) == [source.id])
+    }
+
+    @Test(
+        "A suspended or live VM whose guest can write an external disk is refused a clone until it is stopped",
+        arguments: [
+            VMLifecyclePhase.suspended, .running(sessionID: UUID()),
+            .livePaused(sessionID: UUID()),
+        ])
+    func writableExternalDiskRefusesALiveOrSuspendedClone(phase: VMLifecyclePhase) throws {
+        let harness = makeHarness()
+        let source = register(phase, in: harness) {
+            $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
+        }
+        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: source) }
+
+        do {
+            try harness.core.beginClone(.id(source.id), outcome: .exactCopy)
+            Issue.record("expected the clone to be refused")
+        } catch let error as CommandError {
+            guard case .changeTakesStoppedVM(_, _, let change) = error else {
+                Issue.record("expected a stopped-VM refusal, got \(error)")
+                return
+            }
+            #expect(change == .cloneWritingOutsideBundle)
+            #expect(
+                error.message
+                    == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
+                    + "Cloning a virtual machine with a writable external disk takes a stopped VM. "
+                    + "Stop it first.")
+        }
+        #expect(storage.cloneVMBundleCallCount == 0)
+        #expect(harness.library.entries.map(\.id) == [source.id])
+    }
+
+    @Test("A stopped VM whose guest can write an external disk clones as before")
+    func writableExternalDiskLeavesAStoppedCloneAlone() async throws {
+        let harness = makeHarness()
+        let source = register(.stopped, in: harness) {
+            $0.storageDisks = [
+                StorageDisk(path: "Disk.asif", isInternal: true),
+                StorageDisk(path: "/Volumes/Data/Shared.asif", readOnly: false),
+            ]
+        }
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+
+        #expect(harness.library.instances.contains { $0.id == row.id })
     }
 }

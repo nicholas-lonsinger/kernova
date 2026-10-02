@@ -147,7 +147,7 @@ struct DetailRouteTests {
         let cases: [(VMLifecyclePhase, (display: DetailRoute, settings: DetailRoute))] = [
             (.operating(.deletingSnapshot, from: .stopped), form),
             (.operating(.deleting, from: .stopped), form),
-            (.operating(.copyingOut, from: .stopped), form),
+            (.operating(.copyingOut(.stopped), from: .stopped), form),
             (
                 .operating(.deletingSnapshot, from: .failed(message: "Boot failed.")),
                 (.error(message: "Boot failed."), .error(message: "Boot failed."))

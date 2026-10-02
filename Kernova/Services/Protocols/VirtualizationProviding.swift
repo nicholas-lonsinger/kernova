@@ -81,6 +81,18 @@ protocol VirtualizationProviding: Sendable {
         snapshot: VMSnapshotCaptureRequest
     ) async throws -> VMOperationEnding<VMSnapshot>
 
+    /// Copies a live VM into a clone: `prepare` lays down the clone's bundle,
+    /// then one pause writes the guest's memory into `saveFileURL` — when
+    /// there is one, after taking every passthrough accessory off — and runs
+    /// `copy`, so the disks and the memory describe one instant. Leaves the
+    /// guest as it was found: running stays running, paused stays paused.
+    func copyLive(
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        savingStateTo saveFileURL: URL?,
+        prepare: () async throws -> Void,
+        copy: () async throws -> Void
+    ) async throws -> VMOperationEnding<Void>
+
     /// Returns the VM to `context`'s snapshot, discarding whatever session is
     /// live and keeping the snapshot itself.
     ///

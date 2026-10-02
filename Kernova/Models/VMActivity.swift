@@ -410,7 +410,7 @@ final class VMActivity {
     /// ``perform(_:origin:_:)`` for a snapshot capture, whose body learns the mode it
     /// was admitted in from its context.
     func captureSnapshot<T>(
-        _ mode: VMSnapshotCaptureMode,
+        _ mode: VMCaptureMode,
         _ body: (borrowing VMCaptureContext) async throws -> VMOperationEnding<T>
     ) async throws -> T {
         try await run(
@@ -521,6 +521,19 @@ final class VMActivity {
                     bringUp: VMBringUpContext(operation: $0), snapshot: snapshot,
                     resumesAfter: resumesAfter)
             }, body)
+    }
+
+    /// ``launch(_:origin:resolving:whenEnded:_:)`` for a clone's copy out of the
+    /// bundle in `mode`, whose body learns the mode from its context and
+    /// captures with it as a snapshot capture does.
+    @discardableResult
+    func launchCopyOut(
+        _ mode: VMCaptureMode,
+        _ body: @escaping @MainActor (borrowing VMCaptureContext) async throws -> VMOperationEnding<Void>
+    ) throws -> VMOutcome {
+        try launchRun(
+            .copyingOut(mode), outcome: VMOutcome(), whenEnded: nil,
+            { VMCaptureContext(operation: $0, mode: mode) }, body)
     }
 
     /// ``launch(_:origin:resolving:whenEnded:_:)`` for the attach of the accessory
@@ -1404,13 +1417,14 @@ struct VMGuestStartContext: ~Copyable, Sendable {
     }
 }
 
-/// The authority a snapshot capture's body acts with: an operation admitted
-/// to capture in `mode`, minted only by ``VMActivity/captureSnapshot(_:_:)``.
+/// The authority a capture's body acts with: a snapshot capture or a clone's
+/// copy admitted in `mode`, minted only by ``VMActivity/captureSnapshot(_:_:)``
+/// and ``VMActivity/launchCopyOut(_:_:)``.
 struct VMCaptureContext: ~Copyable, Sendable {
     let operation: VMOperationContext
-    let mode: VMSnapshotCaptureMode
+    let mode: VMCaptureMode
 
-    fileprivate init(operation: consuming VMOperationContext, mode: VMSnapshotCaptureMode) {
+    fileprivate init(operation: consuming VMOperationContext, mode: VMCaptureMode) {
         self.operation = operation
         self.mode = mode
     }

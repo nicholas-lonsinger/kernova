@@ -87,7 +87,8 @@ final class AdvancedSettingsViewController: NSViewController {
                     .body(
                         "An Exact Copy also carries its source\u{2019}s snapshots, Ephemeral Mode and "
                             + "display preferences, but not start at launch; a New Machine starts "
-                            + "with none of these."),
+                            + "with none of these, and one made from a suspended, paused or running "
+                            + "virtual machine starts as if after a power loss."),
                     .body(
                         "Where a virtual machine offers both, the second Clone item in the Virtual "
                             + "Machine menu, or Option (⌥) over Clone in its context menu, makes the "

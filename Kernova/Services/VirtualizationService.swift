@@ -357,31 +357,33 @@ final class VirtualizationService {
         _ instance: VMInstance, _ capture: borrowing VMCaptureContext,
         snapshot request: VMSnapshotCaptureRequest, session: any VMSnapshotSessionOperating
     ) async throws -> VMOperationEnding<VMSnapshot> {
-        guard let sessionID = capture.operation.sessionID else { throw VirtualizationError.noVirtualMachine }
+        guard capture.operation.sessionID != nil else { throw VirtualizationError.noVirtualMachine }
         let snapshot = request.record(capturedIn: .live)
-        let wasRunning = instance.phase.operation?.startedFrom == .running(sessionID: sessionID)
         let configuration = instance.configuration
         let snapshotID = snapshot.id
 
-        do {
-            let prepared = try await capture.operation.bundle.prepareSnapshot(snapshotID, configuration: configuration)
-
-            try await detachUSBAccessories(owingReturns: capture, session: session)
-            try await captureLiveState(
-                session: session, wasRunning: wasRunning, saveFileURL: prepared.saveFileURL
-            ) {
+        let captured = await captureWarm(
+            instance, capture, session: session,
+            prepare: {
+                try await capture.operation.bundle.prepareSnapshot(
+                    snapshotID, configuration: configuration)
+            },
+            savingStateTo: { $0.saveFileURL },
+            copy: { prepared in
                 try await capture.operation.bundle.captureDisks(
                     intoSnapshot: snapshotID, relativePaths: prepared.relativePaths)
-            }
-        } catch {
+            })
+        let rest: VMOperationRest
+        switch captured {
+        case .failed(let failedRest, let error):
             await capture.operation.bundle.removeSnapshotDirectory(snapshotID)
             #log(
                 logger, .error,
                 "Failed to snapshot VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            let guest = await guestAfterFailedWarmCapture(
-                instance, capture.operation, session: session, wasRunning: wasRunning)
-            return .failed(.live(guest), error)
+            return .failed(failedRest, error)
+        case .rest(let capturedRest, ()):
+            rest = capturedRest
         }
 
         if capture.operation.sessionID == nil {
@@ -398,9 +400,77 @@ final class VirtualizationService {
                 "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
         }
-        return .rest(
-            .live(wasRunning ? .running : .paused),
-            VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+        return .rest(rest, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+    }
+
+    /// The one body every capture from a live VM runs: `prepare` lays down
+    /// the destination before the guest is touched, then inside one pause the
+    /// guest's memory is written where `savingStateTo` says — every
+    /// passthrough USB accessory taken off first and owed back — and `copy`
+    /// copies the disks beside it; with no saved state, nothing is detached.
+    ///
+    /// Answers the guest put back the way it was found, or — on a failure,
+    /// which leaves whatever `prepare` laid down for the caller to discard —
+    /// where ``guestAfterFailedWarmCapture(_:_:session:wasRunning:)`` left it.
+    static func captureWarm<Prepared: Sendable>(
+        _ instance: VMInstance, _ capture: borrowing VMCaptureContext,
+        session: any VMSnapshotSessionOperating,
+        prepare: () async throws -> Prepared,
+        savingStateTo saveFileURL: (Prepared) -> URL?,
+        copy: (Prepared) async throws -> Void
+    ) async -> VMOperationEnding<Void> {
+        let wasRunning =
+            capture.operation.sessionID.map {
+                instance.phase.operation?.startedFrom == .running(sessionID: $0)
+            } ?? false
+        do {
+            let prepared = try await prepare()
+            let saveFileURL = saveFileURL(prepared)
+            if saveFileURL != nil {
+                try await detachUSBAccessories(owingReturns: capture, session: session)
+            }
+            try await captureLiveState(
+                session: session, wasRunning: wasRunning, saveFileURL: saveFileURL
+            ) {
+                try await copy(prepared)
+            }
+        } catch {
+            let guest = await guestAfterFailedWarmCapture(
+                instance, capture.operation, session: session, wasRunning: wasRunning)
+            return .failed(.live(guest), error)
+        }
+        return .rest(.live(wasRunning ? .running : .paused), ())
+    }
+
+    /// Copies a live VM into a clone through ``captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
+    /// `prepare` creates the clone's staged bundle, and `copy` copies the
+    /// source's files into it inside the pause that writes the guest's memory
+    /// to `saveFileURL` first, when there is one.
+    func copyLive(
+        _ instance: VMInstance, _ context: borrowing VMCaptureContext,
+        savingStateTo saveFileURL: URL?,
+        prepare: () async throws -> Void,
+        copy: () async throws -> Void
+    ) async throws -> VMOperationEnding<Void> {
+        guard let session = context.operation.session else {
+            throw VirtualizationError.noVirtualMachine
+        }
+        let ending = await Self.captureWarm(
+            instance, context, session: session, prepare: prepare,
+            savingStateTo: { saveFileURL }, copy: copy)
+        switch ending {
+        case .failed(_, let error):
+            #log(
+                Self.logger, .error,
+                "Failed to clone running VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        case .rest:
+            #log(
+                Self.logger, .notice,
+                "Copied running VM '\(instance.name, privacy: .public)' into a clone (saved state: \(saveFileURL != nil, privacy: .public))"
+            )
+        }
+        return ending
     }
 
     /// The bundle's disks and the VM's configuration, from a stopped VM — no VZ
@@ -541,9 +611,9 @@ final class VirtualizationService {
         context.releaseAccessory(deviceID: item.deviceID)
     }
 
-    /// Writes the guest's live state into `saveFileURL`, copies the disks
-    /// beside it, and leaves the guest executing only if it was found
-    /// executing.
+    /// Pauses the guest, writes its live state into `saveFileURL` when there
+    /// is one, copies the disks beside it, and leaves the guest executing only
+    /// if it was found executing.
     ///
     /// The resume is conditional because `resumeIfPaused` reads VZ's `state`,
     /// which does not record who paused the guest: an unconditional call
@@ -552,11 +622,13 @@ final class VirtualizationService {
     static func captureLiveState(
         session: any VMSnapshotSessionOperating,
         wasRunning: Bool,
-        saveFileURL: URL,
+        saveFileURL: URL?,
         captureDisks: () async throws -> Void
     ) async throws {
         try await session.pauseIfRunning()
-        try await session.saveMachineState(to: saveFileURL)
+        if let saveFileURL {
+            try await session.saveMachineState(to: saveFileURL)
+        }
         try await captureDisks()
         if wasRunning {
             try await session.resumeIfPaused()
@@ -579,7 +651,7 @@ final class VirtualizationService {
         } catch {
             #log(
                 logger, .warning,
-                "Could not resume '\(instance.name, privacy: .public)' after a failed snapshot: \(error.localizedDescription, privacy: .public)"
+                "Could not resume '\(instance.name, privacy: .public)' after a failed capture: \(error.localizedDescription, privacy: .public)"
             )
             return .paused
         }

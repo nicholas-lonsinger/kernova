@@ -135,8 +135,8 @@ enum VMCapability: CaseIterable, Hashable {
     }
 
     /// The request admission decides for this capability on `instance`, or
-    /// `nil` when the VM's state names none — a capture from a phase no mode
-    /// is taken from.
+    /// `nil` when the VM's state names none — a capture or a clone from a
+    /// phase no mode is taken from.
     @MainActor
     func request(on instance: VMInstance) -> VMAdmission.Request? {
         switch self {
@@ -189,7 +189,11 @@ enum VMCapability: CaseIterable, Hashable {
             // Which accessory does not change the decision.
             return .operation(.attachingUSB(registryID: 0))
         case .clone:
-            return .operation(.copyingOut)
+            guard
+                let mode = VMAdmission.settledCloneMode(
+                    phase: instance.phase, facts: instance.admissionFacts)
+            else { return nil }
+            return .operation(.copyingOut(mode))
         case .delete:
             return .operation(.deleting)
         case .togglePopOut, .toggleFullscreen:

@@ -47,6 +47,21 @@ struct VirtualizationServiceTests {
         #expect(!calls.contains("resumeIfPaused"))
     }
 
+    @Test("A capture with no saved state pauses, copies and resumes, and writes nothing")
+    func captureWithoutSavedStateOnlyPauses() async throws {
+        let session = MockSnapshotSession(guestState: .running)
+        var stateWhileCopying: MockSnapshotSession.GuestState?
+
+        try await VirtualizationService.captureLiveState(
+            session: session, wasRunning: true, saveFileURL: nil
+        ) {
+            stateWhileCopying = await session.guestState
+        }
+
+        #expect(stateWhileCopying == .paused)
+        #expect(await session.calls == ["pauseIfRunning", "resumeIfPaused"])
+    }
+
     @Test("A capture that fails to save never copies the disks")
     func captureStopsAtAFailedSave() async {
         let session = MockSnapshotSession(guestState: .running)

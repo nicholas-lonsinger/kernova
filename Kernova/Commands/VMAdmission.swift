@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The one decision every request on a VM goes through: what the catalog
 /// offers, what a verb accepts, and what ``VMActivity`` commits.
@@ -35,6 +36,9 @@ enum VMAdmission {
         /// it ends.
         case busy(VMOperationKind)
         case invalidState
+        /// The VM's state takes the request, but not with what the VM is
+        /// configured with: only a stopped VM takes `change`.
+        case takesStoppedVM(StoppedVMChange)
         case removed
         case identityConflict(VMIdentityConflict)
         /// Another attach already holds the accessory an attach names — the
@@ -59,6 +63,7 @@ enum VMAdmission {
         static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
             case (.busy(let l), .busy(let r)): l == r
+            case (.takesStoppedVM(let l), .takesStoppedVM(let r)): l == r
             case (.invalidState, .invalidState), (.removed, .removed),
                 (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating),
                 (.heldByAnotherCopy, .heldByAnotherCopy):
@@ -96,6 +101,10 @@ enum VMAdmission {
         var clipboardSharingEnabled: Bool
         var hasPendingGuestSetup: Bool
         var usbSupported: Bool
+        /// The guest can write to a disk outside its bundle — an external
+        /// storage disk or removable media not marked read-only
+        /// (``VMConfiguration/writesOutsideBundle``).
+        var writesOutsideBundle: Bool
         /// The VM claiming the identity (``VMInstance/claimsIdentity``) that
         /// bringing this one up would duplicate — supplied only when deciding
         /// a bring-up.
@@ -277,7 +286,7 @@ enum VMAdmission {
     /// A capture with no memory is taken only from a plainly stopped VM:
     /// `.initialBoot` holds disks with no installed guest, and `.failed` says the last
     /// operation did not finish.
-    static func captureMode(phase: VMLifecyclePhase, facts: Facts) -> VMSnapshotCaptureMode? {
+    static func captureMode(phase: VMLifecyclePhase, facts: Facts) -> VMCaptureMode? {
         if phase.isSettledLive { return .live }
         guard phase.isAtRest else { return nil }
         if facts.hasSaveFile { return .suspended }
@@ -290,9 +299,26 @@ enum VMAdmission {
     /// dims Take Snapshot rather than hiding it.
     static func settledCaptureMode(
         phase: VMLifecyclePhase, facts: Facts
-    ) -> VMSnapshotCaptureMode? {
+    ) -> VMCaptureMode? {
         let settled = phase.operation?.settledBasis(slotOnDisk: facts.hasSaveFile) ?? phase
         return captureMode(phase: settled, facts: facts)
+    }
+
+    /// How a clone's copy taken from `phase` right now is made, or `nil` when
+    /// the phase admits none: from disks alone at any rest with no saved
+    /// state — a failed or never-booted VM included — and otherwise as a
+    /// capture is (``captureMode(phase:facts:)``).
+    static func cloneMode(phase: VMLifecyclePhase, facts: Facts) -> VMCaptureMode? {
+        if phase.isAtRest, !facts.hasSaveFile { return .stopped }
+        return captureMode(phase: phase, facts: facts)
+    }
+
+    /// The mode a clone is offered in, over the settled phase the VM rests at
+    /// as ``settledCaptureMode(phase:facts:)`` reads it — so an operation in
+    /// flight dims Clone rather than hiding it.
+    static func settledCloneMode(phase: VMLifecyclePhase, facts: Facts) -> VMCaptureMode? {
+        let settled = phase.operation?.settledBasis(slotOnDisk: facts.hasSaveFile) ?? phase
+        return cloneMode(phase: settled, facts: facts)
     }
 
     /// The edit classes a settled phase admits.
@@ -401,10 +427,16 @@ enum VMAdmission {
             admitted = editClasses(settledAt: phase, facts: facts).contains(.machineKeys)
         case .creatingRemovableMedia:
             admitted = editClasses(settledAt: phase, facts: facts).contains(.hotPlugMedia)
-        case .copyingOut:
-            admitted = atRest && !facts.hasSaveFile
+        case .copyingOut(let mode):
+            admitted = cloneMode(phase: phase, facts: facts) == mode
         }
         guard admitted else { return .refuse(.invalidState) }
+        // A clone of a live or suspended VM can carry its saved state, and only
+        // the bundle's own disks are copied: that state would resume over an
+        // outside disk its source has written since.
+        if case .copyingOut(let mode) = kind, mode != .stopped, facts.writesOutsideBundle {
+            return .refuse(.takesStoppedVM(.cloneWritingOutsideBundle))
+        }
         if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
             return identityChecked(facts)
         }

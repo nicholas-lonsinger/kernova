@@ -35,6 +35,7 @@ struct VMAdmissionTests {
         var clipboardSharing = true
         /// The saved state restores after a membership move — a Shared VM's.
         var survivesMembershipMove = false
+        var writesOutsideBundle = false
 
         static let plain = Variant()
         static let sharedNetwork = Variant(survivesMembershipMove: true)
@@ -44,11 +45,13 @@ struct VMAdmissionTests {
         static let noUSB = Variant(usbSupported: false)
         static let noNetwork = Variant(networkEnabled: false)
         static let noClipboard = Variant(clipboardSharing: false)
+        static let writesOutsideBundle = Variant(writesOutsideBundle: true)
 
         var description: String {
             "\(guestOS) setup=\(pendingSetup) usb=\(usbSupported) "
                 + "network=\(networkEnabled) clipboard=\(clipboardSharing) "
-                + "survivesMembershipMove=\(survivesMembershipMove)"
+                + "survivesMembershipMove=\(survivesMembershipMove) "
+                + "writesOutsideBundle=\(writesOutsideBundle)"
         }
     }
 
@@ -61,7 +64,8 @@ struct VMAdmissionTests {
             savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
-            identityConflict: nil, accessoryHolder: nil, terminating: terminating,
+            writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
+            accessoryHolder: nil, terminating: terminating,
             heldByAnotherCopy: heldByAnotherCopy)
     }
 
@@ -72,7 +76,8 @@ struct VMAdmissionTests {
     /// One cell: `A` admit, `J` join, `B` busy with the held kind, `I`
     /// invalid state, `R` removed, `U` unsupported by this build, `C` an
     /// identity conflict, `H` an accessory another attach holds, `T` refused
-    /// by the app's termination, `O` refused as held by another copy.
+    /// by the app's termination, `O` refused as held by another copy, `S`
+    /// taken only by a stopped VM.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -86,6 +91,7 @@ struct VMAdmissionTests {
         case .refuse(.accessoryHeld): "H"
         case .refuse(.terminating): "T"
         case .refuse(.heldByAnotherCopy): "O"
+        case .refuse(.takesStoppedVM): "S"
         }
     }
 
@@ -122,7 +128,12 @@ struct VMAdmissionTests {
         (.operation(.creatingStorageDisk), "AAAIIIR"),
         (.operation(.removingStorageDisk), "AAAIIIR"),
         (.operation(.creatingRemovableMedia), "AAAIAAR"),
-        (.operation(.copyingOut), "AAAIIIR"),
+        // A clone copies from disks alone at any rest without a saved state,
+        // the suspend slot beside them while suspended, and a live guest
+        // inside one pause.
+        (.operation(.copyingOut(.stopped)), "AAAIIIR"),
+        (.operation(.copyingOut(.suspended)), "IIIAIIR"),
+        (.operation(.copyingOut(.live)), "IIIIAAR"),
         (.edit(.machineKeys), "AAAIIIR"),
         (.edit(.liveKeys), "AAAAAAR"),
         (.edit(.hotPlugMedia), "AAAIAAR"),
@@ -185,6 +196,11 @@ struct VMAdmissionTests {
         (.sharedNetwork, .edit(.networkMembership), "AAAAAAR"),
         (.sharedNetwork, .edit(.networkAttachment), "AAAIAAR"),
         (.sharedNetwork, .edit(.machineKeys), "AAAIIIR"),
+        // A disk outside the bundle is not copied, so only a stopped VM is
+        // cloned while its guest can write one.
+        (.writesOutsideBundle, .operation(.copyingOut(.stopped)), "AAAIIIR"),
+        (.writesOutsideBundle, .operation(.copyingOut(.suspended)), "IIISIIR"),
+        (.writesOutsideBundle, .operation(.copyingOut(.live)), "IIIISSR"),
         // A Linux guest's shares ride a device each, so no swap keeps its
         // devices.
         (.linux, .edit(.liveShares), "IIIIIIR"),
@@ -230,7 +246,7 @@ struct VMAdmissionTests {
         (.operation(.deletingSnapshot), "OOOOAAR"),
         (.operation(.discardingSavedState), "IIIOIIR"),
         (.operation(.deleting), "OOOOIIR"),
-        (.operation(.copyingOut), "OOOIIIR"),
+        (.operation(.copyingOut(.stopped)), "OOOIIIR"),
         (.operation(.creatingStorageDisk), "OOOIIIR"),
         (.operation(.creatingRemovableMedia), "OOOIAAR"),
         (.operation(.saving), "IIIIAAR"),
@@ -296,7 +312,7 @@ struct VMAdmissionTests {
         (.operation(.forceStopping), "IIIITTR"),
         (.operation(.discardingSavedState), "IIITIIR"),
         (.operation(.deleting), "TTTTIIR"),
-        (.operation(.copyingOut), "TTTIIIR"),
+        (.operation(.copyingOut(.stopped)), "TTTIIIR"),
         (.operation(.creatingStorageDisk), "TTTIIIR"),
         (.operation(.removingStorageDisk), "TTTIIIR"),
         (.operation(.creatingRemovableMedia), "TTTITTR"),
@@ -489,7 +505,7 @@ struct VMAdmissionTests {
         .operation(.attachingUSB(registryID: 7)), .operation(.reconcilingMedia),
         .operation(.forceStopping),
         .operation(.capturingSnapshot(.stopped)), .operation(.capturingSnapshot(.suspended)),
-        .operation(.discardingSavedState), .operation(.copyingOut),
+        .operation(.discardingSavedState), .operation(.copyingOut(.stopped)),
         .operation(.deletingSnapshot),
         .operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))),
         .operation(.deleting),
@@ -603,8 +619,17 @@ struct VMAdmissionTests {
             kind: .creatingRemovableMedia, startedFrom: .stopped,
             expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
         HeldRow(
-            kind: .copyingOut, startedFrom: .stopped,
+            kind: .copyingOut(.stopped), startedFrom: .stopped,
             expected: "BBI IIIIII BIIB BBB BBB BAAAAAAAA IIIB AIIII"),
+        // The slot stays for the copy's length, so neither a restore nor a
+        // discard takes it.
+        HeldRow(
+            kind: .copyingOut(.suspended), startedFrom: .suspended, slot: true,
+            expected: "BIB IIIIII IBBI BBB III IAIIAAAAA IIIB AAIII"),
+        // A live copy pins the guest as a live capture does.
+        HeldRow(
+            kind: .copyingOut(.live), startedFrom: live,
+            expected: "III BBBBBB IIII BBI IIB IBBBAAAAA BBII AAIII"),
 
         // Facts varied under a held operation.
 

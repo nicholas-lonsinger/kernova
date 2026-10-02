@@ -191,9 +191,12 @@ extension VMCommandCore {
     /// Holds the source for a clone's copy and registers the clone's arrival,
     /// with no suspension point between the decision and the registration.
     ///
-    /// ``VMOperationKind/copyingOut`` holds the source only while its files and
-    /// state are copied into the staged bundle; the arrival's write then lays
-    /// down the clone's configuration.
+    /// ``VMOperationKind/copyingOut(_:)`` holds the source only while its files
+    /// and state are copied into the staged bundle, in the mode the source's
+    /// phase admits (``VMAdmission/cloneMode(phase:facts:)``); the arrival's
+    /// write then lays down the clone's configuration. An Exact Copy of a
+    /// suspended or live source arrives suspended on the source's saved
+    /// state, and every other clone arrives stopped.
     private func registerClone(
         _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMArrival {
@@ -262,20 +265,38 @@ extension VMCommandCore {
 
         let machineIdentifier = clonedConfig.guestOS == .macOS ? clonedConfig.machineIdentifierData : nil
         let storage = storageService
+        let virtualization = lifecycle.virtualizationService
+        // The settled mode, as the catalog offers Clone in: an operation in
+        // flight then refuses the copy as busy.
+        let mode =
+            VMAdmission.settledCloneMode(phase: instance.phase, facts: instance.admissionFacts)
+            ?? .stopped
         // Run directly rather than on the bounded `copyQueue`: the source is
         // held for as long as the copy takes, and an APFS clone takes
         // milliseconds where a queued import copy can take minutes.
         let copied: VMOutcome
         do {
-            copied = try instance.activity.launch(.copyingOut) { context in
+            copied = try instance.activity.launchCopyOut(mode) { context in
                 let copy = CloneCopy(
-                    of: context.instance.bundle, outcome: resolved,
+                    of: context.operation.instance.bundle, outcome: resolved, mode: context.mode,
                     machineIdentifier: machineIdentifier)
-                let source = context.bundle.url
-                try await Task.detached {
-                    try Self.copyOut(copy, from: source, into: staged, storage: storage)
-                }.value
-                return .rest(.asStarted, ())
+                let source = context.operation.bundle.url
+                let copyOut = {
+                    try await Task.detached {
+                        try Self.copyOut(copy, from: source, into: staged, storage: storage)
+                    }.value
+                }
+                guard context.mode == .live else {
+                    try await copyOut()
+                    return .rest(.asStarted, ())
+                }
+                return try await virtualization.copyLive(
+                    context.operation.instance, context,
+                    savingStateTo: copy.carriesSavedState ? staged.layout.saveFileURL : nil,
+                    prepare: {
+                        try await Task.detached { try storage.createVMBundle(at: staged.url) }.value
+                    },
+                    copy: copyOut)
             }
         } catch {
             throw failure(error, verb: .clone, on: instance)
@@ -295,6 +316,9 @@ extension VMCommandCore {
     /// committed state while the clone holds it.
     private struct CloneCopy: Sendable {
         let outcome: CloneOutcome
+        /// How the copy is taken, which says where the source's saved state
+        /// is: in its suspend slot, in a live guest's memory, or nowhere.
+        let mode: VMCaptureMode
         /// The source's configuration, which names the disks to copy.
         let configuration: VMConfiguration
         /// The macOS machine identifier the clone boots as, written over any
@@ -306,8 +330,12 @@ extension VMCommandCore {
         let snapshotManifest: VMSnapshotManifest
 
         @MainActor
-        init(of source: VMBundle, outcome: CloneOutcome, machineIdentifier: Data?) {
+        init(
+            of source: VMBundle, outcome: CloneOutcome, mode: VMCaptureMode,
+            machineIdentifier: Data?
+        ) {
             self.outcome = outcome
+            self.mode = mode
             configuration = source.configuration
             self.machineIdentifier = machineIdentifier
             switch outcome {
@@ -321,6 +349,11 @@ extension VMCommandCore {
                 snapshotManifest = source.snapshotManifest
             }
         }
+
+        /// Whether the clone arrives on its source's saved state: an Exact
+        /// Copy of a suspended or live source. A New Machine leaves it out, as
+        /// a saved state does not restore under a new machine identifier.
+        var carriesSavedState: Bool { outcome == .exactCopy && mode != .stopped }
 
         /// The bundle-relative files and directories to copy out of `source`:
         /// its machine files for both outcomes, and for an Exact Copy its
@@ -347,6 +380,14 @@ extension VMCommandCore {
         try storage.cloneVMBundle(
             from: source, to: staged.url,
             relativePaths: copy.relativePaths(in: VMBundleLayout(bundleURL: source)))
+        // A live copy's saved state is written into the clone by VZ; a
+        // suspended one's is the slot, which admission found on disk and the
+        // hold keeps there.
+        if copy.carriesSavedState, copy.mode == .suspended {
+            try VMBundleMachineFiles.copyItems(
+                [VMBundleLayout.saveFileRelativePath], from: source, to: staged.url,
+                ifMissing: .unchecked)
+        }
         if let machineIdentifier = copy.machineIdentifier {
             try machineIdentifier.write(to: staged.layout.machineIdentifierURL, options: .atomic)
         }

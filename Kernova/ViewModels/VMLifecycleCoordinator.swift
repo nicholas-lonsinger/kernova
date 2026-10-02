@@ -204,7 +204,7 @@ final class VMLifecycleCoordinator {
     /// throws leaves nothing behind: unlisted files are files no surface can
     /// reach or remove, so the capture is undone.
     func takeSnapshot(
-        _ instance: VMInstance, mode: VMSnapshotCaptureMode, snapshot: VMSnapshotCaptureRequest,
+        _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
         record: @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
     ) async throws -> VMSnapshot {
         try await instance.activity.captureSnapshot(mode) { context in

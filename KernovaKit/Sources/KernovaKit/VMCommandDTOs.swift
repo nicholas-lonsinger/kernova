@@ -524,18 +524,22 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
         verb: VMVerb, title: String?, message: String, recovery: CommandRecoveryDTO?)
 }
 
-/// A change a verb makes that only a stopped VM takes, though the verb itself
-/// is taken in more states.
+/// What a verb does that only a stopped VM takes, though the verb itself is
+/// taken in more states.
 public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     /// Adding a guest's first shared directory or removing its last, which
     /// adds or removes the device every share rides.
     case firstOrLastSharedDirectory
+    /// Cloning a VM whose guest can write to a disk outside its bundle.
+    case cloneWritingOutsideBundle
 
     /// The rule, as every surface states it.
     public var sentence: String {
         switch self {
         case .firstOrLastSharedDirectory:
             "Adding the first share or removing the last needs the virtual machine stopped."
+        case .cloneWritingOutsideBundle:
+            "Cloning a virtual machine with a writable external disk needs it stopped."
         }
     }
 }

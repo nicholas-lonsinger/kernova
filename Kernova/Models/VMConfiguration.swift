@@ -860,6 +860,14 @@ extension VMConfiguration {
         guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return true }
         return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
     }
+
+    /// Whether the guest can write to a disk outside the bundle: an external
+    /// storage disk or removable media not marked read-only — files no
+    /// snapshot or clone copies (``VMBundleMachineFiles/capturedRelativePaths(for:layout:)``).
+    var writesOutsideBundle: Bool {
+        (storageDisks ?? []).contains { !$0.isInternal && !$0.readOnly }
+            || (removableMedia ?? []).contains { !$0.readOnly }
+    }
 }
 
 // MARK: - SharedDirectory

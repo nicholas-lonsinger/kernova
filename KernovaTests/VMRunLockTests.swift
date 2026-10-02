@@ -138,7 +138,7 @@ struct VMRunLockTests {
             }
         },
         Attempt(description: "copy-out", phase: .stopped) { instance, recorder in
-            try instance.activity.launch(.copyingOut) { _ in
+            try instance.activity.launch(.copyingOut(.stopped)) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
             }
@@ -264,7 +264,7 @@ struct VMRunLockTests {
 
         // A launched operation, held across its whole body.
         let gate = GatedStep()
-        let outcome = try instance.activity.launch(.copyingOut) { _ in
+        let outcome = try instance.activity.launch(.copyingOut(.stopped)) { _ in
             try await gate.pass()
             return .rest(.asStarted, ())
         }

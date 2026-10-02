@@ -23,7 +23,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     /// window-modal sheet is up, and the mode is stamped at confirm time
     /// (``VMLibraryViewModel/takeSnapshot(_:name:notes:)``) — so the copy has to
     /// follow it or it describes a capture that won't happen.
-    private(set) var mode: VMSnapshotCaptureMode
+    private(set) var mode: VMCaptureMode
 
     private let nameField = NSTextField()
     /// Multi-line, so a note can be *written* here and not only edited into
@@ -41,7 +41,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48
 
-    init(vmName: String, suggestedName: String, mode: VMSnapshotCaptureMode) {
+    init(vmName: String, suggestedName: String, mode: VMCaptureMode) {
         self.vmName = vmName
         self.suggestedName = suggestedName
         self.mode = mode
@@ -55,7 +55,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     /// Re-renders the copy for the mode a capture would now be taken in; a
     /// no-op when it hasn't moved.
-    func update(mode: VMSnapshotCaptureMode) {
+    func update(mode: VMCaptureMode) {
         guard mode != self.mode else { return }
         self.mode = mode
         guard isViewLoaded else { return }

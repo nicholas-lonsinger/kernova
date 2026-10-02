@@ -15,6 +15,7 @@
 			<enumerator name="suspended" code="KsSu" description="The guest's state is saved to disk; resuming restores it."/>
 			<enumerator name="saving" code="KsSv" description="Writing the guest's state to the bundle's suspend slot."/>
 			<enumerator name="snapshotting" code="KsSn" description="Capturing a named restore point."/>
+			<enumerator name="cloning" code="KsCl" description="Copying a running or paused guest into a new virtual machine."/>
 			<enumerator name="restoring" code="KsRs" description="Reading a saved session or a restore point back."/>
 			<enumerator name="installing" code="KsIn" description="Running the guest install."/>
 			<enumerator name="initial boot" code="KsIb" description="In the library, but never booted."/>

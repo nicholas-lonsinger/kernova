@@ -424,7 +424,7 @@ struct SidebarViewControllerTests {
         #expect(menuTitles.contains("Stop"))
         #expect(menuTitles.contains("Suspend"))
         #expect(!menuTitles.contains("Start"))
-        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == false)
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == true)
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == false)
         #expect(menuItem("Rename", in: menu)?.isEnabled == true)
     }
@@ -525,8 +525,8 @@ struct SidebarViewControllerTests {
         // Discard Saved State pass first.
         #expect(menuItem("Move to Trash…", in: menu)?.isEnabled == true)
         #expect(menuItem("Delete Immediately…", in: menu)?.isEnabled == true)
-        // A clone carries no suspend slot, so the saved state pins it out.
-        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == false)
+        // A clone of a suspended VM is taken with its slot on disk.
+        #expect(menuItem("Clone as New Machine", in: menu)?.isEnabled == true)
     }
 
     @Test("Context menu disables delete for a live-paused VM")

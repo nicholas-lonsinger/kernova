@@ -20,6 +20,9 @@ public enum VMStatus: String, Sendable {
     /// Capturing a named snapshot: the guest is paused while its state is
     /// written, then put back the way it was found.
     case snapshotting
+    /// Copying a live guest into a clone: the guest is paused while its disks
+    /// are copied, then put back the way it was found.
+    case cloning
     case restoring
     case installing
     /// VM exists in the library but has never completed its initial boot.
@@ -102,6 +105,7 @@ public enum VMStatus: String, Sendable {
         case .suspended: Words(name: "Suspended", phrase: "suspended")
         case .saving: Words(name: "Suspending", phrase: "suspending")
         case .snapshotting: Words(name: "Taking Snapshot", phrase: "taking a snapshot")
+        case .cloning: Words(name: "Cloning", phrase: "being cloned")
         case .restoring: Words(name: "Restoring", phrase: "restoring")
         case .installing: Words(name: "Installing", phrase: "installing")
         case .initialBoot: Words(name: "Initial Boot", phrase: "not yet booted")

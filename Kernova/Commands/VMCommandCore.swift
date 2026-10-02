@@ -342,6 +342,8 @@ final class VMCommandCore: VMCommanding {
             .busy(vm: summary(instance), operation: Self.busyDescription(kind))
         case .invalidState:
             invalidState(instance)
+        case .takesStoppedVM(let change):
+            .changeTakesStoppedVM(vm: summary(instance), current: instance.status, change: change)
         case .removed:
             .notFound(.id(instance.id))
         case .identityConflict(let conflict) where conflict.asks && conflict.reason == .macAddress:

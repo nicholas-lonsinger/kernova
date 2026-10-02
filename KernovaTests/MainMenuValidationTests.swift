@@ -157,6 +157,48 @@ struct MainMenuValidationTests {
         #expect(alternate.isHidden)
     }
 
+    @Test(
+        "Clone is enabled for a stopped, suspended, paused or running VM, and greyed while an operation holds it",
+        arguments: [
+            (PhaseFixture.settled(.stopped), true),
+            (.settled(.suspended), true),
+            (.settled(.running(sessionID: UUID())), true),
+            (.settled(.livePaused(sessionID: UUID())), true),
+            (.operating(.saving, from: .running(sessionID: UUID())), false),
+            (.operating(.copyingOut(.live), from: .running(sessionID: UUID())), false),
+        ])
+    func cloneValidationFollowsTheCloneableStates(phase: PhaseFixture, isEnabled: Bool) throws {
+        let instance = makeMenuInstance(phase: phase.phase)
+        if phase.phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
+        let fixture = makeFixture(instance: instance)
+
+        #expect(
+            fixture.controller.validate(makeMenuItem(#selector(AppDelegate.cloneVM(_:)))) == isEnabled,
+            "\(phase)")
+    }
+
+    @Test("Clone is greyed for a running VM whose guest can write an external disk, and enabled once stopped")
+    func cloneValidationWithAWritableExternalDisk() {
+        let writable: (inout VMConfiguration) -> Void = {
+            $0.storageDisks = [
+                StorageDisk(path: "Disk.asif", isInternal: true),
+                StorageDisk(path: "/Volumes/Data/Shared.asif", readOnly: false),
+            ]
+        }
+        let item = makeMenuItem(#selector(AppDelegate.cloneVM(_:)))
+
+        // Each fixture is held for the validation: the controller's host is weak.
+        let running = makeMenuInstance(phase: .running(sessionID: UUID()), mutate: writable)
+        let runningFixture = makeFixture(instance: running)
+        #expect(
+            runningFixture.viewModel.capabilities.decision(.clone, on: running, posture: .offer)
+                == .refuse(.takesStoppedVM(.cloneWritingOutsideBundle)))
+        #expect(!runningFixture.controller.validate(item))
+        let stopped = makeMenuInstance(phase: .stopped, mutate: writable)
+        let stoppedFixture = makeFixture(instance: stopped)
+        #expect(stoppedFixture.controller.validate(item))
+    }
+
     @Test("The pop-out title follows where the display lives")
     func popOutTitleFollowsDisplayMode() {
         let instance = makeMenuInstance(phase: .running(sessionID: UUID()))
