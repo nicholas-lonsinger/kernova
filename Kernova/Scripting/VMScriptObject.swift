@@ -58,6 +58,8 @@ final class VMScriptObject: NSObject {
 
     @objc var networkMembership: String? { info.networkMembership }
 
+    @objc var networkName: String? { info.networkName }
+
     @objc var macAddress: String? { info.macAddress }
 
     @objc var ipAddress: String? { info.ipAddress.address }

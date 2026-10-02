@@ -137,6 +137,16 @@ struct VMCommandEnvelopeRouter {
         case .forgetUSBPairing(let selector, let key):
             try commands.forgetUSBPairing(selector, key: key)
             return .ok
+        case .networks:
+            return .networks(commands.networks())
+        case .createNetwork(let name, let kind):
+            return .network(try commands.createNetwork(name: name, kind: kind))
+        case .renameNetwork(let network, let newName):
+            try commands.renameNetwork(network, to: newName)
+            return .ok
+        case .deleteNetwork(let network):
+            try commands.deleteNetwork(network)
+            return .ok
         case .events:
             // Streaming, not unary: a transport answers `.events` through
             // `snapshotAndEvents()` and never reaches here.

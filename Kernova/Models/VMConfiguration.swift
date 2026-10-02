@@ -47,11 +47,63 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
 
 /// Which network of its mode a Shared or Host Only VM joins — membership,
 /// which is what expresses guest↔guest reach (docs/NETWORKING.md).
-enum VMNetworkMembership: String, Codable, Sendable, Equatable, CaseIterable {
+///
+/// Persisted as one string, ``rawValue``: `common`, `isolated`, or a named
+/// network's identifier.
+enum VMNetworkMembership: Hashable, Sendable, Codable {
     /// The mode's common network, which every VM of the mode on it shares.
     case common
     /// A network of the VM's own, which no other guest joins.
     case isolated
+    /// The named network with this identifier, which every VM of its kind
+    /// naming it joins together (``VMNamedNetwork``).
+    case network(UUID)
+
+    static let commonValue = "common"
+    static let isolatedValue = "isolated"
+
+    /// The membership `rawValue` spells, `nil` for a string that spells none.
+    init?(rawValue: String) {
+        switch rawValue {
+        case Self.commonValue: self = .common
+        case Self.isolatedValue: self = .isolated
+        default:
+            guard let id = UUID(uuidString: rawValue) else { return nil }
+            self = .network(id)
+        }
+    }
+
+    /// The persisted spelling, which the `network.membership` key reads and
+    /// takes back.
+    var rawValue: String {
+        switch self {
+        case .common: Self.commonValue
+        case .isolated: Self.isolatedValue
+        case .network(let id): id.uuidString
+        }
+    }
+
+    /// The named network this membership names, `nil` for the mode's common
+    /// network and the VM's own.
+    var namedNetwork: UUID? {
+        guard case .network(let id) = self else { return nil }
+        return id
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let text = try container.decode(String.self)
+        guard let membership = Self(rawValue: text) else {
+            throw DecodingError.dataCorruptedError(
+                in: container, debugDescription: "\(text) names no network membership")
+        }
+        self = membership
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 /// A network a VM's device can join.
@@ -65,18 +117,25 @@ enum VMJoinedNetwork: Hashable, Sendable {
 
     /// Whether this is one VM's network of its own.
     var isOwn: Bool {
-        guard case .vmnet(let id) = self else { return false }
-        return id.owner != nil
+        guard case .vmnet(let id) = self, case .vm = id.scope else { return false }
+        return true
+    }
+
+    /// Whether this is a mode's common network, or Bridged — a network no
+    /// membership chose.
+    var isCommon: Bool {
+        guard case .vmnet(let id) = self else { return true }
+        return id.scope == .common
     }
 
     /// What a build that cannot attach this network lacks, as a refusal
     /// names it.
     var entitledCapability: String {
-        switch self {
-        case .bridged: "bridged networking"
-        case .vmnet(let id) where id.owner != nil: "isolating a virtual machine from other virtual machines"
-        case .vmnet(let id) where id.kind == .hostOnly: "host-only networking"
-        case .vmnet: "Shared Network"
+        guard case .vmnet(let id) = self else { return "bridged networking" }
+        switch id.scope {
+        case .vm: return "isolating a virtual machine from other virtual machines"
+        case .named: return "named networks"
+        case .common: return id.kind == .hostOnly ? "host-only networking" : "Shared Network"
         }
     }
 }
@@ -142,7 +201,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var bridgedInterfaceIdentifier: String?
 
     /// Which network of its mode a Shared or Host Only VM joins. Bridged
-    /// ignores it.
+    /// ignores it. A named network's kind is the mode a VM on it has
+    /// (``VMNamedNetwork/kind``).
     var networkMembership: VMNetworkMembership
 
     var macAddress: String?
@@ -563,12 +623,13 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     var joinedNetwork: VMJoinedNetwork? {
         guard networkEnabled else { return nil }
         guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
-        let owner: UUID? =
+        let scope: VmnetNetworkID.Scope =
             switch networkMembership {
-            case .common: nil
-            case .isolated: id
+            case .common: .common
+            case .isolated: .vm(id)
+            case .network(let network): .named(network)
             }
-        return .vmnet(VmnetNetworkID(kind: kind, owner: owner))
+        return .vmnet(VmnetNetworkID(kind: kind, scope: scope))
     }
 
     /// Whether this VM's device joins a network of its own — what every
@@ -583,7 +644,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     }
 
     /// Whether a saved state this VM holds restores after its device moves
-    /// between its mode's common network and a network of its own — `false`
+    /// to another of its mode's networks — `false`
     /// where no app-managed network is joined.
     var savedStateSurvivesMembershipMove: Bool {
         effectiveNetworkMembership != nil

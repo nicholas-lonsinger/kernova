@@ -1,8 +1,8 @@
 import AppKit
 import KernovaKit
 
-/// The Network category: the Mode picker and the address and MAC rows behind
-/// it.
+/// The Network category: the Mode picker — every network the VM can join, in
+/// one menu — and the address and MAC rows behind it.
 ///
 /// A single-section category, so the section draws no header of its own and
 /// hands its lock hint to the panel header.
@@ -20,11 +20,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var entitlements: EntitlementService { context.viewModel.entitlements }
 
     private var networkModePopUp = NSPopUpButton()
-    /// The isolation row, shown for a mode an app-managed network realizes —
-    /// and in a build that cannot isolate, only while the VM is set isolated,
-    /// so the user can turn it off.
-    private var isolationRow: GroupedFormCollapsibleRow?
-    private var isolationSwitch = NSSwitch()
     /// The Network header's lock hint, hidden — unlike its `lockHints` peers —
     /// while the picker is the live-switch surface.
     private var networkLockHint: NSView?
@@ -45,12 +40,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The duplicate-MAC banner's rendered message, `nil` when no banner is
     /// shown, so a pass that changed nothing about it skips the rebuild.
     private var renderedNetworkMACWarning: String?
-    /// The Mode menu's rendered selection, so a `refresh()` pass that changed
-    /// nothing about networking skips a rebuild.
-    private var renderedNetworkChoice: NetworkModeChoice?
-    /// The live-switch state the Mode menu was last built for; a change rebuilds
-    /// so the None entry's enablement tracks it.
-    private var renderedNetworkLiveSwitchable = false
+    /// What the Mode menu was last built from, so a `refresh()` pass that
+    /// changed nothing about networking skips a rebuild.
+    private var renderedNetworkMenu: NetworkMenuBasis?
     /// The host's bridgeable interfaces as the last picker open found them,
     /// `nil` until one has. Held so a rebuild triggered by the mode the user
     /// just picked from that list still knows the list — rebuilding blind would
@@ -60,14 +52,16 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     // MARK: Network
 
     /// The Mode row's info: one paragraph per mode in `offered` — the modes
-    /// the picker offers — and nothing about a mode it cannot offer.
+    /// the picker offers — and per kind of network it offers beyond a mode's
+    /// common one, and nothing about one it cannot offer.
     ///
     /// "UI copy states only what is known": the Shared reach clause points at
     /// the IP address row only while that row shows a Shared guest's address
     /// (`sharedAddressShown`), and the Wi-Fi limitation is stated at the
     /// standard's strength, on the surface the user picks a mode from.
     static func modeInfoParagraphs(
-        offered: Set<VMNetworkMode>, sharedAddressShown: Bool, guestOS: VMGuestOS
+        offered: Set<VMNetworkMode>, isolationOffered: Bool, namedNetworksOffered: Bool,
+        sharedAddressShown: Bool, guestOS: VMGuestOS
     ) -> [InfoPopoverParagraph] {
         let sharedReachClause =
             sharedAddressShown
@@ -84,6 +78,18 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             paragraphs.append(
                 .body(
                     "Host Only: a private network shared with this Mac and other Host Only guests, with no access to your network or the internet."
+                ))
+        }
+        if isolationOffered {
+            paragraphs.append(
+                .body(
+                    "Isolated: a network of the guest's own instead of the one every other virtual machine in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
+                ))
+        }
+        if namedNetworksOffered {
+            paragraphs.append(
+                .body(
+                    "Named Networks: only the virtual machines on the same named network reach each other there, each in the mode the network was created with. Create, rename and delete them in Kernova > Settings > Networks."
                 ))
         }
         if offered.contains(.bridged) {
@@ -114,9 +120,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             "Mode", control: networkModePopUp, info: modeInfoParagraphs())
         modeInfoButton = modeRow.infoButton
 
-        let rows: [NSView] = [
-            modeRow, makeIsolationRow(), makeIPAddressRow(), makeMACAddressRow(),
-        ]
+        let rows: [NSView] = [modeRow, makeIPAddressRow(), makeMACAddressRow()]
         networkWarningContainer = NSStackView()
         networkWarningContainer.orientation = .vertical
         networkWarningContainer.alignment = .leading
@@ -128,44 +132,6 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let hint = lockRegistry.makeLockHint { self.networkLockHint = $0 }
         chrome = VMSettingsPanelChrome(trailing: [hint])
         return makeGroupedFormSection([makeGroupedFormCard(rows: rows), networkWarningContainer])
-    }
-
-    /// The isolation row: a switch putting a Shared or Host Only VM on a
-    /// network of its own. It hot-swaps while the VM runs and is open beside
-    /// a saved state that survives the move, so `refreshNetwork()` owns its
-    /// enablement.
-    private func makeIsolationRow() -> GroupedFormCollapsibleRow {
-        isolationSwitch = makeGroupedFormSwitch(target: self, action: #selector(isolationToggled))
-        let row = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow(
-                "Isolate from other VMs", control: isolationSwitch,
-                info: [
-                    .body(
-                        "Runs the guest on a network of its own instead of the one every other virtual machine in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
-                    )
-                ]))
-        isolationRow = row
-        return row
-    }
-
-    private func refreshIsolationRow(editable: Bool) {
-        let config = instance.configuration
-        let isolated = config.networkMembership == .isolated
-        // Shown on an app-managed network where the build can attach the VM's
-        // own, and to a VM already isolated so it can be turned off.
-        var onAppManagedNetwork = false
-        if case .vmnet = config.joinedNetwork { onAppManagedNetwork = true }
-        isolationRow?.isHidden =
-            !onAppManagedNetwork || !(offers { $0.networkMembership = .isolated } || isolated)
-        isolationSwitch.state = isolated ? .on : .off
-        applyGroupedFormRowEnabled(editable, control: isolationSwitch)
-    }
-
-    @objc private func isolationToggled() {
-        let membership: VMNetworkMembership = isolationSwitch.state == .on ? .isolated : .common
-        write(VMConfigurationKeyRegistry.networkMembership.assigning(membership.rawValue))
-        refreshResolved()
-        refreshNetwork()
     }
 
     /// The IP address row: the address the host last saw the guest use, with a
@@ -201,6 +167,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private func modeInfoParagraphs() -> [InfoPopoverParagraph] {
         Self.modeInfoParagraphs(
             offered: offeredModes,
+            isolationOffered: VmnetNetworkKind.allCases.contains {
+                offers(.vmnet($0, .isolated))
+            },
+            namedNetworksOffered: VmnetNetworkKind.allCases.contains {
+                offers(.vmnet($0, .network(UUID())))
+            },
             sharedAddressShown: instance.configuration.networkMode == .shared
                 && resolved.ipAddress.address != nil,
             guestOS: instance.configuration.guestOS)
@@ -248,17 +220,42 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         macAddressField.show(instance.configuration.macAddress ?? "")
     }
 
-    /// While the pane is read-only, whether the Mode picker stays live as the
-    /// hot-swap surface.
+    /// What the Mode picker takes right now: which kinds of change, so each
+    /// entry enables by the change choosing it would make.
+    private struct NetworkPickerReach: Equatable {
+        /// A move to another mode, or another bridged interface.
+        var mode: Bool
+        /// A move to another network of the VM's mode.
+        var membership: Bool
+        /// Removing the network device, which no running session takes.
+        var none: Bool
+
+        static let all = NetworkPickerReach(mode: true, membership: true, none: true)
+    }
+
+    /// The change each picker entry makes and whether it is taken now.
     ///
-    /// Both terms come from the catalog, so the picker and the verb behind it
-    /// agree: the mode takes an edit, and not because the VM is at rest — that
-    /// case is the one the pane's own lock already covers.
-    private var networkModeIsLiveSwitchable: Bool {
-        guard isReadOnly else { return false }
+    /// While the pane is read-only, both live terms come from the catalog, so
+    /// the picker and the verb behind it agree: the change takes an edit, and
+    /// not because the VM is at rest — that case is the one the pane's own lock
+    /// already covers. A running VM hot-swaps either; a suspended one whose
+    /// saved state survives a move takes a membership change and no other.
+    private var networkPickerReach: NetworkPickerReach {
+        guard isReadOnly else { return .all }
         let capabilities = viewModel.capabilities
-        return capabilities.isAvailable(.switchNetworkMode, on: instance)
-            && !capabilities.isAvailable(.editConfiguration, on: instance)
+        let atRest = capabilities.isAvailable(.editConfiguration, on: instance)
+        return NetworkPickerReach(
+            mode: !atRest && capabilities.isAvailable(.switchNetworkMode, on: instance),
+            membership: !atRest && capabilities.isAvailable(.switchNetworkMembership, on: instance),
+            none: false)
+    }
+
+    /// Everything the Mode menu is built from but the bridgeable interfaces,
+    /// whose enumeration rebuilds it on its own.
+    private struct NetworkMenuBasis: Equatable {
+        let choice: NetworkModeChoice
+        let reach: NetworkPickerReach
+        let networks: [VMNamedNetwork]
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -275,6 +272,12 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     /// Rebuilds the Mode menu and selects the entry matching the configuration.
     ///
+    /// Each mode's common network, then the VM's own, for Shared Network and
+    /// Host Only; None; the library's named networks; and Bridged's
+    /// interfaces. An entry this build cannot attach is left off, except the
+    /// one the VM is on, which shows without being offered so it still
+    /// selects.
+    ///
     /// The bridgeable list comes from ``enumeratedInterfaces``, which only
     /// ``menuNeedsUpdate(_:)`` fills in — an enumeration is host state that goes
     /// stale, so it runs when the picker opens and nowhere else. Before the
@@ -285,35 +288,59 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         let interfaces = enumeratedInterfaces
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
-        let liveSwitchable = networkModeIsLiveSwitchable
-        let current = NetworkModeChoice(instance.configuration)
-        addNetworkModeItem("Shared Network", choice: .shared, to: menu)
-        if offers(.hostOnly) {
-            addNetworkModeItem("Host Only", choice: .hostOnly, to: menu)
-        } else if current == .hostOnly {
-            // A host-only VM in a build the entitlement doesn't cover: the
-            // picker offers no Host Only entry, so this one shows the mode
-            // without offering it — carrying the current choice so it still
-            // selects.
-            addNetworkModeItem("Host Only (unavailable)", choice: .hostOnly, to: menu, enabled: false)
-        }
-        // While the session runs, every attachable mode can hot-swap; None
-        // cannot — network devices cannot be added or removed at runtime.
-        addNetworkModeItem("None", choice: .none, to: menu, enabled: !liveSwitchable)
+        let basis = NetworkMenuBasis(
+            choice: NetworkModeChoice(instance.configuration), reach: networkPickerReach,
+            networks: viewModel.networks.networks)
+        renderedNetworkMenu = basis
+        let current = basis.choice
 
-        renderedNetworkChoice = current
-        renderedNetworkLiveSwitchable = liveSwitchable
+        for kind in VmnetNetworkKind.menuOrder {
+            for membership in [VMNetworkMembership.common, .isolated] {
+                addNetworkEntry(.vmnet(kind, membership), basis: basis, to: menu)
+            }
+        }
+        addNetworkModeItem("None", choice: .none, to: menu, enabled: isTaken(.none, basis: basis))
+
+        let named = basis.networks.filter {
+            offers(.vmnet($0.kind, .network($0.id))) || current == .vmnet($0.kind, .network($0.id))
+        }
+        let unlisted: Bool
+        if case .vmnet(let kind, .network(let id)) = current {
+            unlisted = !basis.networks.contains { $0.id == id && $0.kind == kind }
+        } else {
+            unlisted = false
+        }
+        if !named.isEmpty || unlisted {
+            menu.addItem(.sectionHeader(title: "Named Networks"))
+            for network in named {
+                addNetworkEntry(
+                    .vmnet(network.kind, .network(network.id)), basis: basis, to: menu,
+                    subtitle: NetworkModeChoice.kindTitle(network.kind))
+            }
+            if unlisted, case .vmnet(let kind, _) = current {
+                // A network another library listed — an import, or a revert
+                // to a snapshot taken before a delete: the VM still joins it,
+                // and no surface here can choose it.
+                addNetworkModeItem(
+                    NetworkModeChoice.unlistedNetworkTitle, choice: current, to: menu,
+                    enabled: false, subtitle: NetworkModeChoice.kindTitle(kind))
+            }
+        }
+
         if offers(.bridged) {
             menu.addItem(.sectionHeader(title: "Bridged"))
-            addNetworkModeItem("Automatic", choice: .bridged(nil), to: menu)
+            addNetworkModeItem(
+                "Automatic", choice: .bridged(nil), to: menu,
+                enabled: isTaken(.bridged(nil), basis: basis))
             if let interfaces {
                 if interfaces.isEmpty {
                     addNetworkModePlaceholder("No Bridgeable Interfaces", to: menu)
                 }
                 for interface in interfaces {
+                    let choice = NetworkModeChoice.bridged(interface.identifier)
                     addNetworkModeItem(
-                        NetworkModeChoice.interfaceTitle(interface),
-                        choice: .bridged(interface.identifier), to: menu)
+                        NetworkModeChoice.interfaceTitle(interface), choice: choice, to: menu,
+                        enabled: isTaken(choice, basis: basis))
                 }
             }
             // Keep the interface the VM is bridged over on the list when the
@@ -338,6 +365,33 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         selectNetworkModeItem()
     }
 
+    /// Appends `choice`'s entry when the picker offers it, and otherwise —
+    /// when it is the VM's current network — a disabled one standing for it.
+    private func addNetworkEntry(
+        _ choice: NetworkModeChoice, basis: NetworkMenuBasis, to menu: NSMenu,
+        subtitle: String? = nil
+    ) {
+        let offered = offers(choice)
+        guard offered || choice == basis.choice else { return }
+        addNetworkModeItem(
+            choice.title(attachable: offered, interfaces: [], networks: basis.networks),
+            choice: choice, to: menu, enabled: offered && isTaken(choice, basis: basis),
+            subtitle: subtitle)
+    }
+
+    /// Whether choosing `choice` makes a change the picker takes now.
+    private func isTaken(_ choice: NetworkModeChoice, basis: NetworkMenuBasis) -> Bool {
+        guard choice != basis.choice else { return true }
+        switch (choice, basis.choice) {
+        case (.none, _):
+            return basis.reach.none
+        case (.vmnet(let kind, _), .vmnet(let currentKind, _)) where kind == currentKind:
+            return basis.reach.membership
+        default:
+            return basis.reach.mode
+        }
+    }
+
     /// The modes the picker offers: Shared Network always, and each other mode
     /// whose network this build can attach.
     private var offeredModes: Set<VMNetworkMode> {
@@ -350,8 +404,25 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         offers { $0.applyNetworkMode(mode) }
     }
 
+    /// Whether the picker offers `choice`: the network it puts the VM on is
+    /// one this build can attach — what the network keys' writes check.
+    private func offers(_ choice: NetworkModeChoice) -> Bool {
+        offers { config in
+            switch choice {
+            case .vmnet(let kind, let membership):
+                config.applyNetworkMode(kind.mode)
+                config.networkMembership = membership
+            case .none:
+                config.applyNetworkMode(nil)
+            case .bridged(let identifier):
+                config.applyNetworkMode(.bridged)
+                config.bridgedInterfaceIdentifier = identifier
+            }
+        }
+    }
+
     /// Whether the network `change` puts the VM on is one this build can
-    /// attach — what the network keys' writes check.
+    /// attach.
     private func offers(_ change: (inout VMConfiguration) -> Void) -> Bool {
         var candidate = instance.configuration
         change(&candidate)
@@ -363,11 +434,13 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// `choice` is non-optional: in an optional context Swift reads the
     /// `.none` case as `nil`, which would strip the None entry's identity.
     private func addNetworkModeItem(
-        _ title: String, choice: NetworkModeChoice, to menu: NSMenu, enabled: Bool = true
+        _ title: String, choice: NetworkModeChoice, to menu: NSMenu, enabled: Bool = true,
+        subtitle: String? = nil
     ) {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.representedObject = choice
         item.isEnabled = enabled
+        item.subtitle = subtitle
         menu.addItem(item)
     }
 
@@ -389,22 +462,18 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     }
 
     private func refreshNetwork() {
-        let liveSwitchable = networkModeIsLiveSwitchable
-        let modeEditable = !isReadOnly || liveSwitchable
-        applyGroupedFormRowEnabled(modeEditable, control: networkModePopUp)
+        let reach = networkPickerReach
+        let live = reach.mode || reach.membership
+        applyGroupedFormRowEnabled(live, control: networkModePopUp)
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
-        networkLockHint?.isHidden = modeEditable
-        if NetworkModeChoice(instance.configuration) != renderedNetworkChoice
-            || liveSwitchable != renderedNetworkLiveSwitchable
-        {
+        networkLockHint?.isHidden = live
+        let basis = NetworkMenuBasis(
+            choice: NetworkModeChoice(instance.configuration), reach: reach,
+            networks: viewModel.networks.networks)
+        if basis != renderedNetworkMenu {
             rebuildNetworkModeMenu()
         }
-        // Its own capability rather than the picker's: a suspended VM whose
-        // saved state survives a move takes a membership change and no other.
-        refreshIsolationRow(
-            editable: !isReadOnly
-                || viewModel.capabilities.isAvailable(.switchNetworkMembership, on: instance))
         refreshMACAddressRow()
         refreshMACAddressWarning()
         refreshIPAddressRow()
@@ -441,13 +510,22 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     @objc private func networkModeChanged() {
         guard let choice = networkModePopUp.selectedItem?.representedObject as? NetworkModeChoice
         else { return }
+        let config = instance.configuration
         let mode = VMConfigurationKeyRegistry.networkMode
         let accepted =
             switch choice {
-            case .shared:
-                write(mode.assigning(VMNetworkMode.shared.rawValue))
-            case .hostOnly:
-                write(mode.assigning(VMNetworkMode.hostOnly.rawValue))
+            case .vmnet(let kind, let membership):
+                // Both keys in one write, so a move to a named network of the
+                // other mode lands whole; a key whose value stays is left out.
+                write(
+                    contentsOf: [
+                        config.effectiveNetworkMode == kind.mode
+                            ? nil : mode.assigning(kind.mode.rawValue),
+                        config.networkMembership == membership
+                            ? nil
+                            : VMConfigurationKeyRegistry.networkMembership.assigning(
+                                membership.rawValue),
+                    ].compactMap { $0 })
             case .none:
                 write(mode.assigning(VMConfigurationKeyRegistry.noNetworkValue))
             case .bridged(let identifier):
@@ -458,8 +536,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
                     mode.assigning(VMNetworkMode.bridged.rawValue))
             }
         // A refused switch leaves the configuration untouched, so nothing marks
-        // the menu stale and the picker would go on showing a mode the VM is not
-        // on. Rebuilding re-selects the configured one.
+        // the menu stale and the picker would go on showing a network the VM is
+        // not on. Rebuilding re-selects the configured one.
         if !accepted { rebuildNetworkModeMenu() }
         // The write flips the card's row visibility; refresh in case the value was
         // already what the model held.
@@ -488,7 +566,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
         renderedNetworkMACWarning = nil
-        renderedNetworkChoice = nil
+        renderedNetworkMenu = nil
         let section = buildNetworkSection()
         panelStack.addArrangedSubview(section)
         section.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
@@ -538,4 +616,10 @@ extension VMSettingsNetworkPanelViewController: NSTextFieldDelegate {
         guard (obj.object as? NSTextField) === macAddressField else { return }
         applyMACAddressFieldEdit()
     }
+}
+
+extension VmnetNetworkKind {
+    /// The order the Mode picker lists each kind's networks in.
+    fileprivate static let menuOrder: [VmnetNetworkKind] = [.shared, .hostOnly]
+
 }

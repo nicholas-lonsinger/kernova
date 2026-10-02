@@ -24,7 +24,7 @@ struct VMCommandEnvelopeTests {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
-            macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.66.2"),
+            networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
             hasSavedState: true, isEphemeral: false, snapshotCount: 2,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
@@ -139,6 +139,10 @@ struct VMCommandEnvelopeTests {
                 consent: .all),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
+            .networks,
+            .createNetwork(name: "Lab", kind: .hostOnly),
+            .renameNetwork(network: "Lab", newName: "Bench"),
+            .deleteNetwork(network: snapshotID.uuidString),
             .quit,
         ]
         // Every case of the vocabulary is represented, so a verb added without a
@@ -255,6 +259,9 @@ struct VMCommandEnvelopeTests {
             .configurationKeys([]),
             .configuration([ConfigurationEntry(key: "cpus", value: "4")]),
             .configuration([]),
+            .networks([NetworkSummary(id: snapshotID, name: "Lab", kind: .hostOnly, members: [summary])]),
+            .networks([]),
+            .network(NetworkSummary(id: snapshotID, name: "Lab", kind: .shared, members: [])),
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),

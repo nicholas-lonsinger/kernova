@@ -34,17 +34,24 @@ struct VMConfigurationWriteContext: Sendable {
     /// What this build authorizes, which decides the networks a write may
     /// move the VM onto.
     let entitlements: EntitlementService
+    /// The library's named networks, which a membership names and whose kind
+    /// a VM on one runs in.
+    let networks: [VMNamedNetwork]
 
-    init(snapshots: VMSnapshotManifest, entitlements: EntitlementService) {
+    init(
+        snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: [VMNamedNetwork]
+    ) {
         self.snapshots = snapshots
         self.entitlements = entitlements
+        self.networks = networks
     }
 
-    /// What `instance` holds, in a build authorizing `entitlements`, for a
-    /// key's write to read.
+    /// What `instance` holds, in a build authorizing `entitlements` whose
+    /// library lists `networks`, for a key's write to read.
     @MainActor
-    init(_ instance: VMInstance, entitlements: EntitlementService) {
-        self.init(snapshots: instance.snapshotManifest, entitlements: entitlements)
+    init(_ instance: VMInstance, entitlements: EntitlementService, networks: [VMNamedNetwork]) {
+        self.init(
+            snapshots: instance.snapshotManifest, entitlements: entitlements, networks: networks)
     }
 }
 
@@ -69,7 +76,7 @@ struct VMConfigurationKey: Sendable {
         /// naming something the VM still needs, is judged on the result rather
         /// than on the order the two arrived in. Asked only of a key the call
         /// actually moved, so writing back what a read answered stays a no-op.
-        let refusalOnResult: @Sendable (VMConfiguration) -> String?
+        let refusalOnResult: @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String?
     }
 
     /// A key whose value lives in the VM's host state.
@@ -112,7 +119,9 @@ struct VMConfigurationKey: Sendable {
         write:
             @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
             throws -> Void,
-        refusalOnResult: @escaping @Sendable (VMConfiguration) -> String? = { _ in nil }
+        refusalOnResult: @escaping @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String? = {
+            _, _ in nil
+        }
     ) {
         self.init(
             name: name, summary: summary, gateByGuest: { _ in gate }, applies: applies, read: read,
@@ -129,7 +138,9 @@ struct VMConfigurationKey: Sendable {
         write:
             @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
             throws -> Void,
-        refusalOnResult: @escaping @Sendable (VMConfiguration) -> String? = { _ in nil }
+        refusalOnResult: @escaping @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String? = {
+            _, _ in nil
+        }
     ) {
         self.name = name
         self.summary = summary
@@ -210,16 +221,20 @@ struct VMConfigurationKey: Sendable {
         guard case .configuration(let field) = field,
             field.read(candidate.configuration) != field.read(settings.configuration)
         else { return true }
-        return field.refusalOnResult(candidate.configuration) == nil
+        return field.refusalOnResult(candidate.configuration, context) == nil
     }
 
     /// ``accepts(_:settings:context:)`` against what `instance` holds, in a
-    /// build authorizing `entitlements`.
+    /// build authorizing `entitlements` whose library lists `networks`.
     @MainActor
-    func accepts(_ value: String, for instance: VMInstance, entitlements: EntitlementService) -> Bool {
+    func accepts(
+        _ value: String, for instance: VMInstance, entitlements: EntitlementService,
+        networks: [VMNamedNetwork]
+    ) -> Bool {
         accepts(
             value, settings: instance.settings,
-            context: VMConfigurationWriteContext(instance, entitlements: entitlements))
+            context: VMConfigurationWriteContext(
+                instance, entitlements: entitlements, networks: networks))
     }
 
     /// An assignment of `value` to this key.
@@ -473,7 +488,8 @@ enum VMConfigurationKeyRegistry {
                 try ConfigurationValue.choice(
                     value, key: "network.mode", also: [noNetworkValue]))
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
-        })
+        },
+        refusalOnResult: namedNetworkRefusal)
 
     static let networkBridgedInterface = VMConfigurationKey(
         name: "network.bridgedInterface",
@@ -489,14 +505,63 @@ enum VMConfigurationKeyRegistry {
         name: "network.membership",
         summary:
             "Which network of its mode a shared or hostOnly guest joins: common, the one every "
-            + "other guest in the mode joins, or isolated, a network of its own.",
+            + "other guest in the mode joins; isolated, a network of its own; or a named "
+            + "network, by name or identifier, which only the guests naming it join.",
         gate: .networkMembership,
         read: { $0.networkMembership.rawValue },
         write: { value, config, context in
             let before = config
-            config.networkMembership = try ConfigurationValue.choice(value, key: "network.membership")
+            config.networkMembership = try membership(value, context: context)
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
-        })
+        },
+        refusalOnResult: namedNetworkRefusal)
+
+    /// The membership `value` spells: `common`, `isolated`, or a named
+    /// network the library lists, by identifier or by name.
+    ///
+    /// The identifier a VM already names is taken back even when the library
+    /// no longer lists it, so a read written back stays a no-op.
+    private static func membership(
+        _ value: String, context: VMConfigurationWriteContext
+    ) throws -> VMNetworkMembership {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let membership = VMNetworkMembership(rawValue: trimmed) { return membership }
+        if let network = context.networks.first(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            return .network(network.id)
+        }
+        let named = context.networks.map(\.name)
+        throw CommandError.invalidArgument(
+            "network.membership takes common, isolated, or a network\u{2019}s name or identifier"
+                + (named.isEmpty ? "" : " (\(named.joined(separator: ", ")))")
+                + ", not \u{201C}\(value)\u{201D}.")
+    }
+
+    /// Why the network the VM ends up on cannot stand, judged once both
+    /// network keys have landed: a named network the library lists runs its
+    /// VMs in its own kind, so a VM joins it only in that mode
+    /// (``VMNamedNetwork/kind``).
+    ///
+    /// A VM naming a network the library does not list is refused too: the
+    /// write would put it on a network nothing manages.
+    private static func namedNetworkRefusal(
+        _ config: VMConfiguration, context: VMConfigurationWriteContext
+    ) -> String? {
+        guard let joined = config.joinedNetwork, case .vmnet(let id) = joined,
+            case .named(let networkID) = id.scope
+        else { return nil }
+        guard let network = context.networks.first(where: { $0.id == networkID }) else {
+            return
+                "network.membership names a network this library does not list. "
+                + "Set network.membership to common, isolated, or a network it lists."
+        }
+        guard network.kind != id.kind else { return nil }
+        return
+            "\u{201C}\(network.name)\u{201D} is a \(network.mode.rawValue) network, so a guest on it "
+            + "runs in that mode. Set network.mode=\(network.mode.rawValue) as well, or choose "
+            + "another network.membership."
+    }
 
     /// Refuses a write that moves the VM onto a network this build cannot
     /// attach (``EntitlementService/canAttach(_:)``), where the user enters it
@@ -532,7 +597,7 @@ enum VMConfigurationKeyRegistry {
             }
             config.macAddress = normalized
         },
-        refusalOnResult: { config in
+        refusalOnResult: { config, _ in
             guard config.networkEnabled, config.macAddress == nil else { return nil }
             return
                 "A guest with a network device sends from a MAC address, and network.mac "
@@ -624,7 +689,7 @@ enum VMConfigurationKeyRegistry {
             config.clipboardPassthroughEnabled = try ConfigurationValue.boolean(
                 value, key: "clipboard.passthrough")
         },
-        refusalOnResult: { config in
+        refusalOnResult: { config, _ in
             guard config.clipboardPassthroughEnabled, !config.clipboardSharingEnabled
             else { return nil }
             return
@@ -666,8 +731,10 @@ enum VMConfigurationKeyRegistry {
     /// The refusal a size key owes while the display is sized to its window:
     /// every cold start recomputes the trio from the window, so a size written
     /// here would be overwritten before the guest ever laid out at it.
-    private static func sizedToWindowRefusal(_ key: String) -> @Sendable (VMConfiguration) -> String? {
-        { config in
+    private static func sizedToWindowRefusal(
+        _ key: String
+    ) -> @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String? {
+        { config, _ in
             guard config.displaySizesToWindow else { return nil }
             return
                 "\(key) is recomputed from the window at every cold start while "

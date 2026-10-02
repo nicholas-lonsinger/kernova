@@ -68,6 +68,10 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case configuration
     case setConfiguration
     case guestAgentDisk
+    case networks
+    case createNetwork
+    case renameNetwork
+    case deleteNetwork
     case quit
 
     /// What a person calls this verb.
@@ -116,6 +120,10 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         case .configuration: "Get Settings"
         case .setConfiguration: "Change Settings"
         case .guestAgentDisk: "Guest Agent Disk"
+        case .networks: "List Networks"
+        case .createNetwork: "Create Network"
+        case .renameNetwork: "Rename Network"
+        case .deleteNetwork: "Delete Network"
         case .quit: "Quit"
         }
     }
@@ -125,8 +133,8 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     ///
     /// The reads, which only answer a question, the reveal that brings a VM in
     /// front of the user whatever state it is in, the Finder reveal, which
-    /// addresses the bundle rather than the guest, and the quit, which
-    /// addresses no VM at all.
+    /// addresses the bundle rather than the guest, and the quit and the
+    /// network verbs, which address no VM at all.
     ///
     /// The settings write is here too, for a different reason: every state
     /// takes a write of *some* key — the clipboard and Ephemeral Mode flags are
@@ -139,7 +147,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
             .usbAccessories, .availableUSBAccessories, .usbPairings,
             .forgetUSBPairing, .events, .reveal,
             .showInFinder, .configurationKeys, .configuration, .setConfiguration,
-            .quit:
+            .networks, .createNetwork, .renameNetwork, .deleteNetwork, .quit:
             true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,

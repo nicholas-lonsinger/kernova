@@ -294,6 +294,26 @@ struct CLIArgumentParsingTests {
         #expect(throws: CLIFailure.self) { try detach.verb() }
     }
 
+    // MARK: - Named networks
+
+    @Test("Each network verb parses to its own subcommand")
+    func networkVerbsResolve() throws {
+        #expect(try parse(["network", "list"]) is KernovaCommand.Network.List)
+        #expect(try parse(["network", "create", "Lab"]) is KernovaCommand.Network.Create)
+        #expect(try parse(["network", "rename", "Lab", "Bench"]) is KernovaCommand.Network.Rename)
+        #expect(try parse(["network", "delete", "Lab"]) is KernovaCommand.Network.Delete)
+    }
+
+    @Test("network create takes only a mode a named network can run in")
+    func networkCreateRefusesAKindThatIsNotOne() {
+        // Bridged joins a host interface rather than an app-managed network,
+        // so no named network runs in it.
+        #expect(throws: (any Error).self) {
+            try parse(["network", "create", "Lab", "--kind", "bridged"])
+        }
+        #expect(throws: (any Error).self) { try parse(["network", "create"]) }
+    }
+
     @Test("get takes any number of keys, and all of them when given none")
     func getParsesItsKeys() throws {
         let everything = try #require(try parse(["get", "Alpha"]) as? KernovaCommand.Get)

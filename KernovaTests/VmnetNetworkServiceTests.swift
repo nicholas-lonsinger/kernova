@@ -81,7 +81,7 @@ struct VmnetNetworkServiceTests {
     func ownNetworksLiveExactlyAsLongAsAView() throws {
         let operations = MockVmnetNetworkOperator()
         let service = VmnetNetworkService(operations: operations)
-        let own = VmnetNetworkID(kind: .shared, owner: vmA)
+        let own = VmnetNetworkID(kind: .shared, scope: .vm(vmA))
         var first: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmA)
         var second: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmA)
         _ = try first?.attachment(for: .own(.shared))
@@ -157,7 +157,7 @@ struct VmnetNetworkServiceTests {
 
         #expect(service.ipv4Subnet(for: .common(.shared)) == .scripted("192.168.65.0"))
         #expect(service.ipv4Subnet(for: .common(.hostOnly)) == nil)
-        #expect(service.ipv4Subnet(for: VmnetNetworkID(kind: .shared, owner: vmA)) == nil)
+        #expect(service.ipv4Subnet(for: VmnetNetworkID(kind: .shared, scope: .vm(vmA))) == nil)
     }
 
     @Test("selection(ofNetwork:) answers for held networks only")
@@ -176,5 +176,36 @@ struct VmnetNetworkServiceTests {
         let foreign = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
         defer { foreign.deallocate() }
         #expect(view.selection(ofNetwork: OpaquePointer(foreign)) == nil)
+    }
+
+    @Test("A named network is one network its members' sessions share, released with its last member's last view")
+    func aNamedNetworkLivesWhileAnyMemberHoldsIt() throws {
+        let operations = MockVmnetNetworkOperator()
+        let service = VmnetNetworkService(operations: operations)
+        let lab = UUID()
+        let id = VmnetNetworkID(kind: .hostOnly, scope: .named(lab))
+        var a: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmA)
+        var b: (any VmnetSessionNetworking)? = service.sessionNetworks(ownedBy: vmB)
+        let outsider = service.sessionNetworks(ownedBy: UUID())
+
+        _ = try a?.attachment(for: .named(lab, .hostOnly))
+        let network = try lastJoined(operations)
+        _ = try b?.attachment(for: .named(lab, .hostOnly))
+        #expect(try lastJoined(operations) == network)
+        #expect(operations.createdKinds == [.hostOnly])
+        #expect(b?.selection(ofNetwork: network) == .named(lab, .hostOnly))
+        // Another kind under the same identifier is another network.
+        _ = try a?.attachment(for: .named(lab, .shared))
+        #expect(try lastJoined(operations) != network)
+
+        a = nil
+        #expect(!operations.releasedNetworks.contains(network))
+        #expect(service.ipv4Subnet(for: id) != nil)
+
+        b = nil
+        #expect(operations.releasedNetworks.contains(network))
+        #expect(service.ipv4Subnet(for: id) == nil)
+        // A session that never joined it held nothing.
+        #expect(outsider.attachmentIfMaterialized(for: .named(lab, .hostOnly)) == nil)
     }
 }

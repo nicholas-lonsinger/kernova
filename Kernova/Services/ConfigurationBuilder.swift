@@ -630,14 +630,14 @@ struct ConfigurationBuilder: Sendable {
     }
 
     /// The attachment joining `selection`'s network — the mode's common one,
-    /// or the VM's own.
+    /// the VM's own, or a named one.
     ///
     /// A network that cannot be materialized — a process holds a bounded
     /// number — builds the device detached (`nil`) rather than failing the
     /// build, for the same reason the bridged no-interface path does: a
     /// throwing build fails a save-file restore. Attachment recovery retries
     /// once the session runs, and never substitutes the common network for the
-    /// VM's own (docs/NETWORKING.md).
+    /// one chosen (docs/NETWORKING.md).
     private func vmnetAttachment(
         _ selection: VmnetNetworkSelection, config: VMConfiguration,
         vmnetNetworks: any VmnetSessionNetworking
@@ -647,7 +647,7 @@ struct ConfigurationBuilder: Sendable {
         } catch {
             #log(
                 Self.logger, .error,
-                "The \(selection.isOwn ? "own " : "", privacy: .public)\(selection.kind.rawValue, privacy: .public) network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
+                "The \(selection.logDescription, privacy: .public) network for '\(config.name, privacy: .public)' could not be materialized — starting detached: \(error.localizedDescription, privacy: .public)"
             )
             return nil
         }
@@ -1039,9 +1039,9 @@ enum ConfigurationBuilderError: LocalizedError {
             "Couldn't open removable media '\(label)' at \(path). The file may have been moved or replaced, or Kernova may no longer have permission to read it. (\(underlying.localizedDescription))"
         case .networkNotEntitled(let network):
             "This build of Kernova does not support \(network.entitledCapability). "
-                + (network.isOwn
-                    ? "Turn off \u{201C}Isolate from other VMs\u{201D} in the VM's Network settings."
-                    : "Switch the VM's network mode to Shared Network.")
+                + (network.isCommon
+                    ? "Switch the VM's network mode to Shared Network."
+                    : "Move the VM to its mode\u{2019}s common network in its Network settings.")
         case .sharedDirectoryNotFound(let path):
             "Shared directory not found at \(path)."
         case .sharedDirectoryNotADirectory(let path):

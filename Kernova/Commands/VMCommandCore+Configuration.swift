@@ -60,7 +60,8 @@ extension VMCommandCore {
         _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let context = VMConfigurationWriteContext(instance, entitlements: library.entitlements)
+        let context = VMConfigurationWriteContext(
+            instance, entitlements: library.entitlements, networks: library.networks.networks)
         let guestOS = instance.configuration.guestOS
 
         var answered: [VMConfigurationKey] = []
@@ -213,7 +214,7 @@ extension VMCommandCore {
             // Only a key this call actually moved is judged: writing back what
             // a read answered has to stay a no-op, so `get` output is `set`
             // input on a VM whose stored value is already inert.
-            guard let message = write.field.refusalOnResult(config) else { continue }
+            guard let message = write.field.refusalOnResult(config, context) else { continue }
             throw CommandError.invalidArgument(message)
         }
         try requireClipboardPassthroughConsent(
@@ -228,7 +229,7 @@ extension VMCommandCore {
 
     /// Refuses unless `instance` takes every one of `edits`, naming each
     /// assignment its state refused.
-    private func requireGates(
+    func requireGates(
         for edits: [(key: VMConfigurationKey, value: String)], on instance: VMInstance
     ) throws {
         let guestOS = instance.configuration.guestOS

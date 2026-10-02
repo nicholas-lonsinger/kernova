@@ -474,6 +474,33 @@ protocol VMCommanding: AnyObject {
         _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry]
 
+    // MARK: - Networks
+
+    /// The library's named networks, ordered by name, each with the VMs on it.
+    ///
+    /// Addresses no VM: a network is the library's, and a VM joins one through
+    /// its `network.membership` key.
+    func networks() -> [NetworkSummary]
+
+    /// Lists a new network named `name`, whose VMs run in `kind`. Refuses a
+    /// name another network has, ignoring case, and one a membership value
+    /// already spells.
+    @discardableResult
+    func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary
+
+    /// Renames the network `network` names, by identifier or by name. A VM
+    /// names its network by identifier, so no VM changes.
+    func renameNetwork(_ network: String, to newName: String) throws
+
+    /// Stops listing the network `network` names, first moving each VM on it
+    /// to a network of its own, which narrows what it reaches and widens
+    /// nothing (docs/NETWORKING.md).
+    ///
+    /// Every move or none: a VM whose state takes no change to its membership
+    /// refuses the whole delete, naming it. A snapshot taken on the network
+    /// still names it, and a revert puts the VM back on it, unlisted.
+    func deleteNetwork(_ network: String) throws
+
     // MARK: - Guest Agent Disk
 
     /// Puts the bundled guest-agent installer image in front of the guest,

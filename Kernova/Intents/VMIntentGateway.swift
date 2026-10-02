@@ -84,17 +84,20 @@ final class VMIntentGateway {
     /// asserted and skipped rather than being taken for a VM that left.
     func vms() async -> [VMEntity] {
         await ready()
-        return commands.list().compactMap { summary in
-            do {
-                return VMEntity(try commands.info(.id(summary.id)))
-            } catch {
-                #log(
-                    Self.logger, .fault,
-                    "Listed VM \(summary.id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
-                )
-                assertionFailure("Listed VM \(summary.id.uuidString) has no info read: \(error)")
-                return nil
-            }
+        return commands.list().compactMap { entity(for: $0.id) }
+    }
+
+    /// One listed VM's whole read, `nil` — asserted — for a row with none.
+    private func entity(for id: UUID) -> VMEntity? {
+        do {
+            return VMEntity(try commands.info(.id(id)))
+        } catch {
+            #log(
+                Self.logger, .fault,
+                "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
+            )
+            assertionFailure("Listed VM \(id.uuidString) has no info read: \(error)")
+            return nil
         }
     }
 
@@ -348,6 +351,49 @@ final class VMIntentGateway {
         }
     }
 
+    // MARK: - Networks
+
+    /// Every named network, ordered by name, each with the VMs on it read in
+    /// full — read the same way as ``vms()``.
+    func networks() async -> [NetworkEntity] {
+        await ready()
+        return commands.networks().map(entity(for:))
+    }
+
+    /// The networks `ids` names, skipping any that have since been deleted.
+    func networks(withIDs ids: [UUID]) async -> [NetworkEntity] {
+        let wanted = Set(ids)
+        return await networks().filter { wanted.contains($0.id) }
+    }
+
+    /// Every network whose name contains `text`, ignoring case.
+    func networks(matching text: String) async -> [NetworkEntity] {
+        await networks().filter { $0.name.localizedCaseInsensitiveContains(text) }
+    }
+
+    func createNetwork(name: String, kind: NetworkKind) async throws -> NetworkEntity {
+        try await perform(.createNetwork, on: nil) {
+            self.entity(for: try self.commands.createNetwork(name: name, kind: kind))
+        }
+    }
+
+    func renameNetwork(_ id: UUID, to newName: String) async throws {
+        try await perform(.renameNetwork, on: id) {
+            try self.commands.renameNetwork(id.uuidString, to: newName)
+        }
+    }
+
+    /// Deletes the network, moving each VM on it to a network of its own.
+    func deleteNetwork(_ id: UUID) async throws {
+        try await perform(.deleteNetwork, on: id) {
+            try self.commands.deleteNetwork(id.uuidString)
+        }
+    }
+
+    private func entity(for network: NetworkSummary) -> NetworkEntity {
+        NetworkEntity(network, members: network.members.compactMap { entity(for: $0.id) })
+    }
+
     // MARK: - Arguments
 
     /// `name` with its surrounding whitespace gone, refusing one that carries
@@ -376,9 +422,10 @@ final class VMIntentGateway {
     /// framework shows it to whoever ran the intent and reports it nowhere
     /// else — no alert, no window, nothing a later session can read back.
     ///
-    /// `id` names the VM the verb addresses, and is `nil` for one that
-    /// addresses none: an import names a file, and the row it fills has no
-    /// identifier until the core has registered it.
+    /// `id` names the VM the verb addresses — the network, for a network
+    /// verb — and is `nil` for one that addresses neither yet: an import names
+    /// a file, and neither the row it fills nor the network a create lists has
+    /// an identifier until the core has made it.
     private func perform<T>(
         _ verb: VMVerb, on id: UUID?, _ body: () async throws -> T
     ) async throws -> T {

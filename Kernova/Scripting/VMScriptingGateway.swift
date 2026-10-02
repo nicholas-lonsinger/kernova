@@ -312,6 +312,120 @@ final class VMScriptingGateway {
         }
     }
 
+    // MARK: - Networks
+
+    /// What a script that asks to make a virtual machine reads back.
+    nonisolated static let cannotMakeVirtualMachine = "A script can\u{2019}t make a virtual machine."
+
+    /// Every named network, ordered by name — or nothing, with the command
+    /// asking deferred, until the library has landed.
+    ///
+    /// The deferral is what holds a `delete` or a `set` back too: each
+    /// evaluates its network specifier through here before it acts, and a
+    /// delete run against a library that has not landed would move no VM off
+    /// the network.
+    func networks() -> [VMNetworkScriptObject] {
+        guard !deferUntilLanded() else { return [] }
+        return commands.networks().map(object(for:))
+    }
+
+    /// One network's read, with the VMs on it.
+    private func object(for network: NetworkSummary) -> VMNetworkScriptObject {
+        VMNetworkScriptObject(
+            network, members: network.members.compactMap { object(for: $0.id) }, gateway: self)
+    }
+
+    /// What `make new <class>` creates as an element of the application under
+    /// `key`, with the `name` and `kind` its `with properties` record names —
+    /// a network, listed by the core before this returns, or `nil` with the
+    /// refusal recorded.
+    ///
+    /// Cocoa inserts what this answers into the element afterwards, which
+    /// therefore has nothing left to do. Every other element is refused:
+    /// Cocoa's own answer allocates the class with `init()`, which
+    /// ``VMScriptObject`` does not have.
+    func makeElement(forKey key: String, name: String?, kind: NSNumber?) -> VMNetworkScriptObject? {
+        guard key == AppDelegate.networksKey else {
+            answering?.refuse(Int(errAECantHandleClass), Self.cannotMakeVirtualMachine)
+            return nil
+        }
+        return run(.createNetwork, on: nil) {
+            object(for: try commands.createNetwork(name: name ?? "", kind: try Self.networkKind(kind)))
+        }
+    }
+
+    /// The kind a `make`'s `kind` property names, as its enumerator's code: a
+    /// Shared Network when it names none.
+    private static func networkKind(_ code: NSNumber?) throws -> NetworkKind {
+        guard let code else { return .shared }
+        guard let term = VMScriptNetworkKind(code: code.uint32Value) else {
+            throw CommandError.invalidArgument("That is not a kind of network Kernova makes.")
+        }
+        return term.kind
+    }
+
+    /// Renames the network `id` identifies — a script's `set name of network`.
+    func renameNetwork(_ id: UUID, to newName: String) {
+        run(.renameNetwork, on: id) { try commands.renameNetwork(id.uuidString, to: newName) }
+    }
+
+    /// Deletes the network at `index` of ``networks()`` — a script's
+    /// `delete network`.
+    ///
+    /// Cocoa removes an element through this for a `move` too, then inserts it
+    /// again (observed on macOS 27: `move network 1 to end of networks` sends
+    /// `removeFromNetworksAtIndex:` then `insertInNetworks:atIndex:`), and
+    /// that removal would delete the network. The networks are ordered by
+    /// name, so there is no move to make: only a delete reaches the core.
+    ///
+    /// A delete addressing several networks stops at the first refusal, as a
+    /// verb addressing several VMs does: Cocoa carries on removing the rest,
+    /// and a script could not tell how far it got.
+    func removeNetwork(at index: Int) {
+        guard let command = answering, command is NSDeleteCommand else {
+            answering?.refuse(
+                Int(errAEEventNotHandled),
+                "Kernova orders networks by name, so a script can\u{2019}t move one.")
+            return
+        }
+        guard command.scriptErrorNumber == 0 else { return }
+        let listed = commands.networks()
+        // Cocoa evaluated the index against this same list on this turn.
+        guard listed.indices.contains(index) else {
+            #log(
+                Self.logger, .fault,
+                "Asked to remove network \(index, privacy: .public) of \(listed.count, privacy: .public)")
+            assertionFailure("Asked to remove network \(index) of \(listed.count)")
+            command.refuse(Int(errAEIllegalIndex), "There is no network \(index + 1).")
+            return
+        }
+        let network = listed[index].id
+        run(.deleteNetwork, on: network) { try commands.deleteNetwork(network.uuidString) }
+    }
+
+    /// Runs a verb Cocoa's own command asked for — inside its specifier
+    /// evaluation, where nothing can suspend — logging and recording any
+    /// refusal on the command being answered.
+    ///
+    /// `id` names the network the verb addresses, `nil` for a create.
+    @discardableResult
+    private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
+        do {
+            return try body()
+        } catch let refusal as CommandError {
+            let subject = id.map { " for \($0.uuidString)" } ?? ""
+            #log(
+                Self.logger, .notice,
+                "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message, privacy: .public)"
+            )
+            answering?.refuse(refusal)
+            return nil
+        } catch {
+            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
+            return nil
+        }
+    }
+
     // MARK: - Dispatch
 
     /// Runs `verb` on each VM once the library read has landed, logging and

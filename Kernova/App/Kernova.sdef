@@ -35,10 +35,23 @@
 			<enumerator name="no network" code="KrNn" description="Turn its networking off, discarding a saved state."/>
 		</enumeration>
 
+		<enumeration name="network kind" code="KvNK" description="The mode every virtual machine on a named network runs in.">
+			<enumerator name="shared network" code="KnSh" description="The guests reach the internet through this Mac."/>
+			<enumerator name="host only" code="KnHo" description="The guests reach this Mac and each other, nothing else."/>
+		</enumeration>
+
 		<class-extension extends="application" description="Kernova's top-level scripting object.">
 			<cocoa class="NSApplication"/>
 			<element type="virtual machine" access="r" description="The virtual machines in the library.">
 				<cocoa key="virtualMachines"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+			<element type="network" description="The library's named networks, ordered by name.">
+				<cocoa key="networks"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
 				<accessor style="id"/>
@@ -73,8 +86,11 @@
 			<property name="network mode" code="KvNm" type="text" access="r" description="The network it joins, or missing value when networking is off.">
 				<cocoa key="networkMode"/>
 			</property>
-			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, or isolated, a network of its own; missing value when it joins no Shared Network or Host Only network.">
+			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, isolated, a network of its own, or the identifier of a named network; missing value when it joins no Shared Network or Host Only network.">
 				<cocoa key="networkMembership"/>
+			</property>
+			<property name="network name" code="KvNa" type="text" access="r" description="The name of the named network it joins, or missing value when it joins none or one this library does not list.">
+				<cocoa key="networkName"/>
 			</property>
 			<property name="MAC address" code="KvMA" type="text" access="r" description="The address the guest presents on that network.">
 				<cocoa key="macAddress"/>
@@ -97,6 +113,22 @@
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
 			</property>
+		</class>
+
+		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a Shared Network unless kind names another. Deleting one first moves each virtual machine on it to a network of its own.">
+			<cocoa class="VMNetworkScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a virtual machine's network membership names.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" description="Its name, unique in the library ignoring case.">
+				<cocoa key="name"/>
+			</property>
+			<property name="kind" code="KvKd" type="network kind" access="r" description="The mode every virtual machine on it runs in, fixed when it is made.">
+				<cocoa key="kind"/>
+			</property>
+			<element type="virtual machine" access="r" description="The virtual machines that join it.">
+				<cocoa key="virtualMachines"/>
+			</element>
 		</class>
 
 		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first.">

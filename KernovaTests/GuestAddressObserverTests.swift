@@ -140,7 +140,7 @@ struct GuestAddressObserverTests {
         let common = vm(.shared)
         let isolated = vm(.shared, isolated: true)
         let vmnet = Self.subnetted()
-        vmnet.scriptedSubnets[VmnetNetworkID(kind: .shared, owner: isolated.configuration.id)] =
+        vmnet.scriptedSubnets[VmnetNetworkID(kind: .shared, scope: .vm(isolated.configuration.id))] =
             .scripted("192.168.65.0")
         let observer = makeObserver(
             ScriptedARPTable([Self.entry("192.168.64.5"), Self.entry("192.168.65.27")]), vmnet: vmnet)

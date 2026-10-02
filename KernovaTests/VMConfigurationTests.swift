@@ -1389,12 +1389,30 @@ struct VMConfigurationTests {
             VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
 
         #expect(decoded.networkMembership == .isolated)
-        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, owner: config.id)))
+        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .vm(config.id))))
         // Bridged has no app-managed network to be isolated on.
         var bridged = decoded
         bridged.networkMode = .bridged
         #expect(bridged.joinedNetwork == .bridged)
         #expect(!bridged.joinsOwnNetwork)
+    }
+
+    @Test("A named network's membership persists as its identifier and joins that network in the VM's mode")
+    func namedMembershipRoundTripsAsItsIdentifier() throws {
+        let lab = UUID()
+        var config = VMConfiguration(name: "Member", guestOS: .linux, bootMode: .efi)
+        config.networkMembership = .network(lab)
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let stored = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(stored["networkMembership"] as? String == lab.uuidString)
+
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        #expect(decoded.networkMembership == .network(lab))
+        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .named(lab))))
+        #expect(VMNetworkMembership(rawValue: "common") == .common)
+        #expect(VMNetworkMembership(rawValue: "isolated") == .isolated)
+        #expect(VMNetworkMembership(rawValue: "Lab") == nil)
     }
 
     @Test("A bridged config decodes Automatic from a stored mode without an interface")

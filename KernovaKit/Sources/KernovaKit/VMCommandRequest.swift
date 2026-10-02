@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 7
+    public static let currentProtocolVersion = 8
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -111,6 +111,17 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case setConfiguration(
             VMSelector, assignments: [ConfigurationEntry], consent: Consent)
 
+        /// The library's named networks, ordered by name. Addresses no VM.
+        case networks
+        /// Lists a new network named `name` whose virtual machines run in
+        /// `kind`.
+        case createNetwork(name: String, kind: NetworkKind)
+        /// Renames the network `network` names, by identifier or by name.
+        case renameNetwork(network: String, newName: String)
+        /// Stops listing the network `network` names, moving each virtual
+        /// machine on it to a network of its own.
+        case deleteNetwork(network: String)
+
         /// Quits Kernova the way the status item's Quit does, save-suspending
         /// running and paused VMs on the way out.
         case quit
@@ -157,6 +168,10 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .configurationKeys: .configurationKeys
             case .configuration: .configuration
             case .setConfiguration: .setConfiguration
+            case .networks: .networks
+            case .createNetwork: .createNetwork
+            case .renameNetwork: .renameNetwork
+            case .deleteNetwork: .deleteNetwork
             case .quit: .quit
             }
         }

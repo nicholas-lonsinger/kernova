@@ -320,6 +320,7 @@ final class MockVMCommanding: VMCommanding {
             diskSizeInGB: 64,
             networkMode: nil,
             networkMembership: nil,
+            networkName: nil,
             macAddress: nil,
             ipAddress: guestAddress,
             agentStatus: "notInstalled",
@@ -835,6 +836,35 @@ final class MockVMCommanding: VMCommanding {
 
     func quit() {
         quitCallCount += 1
+    }
+
+    // MARK: - Networks
+
+    var networksToReturn: [NetworkSummary] = []
+    /// Thrown by every network edit when set.
+    var networkError: (any Error)?
+    private(set) var createNetworkCalls: [(name: String, kind: NetworkKind)] = []
+    private(set) var renameNetworkCalls: [(network: String, newName: String)] = []
+    private(set) var deleteNetworkCalls: [String] = []
+
+    func networks() -> [NetworkSummary] { networksToReturn }
+
+    func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary {
+        createNetworkCalls.append((name, kind))
+        if let networkError { throw networkError }
+        let network = NetworkSummary(id: UUID(), name: name, kind: kind, members: [])
+        networksToReturn.append(network)
+        return network
+    }
+
+    func renameNetwork(_ network: String, to newName: String) throws {
+        renameNetworkCalls.append((network, newName))
+        if let networkError { throw networkError }
+    }
+
+    func deleteNetwork(_ network: String) throws {
+        deleteNetworkCalls.append(network)
+        if let networkError { throw networkError }
     }
 
     // MARK: - Observation

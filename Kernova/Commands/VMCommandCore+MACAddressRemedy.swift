@@ -15,8 +15,8 @@ extension VMCommandCore {
     /// Why `remedy` cannot be taken by a VM brought up under `configuration`,
     /// or `nil` when it can — the one rule both the offers and the write read.
     ///
-    /// A network of its own is a Shared or Host Only VM's on its mode's common
-    /// network, where this build can attach the VM's own network, and beside a
+    /// A network of its own is a Shared or Host Only VM's on a network it
+    /// shares — its mode's common network or a named one — where this build can attach the VM's own network, and beside a
     /// saved state only where that state restores on it
     /// (``VMConfiguration/savedStateSurvivesMembershipMove``). A new address
     /// and no network are open to any VM with a network device.
@@ -30,9 +30,11 @@ extension VMCommandCore {
         }
         switch remedy {
         case .ownNetwork:
-            guard configuration.effectiveNetworkMembership == .common else {
+            guard let membership = configuration.effectiveNetworkMembership,
+                membership != .isolated
+            else {
                 return .invalidArgument(
-                    "Only a Shared Network or Host Only virtual machine on its mode\u{2019}s common network can move to a network of its own."
+                    "Only a Shared Network or Host Only virtual machine on a network it shares can move to a network of its own."
                 )
             }
             var moved = configuration

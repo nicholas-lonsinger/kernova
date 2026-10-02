@@ -127,8 +127,10 @@ extension VMInstance {
             // Shared and Host Only wait on the app's own network, not a host
             // interface — pointing the user at Wi-Fi/Ethernet would misdirect
             // them.
-            if configuration.joinsOwnNetwork {
-                return "This VM's isolated network is unavailable. Kernova reconnects automatically."
+            if let network = configuration.joinedNetwork, !network.isCommon {
+                return network.isOwn
+                    ? "This VM's isolated network is unavailable. Kernova reconnects automatically."
+                    : "This VM's network is unavailable. Kernova reconnects automatically."
             }
             return switch configuration.networkMode {
             case .hostOnly:

@@ -46,6 +46,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// without an entitlement reads it.
     let entitlements: EntitlementService
 
+    /// The named networks VMs join together.
+    let networks: VMNetworkDirectory
+
     // MARK: - Collaborators
 
     /// Drives a running VM's XHCI removable-media list to what its
@@ -228,10 +231,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
+        networks: VMNetworkDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore()
     ) {
         self.storageService = storageService
+        self.networks = networks
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences

@@ -53,6 +53,8 @@ final class VMLibraryViewModel {
     /// What this build's signature authorizes, as every surface that degrades
     /// without an entitlement reads it.
     var entitlements: EntitlementService { library.entitlements }
+    /// The named networks VMs join together.
+    var networks: VMNetworkDirectory { library.networks }
 
     // MARK: - Library Forwarding
 
@@ -569,7 +571,8 @@ final class VMLibraryViewModel {
         preferences: AppPreferences,
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
-        entitlements: EntitlementService
+        entitlements: EntitlementService,
+        networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
@@ -595,7 +598,8 @@ final class VMLibraryViewModel {
             preferences: preferences,
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
-            entitlements: entitlements
+            entitlements: entitlements,
+            networks: networks
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(

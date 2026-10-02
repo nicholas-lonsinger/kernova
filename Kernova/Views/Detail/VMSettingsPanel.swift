@@ -162,6 +162,14 @@ extension VMSettingsPanel {
     /// - Returns: Whether the edit was applied.
     @discardableResult
     func write(_ assignments: ConfigurationEntry...) -> Bool {
+        write(contentsOf: assignments)
+    }
+
+    /// ``write(_:)`` for a batch assembled at run time; an empty one writes
+    /// nothing and is applied.
+    @discardableResult
+    func write(contentsOf assignments: [ConfigurationEntry]) -> Bool {
+        guard !assignments.isEmpty else { return true }
         guard case .applied = viewModel.setConfiguration(assignments, on: instance) else {
             refresh()
             return false

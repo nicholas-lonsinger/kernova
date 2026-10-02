@@ -44,7 +44,9 @@ enum TableRenderer {
             ("Disk", "\(info.diskSizeInGB) GB"),
             (
                 "Network",
-                info.networkMode.map { [$0, info.networkMembership].compactMap(\.self).joined(separator: ", ") }
+                info.networkMode.map {
+                    [$0, info.networkName ?? info.networkMembership].compactMap(\.self).joined(separator: ", ")
+                }
                     ?? "Off"
             ),
         ]
@@ -127,6 +129,26 @@ enum TableRenderer {
         guard !rows.isEmpty else { return "" }
         return columns(
             headings: ["VM", "NAME", "KEY"], rows: rows.map { [$0.vm, $0.name, $0.key] })
+    }
+
+    /// The library's named networks, in the order the app listed them (by
+    /// name).
+    ///
+    /// The members are one comma-separated cell ahead of the identifier, so
+    /// the identifier stays the last field however many names precede it.
+    /// `quiet` prints names alone, which every `network` verb accepts back.
+    static func render(_ rows: [NetworkSummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.name).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["NAME", "KIND", "MEMBERS", "ID"],
+            rows: rows.map {
+                [
+                    $0.name, $0.kind.rawValue,
+                    $0.members.isEmpty ? "None" : $0.members.map(\.name).joined(separator: ", "),
+                    $0.id.uuidString,
+                ]
+            })
     }
 
     /// What `usb attach` or `usb detach` takes back for one accessory: the

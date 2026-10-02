@@ -85,6 +85,9 @@ enum CompletionSource {
         return usbPairingKeys(ofVM: subject.vm, byIdentifier: subject.byIdentifier)
     }
 
+    /// The named networks a `<network>` argument offers.
+    static let network = CompletionKind.custom { _, _, _ in networkNames() }
+
     /// The settings a `get` key argument offers.
     static let configurationKey = CompletionKind.custom { _, _, _ in configurationKeys() }
 
@@ -184,6 +187,13 @@ enum CompletionSource {
             case .usbPairings(let pairings)? = answer(to: .usbPairings(selector), in: context)
         else { return [] }
         return pairings.map { candidate($0.key, describedBy: $0.name, for: context.shell) }
+    }
+
+    /// Every named network in the library, by the name each `network` verb
+    /// takes back.
+    static func networkNames(in context: CompletionContext = .live) -> [String] {
+        guard case .networks(let networks)? = answer(to: .networks, in: context) else { return [] }
+        return networks.map { candidate($0.name, describedBy: $0.kind.rawValue, for: context.shell) }
     }
 
     /// Every setting `get` and `set` address, each with `suffix` appended.
