@@ -98,6 +98,20 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
 
     /// Re-keys everything held at `source` to `destination`, its run lock
     /// included, as a rename of the bundle directory would.
+    /// Copies every file this store holds at or under each of `relativePaths`
+    /// in the bundle at `source` to the same path in the bundle at
+    /// `destination`, as a clone copies those paths on disk.
+    func copyFiles(_ relativePaths: [String], from source: URL, to destination: URL) {
+        if let target { return target.copyFiles(relativePaths, from: source, to: destination) }
+        lock.withLock {
+            guard let files = bundles[Self.key(source)] else { return }
+            for (path, data) in files
+            where relativePaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+                bundles[Self.key(destination), default: [:]][path] = data
+            }
+        }
+    }
+
     func moveBundle(from source: URL, to destination: URL) {
         if let target { return target.moveBundle(from: source, to: destination) }
         lock.withLock {

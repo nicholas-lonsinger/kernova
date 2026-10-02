@@ -5013,6 +5013,34 @@ struct VMLibraryViewModelTests {
         #expect(instance.hostState == sourceHostState)
     }
 
+    @Test("An Exact Copy's carried snapshot reports the network its source captured it on")
+    func exactCopyCarriedSnapshotKeepsItsCapturedNetwork() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let taken = UUID()
+        var captured = VMConfiguration(name: "Original", guestOS: .linux, bootMode: .efi)
+        captured.applyNetworkMode(.hostOnly)
+        captured.networkMembership = .isolated
+        captured.macAddress = "02:4b:4e:56:0d:01"
+        let network = VMCapturedNetwork(captured)
+        let instance = viewModel.library.registerFixture(
+            name: "Original",
+            snapshots: VMSnapshotManifest(
+                snapshots: [
+                    VMSnapshot(
+                        id: taken, name: "Isolated", macAddress: captured.macAddress,
+                        network: network)
+                ]))
+        instance.activity.placeForTesting(.stopped)
+
+        // The copy reads its entry's network from the snapshot's own
+        // configuration, which it carries with the snapshot's directory.
+        viewModel.cloneVM(instance, as: .exactCopy)
+        await viewModel.awaitArrivalsForTesting()
+        let clone = try #require(viewModel.instances.first { $0.id != instance.id })
+
+        #expect(clone.snapshotManifest.snapshot(id: taken)?.network == network)
+    }
+
     @Test("cloneVM removes its arrival on storage error and selects remaining instance")
     func cloneVMRemovesTheArrivalOnError() async {
         let storage = MockVMStorageService()

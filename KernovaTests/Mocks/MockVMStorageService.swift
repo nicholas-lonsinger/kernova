@@ -229,6 +229,9 @@ final class MockVMStorageService: VMStorageProviding, @unchecked Sendable {
             at: destinationBundleURL, withIntermediateDirectories: true)
         try VMBundleMachineFiles.copyItems(
             relativePaths, from: sourceBundleURL, to: destinationBundleURL, ifMissing: .skip)
+        // The same paths among the files this store holds — a snapshot's own
+        // configuration above all, which the copy's manifest is read back from.
+        files.copyFiles(relativePaths, from: sourceBundleURL, to: destinationBundleURL)
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: destinationBundleURL)
     }
 
