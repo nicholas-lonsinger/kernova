@@ -33,8 +33,11 @@ struct VMAdmissionTests {
         var usbSupported = true
         var networkEnabled = true
         var clipboardSharing = true
+        /// The saved state restores after a membership move — a Shared VM's.
+        var survivesMembershipMove = false
 
         static let plain = Variant()
+        static let sharedNetwork = Variant(survivesMembershipMove: true)
         static let linux = Variant(guestOS: .linux)
         static let pendingSetup = Variant(pendingSetup: true)
         static let linuxPendingSetup = Variant(guestOS: .linux, pendingSetup: true)
@@ -44,7 +47,8 @@ struct VMAdmissionTests {
 
         var description: String {
             "\(guestOS) setup=\(pendingSetup) usb=\(usbSupported) "
-                + "network=\(networkEnabled) clipboard=\(clipboardSharing)"
+                + "network=\(networkEnabled) clipboard=\(clipboardSharing) "
+                + "survivesMembershipMove=\(survivesMembershipMove)"
         }
     }
 
@@ -54,6 +58,7 @@ struct VMAdmissionTests {
         VMAdmission.Facts(
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
+            savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
             clipboardSharingEnabled: variant.clipboardSharing,
             hasPendingGuestSetup: variant.pendingSetup, usbSupported: variant.usbSupported,
             identityConflict: nil, accessoryHolder: nil, terminating: terminating,
@@ -122,6 +127,8 @@ struct VMAdmissionTests {
         (.edit(.liveKeys), "AAAAAAR"),
         (.edit(.hotPlugMedia), "AAAIAAR"),
         (.edit(.networkAttachment), "AAAIAAR"),
+        // A saved state pins membership unless it restores across the move.
+        (.edit(.networkMembership), "AAAIAAR"),
         (.edit(.hostPresentation), "AAAAAAR"),
         (.edit(.snapshotMetadata), "AAAAAAR"),
         (.edit(.pairingRules), "AAAAAAR"),
@@ -173,6 +180,11 @@ struct VMAdmissionTests {
         (.noUSB, .operation(.detachingUSB(deviceID: session)), "UUUUUUR"),
         (.noUSB, .edit(.hotPlugMedia), "AAAIAAR"),
         (.noNetwork, .edit(.networkAttachment), "AAAIIIR"),
+        (.noNetwork, .edit(.networkMembership), "AAAIIIR"),
+        // Only membership is open beside a saved state that survives a move.
+        (.sharedNetwork, .edit(.networkMembership), "AAAAAAR"),
+        (.sharedNetwork, .edit(.networkAttachment), "AAAIAAR"),
+        (.sharedNetwork, .edit(.machineKeys), "AAAIIIR"),
         // A Linux guest's shares ride a device each, so no swap keeps its
         // devices.
         (.linux, .edit(.liveShares), "IIIIIIR"),
@@ -789,7 +801,8 @@ struct VMAdmissionTests {
         let mine = VMInstanceFixture.make(name: "Mine")
         let other = VMInstanceFixture.make(name: "Other")
         var facts = Self.facts()
-        facts.identityConflict = VMIdentityConflict(vm: mine, other: other, reason: .macAddress)
+        facts.identityConflict = VMIdentityConflict(
+            vm: mine, other: other, reason: .macAddress, configuration: mine.configuration)
         let conflict = VMAdmission.Decision.refuse(.identityConflict(facts.identityConflict!))
         #expect(
             VMAdmission.decide(.start(recovery: false), posture: .commit, phase: .stopped, facts: facts)

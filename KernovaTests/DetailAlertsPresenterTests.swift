@@ -743,6 +743,78 @@ struct DetailAlertsPresenterTests {
         #expect(answers.value == [.answered(false)])
     }
 
+    // MARK: - A MAC address conflict's remedies
+
+    private func remedyRequest(
+        answers: Box<[PresenterAnswer<MACAddressRemedy?>]>
+    ) -> MACAddressRemedyRequest {
+        let clone = VMSummary(
+            id: UUID(), name: "Clone", status: "suspended", ipAddress: .unavailable,
+            heldByAnotherCopy: false)
+        return MACAddressRemedyRequest(
+            prompt: MACAddressRemedyPrompt(
+                vm: clone, other: clone, verb: .resume, title: "Duplicate MAC Address",
+                message: "Change its network:",
+                offers: [
+                    MACAddressRemedyOffer(
+                        remedy: .ownNetwork, title: "Move to a Network of Its Own and Resume",
+                        isDestructive: false),
+                    MACAddressRemedyOffer(
+                        remedy: .newAddress, title: "Use a New MAC Address and Resume",
+                        isDestructive: true),
+                    MACAddressRemedyOffer(
+                        remedy: .noNetwork, title: "Turn Off Networking and Resume",
+                        isDestructive: true),
+                ],
+                dismissTitle: "Cancel"),
+            answer: { answers.value.append($0) })
+    }
+
+    @Test("The remedy alert keeps every change that discards a saved state off Return")
+    func remedyAlertOrdersItsButtons() {
+        let alert = AlertConfiguration(
+            offering: remedyRequest(answers: Box([])).prompt, choose: { _ in })
+
+        #expect(
+            alert.buttons.map(\.title) == [
+                "Move to a Network of Its Own and Resume", "Cancel",
+                "Use a New MAC Address and Resume", "Turn Off Networking and Resume",
+            ])
+        #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive, .destructive])
+    }
+
+    @Test("Each remedy button answers the bring-up with its change, and Cancel with none")
+    func remedyButtonsAnswerTheBringUp() {
+        for (response, expected): (NSApplication.ModalResponse, MACAddressRemedy?) in [
+            (.alertFirstButtonReturn, .ownNetwork), (.alertSecondButtonReturn, nil),
+            (.alertThirdButtonReturn, .newAddress),
+        ] {
+            let (presenter, _) = makePresenter()
+            presenter.start(window: showTestWindow(styleMask: [.titled]))
+            let answers = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
+
+            presenter.presentMACAddressRemedy(remedyRequest(answers: answers))
+            #expect(presenter.dismissShownAlertForTesting(response))
+            presenter.stop()
+
+            #expect(answers.value == [.answered(expected)], "\(response)")
+        }
+    }
+
+    @Test("A remedy question with nowhere to ask is answered unasked, and one on screen when the window goes")
+    func remedyQuestionWithNowhereToAskIsUnasked() {
+        let (presenter, _) = makePresenter()
+        let unshown = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
+        presenter.presentMACAddressRemedy(remedyRequest(answers: unshown))
+        #expect(unshown.value == [.unasked])
+
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        let shown = Box<[PresenterAnswer<MACAddressRemedy?>]>([])
+        presenter.presentMACAddressRemedy(remedyRequest(answers: shown))
+        presenter.stop()
+        #expect(shown.value == [.unasked])
+    }
+
     // MARK: - The guest account a VM still owes
 
     /// Collects the answers the account prompts under test are given.

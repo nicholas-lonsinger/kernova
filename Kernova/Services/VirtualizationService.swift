@@ -400,7 +400,7 @@ final class VirtualizationService {
         }
         return .rest(
             .live(wasRunning ? .running : .paused),
-            VMSnapshot(snapshot, macAddress: configuration.macAddress))
+            VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
     }
 
     /// The bundle's disks and the VM's configuration, from a stopped VM — no VZ
@@ -427,7 +427,7 @@ final class VirtualizationService {
             Self.logger, .notice,
             "Took a cold snapshot '\(snapshot.name, privacy: .public)' of stopped VM '\(instance.name, privacy: .public)'"
         )
-        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
+        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
     }
 
     /// The bundle's suspend slot plus its disks, from a VM paused to disk.
@@ -459,7 +459,7 @@ final class VirtualizationService {
             Self.logger, .notice,
             "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
-        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
+        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
     }
 
     /// Takes every passthrough USB accessory off the VM `context` holds before

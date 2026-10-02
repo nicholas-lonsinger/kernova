@@ -8,33 +8,30 @@ import Testing
 @Suite("VMMACAddressRegistry Tests", .serialized, .caseScoped)
 @MainActor
 struct VMMACAddressRegistryTests {
-    /// What the registry asked a user to be told, in place of a presenter.
+    /// What a refused edit tells the user, in place of a presenter.
     private let failures = MockLibraryFailureSink()
     /// The library the registry reads through. Held by the suite because the
     /// registry's reference is weak — the real one is owned by its library.
     private let roster = StubVMInstanceRoster()
 
     private func makeRegistry() -> VMMACAddressRegistry {
-        let registry = VMMACAddressRegistry(
-            guestAddresses: GuestAddressObserver(
-                reader: ScriptedARPTable(), vmnetNetworks: MockVmnetNetworkProvider(),
-                entitlements: .entitled))
+        let registry = VMMACAddressRegistry()
         registry.roster = roster
-        registry.onFailure = { [failures] title, message in
-            failures.record(title: title, message: message)
-        }
         return registry
     }
 
-    /// The conflict `registry` finds for the edit, presented as the library
-    /// presents a refused edit.
+    /// The conflict `registry` finds for the edit, recorded in `failures` in
+    /// the words the refusal a write raises over it reads in.
     private func refuse(
         _ registry: VMMACAddressRegistry, on instance: VMInstance,
         movingFrom old: VMConfiguration, to new: VMConfiguration
     ) -> VMMACAddressRegistry.MACAddressConflict? {
         guard let conflict = registry.macAddressConflict(on: instance, movingFrom: old, to: new)
         else { return nil }
-        registry.presentRefusal(conflict, on: instance)
+        let failure = CommandErrorDTO.conflict(
+            vm: instance.summary(ipAddress: .unavailable),
+            with: conflict.other.summary(ipAddress: .unavailable), reason: conflict.reason)
+        failures.record(title: failure.title, message: failure.message)
         return conflict
     }
 
@@ -300,7 +297,11 @@ struct VMMACAddressRegistryTests {
         var new = old
         new.networkMode = .hostOnly
 
-        #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
+        let conflict = refuse(registry, on: instance, movingFrom: old, to: new)
+        #expect(conflict?.other === twin)
+        // What the change would have landed, which decides whether a network
+        // of its own is offered in its place.
+        #expect(conflict?.target == new)
         #expect(failures.errorTitle == "Duplicate MAC Address")
     }
 

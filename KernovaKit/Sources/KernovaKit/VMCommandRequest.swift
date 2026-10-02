@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 6
+    public static let currentProtocolVersion = 7
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -50,18 +50,25 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// ``CommandErrorDTO/guestAccountPasswordRequired(prompt:)``: the wire
         /// carries no way to answer that, so every out-of-process caller gets
         /// the refusal.
-        case start(VMSelector, recovery: Bool, consent: Consent)
+        ///
+        /// `macAddressRemedy` is the change to the VM's network that a refusal
+        /// over a MAC address another active VM uses on the same network asks
+        /// for (``CommandErrorDTO/macAddressRemedyRequired(prompt:)``), `nil`
+        /// for none; the same on every bring-up verb below.
+        case start(
+            VMSelector, recovery: Bool, consent: Consent, macAddressRemedy: MACAddressRemedy?)
         case cancelGuestSetup(VMSelector, consent: Consent)
         /// `timeout` bounds the wait for the guest to power off, in seconds;
         /// `nil` returns as soon as the guest has been asked to go down.
         case stop(
             VMSelector, disposition: StopDisposition, consent: Consent, timeout: TimeInterval?)
         case pause(VMSelector)
-        case resume(VMSelector, consent: Consent)
+        case resume(VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy?)
         case suspend(VMSelector)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
+        case restart(
+            VMSelector, timeout: TimeInterval?, consent: Consent, macAddressRemedy: MACAddressRemedy?)
         case open(VMSelector)
         case reveal(VMSelector)
         /// Selects the VM's bundle in the Finder, which is what comes forward.
@@ -69,7 +76,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         case takeSnapshot(VMSelector, name: String, notes: String)
         case revertToSnapshot(
-            VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent)
+            VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent,
+            macAddressRemedy: MACAddressRemedy?)
         case deleteSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
         case setSnapshotNotes(VMSelector, snapshot: UUID, notes: String)

@@ -92,8 +92,12 @@ struct VMBundleTests {
             pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
     }
 
+    /// A listed snapshot whose own configuration this bundle does not hold,
+    /// as one reads back.
     private func snapshot(_ name: String) -> VMSnapshot {
-        VMSnapshot(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
+        VMSnapshot(
+            VMSnapshotRecord(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000)),
+            network: nil)
     }
 
     /// Commits this test's own change to `file` through the VM, answering
@@ -450,8 +454,10 @@ struct VMBundleTests {
         try withBundle { url in
             let bundle = makeBundle(try onDisk(url))
             let taken = VMSnapshot(
-                name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-                notes: "tools configured", macAddress: nil)
+                VMSnapshotRecord(
+                    name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                    notes: "tools configured"),
+                network: nil)
             let written = VMSnapshotManifest(snapshots: [taken], currentID: taken.id)
 
             try bundle.commitSnapshotManifest { $0 = written }
@@ -460,7 +466,7 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A read snapshot carries the MAC address of the configuration it was taken under")
+    @Test("A read snapshot carries the network device and MAC address of the configuration it was taken under")
     func manifestCarriesEachSnapshotsMACAddress() throws {
         try withBundle { url in
             var configuration = VMConfiguration(name: "Captured", guestOS: .linux, bootMode: .efi)
@@ -479,6 +485,7 @@ struct VMBundleTests {
             let loaded = try onDisk(url).snapshotManifest
 
             #expect(loaded.snapshot(id: captured.id)?.macAddress == "aa:bb:cc:dd:ee:01")
+            #expect(loaded.snapshot(id: captured.id)?.network == VMCapturedNetwork(configuration))
             #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
             // The snapshot's own configuration is where the address lives; the
             // manifest never records a second copy of it.

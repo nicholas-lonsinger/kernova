@@ -132,9 +132,47 @@ final class VMLibraryViewModel {
     func setConfiguration(
         _ assignments: [ConfigurationEntry], on instance: VMInstance, consent: Consent = .none
     ) -> EditOutcome {
-        runEdit(on: instance) {
-            try self.commands.setConfiguration(
+        do {
+            try commands.setConfiguration(
                 .id(instance.id), assignments: assignments, consent: consent)
+            return .applied
+        } catch let error as CommandError {
+            guard let prompt = error.macAddressRemedyPrompt, !prompt.offers.isEmpty else {
+                return route(error, ofEditOn: instance)
+            }
+            offerOwnNetwork(prompt, for: assignments, on: instance, consent: consent)
+            return .refused
+        } catch {
+            return route(error, ofEditOn: instance)
+        }
+    }
+
+    /// Asks whether a running VM refused a network change over its MAC address
+    /// joins a network of its own instead, and makes the change with that
+    /// membership when it does — the one remedy a live session takes.
+    ///
+    /// Asked after the refusal returns, since the edit that raised it answers
+    /// synchronously; a refusal that could not be asked takes the error path.
+    private func offerOwnNetwork(
+        _ prompt: MACAddressRemedyPrompt, for assignments: [ConfigurationEntry],
+        on instance: VMInstance, consent: Consent
+    ) {
+        Task {
+            do {
+                guard try await askForMACAddressRemedy(prompt) == .ownNetwork else { return }
+            } catch is ConfirmationDeclined {
+                return
+            } catch {
+                present(error, for: instance)
+                return
+            }
+            setConfiguration(
+                assignments
+                    + [
+                        VMConfigurationKeyRegistry.networkMembership.assigning(
+                            VMNetworkMembership.isolated.rawValue)
+                    ],
+                on: instance, consent: consent)
         }
     }
 
@@ -751,9 +789,10 @@ final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommanding`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance) { consent in
+        await runAsking(on: instance) { consent, remedy in
             try await self.commands.start(
-                .id(instance.id), recovery: bootIntoRecovery, consent: consent)
+                .id(instance.id), recovery: bootIntoRecovery, consent: consent,
+                macAddressRemedy: remedy)
         }
     }
 
@@ -792,9 +831,11 @@ final class VMLibraryViewModel {
     /// What a user declining a confirmation raises, for the same reason.
     private struct ConfirmationDeclined: Error {}
 
-    /// Runs a bring-up through ``VMConsentPolicy/run(prompting:_:)`` and, inside
-    /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking on
-    /// screen for each consent and the account it refuses without.
+    /// Runs a bring-up through
+    /// ``VMConsentPolicy/run(prompting:choosingMACAddressRemedy:_:)`` and,
+    /// inside it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``,
+    /// asking on screen for each consent, the change a MAC address conflict
+    /// takes, and the account it refuses without.
     ///
     /// Asking is the door's job and deciding is the verb's: this presents the
     /// questions and hands each answer to the verb, writing nothing itself. A
@@ -804,13 +845,17 @@ final class VMLibraryViewModel {
     /// said no to it. A question that could not be asked leaves its refusal
     /// standing, and that refusal takes the ordinary error surface like every
     /// other, queued behind whatever is on screen.
-    private func runAsking(on instance: VMInstance, _ verb: (Consent) async throws -> Void) async {
+    private func runAsking(
+        on instance: VMInstance, _ verb: (Consent, MACAddressRemedy?) async throws -> Void
+    ) async {
         do {
-            try await VMConsentPolicy.run(prompting: { try await self.askToConfirm($0) }) {
-                consent in
+            try await VMConsentPolicy.run(
+                prompting: { try await self.askToConfirm($0) },
+                choosingMACAddressRemedy: { try await self.askForMACAddressRemedy($0) }
+            ) { consent, remedy in
                 try await VMConsentPolicy.runGatheringGuestAccount(
                     prompting: { try await self.askForGuestAccount($0) },
-                    { try await verb(consent) })
+                    { try await verb(consent, remedy) })
             }
         } catch is GuestAccountPromptDismissed {
             #log(
@@ -842,6 +887,27 @@ final class VMLibraryViewModel {
         case .answered(true): return
         case .answered(false): throw ConfirmationDeclined()
         case .unasked: throw CommandError.confirmationRequired(prompt)
+        }
+    }
+
+    /// Puts the changes a MAC address conflict offers on screen and waits for
+    /// the user's choice.
+    ///
+    /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
+    ///   refusal itself when it could not be asked.
+    private func askForMACAddressRemedy(
+        _ prompt: MACAddressRemedyPrompt
+    ) async throws -> MACAddressRemedy {
+        guard let presenter else { throw CommandError.macAddressRemedyRequired(prompt) }
+        let answer = await withCheckedContinuation { continuation in
+            presenter.presentMACAddressRemedy(
+                MACAddressRemedyRequest(
+                    prompt: prompt, answer: { continuation.resume(returning: $0) }))
+        }
+        switch answer {
+        case .answered(let remedy?): return remedy
+        case .answered(nil): throw ConfirmationDeclined()
+        case .unasked: throw CommandError.macAddressRemedyRequired(prompt)
         }
     }
 
@@ -913,8 +979,9 @@ final class VMLibraryViewModel {
     /// surfaces for the same reason.
     func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance) { consent in
-            try await self.commands.resume(.id(instance.id), consent: consent)
+        await runAsking(on: instance) { consent, remedy in
+            try await self.commands.resume(
+                .id(instance.id), consent: consent, macAddressRemedy: remedy)
         }
     }
 
@@ -993,10 +1060,10 @@ final class VMLibraryViewModel {
     func revert(
         _ instance: VMInstance, to snapshot: VMSnapshot, takingCheckpoint: Bool = false
     ) async {
-        await runAsking(on: instance) { consent in
+        await runAsking(on: instance) { consent, remedy in
             try await self.commands.revertToSnapshot(
                 .id(instance.id), snapshot: snapshot.id, takingCheckpoint: takingCheckpoint,
-                consent: consent.adding(.revertToSnapshot))
+                consent: consent.adding(.revertToSnapshot), macAddressRemedy: remedy)
         }
     }
 

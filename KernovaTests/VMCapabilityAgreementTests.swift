@@ -134,6 +134,16 @@ struct VMCapabilityAgreementTests {
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
                 consent: .all)
+        case .switchNetworkMembership:
+            try core.setConfiguration(
+                vm,
+                assignments: [
+                    ConfigurationEntry(
+                        key: "network.membership",
+                        value: instance.configuration.networkMembership == .isolated
+                            ? "common" : "isolated")
+                ],
+                consent: .all)
         case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)
@@ -152,7 +162,8 @@ struct VMCapabilityAgreementTests {
             .unsupportedByBuild, .terminating, .heldByAnotherCopy:
             true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
-            .guestAccountPasswordRequired, .invalidArgument, .unsupported, .timedOut,
+            .guestAccountPasswordRequired, .macAddressRemedyRequired, .invalidArgument, .unsupported,
+            .timedOut,
             .operationFailed:
             false
         }

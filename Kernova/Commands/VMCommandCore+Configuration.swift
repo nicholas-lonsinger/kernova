@@ -221,8 +221,7 @@ extension VMCommandCore {
         if let conflict = library.macAddresses.macAddressConflict(
             on: instance, movingFrom: held, to: config)
         {
-            throw CommandError.conflict(
-                vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
+            throw macAddressRefusal(conflict, on: instance)
         }
         return moved.map(\.key)
     }

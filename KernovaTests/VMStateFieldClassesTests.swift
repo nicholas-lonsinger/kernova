@@ -83,6 +83,25 @@ struct VMStateFieldClassesTests {
             classes.refused(from: on, to: readdressed, by: .edit(.networkAttachment)) == ["macAddress"])
     }
 
+    @Test("A membership edit writes the membership and no other network field")
+    func membershipEditWritesMembershipAlone() {
+        var common = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
+        common.applyNetworkMode(.shared)
+        var isolated = common
+        isolated.networkMembership = .isolated
+        let classes = VMConfiguration.fieldClasses
+        #expect(classes.refused(from: common, to: isolated, by: .edit(.networkMembership)) == [])
+        var moved = isolated
+        moved.networkMode = .hostOnly
+        #expect(
+            classes.refused(from: common, to: moved, by: .edit(.networkMembership)) == ["networkMode"])
+        var readdressed = common
+        readdressed.macAddress = "02:11:22:33:44:55"
+        #expect(
+            classes.refused(from: common, to: readdressed, by: .edit(.networkMembership))
+                == ["macAddress"])
+    }
+
     @Test("Clipboard sharing is hardware on a Linux guest and a live setting on a macOS one")
     func clipboardSharingIsClassifiedByGuest() {
         let classes = VMConfiguration.fieldClasses

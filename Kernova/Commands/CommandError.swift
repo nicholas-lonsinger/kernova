@@ -55,6 +55,10 @@ enum CommandError: Error, Sendable, Equatable {
     /// The start would spend the one boot macOS creates a guest account on, and
     /// the caller answered nothing about that account.
     case guestAccountPasswordRequired(GuestAccountPrompt)
+    /// Another active VM uses the VM's MAC address on the network it would
+    /// join; the verb takes a change to the VM's network that removes the
+    /// conflict.
+    case macAddressRemedyRequired(MACAddressRemedyPrompt)
     /// An argument named something the verb does not offer — a configuration
     /// key that is not in the keyspace — or carried a value it cannot use.
     /// The string is the whole refusal, in the words the user reads.
@@ -114,6 +118,13 @@ extension CommandError {
         return prompt
     }
 
+    /// The changes this refusal offers to a VM's network, or `nil` when it is
+    /// not a MAC address refusal that offers any.
+    var macAddressRemedyPrompt: MACAddressRemedyPrompt? {
+        guard case .macAddressRemedyRequired(let prompt) = self else { return nil }
+        return prompt
+    }
+
     /// This failure as it crosses a wire.
     var dto: CommandErrorDTO {
         switch self {
@@ -137,6 +148,8 @@ extension CommandError {
             .confirmationRequired(prompt: prompt)
         case .guestAccountPasswordRequired(let prompt):
             .guestAccountPasswordRequired(prompt: prompt)
+        case .macAddressRemedyRequired(let prompt):
+            .macAddressRemedyRequired(prompt: prompt)
         case .invalidArgument(let message):
             .invalidArgument(message: message)
         case .unsupported(let capability):

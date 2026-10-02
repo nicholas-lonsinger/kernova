@@ -1542,6 +1542,38 @@ struct VMLibraryViewModelTests {
         #expect(starting.status == .stopped)
     }
 
+    @Test("start beside a MAC address twin asks how to change the VM's network, and starts with the change chosen")
+    func startAsksForAMACAddressRemedy() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        presenter.macAddressRemedyAnswer = .answered(.newAddress)
+
+        await viewModel.start(starting)
+
+        #expect(presenter.macAddressRemedyRequests.map(\.prompt.vm.id) == [starting.id])
+        #expect(starting.configuration.macAddress != other.configuration.macAddress)
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("start beside a MAC address twin, walked away from, starts nothing and says nothing")
+    func startDeclinedAtTheMACAddressRemedy() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMACAddressPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        presenter.macAddressRemedyAnswer = .answered(nil)
+
+        await viewModel.start(starting)
+
+        #expect(presenter.macAddressRemedyRequests.count == 1)
+        #expect(starting.configuration.macAddress == other.configuration.macAddress)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.showError == false)
+    }
+
     @Test("start is refused while the MAC address twin is live-paused (it still holds the address)")
     func startBlockedByLivePausedMACAddressTwin() async {
         let virtService = MockVirtualizationService()
@@ -1716,8 +1748,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorTitle == "Duplicate MAC Address")
     }
 
-    @Test("a live mode switch onto a MAC address twin's network is refused, changing nothing")
-    func liveModeSwitchOntoAMACAddressTwinIsRefused() throws {
+    @Test("a live mode switch onto a MAC address twin's network is refused, changing nothing, once")
+    func liveModeSwitchOntoAMACAddressTwinIsRefused() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
             to: viewModel, mode: .hostOnly, otherMode: .shared)
@@ -1725,15 +1757,37 @@ struct VMLibraryViewModelTests {
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let accepted = try viewModel.library.updateConfiguration(
-            of: switching, as: .networkAttachment
-        ) {
-            $0.networkMode = .shared
-        }
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.shared.rawValue)],
+            on: switching)
 
-        #expect(accepted.refusedForMACAddress)
+        #expect(outcome == .refused)
+        // The question that could not be asked stands as the refusal, once.
+        try await waitForChange { !presenter.errorTitles.isEmpty }
+        #expect(presenter.macAddressRemedyRequests.count == 1)
+        #expect(presenter.errorTitles == ["Duplicate MAC Address"])
         #expect(switching.configuration.networkMode == .hostOnly)
-        #expect(presenter.errorTitle == "Duplicate MAC Address")
+    }
+
+    @Test("a live mode switch refused over a MAC address joins a network of its own when the user chooses one")
+    func liveModeSwitchJoinsItsOwnNetworkWhenChosen() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let (switching, other) = appendMACAddressPair(
+            to: viewModel, mode: .hostOnly, otherMode: .shared)
+        switching.activity.placeForTesting(.running(sessionID: UUID()))
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        presenter.macAddressRemedyAnswer = .answered(.ownNetwork)
+
+        viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.shared.rawValue)],
+            on: switching)
+
+        try await waitForChange { switching.configuration.networkMode == .shared }
+        let request = try #require(presenter.macAddressRemedyRequests.first)
+        #expect(request.prompt.verb == .setConfiguration)
+        #expect(request.prompt.offers.map(\.title) == ["Join a Network of Its Own"])
+        #expect(switching.configuration.networkMembership == .isolated)
+        #expect(presenter.errorTitles.isEmpty)
     }
 
     @Test("a stopped VM may take the mode a live MAC address twin is on — its start is the guard")
@@ -2935,14 +2989,14 @@ struct VMLibraryViewModelTests {
             using: vmnet, held: "aa:bb:cc:dd:ee:0f", editing: "aa:bb:cc:dd:ee:10",
             storage: storage)
 
-        let accepted = try viewModel.library.updateConfiguration(of: editor, as: .machineKeys) {
-            $0.macAddress = "aa:bb:cc:dd:ee:0f"
-        }
+        let outcome = viewModel.setConfiguration(
+            [VMConfigurationKeyRegistry.networkMAC.assigning("aa:bb:cc:dd:ee:0f")], on: editor)
 
-        #expect(accepted.refusedForMACAddress)
+        #expect(outcome == .refused)
         #expect(editor.configuration.macAddress == "aa:bb:cc:dd:ee:10")
         #expect(storage.saveConfigurationCallCount == 0)
-        #expect(presenter.errorTitle == "MAC Address In Use")
+        // Told once, by the edit that was refused.
+        #expect(presenter.errorTitles == ["MAC Address In Use"])
         #expect(presenter.errorMessage?.contains("Holder") == true)
         #expect(presenter.errorMessage?.contains("aa:bb:cc:dd:ee:0f") == true)
     }
@@ -4957,6 +5011,34 @@ struct VMLibraryViewModelTests {
         #expect(!fm.fileExists(atPath: cloneLayout.restoreStagingURL.path(percentEncoded: false)))
         #expect(storage.lastCloneRelativePaths?.contains(VMBundleLayout.usbPairingsRelativePath) == false)
         #expect(instance.hostState == sourceHostState)
+    }
+
+    @Test("An Exact Copy's carried snapshot reports the network its source captured it on")
+    func exactCopyCarriedSnapshotKeepsItsCapturedNetwork() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let taken = UUID()
+        var captured = VMConfiguration(name: "Original", guestOS: .linux, bootMode: .efi)
+        captured.applyNetworkMode(.hostOnly)
+        captured.networkMembership = .isolated
+        captured.macAddress = "02:4b:4e:56:0d:01"
+        let network = VMCapturedNetwork(captured)
+        let instance = viewModel.library.registerFixture(
+            name: "Original",
+            snapshots: VMSnapshotManifest(
+                snapshots: [
+                    VMSnapshot(
+                        id: taken, name: "Isolated", macAddress: captured.macAddress,
+                        network: network)
+                ]))
+        instance.activity.placeForTesting(.stopped)
+
+        // The copy reads its entry's network from the snapshot's own
+        // configuration, which it carries with the snapshot's directory.
+        viewModel.cloneVM(instance, as: .exactCopy)
+        await viewModel.awaitArrivalsForTesting()
+        let clone = try #require(viewModel.instances.first { $0.id != instance.id })
+
+        #expect(clone.snapshotManifest.snapshot(id: taken)?.network == network)
     }
 
     @Test("cloneVM removes its arrival on storage error and selects remaining instance")

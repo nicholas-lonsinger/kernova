@@ -87,24 +87,28 @@ struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
 /// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
 /// state is consumed the moment a restore succeeds.
 ///
-/// Equality covers ``macAddress``: two values that differ in it describe
-/// different captured states, and the address is what reserves it.
+/// Equality covers ``network``: two values that differ in it describe
+/// different captured states, and its address is what reserves it.
 struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// What the manifest records.
     var record: VMSnapshotRecord
 
-    /// The MAC address of the configuration the snapshot was captured under,
-    /// which a revert puts the VM back on — and which stays this VM's while
-    /// the snapshot is listed (``VMMACAddressRegistry``).
+    /// The network device of the configuration the snapshot was captured
+    /// under, which a revert puts the VM back on — `nil` when the snapshot
+    /// holds no readable configuration.
     ///
     /// Read from the snapshot's own `config.json`, which is the only place it
     /// is stored; the manifest does not repeat it.
-    let macAddress: String?
+    let network: VMCapturedNetwork?
 
-    init(_ record: VMSnapshotRecord, macAddress: String?) {
+    init(_ record: VMSnapshotRecord, network: VMCapturedNetwork?) {
         self.record = record
-        self.macAddress = macAddress
+        self.network = network
     }
+
+    /// The MAC address a revert puts the VM back on, which stays this VM's
+    /// while the snapshot is listed (``VMMACAddressRegistry``).
+    var macAddress: String? { network?.macAddress }
 
     var id: UUID { record.id }
     var createdAt: Date { record.createdAt }
@@ -119,6 +123,70 @@ struct VMSnapshot: Sendable, Equatable, Identifiable {
     var notes: String {
         get { record.notes }
         set { record.notes = newValue }
+    }
+}
+
+/// The network device a snapshot's configuration was captured with — the part
+/// of what a revert installs that decides which network the VM lands on, and
+/// under which address.
+struct VMCapturedNetwork: Sendable, Equatable, Codable {
+    var networkEnabled: Bool
+    var networkMode: VMNetworkMode
+    var networkMembership: VMNetworkMembership
+    var bridgedInterfaceIdentifier: String?
+    var macAddress: String?
+
+    init(
+        networkEnabled: Bool, networkMode: VMNetworkMode,
+        networkMembership: VMNetworkMembership, bridgedInterfaceIdentifier: String?,
+        macAddress: String?
+    ) {
+        self.networkEnabled = networkEnabled
+        self.networkMode = networkMode
+        self.networkMembership = networkMembership
+        self.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+        self.macAddress = macAddress
+    }
+
+    /// What `configuration` carries.
+    init(_ configuration: VMConfiguration) {
+        self.init(
+            networkEnabled: configuration.networkEnabled, networkMode: configuration.networkMode,
+            networkMembership: configuration.networkMembership,
+            bridgedInterfaceIdentifier: configuration.bridgedInterfaceIdentifier,
+            macAddress: configuration.macAddress)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case networkEnabled, networkMode, networkMembership, bridgedInterfaceIdentifier, macAddress
+    }
+
+    /// Each field read on its own, falling back to what
+    /// ``VMConfiguration``'s decoding falls back to, so a configuration that
+    /// no longer decodes whole still reserves its address.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        networkEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .networkEnabled)) ?? false
+        networkMode = (try? c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode)) ?? .shared
+        networkMembership =
+            (try? c.decodeIfPresent(VMNetworkMembership.self, forKey: .networkMembership)) ?? .common
+        bridgedInterfaceIdentifier =
+            (try? c.decodeIfPresent(String.self, forKey: .bridgedInterfaceIdentifier)) ?? nil
+        macAddress = (try? c.decodeIfPresent(String.self, forKey: .macAddress)) ?? nil
+    }
+
+    /// `configuration` with this network device in place of its own — the
+    /// network a revert to the snapshot lands `configuration`'s VM on
+    /// (``VMConfiguration/adoptingSnapshotState(_:)`` installs these fields
+    /// with the rest of the captured configuration).
+    func installed(on configuration: VMConfiguration) -> VMConfiguration {
+        var landing = configuration
+        landing.networkEnabled = networkEnabled
+        landing.networkMode = networkMode
+        landing.networkMembership = networkMembership
+        landing.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
+        landing.macAddress = macAddress
+        return landing
     }
 }
 

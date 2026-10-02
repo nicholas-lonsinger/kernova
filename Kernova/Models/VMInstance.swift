@@ -511,6 +511,7 @@ final class VMInstance {
             hasSnapshots: !snapshotManifest.isEmpty,
             guestOS: configuration.guestOS,
             networkEnabled: configuration.networkEnabled,
+            savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
             clipboardSharingEnabled: configuration.clipboardSharingEnabled,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbSupported: peers?.supportsUSBAccessories ?? false,
@@ -536,17 +537,22 @@ final class VMInstance {
         machineIdentity != nil && machineIdentity == other.machineIdentity
     }
 
-    /// The configuration `kind` puts in front of VZ: this VM's own, except for
-    /// a revert, which lands the snapshot's address
+    /// The configuration `kind` puts in front of VZ, as far as identity reads
+    /// it: this VM's own, except for a revert, which lands the snapshot's
+    /// network device and address
     /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
     /// identity across).
-    private func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
+    func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
         guard case .reverting(let snapshotID, _) = kind,
             let snapshot = snapshotManifest.snapshot(id: snapshotID)
         else { return configuration }
-        var landing = configuration
-        landing.macAddress = snapshot.macAddress
-        return landing
+        guard let network = snapshot.network else {
+            // Nothing readable to land on: no address a network could see.
+            var landing = configuration
+            landing.macAddress = nil
+            return landing
+        }
+        return network.installed(on: configuration)
     }
 
     /// `true` when the bundle holds a saved state and nothing is live — the VM

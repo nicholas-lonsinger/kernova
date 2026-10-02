@@ -130,9 +130,12 @@ final class VMIntentGateway {
 
     // MARK: - Lifecycle
 
-    func start(_ id: UUID, recovery: Bool, consent: Consent) async throws {
+    func start(
+        _ id: UUID, recovery: Bool, consent: Consent, macAddressRemedy: MACAddressRemedy?
+    ) async throws {
         try await perform(.start, on: id) {
-            try await self.commands.start(.id(id), recovery: recovery, consent: consent)
+            try await self.commands.start(
+                .id(id), recovery: recovery, consent: consent, macAddressRemedy: macAddressRemedy)
         }
     }
 
@@ -147,9 +150,10 @@ final class VMIntentGateway {
         try await perform(.pause, on: id) { try await self.commands.pause(.id(id)) }
     }
 
-    func resume(_ id: UUID, consent: Consent) async throws {
+    func resume(_ id: UUID, consent: Consent, macAddressRemedy: MACAddressRemedy?) async throws {
         try await perform(.resume, on: id) {
-            try await self.commands.resume(.id(id), consent: consent)
+            try await self.commands.resume(
+                .id(id), consent: consent, macAddressRemedy: macAddressRemedy)
         }
     }
 
@@ -157,9 +161,10 @@ final class VMIntentGateway {
         try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
     }
 
-    func restart(_ id: UUID, consent: Consent) async throws {
+    func restart(_ id: UUID, consent: Consent, macAddressRemedy: MACAddressRemedy?) async throws {
         try await perform(.restart, on: id) {
-            try await self.commands.restart(.id(id), timeout: nil, consent: consent)
+            try await self.commands.restart(
+                .id(id), timeout: nil, consent: consent, macAddressRemedy: macAddressRemedy)
         }
     }
 
@@ -225,13 +230,14 @@ final class VMIntentGateway {
     }
 
     func revertToSnapshot(
-        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, consent: Consent
+        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, consent: Consent,
+        macAddressRemedy: MACAddressRemedy?
     ) async throws {
         try await perform(.revertToSnapshot, on: id) {
             let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.revertToSnapshot(
                 .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
-                consent: consent)
+                consent: consent, macAddressRemedy: macAddressRemedy)
         }
     }
 

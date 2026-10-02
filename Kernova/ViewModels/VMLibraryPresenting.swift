@@ -119,6 +119,15 @@ struct ConfirmationRequest {
     let answer: @MainActor (PresenterAnswer<Bool>) -> Void
 }
 
+/// The change to a VM's network a bring-up refused over its MAC address
+/// offers, put to the user while that bring-up waits for the answer.
+struct MACAddressRemedyRequest {
+    /// What the core offers, in its own words.
+    let prompt: MACAddressRemedyPrompt
+    /// Answers the prompt: the remedy chosen, or `nil` to walk away.
+    let answer: @MainActor (PresenterAnswer<MACAddressRemedy?>) -> Void
+}
+
 /// Imperative presentation interface the view model calls to surface alerts,
 /// sheets, and the creation wizard.
 @MainActor
@@ -171,6 +180,13 @@ protocol VMLibraryPresenting: AnyObject {
     /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
     /// there is nowhere to ask right now.
     func presentConfirmationRequest(_ request: ConfirmationRequest)
+    /// Ask the user which change to a VM's network removes the MAC address
+    /// conflict a verb they started refused over.
+    ///
+    /// The request's `answer` is called exactly once — the verb that raised it
+    /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
+    /// there is nowhere to ask right now.
+    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

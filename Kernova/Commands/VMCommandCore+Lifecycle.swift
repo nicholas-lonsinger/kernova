@@ -7,12 +7,23 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Start
 
-    func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
+    func start(
+        _ selector: VMSelector, recovery: Bool, consent: Consent,
+        macAddressRemedy: MACAddressRemedy? = nil
+    ) async throws {
         let instance = try resolve(selector)
+        let identity = VMIdentityOverride(consent)
         do {
-            try await startNow(
-                instance, recovery: recovery, policy: .command(VMIdentityOverride(consent))
-            ).value()
+            if let remedy = try macAddressRemedyToTake(
+                macAddressRemedy,
+                answering: instance.activity.decide(
+                    .start(recovery: recovery), posture: .commit, identity: identity),
+                on: instance, identity: identity, holdingSavedState: instance.hasSaveFile,
+                accountFor: recovery, verb: .start)
+            {
+                try takeMACAddressRemedy(remedy, on: instance, verb: .start)
+            }
+            try await startNow(instance, recovery: recovery, policy: .command(identity)).value()
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
@@ -202,7 +213,7 @@ extension VMCommandCore {
     /// and a restore both carry no account and spend no window, so neither
     /// asks for one, and the question is put to the bring-up the start itself
     /// performs, so what is read here and what the boot does cannot disagree.
-    private func guestProvisioning(
+    func guestProvisioning(
         for instance: VMInstance, work: VMAdmission.StartWork
     ) throws -> GuestProvisioningCredentials? {
         let deliversAccount: Bool =
@@ -898,10 +909,29 @@ extension VMCommandCore {
 
     /// A hot resume of a live-paused VM, or the restore of the saved state one
     /// holds — joining a restore already in flight.
-    func resume(_ selector: VMSelector, consent: Consent) async throws {
+    ///
+    /// A remedy the caller chose for a MAC address conflict lands first, and
+    /// the bring-up is then the start the VM's state names: a restore while
+    /// the saved state survives it, a boot once it was discarded.
+    func resume(
+        _ selector: VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy? = nil
+    ) async throws {
         let instance = try resolve(selector)
         let identity = VMIdentityOverride(consent)
-        switch instance.activity.decide(.resume, posture: .commit, identity: identity) {
+        let decision = instance.activity.decide(.resume, posture: .commit, identity: identity)
+        do {
+            if let remedy = try macAddressRemedyToTake(
+                macAddressRemedy, answering: decision, on: instance, identity: identity,
+                holdingSavedState: instance.hasSaveFile, accountFor: false, verb: .resume)
+            {
+                try takeMACAddressRemedy(remedy, on: instance, verb: .resume)
+                try await startNow(instance, policy: .command(identity)).value()
+                return
+            }
+        } catch {
+            throw bringUpFailure(error, verb: .resume, on: instance)
+        }
+        switch decision {
         case .refuse(let reason):
             throw admissionRefusal(reason, on: instance, verb: .resume)
         case .join(let outcome):
@@ -988,8 +1018,13 @@ extension VMCommandCore {
     /// the machine identity the boot would claim is refused, or asked about,
     /// before the stop for the same reason; `consent` answers it, and the boot
     /// carries that answer.
+    ///
+    /// A remedy the caller chose for a MAC address conflict is decided before
+    /// the stop, on the same terms, and lands between the power-off and the
+    /// boot.
     func restart(
-        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
+        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent,
+        macAddressRemedy: MACAddressRemedy? = nil
     ) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
@@ -1000,9 +1035,14 @@ extension VMCommandCore {
         // running, and the door that can ask answers and restarts again.
         try refuseOwedGuestAccount(instance)
         let identity = VMIdentityOverride(consent)
-        if let conflict = instance.identityConflict(
+        let conflict = instance.identityConflict(
             for: .guestStart(.starting(recovery: false)), override: identity)
-        {
+        let remedy = try macAddressRemedyToTake(
+            macAddressRemedy, answering: conflict.map { .refuse(.identityConflict($0)) } ?? .admit,
+            on: instance, identity: identity,
+            holdingSavedState: instance.ephemeralBaselineSnapshot?.kind == .warm,
+            accountFor: nil, verb: .restart)
+        if let conflict, remedy == nil {
             throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
         }
         guard let sessionID = instance.activity.liveSessionID else {
@@ -1014,8 +1054,19 @@ extension VMCommandCore {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
             // Asks nobody: the boot runs once the guest is down, after the
-            // call that asked has moved on.
-            try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
+            // call that asked has moved on. The remedy is decided again
+            // against where the power-off left the VM.
+            let bootIdentity = identity.unattended
+            if let taken = try self.macAddressRemedyToTake(
+                remedy,
+                answering: instance.activity.decide(
+                    .start(recovery: false), posture: .commit, identity: bootIdentity),
+                on: instance, identity: bootIdentity, holdingSavedState: instance.hasSaveFile,
+                accountFor: false, verb: .restart)
+            {
+                try self.takeMACAddressRemedy(taken, on: instance, verb: .restart)
+            }
+            try self.startNow(instance, policy: .command(bootIdentity), resolving: outcome)
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {

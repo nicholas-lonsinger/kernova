@@ -183,7 +183,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                 intoSnapshot: snapshot.id, relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
-        return .rest(.asStarted, VMSnapshot(snapshot, macAddress: configuration.macAddress))
+        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
     }
 
     /// Mirrors the real service: the pre-flight runs before anything is torn

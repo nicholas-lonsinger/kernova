@@ -437,6 +437,39 @@ struct VMScriptingGatewayTests {
         #expect(preparations.count == 1)
     }
 
+    @Test("A script's resolving MAC conflict by reaches each bring-up, and a refusal names the term")
+    func macConflictRemedyReachesTheCore() async throws {
+        let commands = MockVMCommanding()
+        let gateway = makeGateway(commands)
+        let alpha = VMSelector.name("Alpha")
+
+        try await gateway.start(
+            [alpha], recoveryMode: false, confirmation: false, resolvingMACConflictBy: .ownNetwork)
+        try await gateway.resume([alpha], confirmation: false, resolvingMACConflictBy: .newAddress)
+        try await gateway.restart(
+            [alpha], confirmation: false, givingUpAfter: nil, resolvingMACConflictBy: .noNetwork)
+
+        #expect(commands.startRemedies == [.ownNetwork])
+        #expect(commands.resumeRemedies == [.newAddress])
+        #expect(commands.restartRemedies == [.noNetwork])
+
+        let vm = VMSummary(
+            id: UUID(), name: "Alpha", status: "stopped", ipAddress: .unavailable,
+            heldByAnotherCopy: false)
+        let refusal = CommandError.macAddressRemedyRequired(
+            MACAddressRemedyPrompt(
+                vm: vm, other: vm, verb: .start, title: "Duplicate MAC Address", message: "",
+                offers: [
+                    MACAddressRemedyOffer(remedy: .newAddress, title: "New", isDestructive: false),
+                    MACAddressRemedyOffer(remedy: .noNetwork, title: "None", isDestructive: false),
+                ],
+                dismissTitle: "Cancel"))
+        #expect(
+            refusal.appleEventErrorString.hasSuffix(
+                "Add `resolving MAC conflict by new MAC address` or `resolving MAC conflict by no network` "
+                    + "to change \u{201C}Alpha\u{201D}\u{2019}s network first."))
+    }
+
     /// Bringing a guest up is not a request to look at it.
     @Test("A verb that puts nothing up readies nothing, as does one addressing no VM")
     func nonSurfacingVerbsDoNotPrepare() async throws {

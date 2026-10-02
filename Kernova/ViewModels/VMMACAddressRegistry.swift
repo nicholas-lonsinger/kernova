@@ -12,9 +12,9 @@ import KernovaLogging
 /// the VM back on the snapshot's address — a warm snapshot's saved state
 /// restores under no other — so the address must still be the VM's to take.
 ///
-/// Headless: a refusal leaves through ``onFailure`` as words, and through
-/// ``macAddressConflict(on:movingFrom:to:)`` as data for a caller that renders
-/// its own.
+/// Headless: a refusal leaves through ``macAddressConflict(on:movingFrom:to:)``
+/// as data, which the write that raised it renders
+/// (``VMCommandCore/macAddressRefusal(_:on:)``).
 @MainActor
 final class VMMACAddressRegistry {
     nonisolated private static let logger = KernovaLogger(
@@ -24,12 +24,6 @@ final class VMMACAddressRegistry {
     /// this registry, so a strong reference back would be a cycle.
     weak var roster: (any VMInstanceRoster)?
 
-    /// Receives the refusals a user has to be told about.
-    var onFailure: ((_ title: String, _ message: String) -> Void)?
-
-    /// The address a refusal's summaries carry for each VM.
-    private let guestAddresses: GuestAddressObserver
-
     private var instances: [VMInstance] {
         guard let roster else {
             #log(Self.logger, .fault, "VMMACAddressRegistry has no roster — answering as an empty library")
@@ -37,10 +31,6 @@ final class VMMACAddressRegistry {
             return []
         }
         return roster.instances
-    }
-
-    init(guestAddresses: GuestAddressObserver) {
-        self.guestAddresses = guestAddresses
     }
 
     // MARK: - Refusals
@@ -52,16 +42,10 @@ final class VMMACAddressRegistry {
         let other: VMInstance
         /// What the two collide on.
         let reason: ConflictReason
-    }
-
-    /// Surfaces the alert a configuration edit refused for `conflict` owes.
-    func presentRefusal(_ conflict: MACAddressConflict, on instance: VMInstance) {
-        let failure = commandFailure(conflict, on: instance)
-        #log(
-            Self.logger, .notice,
-            "Refused a configuration change to '\(instance.name, privacy: .public)': \(failure.message, privacy: .public)"
-        )
-        onFailure?(failure.title, failure.message)
+        /// The configuration the change moved from.
+        let source: VMConfiguration
+        /// The configuration the change would have landed.
+        let target: VMConfiguration
     }
 
     /// The VM a configuration change would collide with, and what on — the one
@@ -81,7 +65,8 @@ final class VMMACAddressRegistry {
                         address: mac, holding: holding,
                         otherHolders: holders.dropFirst().map {
                             MACAddressHolder(name: $0.vm.name, holding: $0.holding)
-                        }))
+                        }),
+                    source: old, target: new)
             }
         }
         // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
@@ -95,7 +80,7 @@ final class VMMACAddressRegistry {
             let live = liveMACAddressConflict(for: new, excluding: instance),
             liveMACAddressConflict(for: old, excluding: instance) == nil
         else { return nil }
-        return MACAddressConflict(other: live, reason: .macAddress)
+        return MACAddressConflict(other: live, reason: .macAddress, source: old, target: new)
     }
 
     /// Whether `a` and `b` put the same address on the same network — what
@@ -103,17 +88,6 @@ final class VMMACAddressRegistry {
     private static func claimSameNetwork(_ a: VMConfiguration, _ b: VMConfiguration) -> Bool {
         a.joinedNetwork == b.joinedNetwork
             && a.macAddress?.lowercased() == b.macAddress?.lowercased()
-    }
-
-    /// `conflict` in the command vocabulary, so an alert and a wire client word
-    /// the same refusal identically.
-    func commandFailure(_ conflict: MACAddressConflict, on instance: VMInstance) -> CommandErrorDTO {
-        .conflict(
-            vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
-    }
-
-    private func summary(_ instance: VMInstance) -> VMSummary {
-        instance.summary(ipAddress: guestAddresses.address(for: instance))
     }
 
     // MARK: - Holders

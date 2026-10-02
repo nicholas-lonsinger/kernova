@@ -215,9 +215,36 @@ extension VMCommandResponse {
         switch error {
         case .confirmationRequired:
             error.message + "\n\nPass --yes to do it anyway."
+        case .macAddressRemedyRequired(let prompt):
+            error.message + "\n\n" + macAddressRemedyHint(prompt)
         default:
             error.message
         }
+    }
+
+    /// The flag, or the setting, that takes each change a MAC address refusal
+    /// offers.
+    static func macAddressRemedyHint(_ prompt: MACAddressRemedyPrompt) -> String {
+        let vm = "\u{201C}\(prompt.vm.name)\u{201D}"
+        guard prompt.verb != .setConfiguration else {
+            // A live mode switch offers only the network of its own, which is
+            // one more key in the same `set`.
+            return "Add network.membership=isolated to put \(vm) on a network of its own instead."
+        }
+        let spellings = prompt.offers.map { MACConflictSpelling($0.remedy).rawValue }
+        let choices =
+            spellings.count > 1
+            ? spellings.dropLast().joined(separator: ", ") + " or " + spellings[spellings.count - 1]
+            : spellings.joined()
+        let discarding = prompt.offers.filter(\.isDestructive)
+            .map { MACConflictSpelling($0.remedy).rawValue }
+        let discards =
+            discarding.isEmpty
+            ? ""
+            : " " + discarding.joined(separator: " and ")
+                + (discarding.count == 1 ? " discards" : " discard") + " its saved state."
+        return "Pass --resolve-mac-conflict with \(choices) to change \(vm)\u{2019}s network first."
+            + discards
     }
 
     private static func message(for refusal: VMCommandTransportRefusal) -> String {

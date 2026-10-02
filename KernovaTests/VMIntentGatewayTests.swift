@@ -280,7 +280,7 @@ struct VMIntentGatewayTests {
 
         _ = await gateway.vms()
         _ = await gateway.vms()
-        try await gateway.start(UUID(), recovery: false, consent: .none)
+        try await gateway.start(UUID(), recovery: false, consent: .none, macAddressRemedy: nil)
 
         #expect(await awaits.value == 1)
     }
@@ -294,12 +294,12 @@ struct VMIntentGatewayTests {
         commands.library = [makeSummary(name: "Twin", id: id)]
         let gateway = makeGateway(commands)
 
-        try await gateway.start(id, recovery: true, consent: .none)
+        try await gateway.start(id, recovery: true, consent: .none, macAddressRemedy: .noNetwork)
         try await gateway.stop(id, disposition: .force, consent: .all)
         try await gateway.pause(id)
-        try await gateway.resume(id, consent: .none)
+        try await gateway.resume(id, consent: .none, macAddressRemedy: .newAddress)
         try await gateway.suspend(id)
-        try await gateway.restart(id, consent: .none)
+        try await gateway.restart(id, consent: .none, macAddressRemedy: .ownNetwork)
         try await gateway.open(id)
         try await gateway.reveal(id)
         _ = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
@@ -315,6 +315,10 @@ struct VMIntentGatewayTests {
         #expect(commands.restartCalls.map(\.selector) == [.id(id)])
         // An intent's caller is not sitting there waiting on a deadline.
         #expect(commands.restartCalls.map(\.timeout) == [nil])
+        // The change a MAC address conflict takes reaches each bring-up as chosen.
+        #expect(commands.startRemedies == [.noNetwork])
+        #expect(commands.resumeRemedies == [.newAddress])
+        #expect(commands.restartRemedies == [.ownNetwork])
         #expect(commands.openSelectors == [.id(id)])
         #expect(commands.revealSelectors == [.id(id)])
         #expect(commands.ipAddressSelectors == [.id(id)])
@@ -406,7 +410,7 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands)
 
         await #expect(throws: CommandError.self) {
-            try await gateway.start(UUID(), recovery: false, consent: .none)
+            try await gateway.start(UUID(), recovery: false, consent: .none, macAddressRemedy: nil)
         }
     }
 
