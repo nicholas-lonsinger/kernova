@@ -417,9 +417,7 @@ struct ClipboardEndpointTests {
 
     @Test("the readout's Cancel stops the wave, and later requests are refused stale")
     func readoutCancelRefusesLaterRequests() async throws {
-        // Unbounded, so the parked write below is released by this side's read
-        // and never by the stall timeout, which would end it with no trailer.
-        let harness = try RawPeerHarness(dataSocketTimeout: 0)
+        let harness = try RawPeerHarness()
         defer { harness.tearDown() }
         // Larger than the connection's send buffer, so the transfer is still in
         // flight while its readout is on screen: a peer that reads the reply and
@@ -456,6 +454,24 @@ struct ClipboardEndpointTests {
     }
 
     // MARK: - Bounding accepted data connections
+
+    @Test("an accepted data connection is bounded by the configured socket timeout")
+    func acceptedConnectionTakesTheConfiguredTimeout() throws {
+        let harness = try RawPeerHarness(dataSocketTimeout: 7)
+        defer { harness.tearDown() }
+        let (peerEnd, endpointEnd) = try makeRawSocketPair()
+        // The endpoint's header read parks on the silent peer, so the
+        // descriptor is still open to read back.
+        harness.endpoint.acceptDataConnection(fd: endpointEnd)
+        defer { ClipboardDataConnection.end(fd: peerEnd) }
+
+        var window = timeval()
+        var length = socklen_t(MemoryLayout<timeval>.size)
+        #expect(getsockopt(endpointEnd, SOL_SOCKET, SO_SNDTIMEO, &window, &length) == 0)
+        #expect(window.tv_sec == 7)
+        #expect(getsockopt(endpointEnd, SOL_SOCKET, SO_RCVTIMEO, &window, &length) == 0)
+        #expect(window.tv_sec == 7)
+    }
 
     /// A wedged or compromised guest is in scope — the guest is untrusted — and
     /// each accepted connection's opening frame is read on a blocking worker —

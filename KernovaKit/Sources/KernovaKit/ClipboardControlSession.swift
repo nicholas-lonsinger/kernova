@@ -70,8 +70,6 @@ public final class ClipboardControlSession {
     private let staging: ClipboardFileStaging?
 
     nonisolated private let dataLink: DataLink
-
-    /// Every data connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`.
     nonisolated let dataSocketTimeout: TimeInterval
 
     /// The inbox, held where a thread that is not the main one can reach it.
@@ -109,7 +107,7 @@ public final class ClipboardControlSession {
     public init(
         channel: VsockChannel, role: Role, kind: Kind, label: String,
         staging: ClipboardFileStaging? = nil, dataLink: DataLink = .accepts,
-        dataSocketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout
+        dataSocketTimeout: TimeInterval
     ) {
         self.channel = channel
         self.role = role

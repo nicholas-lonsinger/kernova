@@ -33,7 +33,7 @@ final class EndpointSide {
         lazyPullTimeout: TimeInterval,
         firstGeneration: UInt64,
         dataLink: ClipboardEndpoint.DataLink,
-        dataSocketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout
+        dataSocketTimeout: TimeInterval = testWaitBackstop
     ) {
         self.channel = channel
         self.pasteLimit = Box(pasteLimit)
@@ -203,7 +203,7 @@ final class RawPeerHarness {
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
         firstGeneration: UInt64 = 1,
-        dataSocketTimeout: TimeInterval = ClipboardStreamTuning.dataSocketTimeout,
+        dataSocketTimeout: TimeInterval = testWaitBackstop,
         autoStart: Bool = true
     ) throws {
         let (localFd, peerFd) = try makeRawSocketPair()

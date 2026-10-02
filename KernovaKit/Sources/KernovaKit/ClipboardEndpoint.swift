@@ -96,8 +96,7 @@ public final class ClipboardEndpoint {
         /// kind's data port, the host takes what its listener accepted.
         public var dataLink: DataLink
         /// Every data connection's `SO_RCVTIMEO`/`SO_SNDTIMEO`: a read or
-        /// write that reaches it is the transfer's stall. `0` leaves the
-        /// connection unbounded, as `setsockopt(2)` documents.
+        /// write that reaches it is the transfer's stall.
         public var dataSocketTimeout: TimeInterval
         /// The generation this connection's first offer carries, so a counter
         /// outliving the channel is never reused.
