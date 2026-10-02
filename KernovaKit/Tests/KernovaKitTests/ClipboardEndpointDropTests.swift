@@ -165,6 +165,12 @@ struct ClipboardEndpointDropTests {
                 generation: 1, transferID: harness.peerTransferID(generation: 1, repIndex: 0),
                 uti: "public.data"),
             fd: connection)
+        // The readout opens before the sender's queue runs, and a Cancel landing
+        // in that gap is refused rather than streamed. The reply is written only
+        // after the sender's last check before streaming, so a Cancel after it
+        // meets an item already streaming.
+        let reply = try #require(await offCooperativePool { readTransferReply(fd: connection) })
+        #expect(reply.refusalCode.isEmpty)
         try await harness.side.reports.wait { harness.side.reports.runningSnapshot != nil }
 
         harness.endpoint.cancelOutbound(generation: 1)
@@ -177,7 +183,7 @@ struct ClipboardEndpointDropTests {
         }
         // The item already streaming is called off too, and says so in the
         // trailer that ends its payload rather than running to completion.
-        let received = await offCooperativePool { try? receiveTransfer(fd: connection) }
+        let received = await offCooperativePool { try? receiveTransfer(fd: connection, after: reply) }
         #expect(try #require(received).abortCode == ClipboardStreamAbortCode.superseded.rawValue)
         try await harness.side.reports.wait {
             dropFinishes(harness.side.reports).contains { isCancelledFinish($0) }
