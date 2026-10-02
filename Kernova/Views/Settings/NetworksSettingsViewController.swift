@@ -360,6 +360,7 @@ extension NetworksSettingsViewController: NSTableViewDelegate {
         let cell =
             tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView
             ?? makeCell(identifier)
+        cell.textField?.allowsExpansionToolTips = true
         switch identifier {
         case Self.nameColumn: cell.textField?.stringValue = network.name
         case Self.kindColumn: cell.textField?.stringValue = Self.kindTitle(network.kind)
