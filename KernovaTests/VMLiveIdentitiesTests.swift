@@ -64,6 +64,10 @@ struct VMLiveIdentitiesTests {
         Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.macAddress, true)),
         Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.macAddress, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, true)),
+        // A boot chained after the call that asked keeps the confirmation and asks nothing.
+        Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: false, expected: nil),
+        Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: true, expected: (.macAddress, false)),
+        Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (.machineIdentity, false)),
     ]
 
     @Test(

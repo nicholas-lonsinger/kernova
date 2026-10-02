@@ -373,6 +373,133 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(vm.configuration.macAddress != Self.sharedMAC)
     }
 
+    @Test("An unattended bring-up asks nothing, whatever was confirmed: its question is a refusal")
+    func unattendedBringUpNeverAsks() async throws {
+        let harness = makeHarness()
+        let (vm, _) = try makePair(in: harness)
+
+        do {
+            try harness.core.startNow(vm, policy: .command(VMIdentityOverride.confirmed.unattended))
+            Issue.record("the unattended start was admitted")
+        } catch let refused as VMAdmissionRefusal {
+            guard case .identityConflict(let conflict) = refused.refusal else {
+                Issue.record("refused as \(refused.refusal)")
+                return
+            }
+            #expect(conflict.reason == .macAddress)
+            #expect(!conflict.asks)
+            #expect(harness.core.commandError(for: refused.refusal, on: vm, verb: .restart).isConflict)
+        }
+    }
+
+    @Test("A running VM taken off its own network onto a used one is refused with no offer to rejoin it")
+    func leavingItsOwnNetworkOffersNoWayBack() throws {
+        let harness = makeHarness()
+        let (vm, _) = try makePair(in: harness, phase: .running(sessionID: UUID()))
+        // Already on a network of its own, as the remedy leaves it.
+        try harness.core.setConfiguration(
+            .id(vm.id),
+            assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")],
+            consent: .none)
+
+        do {
+            try harness.core.setConfiguration(
+                .id(vm.id),
+                assignments: [ConfigurationEntry(key: "network.membership", value: "common")],
+                consent: .none)
+            Issue.record("the switch onto the used network was taken")
+        } catch let error as CommandError {
+            #expect(error.macAddressRemedyPrompt == nil)
+            #expect(error.isConflict)
+        }
+        #expect(vm.configuration.networkMembership == .isolated)
+    }
+
+    @Test("A revert is judged on the network its snapshot lands the VM on, not the one it is on now")
+    func revertIsJudgedOnTheSnapshotsNetwork() async throws {
+        let harness = makeHarness()
+        // B, an Exact Copy on Shared's common network.
+        RegisteredVMInstanceFixture.register(
+            name: "B", phase: .running(sessionID: UUID()), guestOS: .linux,
+            library: harness.library, preferences: preferences
+        ) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = Self.sharedMAC
+        }
+        // A, running on its own network after the remedy, with a snapshot
+        // taken while it was on the common one.
+        let a = RegisteredVMInstanceFixture.register(
+            name: "A", phase: .running(sessionID: UUID()), guestOS: .linux,
+            library: harness.library, preferences: preferences
+        ) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.networkMembership = .isolated
+            $0.macAddress = Self.sharedMAC
+        }
+        var captured = a.configuration
+        captured.networkMembership = .common
+        let snapshot = VMSnapshot(
+            name: "On common", kind: .warm, macAddress: Self.sharedMAC,
+            network: VMCapturedNetwork(captured))
+        a.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
+
+        let error = try #require(
+            await refusal {
+                try await harness.core.revertToSnapshot(
+                    .id(a.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+            })
+
+        let prompt = try #require(error.macAddressRemedyPrompt)
+        #expect(prompt.offers.map(\.remedy) == [.ownNetwork, .newAddress, .noNetwork])
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(a.configuration.networkMembership == .isolated)
+    }
+
+    @Test("A remedy a snapshot's network cannot take is refused before the revert lands anything")
+    func revertRemedyIsJudgedBeforeAnythingLands() async throws {
+        let harness = makeHarness()
+        RegisteredVMInstanceFixture.register(
+            name: "Holder", phase: .running(sessionID: UUID()), guestOS: .linux,
+            library: harness.library, preferences: preferences
+        ) {
+            $0.networkEnabled = true
+            $0.networkMode = .hostOnly
+            $0.macAddress = Self.sharedMAC
+        }
+        let reverting = RegisteredVMInstanceFixture.register(
+            name: "Reverting", phase: .running(sessionID: UUID()), guestOS: .linux,
+            library: harness.library, preferences: preferences
+        ) {
+            $0.networkEnabled = true
+            $0.networkMode = .shared
+            $0.macAddress = Self.sharedMAC
+        }
+        // Taken on Host Only, whose saved state is not known to restore on a
+        // network of its own.
+        var captured = reverting.configuration
+        captured.networkMode = .hostOnly
+        let snapshot = VMSnapshot(
+            name: "On Host Only", kind: .warm, macAddress: Self.sharedMAC,
+            network: VMCapturedNetwork(captured))
+        reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        harness.snapshots.setCapturedConfiguration(captured, for: snapshot.id)
+
+        let error = try #require(
+            await refusal {
+                try await harness.core.revertToSnapshot(
+                    .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
+                    consent: .all, macAddressRemedy: .ownNetwork)
+            })
+
+        #expect(error.macAddressRemedyPrompt == nil)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(reverting.status == .running)
+        #expect(reverting.configuration.networkMode == .shared)
+    }
+
     @Test("A warm revert that would resume onto a used address lands at rest, takes the remedy, then resumes")
     func revertTakesTheRemedyBeforeItsRestore() async throws {
         let harness = makeHarness()
@@ -415,5 +542,13 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(reverting.configuration.networkMembership == .isolated)
         #expect(reverting.configuration.macAddress == Self.sharedMAC)
         #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
+    }
+}
+
+extension CommandError {
+    /// Whether this is the plain conflict refusal, offering nothing.
+    fileprivate var isConflict: Bool {
+        if case .conflict = self { return true }
+        return false
     }
 }

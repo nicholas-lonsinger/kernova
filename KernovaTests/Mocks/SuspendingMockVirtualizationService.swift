@@ -173,7 +173,8 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         .rest(
             .asStarted,
             VMSnapshot(
-                request.record(capturedIn: context.mode), macAddress: instance.configuration.macAddress))
+                request.record(capturedIn: context.mode),
+                network: VMCapturedNetwork(instance.configuration)))
     }
 
     func revertToSnapshot(

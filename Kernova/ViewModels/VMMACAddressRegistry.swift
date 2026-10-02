@@ -42,6 +42,8 @@ final class VMMACAddressRegistry {
         let other: VMInstance
         /// What the two collide on.
         let reason: ConflictReason
+        /// The configuration the change moved from.
+        let source: VMConfiguration
         /// The configuration the change would have landed.
         let target: VMConfiguration
     }
@@ -64,7 +66,7 @@ final class VMMACAddressRegistry {
                         otherHolders: holders.dropFirst().map {
                             MACAddressHolder(name: $0.vm.name, holding: $0.holding)
                         }),
-                    target: new)
+                    source: old, target: new)
             }
         }
         // A live VM's Mode picker stays enabled, and a mode change hot-swaps the
@@ -78,7 +80,7 @@ final class VMMACAddressRegistry {
             let live = liveMACAddressConflict(for: new, excluding: instance),
             liveMACAddressConflict(for: old, excluding: instance) == nil
         else { return nil }
-        return MACAddressConflict(other: live, reason: .macAddress, target: new)
+        return MACAddressConflict(other: live, reason: .macAddress, source: old, target: new)
     }
 
     /// Whether `a` and `b` put the same address on the same network — what

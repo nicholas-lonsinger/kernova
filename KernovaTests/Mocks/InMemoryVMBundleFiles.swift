@@ -225,10 +225,12 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         setData(
             Self.encode(manifest.record), atRelativePath: VMBundleLayout.snapshotManifestRelativePath,
             in: url)
+        // Each snapshot's own `config.json` carries the network device the
+        // manifest's reader takes from it.
         for snapshot in manifest.snapshots {
-            struct CapturedAddress: Encodable { let macAddress: String? }
+            guard let network = snapshot.network else { continue }
             setData(
-                Self.encode(CapturedAddress(macAddress: snapshot.macAddress)),
+                Self.encode(network),
                 atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshot.id), in: url)
         }
     }

@@ -53,7 +53,7 @@ final class VMLiveIdentities {
         if let other = macAddresses.liveMACAddressConflict(for: configuration, excluding: instance) {
             return VMIdentityConflict(
                 vm: instance, other: other, reason: .macAddress, configuration: configuration,
-                asks: override != .unavailable)
+                asks: override.canAsk)
         }
         guard
             let other = instances.first(where: {
@@ -64,46 +64,56 @@ final class VMLiveIdentities {
             return VMIdentityConflict(
                 vm: instance, other: other, reason: .machineIdentity, configuration: configuration)
         }
-        switch override {
-        case .confirmed:
-            #log(
-                Self.logger, .notice,
-                "Starting '\(instance.name, privacy: .public)' beside '\(other.name, privacy: .public)', which has the same machine identity, as the user confirmed"
-            )
-            return nil
-        case .askable:
+        guard override.confirmed else {
             return VMIdentityConflict(
                 vm: instance, other: other, reason: .machineIdentity, configuration: configuration,
-                asks: true)
-        case .unavailable:
-            return VMIdentityConflict(
-                vm: instance, other: other, reason: .machineIdentity, configuration: configuration)
+                asks: override.canAsk)
         }
+        #log(
+            Self.logger, .notice,
+            "Starting '\(instance.name, privacy: .public)' beside '\(other.name, privacy: .public)', which has the same machine identity, as the user confirmed"
+        )
+        return nil
     }
 }
 
-/// What a bring-up's request can do about another active VM sharing its
-/// machine identity — decided by whoever asked for the bring-up, never stored.
-enum VMIdentityOverride: Sendable, Equatable {
-    /// Nobody is there to confirm — a start at launch, Restart's boot — so the
-    /// bring-up is refused.
-    case unavailable
-    /// Someone can be asked, so the refusal offers starting anyway — and, for
-    /// a MAC address, changing the VM's network.
-    case askable
-    /// The user confirmed starting anyway.
-    case confirmed
+/// What a bring-up's request can do about another active VM claiming its
+/// identity — decided by whoever asked for the bring-up, never stored.
+///
+/// Two independent facts: whether the user confirmed starting beside a VM
+/// sharing its machine identity, and whether anyone is there to be asked. A
+/// boot chained after the call that asked carries the first and never the
+/// second, so it asks nothing.
+struct VMIdentityOverride: Sendable, Equatable {
+    /// The user confirmed starting beside a VM sharing its machine identity.
+    let confirmed: Bool
+    /// Someone is there to answer a question, so a refusal offers its way
+    /// through — starting anyway, or changing the VM's network.
+    let canAsk: Bool
+
+    /// Nobody is there to confirm — a start at launch — so the bring-up is
+    /// refused.
+    static let unavailable = VMIdentityOverride(confirmed: false, canAsk: false)
+    /// Someone can be asked, nothing confirmed yet.
+    static let askable = VMIdentityOverride(confirmed: false, canAsk: true)
+    /// The user confirmed starting anyway, and can still be asked.
+    static let confirmed = VMIdentityOverride(confirmed: true, canAsk: true)
 
     /// The override a caller holding `consent` brings.
     init(_ consent: Consent) {
         self = consent.covers(.startBesideSharedMachineIdentity) ? .confirmed : .askable
     }
 
+    private init(confirmed: Bool, canAsk: Bool) {
+        self.confirmed = confirmed
+        self.canAsk = canAsk
+    }
+
     /// This override for a bring-up that runs with nobody to ask — a boot
     /// chained after the call that asked: a confirmation carries over, and a
     /// question becomes a refusal.
     var unattended: VMIdentityOverride {
-        self == .confirmed ? .confirmed : .unavailable
+        VMIdentityOverride(confirmed: confirmed, canAsk: false)
     }
 }
 

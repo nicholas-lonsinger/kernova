@@ -685,15 +685,25 @@ extension CommandErrorDTO {
                 vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy)
                 + " Two virtual machines with the same machine ID must not run at once."
                 + (otherHeldByAnotherCopy ? "" : " Stop \u{201C}\(other)\u{201D} first.")
-        case .macAddress where otherHeldByAnotherCopy:
-            "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which another copy of Kernova is using. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings."
         case .macAddress:
-            "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, which is active. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop \u{201C}\(other)\u{201D} first, or change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings."
+            sharedMACAddressSentences(
+                vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy) + " "
+                + (otherHeldByAnotherCopy
+                    ? "Change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings."
+                    : "Stop \u{201C}\(other)\u{201D} first, or change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings.")
         }
+    }
+
+    /// The sentences naming the VM `vm` shares its MAC address with on one
+    /// network, who is running it, and the rule they break — public so the
+    /// question that offers changing `vm`'s network opens with the words its
+    /// refusal does.
+    public static func sharedMACAddressSentences(
+        vm: String, other: String, otherHeldByAnotherCopy: Bool
+    ) -> String {
+        "\u{201C}\(vm)\u{201D} has the same MAC address as \u{201C}\(other)\u{201D}, "
+            + (otherHeldByAnotherCopy ? "which another copy of Kernova is using. " : "which is active. ")
+            + "Two virtual machines with the same MAC address must not run on the same network at once."
     }
 
     /// The sentence naming the VM `vm` shares its machine identity with, and

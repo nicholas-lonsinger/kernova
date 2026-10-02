@@ -107,7 +107,7 @@ extension VMCommandCore {
             posture: .commit, identity: identity)
         let remedy = try macAddressRemedyToTake(
             macAddressRemedy, answering: decision, on: instance, identity: identity,
-            holdingSavedState: true, accountFor: nil, verb: .revertToSnapshot)
+            holdingSavedState: true, accountFor: false, verb: .revertToSnapshot)
         if remedy == nil, case .refuse(let reason) = decision {
             throw admissionRefusal(reason, on: instance, verb: .revertToSnapshot)
         }

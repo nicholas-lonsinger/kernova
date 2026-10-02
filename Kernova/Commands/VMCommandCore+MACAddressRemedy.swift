@@ -97,9 +97,8 @@ extension VMCommandCore {
         let other = "\u{201C}\(conflict.other.name)\u{201D}"
         let heldElsewhere = conflict.other.heldByAnotherCopy
         var sentences = [
-            "\(vm) has the same MAC address as \(other), "
-                + (heldElsewhere ? "which another copy of Kernova is using." : "which is active."),
-            "Two virtual machines with the same MAC address must not run on the same network at once.",
+            CommandErrorDTO.sharedMACAddressSentences(
+                vm: instance.name, other: conflict.other.name, otherHeldByAnotherCopy: heldElsewhere)
         ]
         if holdsSavedState, offers.contains(where: \.isDestructive) {
             let keeps = offers.contains { $0.remedy == .ownNetwork }
@@ -161,22 +160,20 @@ extension VMCommandCore {
     func joinOwnNetworkRefusal(
         _ conflict: VMMACAddressRegistry.MACAddressConflict, on instance: VMInstance
     ) -> CommandError? {
-        guard conflict.reason == .macAddress,
+        // An edit that took the VM off its own network has the membership
+        // the offer would put back, so re-issuing it would change nothing.
+        guard conflict.reason == .macAddress, conflict.source.networkMembership == .common,
             macAddressRemedyRefusal(.ownNetwork, for: conflict.target, holdingSavedState: false)
                 == nil
         else { return nil }
-        let vm = "\u{201C}\(instance.name)\u{201D}"
-        let other = "\u{201C}\(conflict.other.name)\u{201D}"
         return .macAddressRemedyRequired(
             MACAddressRemedyPrompt(
                 vm: summary(instance), other: summary(conflict.other), verb: .setConfiguration,
                 title: ConflictReason.macAddress.title,
-                message: "\(vm) has the same MAC address as \(other), "
-                    + (conflict.other.heldByAnotherCopy
-                        ? "which another copy of Kernova is using. "
-                        : "which is active. ")
-                    + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                    + "\(vm) can join a network of its own in that mode instead.",
+                message: CommandErrorDTO.sharedMACAddressSentences(
+                    vm: instance.name, other: conflict.other.name,
+                    otherHeldByAnotherCopy: conflict.other.heldByAnotherCopy)
+                    + " \u{201C}\(instance.name)\u{201D} can join a network of its own in that mode instead.",
                 offers: [
                     MACAddressRemedyOffer(
                         remedy: .ownNetwork, title: "Join a Network of Its Own", isDestructive: false)
@@ -224,12 +221,12 @@ extension VMCommandCore {
             throw admissionRefusal(.identityConflict(remaining), on: instance, verb: verb)
         }
         if let recovery {
-            let keeps = holdingSavedState && !Self.discardsSavedState(remedy)
-            let facts = instance.admissionFacts
+            // As the VM will stand at its bring-up: a revert lands the
+            // snapshot's saved state on a VM that holds none yet.
+            var facts = instance.admissionFacts
+            facts.hasSaveFile = holdingSavedState && !Self.discardsSavedState(remedy)
             _ = try guestProvisioning(
-                for: instance,
-                work: VMAdmission.startWork(
-                    recovery: recovery, facts: keeps ? facts : facts.discardingSavedState()))
+                for: instance, work: VMAdmission.startWork(recovery: recovery, facts: facts))
         }
         return remedy
     }

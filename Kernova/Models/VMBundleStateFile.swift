@@ -96,33 +96,27 @@ extension VMBundleStateFile where Value == VMSnapshotManifest {
                     VMSnapshotManifestRecord.self, from: data)
                 return VMSnapshotManifest(
                     snapshots: record.snapshots.map {
-                        VMSnapshot($0, macAddress: capturedMACAddress(of: $0.id, in: files))
+                        VMSnapshot($0, network: capturedNetwork(of: $0.id, in: files))
                     },
                     currentID: record.currentID)
             },
             encode: { try VMConfiguration.makeJSONEncoder().encode($0.record) })
     }
 
-    /// The `macAddress` of the configuration snapshot `id` holds, or `nil` when
-    /// it holds none or carries no address.
+    /// The network device of the configuration snapshot `id` holds, or `nil`
+    /// when it holds none.
     ///
-    /// Decodes that one key rather than the whole configuration, so a snapshot
+    /// Decodes those keys rather than the whole configuration, so a snapshot
     /// whose configuration no longer decodes still reserves its address.
-    private static func capturedMACAddress(
+    private static func capturedNetwork(
         of id: UUID, in files: any VMBundleFileReading
-    ) -> String? {
+    ) -> VMCapturedNetwork? {
         guard
             let data = try? files.data(
                 atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: id))
         else { return nil }
-        return (try? VMConfiguration.makeJSONDecoder().decode(CapturedAddress.self, from: data))?
-            .macAddress
+        return try? VMConfiguration.makeJSONDecoder().decode(VMCapturedNetwork.self, from: data)
     }
-}
-
-/// The one key of a snapshot's configuration its manifest entry needs.
-private struct CapturedAddress: Decodable {
-    let macAddress: String?
 }
 
 /// A bundle state file that is present but could not be read or decoded — or,
