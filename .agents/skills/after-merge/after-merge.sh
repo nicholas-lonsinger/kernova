@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # after-merge.sh — fetch with prune, fast-forward the checkout that holds the
-# remote's default branch onto its remote-tracking ref, then retire the calling
-# worktree's branch once its content is on that ref.
+# remote's default branch onto its remote-tracking ref, then report whether the
+# calling worktree's content is on that ref.
 #
 # Exists for worktree sessions. A squash merge lands on the remote without
 # moving the local default-branch ref, and a session running inside a worktree
@@ -9,13 +9,7 @@
 # command moves it, and Claude Code's worktree-isolation guard refuses ad-hoc
 # `git -C <other-checkout>` commands. This script is the vetted route — one
 # fetch, one fast-forward, and on request the restore of a file in its way.
-#
-# A squash merge also leaves the worktree's own branch holding commits the
-# default branch never gets, and Claude Code removes a worktree at exit only
-# when every commit on its branch is already on the default branch. So once
-# the calling checkout's content is verifiably on the remote default branch,
-# its branch is reset onto that branch's tip — that checkout only, and only
-# with nothing uncommitted there.
+# The calling worktree is only inspected, never changed.
 #
 # Usage:
 #   .agents/skills/after-merge/after-merge.sh [--remote <name>] [--discard <path>]...
@@ -49,11 +43,10 @@
 #                       worktree= field follows
 #
 # Worktree tokens, for the checkout the script runs in — whatever the verdict:
-#   reset     its branch moved to the remote default branch's tip
-#   current   its HEAD already is that tip
+#   merged    its HEAD's content is on the remote default branch (HEAD at
+#             that branch's tip included) and nothing is uncommitted there
 #   unmerged  its content is not on the remote default branch
-#   dirty     uncommitted, untracked, or index-hidden changes there, or a
-#             `git reset --keep` that refused
+#   dirty     uncommitted, untracked, or index-hidden changes there
 #   none      not a linked worktree, a detached HEAD, or the checkout that
 #             holds the default branch
 
@@ -71,14 +64,13 @@ usage() {
 
 verdict() { # <exit-code> <token> [key=value ...]
     _code="$1"; _token="$2"; shift 2
-    [ "$_token" = setup-error ] || set -- "$@" "worktree=$(retire_worktree)"
+    [ "$_token" = setup-error ] || set -- "$@" "worktree=$(worktree_state)"
     printf 'after-merge: verdict=%s%s\n' "$_token" "${*:+ $*}"
     exit "$_code"
 }
 
-# retire_worktree — prints the worktree token, first resetting the calling
-# checkout's branch onto default_ref when the token is `reset`.
-retire_worktree() {
+# worktree_state — prints the worktree token for the calling checkout.
+worktree_state() {
     local own head_ref head tip
     if ! own=$(git rev-parse --show-toplevel 2>/dev/null) || ! read_worktree_layout "$own"; then
         echo none; return
@@ -91,11 +83,10 @@ retire_worktree() {
     fi
     head=$(git rev-parse --verify -q HEAD) || { echo unmerged; return; }
     tip=$(git rev-parse --verify -q "$default_ref") || { echo unmerged; return; }
-    [ "$head" = "$tip" ] && { echo current; return; }
+    [ "$head" = "$tip" ] && { echo merged; return; }
     # The object name, never HEAD: content_on_default runs git in main_root.
     content_on_default "$head" || { echo unmerged; return; }
-    git reset --quiet --keep "$tip" >/dev/null 2>&1 || { echo dirty; return; }
-    echo reset
+    echo merged
 }
 
 while [ $# -gt 0 ]; do
