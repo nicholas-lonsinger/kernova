@@ -58,15 +58,15 @@ run() {
 local_main() { git -C "$tmp/local" rev-parse main; }
 remote_main() { git -C "$tmp/seed" rev-parse main; }
 
-run "current" 0 '^after-merge: verdict=current branch=main worktree=current$'
+run "current" 0 '^after-merge: verdict=current branch=main worktree=merged$'
 
 seed_commit B
-run "fast-forwarded" 0 "^after-merge: verdict=fast-forwarded branch=main path=$tmp/local worktree=reset\$"
+run "fast-forwarded" 0 "^after-merge: verdict=fast-forwarded branch=main path=$tmp/local worktree=merged\$"
 if [ "$(local_main)" = "$(remote_main)" ]; then pass; else fail "fast-forwarded: local main is not at the remote tip"; fi
 
 seed_commit C
 printf 'local edit\n' >"$tmp/local/file"
-run "dirty" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local files=file worktree=reset\$"
+run "dirty" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local files=file worktree=merged\$"
 if [ "$(local_main)" != "$(remote_main)" ]; then pass; else fail "dirty: the branch moved despite local changes"; fi
 
 # An edit to a file the incoming commits leave alone does not block, and so
@@ -77,7 +77,7 @@ run "discard not blocking" 1 "^after-merge: verdict=setup-error reason=not-block
 if [ "$(local_main)" != "$(remote_main)" ]; then pass; else fail "discard not blocking: the branch moved"; fi
 if [ "$(cat "$tmp/local/file")" = "local edit" ]; then pass; else fail "discard not blocking: the edit was discarded anyway"; fi
 
-run "discard" 0 "^after-merge: verdict=fast-forwarded branch=main path=$tmp/local discarded=file worktree=reset\$" --discard file
+run "discard" 0 "^after-merge: verdict=fast-forwarded branch=main path=$tmp/local discarded=file worktree=merged\$" --discard file
 if [ "$(local_main)" = "$(remote_main)" ]; then pass; else fail "discard: local main is not at the remote tip"; fi
 
 # An untracked file the merge would create blocks too, and --discard cannot
@@ -86,27 +86,27 @@ seed_commit F
 printf 'incoming\n' >"$tmp/seed/new"
 git -C "$tmp/seed" add new && git -C "$tmp/seed" commit -q -m "new" && git -C "$tmp/seed" push -q origin main 2>/dev/null
 printf 'untracked\n' >"$tmp/local/new"
-run "dirty untracked" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local files=new worktree=reset\$"
+run "dirty untracked" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local files=new worktree=merged\$"
 run "discard untracked" 1 '^after-merge: verdict=setup-error reason=discard-failed path=new$' --discard new
 rm "$tmp/local/new"
-run "clean again" 0 '^after-merge: verdict=fast-forwarded .* worktree=current$'
+run "clean again" 0 '^after-merge: verdict=fast-forwarded .* worktree=merged$'
 
 seed_commit G
 printf 'local edit\n' >"$tmp/local/file"
 git -C "$tmp/local" rev-parse HEAD >"$tmp/local/.git/MERGE_HEAD"
-run "in progress" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local reason=in-progress worktree=reset\$"
+run "in progress" 0 "^after-merge: verdict=dirty branch=main path=$tmp/local reason=in-progress worktree=merged\$"
 rm "$tmp/local/.git/MERGE_HEAD"
 git -C "$tmp/local" checkout -q -- file
-run "clean after in progress" 0 '^after-merge: verdict=fast-forwarded .* worktree=current$'
+run "clean after in progress" 0 '^after-merge: verdict=fast-forwarded .* worktree=merged$'
 
 printf 'local commit\n' >"$tmp/local/file"
 git -C "$tmp/local" commit -q -am "local D"
 seed_commit E
-run "diverged" 0 "^after-merge: verdict=diverged branch=main path=$tmp/local worktree=reset\$"
+run "diverged" 0 "^after-merge: verdict=diverged branch=main path=$tmp/local worktree=merged\$"
 git -C "$tmp/local" reset -q --hard origin/main
 
 git -C "$tmp/local" checkout -q --detach
-run "not-checked-out" 0 '^after-merge: verdict=not-checked-out branch=main worktree=current$'
+run "not-checked-out" 0 '^after-merge: verdict=not-checked-out branch=main worktree=merged$'
 git -C "$tmp/local" checkout -q main
 
 # The worktree's own branch. Two topic commits the remote never gets; the
@@ -132,9 +132,10 @@ git -C "$tmp/local/wt" checkout -q --detach
 run "worktree detached" 0 '^after-merge: verdict=current branch=main worktree=none$'
 git -C "$tmp/local/wt" checkout -q topic
 
-run "worktree reset" 0 '^after-merge: verdict=current branch=main worktree=reset$'
-if [ "$(git -C "$tmp/local/wt" rev-parse topic)" = "$(remote_main)" ]; then pass; else fail "worktree reset: topic is not at the remote tip"; fi
-run "worktree current" 0 '^after-merge: verdict=current branch=main worktree=current$'
+run "worktree squash-merged" 0 '^after-merge: verdict=current branch=main worktree=merged$'
+if [ "$(wt_head)" = "$topic_before" ]; then pass; else fail "worktree squash-merged: the branch moved"; fi
+git -C "$tmp/local/wt" reset -q --hard "$(remote_main)"
+run "worktree at tip" 0 '^after-merge: verdict=current branch=main worktree=merged$'
 
 cd "$tmp/local" || exit 1
 run "worktree primary" 0 '^after-merge: verdict=current branch=main worktree=none$'
