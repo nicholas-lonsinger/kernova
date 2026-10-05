@@ -104,16 +104,6 @@ extension TestFailure {
     ) -> TestFailure {
         TestFailure(message + stopwatch.diagnosis(timeout: timeout))
     }
-
-    /// `backstop(_:stopwatch:timeout:)` for the `Duration`-based wait helpers.
-    @available(macOS 13.0, *)
-    public static func backstop(
-        _ message: String, stopwatch: BackstopStopwatch, timeout: Duration
-    ) -> TestFailure {
-        let seconds =
-            Double(timeout.components.seconds) + Double(timeout.components.attoseconds) * 1e-18
-        return backstop(message, stopwatch: stopwatch, timeout: seconds)
-    }
 }
 
 /// Renders `BackstopStopwatch.diagnosis(timeout:)`: how far past its deadline
@@ -148,15 +138,12 @@ func backstopDiagnosis(
 /// (a `notify()` and the timeout backstop) try to fire it.
 ///
 /// `CheckedContinuation` traps on a second resume.
-public final class ResumeOnce: @unchecked Sendable {
+final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
 
-    /// Creates a fresh, unfired guard.
-    public init() {}
-
     /// Runs `body` only on the first call; every later call is a no-op.
-    public func fire(_ body: () -> Void) {
+    func fire(_ body: () -> Void) {
         lock.lock()
         let already = fired
         fired = true

@@ -3,8 +3,6 @@ import KernovaKit
 import KernovaTestSupport
 import Testing
 
-@testable import Kernova
-
 @Suite("waitForChange Tests", .caseScoped)
 @MainActor
 struct WaitForChangeTests {
