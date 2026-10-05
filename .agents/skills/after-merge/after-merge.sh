@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# freshen-main.sh — fetch with prune, then fast-forward the checkout that holds
-# the remote's default branch onto its remote-tracking ref.
+# after-merge.sh — fetch with prune, fast-forward the checkout that holds the
+# remote's default branch onto its remote-tracking ref, then retire the calling
+# worktree's branch once its content is on that ref.
 #
 # Exists for worktree sessions. A squash merge lands on the remote without
 # moving the local default-branch ref, and a session running inside a worktree
@@ -9,8 +10,15 @@
 # `git -C <other-checkout>` commands. This script is the vetted route — one
 # fetch, one fast-forward, and on request the restore of a file in its way.
 #
+# A squash merge also leaves the worktree's own branch holding commits the
+# default branch never gets, and Claude Code removes a worktree at exit only
+# when every commit on its branch is already on the default branch. So once
+# the calling checkout's content is verifiably on the remote default branch,
+# its branch is reset onto that branch's tip — that checkout only, and only
+# with nothing uncommitted there.
+#
 # Usage:
-#   .agents/skills/freshen-main/freshen-main.sh [--remote <name>] [--discard <path>]...
+#   .agents/skills/after-merge/after-merge.sh [--remote <name>] [--discard <path>]...
 #
 #   --remote   Remote whose default branch to follow (default origin).
 #   --discard  Restore <path> (repo-relative) from HEAD in the default-branch
@@ -18,8 +26,8 @@
 #              is not blocked on, so it can only ever discard an edit a `dirty`
 #              verdict named.
 #
-# Output is one line, the verdict, on stdout:
-#   freshen-main: verdict=<token> branch=<name> [path=<checkout>] [files=<a,b>]
+# Output is one line on stdout:
+#   after-merge: verdict=<token> branch=<name> [path=<checkout>] [files=<a,b>] worktree=<token>
 #
 # Verdict tokens and exit codes:
 #   0  fast-forwarded   the local branch moved; path= names the checkout, and
@@ -37,12 +45,25 @@
 #                       such remote), the default branch is unresolvable, a
 #                       bad argument, or a --discard path that is not blocking
 #                       (reason=not-blocking) or could not be restored
-#                       (reason=discard-failed); reason= says which
+#                       (reason=discard-failed); reason= says which, and no
+#                       worktree= field follows
+#
+# Worktree tokens, for the checkout the script runs in — whatever the verdict:
+#   reset     its branch moved to the remote default branch's tip
+#   current   its HEAD already is that tip
+#   unmerged  its content is not on the remote default branch
+#   dirty     uncommitted, untracked, or index-hidden changes there, or a
+#             `git reset --keep` that refused
+#   none      not a linked worktree, a detached HEAD, or the checkout that
+#             holds the default branch
 
 set -uo pipefail
 
 REMOTE=origin
 DISCARD=()
+
+# shellcheck source=../../../Tools/lib/worktrees.sh
+. "$(dirname "${BASH_SOURCE[0]}")/../../../Tools/lib/worktrees.sh"
 
 usage() {
     sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
@@ -50,8 +71,31 @@ usage() {
 
 verdict() { # <exit-code> <token> [key=value ...]
     _code="$1"; _token="$2"; shift 2
-    printf 'freshen-main: verdict=%s%s\n' "$_token" "${*:+ $*}"
+    [ "$_token" = setup-error ] || set -- "$@" "worktree=$(retire_worktree)"
+    printf 'after-merge: verdict=%s%s\n' "$_token" "${*:+ $*}"
     exit "$_code"
+}
+
+# retire_worktree — prints the worktree token, first resetting the calling
+# checkout's branch onto default_ref when the token is `reset`.
+retire_worktree() {
+    local own head_ref head tip
+    if ! own=$(git rev-parse --show-toplevel 2>/dev/null) || ! read_worktree_layout "$own"; then
+        echo none; return
+    fi
+    [ "$own" -ef "$main_root" ] && { echo none; return; }
+    head_ref=$(git symbolic-ref -q HEAD) || { echo none; return; }
+    [ "$head_ref" = "refs/heads/$branch" ] && { echo none; return; }
+    if ! worktree_clean "$own" || ! worktree_unhidden "$own"; then
+        echo dirty; return
+    fi
+    head=$(git rev-parse --verify -q HEAD) || { echo unmerged; return; }
+    tip=$(git rev-parse --verify -q "$default_ref") || { echo unmerged; return; }
+    [ "$head" = "$tip" ] && { echo current; return; }
+    # The object name, never HEAD: content_on_default runs git in main_root.
+    content_on_default "$head" || { echo unmerged; return; }
+    git reset --quiet --keep "$tip" >/dev/null 2>&1 || { echo dirty; return; }
+    echo reset
 }
 
 while [ $# -gt 0 ]; do
@@ -70,13 +114,14 @@ git fetch --prune --quiet "$REMOTE" 2>/dev/null || verdict 1 setup-error reason=
 # The default branch, read from the remote's cached HEAD symref. A clone made
 # with --single-branch, or a remote added by hand, has no refs/remotes/<remote>/HEAD
 # until something sets it; --auto asks the remote and caches the answer.
-default_ref=$(git symbolic-ref -q --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)
-if [ -z "$default_ref" ]; then
+remote_head=$(git symbolic-ref -q --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)
+if [ -z "$remote_head" ]; then
     git remote set-head "$REMOTE" --auto --quiet 2>/dev/null
-    default_ref=$(git symbolic-ref -q --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)
+    remote_head=$(git symbolic-ref -q --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)
 fi
-[ -n "$default_ref" ] || verdict 1 setup-error reason=no-default-branch "remote=$REMOTE"
-branch=${default_ref#"$REMOTE/"}
+[ -n "$remote_head" ] || verdict 1 setup-error reason=no-default-branch "remote=$REMOTE"
+branch=${remote_head#"$REMOTE/"}
+default_ref="refs/remotes/$REMOTE/$branch"
 
 # The worktree with that branch checked out, which is not necessarily the
 # primary one. A bare primary and a detached HEAD (mid-rebase, or a manually

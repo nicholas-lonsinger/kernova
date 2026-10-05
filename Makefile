@@ -54,7 +54,7 @@ SWIFT_FORMAT := xcrun swift-format
 # through every verdict against recorded fixtures — no Xcode, no network,
 # seconds to run — which is what lets `lint` gate them, and the pre-push hook
 # with it.
-FIXTURE_TESTS := .agents/skills/freshen-main/tests/run.sh \
+FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh
 
