@@ -179,19 +179,29 @@ row included, and often to a mechanism, since a script that reports the
 condition a memory warns about deletes the memory. A fact observed through
 one agent's tool but stated about the app or the platform holds under any
 agent, and a rule that binds work in the repository is not a private
-arrangement because it discloses a plan or a stance. Two things differ:
+arrangement because it discloses a plan or a stance. Four things differ:
 
 - **Its read-trigger is its `description` and its index line.** Judge each
   as a docs/README.md row: it names the situation in which the reader needs
   the memory, and it matches the body. A file the index omits, or an index
-  line whose file is gone, is a dangling pointer.
+  line whose file is gone, is a dangling pointer. The index is always
+  loaded, so a line is the trigger plus a gist, never the rule restated.
 - **What stays must earn memory.** It is a non-obvious external fact that
   costs real time to rediscover, a preference that could not be guessed, or
   an environmental fact invisible from the tree — judged against a model
   more capable than the auditor, since the auditor is the model most likely
   to have needed it. Where the subject changes release to release, an agent
   harness above all, keep the shape of the failure, not its mechanism. A
-  `Why:` that narrates how the memory was learned is filler.
+  `Why:` that narrates how the memory was learned is filler. A memory that
+  guards against a model's own mistake, written under a model older than the
+  current one, is deleted: if the mistake recurs, it is written again.
+- **A stated limit is reproduced before the verdict.** A memory resting on
+  "X cannot" or "this must wait for the user" is tried when trying it is
+  safe; a limit that does not reproduce deletes the memory, and the
+  capability goes where the work that needs it is done.
+- **An overlong memory is trimmed in place.** Folding it into an
+  always-loaded file is not the remedy; that file grows only by a rule that
+  must fire in nearly every session.
 
 A fact the table sends to an agent's user scope is `move → user scope`,
 outside this audit's edits. A moved memory's file and index line are deleted
