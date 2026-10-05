@@ -334,9 +334,6 @@ extension VMSettingsViewController {
         panelControllers[category]
     }
 
-    /// The pane's resolver, so a test awaits its reads instead of polling.
-    var overviewResolverForTesting: VMOverviewResolver { panelContext.overview }
-
     /// What the cards are currently painted from.
     var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
 
