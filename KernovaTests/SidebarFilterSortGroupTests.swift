@@ -16,8 +16,9 @@ extension SidebarLayout.Context {
         SidebarLayout.Context(
             bundledAgentVersion: bundledAgentVersion, networks: .listed(networks), tags: tags,
             networkTitle: {
-                NetworkModeChoice.title(
-                    of: $0, entitlements: .entitled, interfaces: { [] }, networks: .listed(networks))
+                NetworkModeChoice.label(
+                    of: $0, entitlements: .entitled, interfaces: { [] }, networks: .listed(networks)
+                ).text
             })
     }
 }
@@ -230,7 +231,8 @@ struct SidebarFilterSortGroupTests {
             entries, SidebarViewOptions(grouping: .network), context: .testing(networks: [lab, lookalike]))
         #expect(
             byNetwork.map(\.title) == [
-                "Shared Network", "Lab", "Host Only", "Host Only", "Network Not in This Library", "None",
+                "NAT \u{2013} Common", "NAT \u{2013} Lab", "Host Only \u{2013} Common", "Host Only \u{2013} Host Only",
+                "Network Not in This Library", "None",
             ])
         #expect(byNetwork[2].names == ["Built-in Host Only"])
         #expect(byNetwork[3].names == ["Lookalike"])
@@ -383,7 +385,7 @@ struct SidebarFilterSortGroupTests {
 
     private func value(
         _ guestOS: VMGuestOS = .linux, state: VMStateBucket = .stopped,
-        network: VMLibraryFilter.Network = net(.shared), title: String = "Shared Network",
+        network: VMLibraryFilter.Network = net(.shared), title: String = "NAT \u{2013} Common",
         isEphemeral: Bool = false
     ) -> SidebarViewMenu.Value {
         SidebarViewMenu.Value(
@@ -455,14 +457,14 @@ struct SidebarFilterSortGroupTests {
         let values = [
             value(network: net(.none), title: "None"),
             value(network: .unlisted, title: "Network Not in This Library"),
-            value(network: net(.shared), title: "Shared Network"),
+            value(network: net(.shared), title: "NAT \u{2013} Common"),
             value(network: lookalike, title: "None"),
             value(network: .unlisted, title: "Network Not in This Library"),
         ]
         let network = try #require(menu(SidebarViewOptions(), values: values).items[2].submenu)
         #expect(
             network.items.map(\.title) == [
-                "All Networks", "", "Shared Network", "None", "Network Not in This Library", "None",
+                "All Networks", "", "NAT \u{2013} Common", "None", "Network Not in This Library", "None",
             ])
         #expect(network.items[4].badge?.itemCount == 2)
         #expect(picked(network.items[4])?.filter.networks == [.unlisted])
@@ -723,11 +725,11 @@ struct SidebarFilterSortGroupTests {
             guard case .groups(let groups) = library.sidebarLayout.sections.first?.content else { return nil }
             return groups.groups.first?.title
         }
-        #expect(title() == "en7 (unavailable)")
+        #expect(title() == "Bridged \u{2013} en7 (unavailable)")
 
         interfaces.available = [BridgedInterface(identifier: "en7", localizedDisplayName: "Thunderbolt Ethernet")]
 
-        #expect(title() == "Thunderbolt Ethernet (en7)")
+        #expect(title() == "Bridged \u{2013} Thunderbolt Ethernet (en7)")
     }
 
     @Test("VMInfo reports the state bucket by liveness, and the Shortcuts entity reads it")

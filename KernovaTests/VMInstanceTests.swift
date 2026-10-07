@@ -564,7 +564,7 @@ struct VMInstanceTests {
         library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .shared }
         #expect(
             instance.statusToolTip
-                == "The Shared Network is unavailable. Kernova reconnects automatically.")
+                == "The NAT network is unavailable. Kernova reconnects automatically.")
         library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .hostOnly }
         #expect(
             instance.statusToolTip

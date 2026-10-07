@@ -25,14 +25,14 @@ struct ReviewContentViewControllerTests {
         #expect(vm.networkEnabled)
         let sharedVC = ReviewContentViewController(creationVM: vm)
         sharedVC.loadViewIfNeeded()
-        #expect(findLabel(withText: "Shared Network", in: sharedVC.view) != nil)
+        #expect(findLabel(withText: "NAT \u{2013} Common", in: sharedVC.view) != nil)
         #expect(findLabel(withText: "None", in: sharedVC.view) == nil)
 
         vm.networkEnabled = false
         let noneVC = ReviewContentViewController(creationVM: vm)
         noneVC.loadViewIfNeeded()
         #expect(findLabel(withText: "None", in: noneVC.view) != nil)
-        #expect(findLabel(withText: "Shared Network", in: noneVC.view) == nil)
+        #expect(findLabel(withText: "NAT \u{2013} Common", in: noneVC.view) == nil)
     }
 
     @Test("macOS + download shows the abbreviated save-to path")

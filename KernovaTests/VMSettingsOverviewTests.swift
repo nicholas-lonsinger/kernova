@@ -392,7 +392,8 @@ struct VMSettingsOverviewTests {
         // A stopped VM has no address yet, so nothing offers to copy one.
         #expect(copyButton(in: network) == nil)
 
-        let mode = try #require(vc.resolvedForTesting.networkModeTitle)
+        let mode = try #require(vc.resolvedForTesting.networkModeLabel?.text)
+        #expect(mode == "NAT \u{2013} Common")
         #expect(findLabel(withText: mode, in: network) != nil)
     }
 

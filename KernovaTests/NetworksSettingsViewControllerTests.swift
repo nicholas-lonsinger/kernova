@@ -139,7 +139,7 @@ struct NetworksSettingsViewControllerTests {
             (table.view(atColumn: column, row: 1, makeIfNecessary: true) as? NSTableCellView)?
                 .textField?.stringValue
         }
-        #expect(texts == ["Lab", "Shared Network", "Alpha, Beta"])
+        #expect(texts == ["Lab", "NAT", "Alpha, Beta"])
         let farm = (0..<table.numberOfColumns).map { column in
             (table.view(atColumn: column, row: 0, makeIfNecessary: true) as? NSTableCellView)?
                 .textField?.stringValue

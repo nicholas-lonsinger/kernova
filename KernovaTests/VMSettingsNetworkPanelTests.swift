@@ -36,6 +36,27 @@ struct VMSettingsNetworkPanelTests {
 
     // MARK: - Network mode picker
 
+    /// The entry selecting `choice`; entry titles alone repeat across groups.
+    private func item(_ choice: NetworkModeChoice, in popUp: NSPopUpButton) -> NSMenuItem? {
+        popUp.itemArray.first { ($0.representedObject as? NetworkModeEntry)?.choice == choice }
+    }
+
+    /// What the closed picker shows, which is the cell's own item rather than
+    /// the selected entry's title.
+    private func closedTitle(_ popUp: NSPopUpButton) -> String? {
+        (popUp.cell as? NSPopUpButtonCell)?.title
+    }
+
+    /// The menu as a reader sees it: `# ` for a section header, `---` for a
+    /// separator, two spaces of indent per indentation level.
+    private func menuOutline(_ popUp: NSPopUpButton) -> [String] {
+        popUp.itemArray.map {
+            if $0.isSeparatorItem { return "---" }
+            if $0.isSectionHeader { return "# \($0.title)" }
+            return String(repeating: "  ", count: $0.indentationLevel) + $0.title
+        }
+    }
+
     private static let wiFi = BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")
     private static let ethernet = BridgedInterface(
         identifier: "en1", localizedDisplayName: "Ethernet")
@@ -167,46 +188,46 @@ struct VMSettingsNetworkPanelTests {
         #expect(!visibleLabel("IP address", in: vc.view))
     }
 
-    @Test("The Mode picker replaces the networking switch and offers Shared Network and None")
+    @Test("The Mode picker replaces the networking switch and offers NAT and None")
     func modePickerOffersSharedAndNone() throws {
         let (vc, _) = makeNetworkController(entitled: false)
         #expect(containsLabel("Mode", in: vc.view))
         #expect(!containsLabel("Networking Enabled", in: vc.view))
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.itemTitles == ["Shared Network", "None"])
-        #expect(popUp.titleOfSelectedItem == "Shared Network")
+        // Nothing to edit in a build that cannot create a network: None is
+        // last, with no separator after it.
+        #expect(menuOutline(popUp) == ["# NAT", "  Common", "---", "None"])
+        #expect(closedTitle(popUp) == "NAT \u{2013} Common")
     }
 
-    @Test("An entitled build lists each mode's own networks, None, and a Bridged section")
-    func entitledPickerListsBridgedInterfaces() throws {
+    @Test("An entitled build groups each mode's networks under its header, then None, then the edit entry")
+    func entitledPickerGroupsByMode() throws {
         let (vc, _) = makeNetworkController(
             interfaces: MockBridgedInterfaceProvider(
                 available: [Self.wiFi, Self.ethernet], primary: "en0"))
 
         let popUp = try openModeMenu(in: vc)
         #expect(
-            popUp.itemTitles == [
-                "Shared Network", "Shared Network, Isolated", "Host Only", "Host Only, Isolated",
-                "None", "Named Networks", Self.editNamedNetworks, "Bridged", "Automatic", "Wi-Fi (en0)",
-                "Ethernet (en1)",
+            menuOutline(popUp) == [
+                "# NAT", "  Common", "  Isolated",
+                "# Host Only", "  Common", "  Isolated",
+                "# Bridged", "  Automatic", "  Wi-Fi (en0)", "  Ethernet (en1)",
+                "---", "None",
+                "---", Self.editNamedNetworks,
             ])
-        let header = try #require(popUp.menu?.items.first { $0.title == "Bridged" })
-        #expect(header.isSectionHeader)
+        #expect(item(.hostOnly, in: popUp)?.isEnabled == true)
     }
 
-    @Test("An entitled build offers Host Only after Shared Network's entries and before None")
-    func entitledPickerOffersHostOnly() throws {
-        let (vc, _) = makeNetworkController()
-
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let titles = popUp.itemTitles
-        let hostOnly = try #require(titles.firstIndex(of: "Host Only"))
-        let shared = try #require(titles.firstIndex(of: "Shared Network, Isolated"))
-        let none = try #require(titles.firstIndex(of: "None"))
-        #expect(hostOnly == shared + 1)
-        #expect(hostOnly < none)
-        #expect(popUp.menu?.items.first { $0.title == "Host Only" }?.isEnabled == true)
+    @Test("No entry carries a qualifier: no subtitle, no attributed title")
+    func entriesCarryNoQualifier() throws {
+        let (viewModel, _) = try makeViewModel(listing: [("Lab", .shared)])
+        let (vc, _) = makeNetworkController(viewModel: viewModel)
+        let popUp = try openModeMenu(in: vc)
+        for entry in popUp.itemArray {
+            #expect(entry.subtitle == nil)
+            #expect(entry.attributedTitle == nil)
+        }
     }
 
     @Test("An unentitled build still reports a host-only VM's mode")
@@ -214,10 +235,53 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(mode: .hostOnly, entitled: false)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Host Only (unavailable)")
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Common (unavailable)")
         #expect(
-            popUp.menu?.items.first { $0.title == "Host Only (unavailable)" }?.isEnabled == false)
-        #expect(popUp.menu?.items.first { $0.title == "Host Only" } == nil)
+            menuOutline(popUp) == ["# NAT", "  Common", "# Host Only", "  Common (unavailable)", "---", "None"])
+        #expect(item(.hostOnly, in: popUp)?.isEnabled == false)
+    }
+
+    @Test(
+        "The closed picker names the group and the entry of every kind of choice, the entry checked",
+        arguments: ClosedTitleCase.allCases)
+    func closedTitleNamesGroupAndEntry(_ testCase: ClosedTitleCase) throws {
+        let (viewModel, listed) = try makeViewModel(listing: [("Lab", .hostOnly)])
+        let choice: NetworkModeChoice
+        let expected: String
+        switch testCase {
+        case .common: (choice, expected) = (.shared, "NAT \u{2013} Common")
+        case .isolated: (choice, expected) = (.vmnet(.shared, .isolated), "NAT \u{2013} Isolated")
+        case .named: (choice, expected) = (.vmnet(.hostOnly, .network(listed[0].id)), "Host Only \u{2013} Lab")
+        case .unlisted:
+            (choice, expected) = (.vmnet(.shared, .network(UUID())), "NAT \u{2013} Network Not in This Library")
+        case .bridgedAutomatic: (choice, expected) = (.bridged(nil), "Bridged \u{2013} Automatic")
+        case .bridgedInterface: (choice, expected) = (.bridged("en0"), "Bridged \u{2013} Wi-Fi (en0)")
+        case .none: (choice, expected) = (.none, "None")
+        }
+        let (vc, _) = makeNetworkController(
+            networkEnabled: choice != .none,
+            mode: choice.mode ?? .shared,
+            bridgedInterfaceIdentifier: {
+                if case .bridged(let id) = choice { return id }
+                return nil
+            }(),
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            membership: {
+                if case .vmnet(_, let membership) = choice { return membership }
+                return .common
+            }(),
+            viewModel: viewModel)
+
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(closedTitle(popUp) == expected)
+        let selected = try #require(item(choice, in: popUp))
+        #expect(popUp.selectedItem === selected)
+        #expect(selected.state == .on)
+        #expect(popUp.itemArray.filter { $0.state == .on }.count == 1)
+    }
+
+    enum ClosedTitleCase: CaseIterable, Sendable {
+        case common, isolated, named, unlisted, bridgedAutomatic, bridgedInterface, none
     }
 
     // MARK: - Networks of a mode
@@ -226,6 +290,13 @@ struct VMSettingsNetworkPanelTests {
     private func choose(_ title: String, in popUp: NSPopUpButton) throws {
         let item = try #require(popUp.itemArray.first { $0.title == title })
         popUp.select(item)
+        popUp.sendAction(popUp.action, to: popUp.target)
+    }
+
+    /// Selects `choice`'s entry the way a click does.
+    private func choose(_ choice: NetworkModeChoice, in popUp: NSPopUpButton) throws {
+        let entry: NSMenuItem = try #require(item(choice, in: popUp))
+        popUp.select(entry)
         popUp.sendAction(popUp.action, to: popUp.target)
     }
 
@@ -252,24 +323,26 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(mode: .hostOnly)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        try choose("Host Only, Isolated", in: popUp)
+        try choose(.vmnet(.hostOnly, .isolated), in: popUp)
 
         #expect(instance.configuration.networkMode == .hostOnly)
         #expect(instance.configuration.networkMembership == .isolated)
         #expect(instance.configuration.joinsOwnNetwork)
-        #expect(popUp.titleOfSelectedItem == "Host Only, Isolated")
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Isolated")
+        #expect(item(.vmnet(.hostOnly, .isolated), in: popUp)?.state == .on)
     }
 
     @Test("Choosing the other mode's common network from an isolated one moves both keys")
     func commonEntryOfTheOtherModeMovesModeAndMembership() throws {
         let (vc, instance) = makeNetworkController(mode: .hostOnly, membership: .isolated)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Host Only, Isolated")
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Isolated")
 
-        try choose("Shared Network", in: popUp)
+        try choose(.shared, in: popUp)
 
         #expect(instance.configuration.networkMode == .shared)
         #expect(instance.configuration.networkMembership == .common)
+        #expect(closedTitle(popUp) == "NAT \u{2013} Common")
     }
 
     @Test("An unentitled build offers no isolated entry, but shows a VM already isolated so it can move off")
@@ -279,28 +352,29 @@ struct VMSettingsNetworkPanelTests {
 
         let (vc, instance) = makeNetworkController(entitled: false, membership: .isolated)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Shared Network, Isolated (unavailable)")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Isolated (unavailable)")
         #expect(popUp.selectedItem?.isEnabled == false)
 
-        try choose("Shared Network", in: popUp)
+        try choose(.shared, in: popUp)
 
         #expect(instance.configuration.networkMembership == .common)
-        #expect(popUp.itemTitles == ["Shared Network", "None"])
+        #expect(menuOutline(popUp) == ["# NAT", "  Common", "---", "None"])
     }
 
     @Test(
-        "Beside a saved state, only a move to another network of a Shared VM's mode stays live",
+        "Beside a saved state, only a move to another network of a NAT VM's mode stays live",
         arguments: [VMNetworkMode.shared, .hostOnly])
     func membershipEntriesStayLiveBesideASharedSavedState(mode: VMNetworkMode) throws {
         let (vc, instance) = makeNetworkController(
             mode: mode, isReadOnly: true, phase: .suspended, holdsSavedState: true)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let isolated = mode == .shared ? "Shared Network, Isolated" : "Host Only, Isolated"
-        let otherMode = mode == .shared ? "Host Only" : "Shared Network"
+        let kind = try #require(VmnetNetworkKind(mode: mode))
+        let isolated = NetworkModeChoice.vmnet(kind, .isolated)
+        let otherMode: NetworkModeChoice = mode == .shared ? .hostOnly : .shared
 
         #expect(popUp.isEnabled == (mode == .shared))
-        #expect(popUp.menu?.items.first { $0.title == isolated }?.isEnabled == (mode == .shared))
-        #expect(popUp.menu?.items.first { $0.title == otherMode }?.isEnabled == false)
+        #expect(item(isolated, in: popUp)?.isEnabled == (mode == .shared))
+        #expect(item(otherMode, in: popUp)?.isEnabled == false)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
         guard mode == .shared else { return }
 
@@ -312,85 +386,38 @@ struct VMSettingsNetworkPanelTests {
 
     // MARK: - Named networks
 
-    @Test("The library's named networks of both modes follow None under their own header")
-    func namedNetworksAreListed() throws {
+    @Test("The library's named networks follow their mode's common and isolated entries")
+    func namedNetworksAreListedUnderTheirMode() throws {
         let (viewModel, _) = try makeViewModel(listing: [("Lab", .shared), ("Build Farm", .hostOnly)])
         let (vc, _) = makeNetworkController(viewModel: viewModel)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let titles = popUp.itemTitles
-        let none = try #require(titles.firstIndex(of: "None"))
         #expect(
-            Array(titles[(none + 1)...(none + 4)]) == [
-                "Named Networks", "Build Farm, Host Only", "Lab, Shared Network", Self.editNamedNetworks,
+            menuOutline(popUp) == [
+                "# NAT", "  Common", "  Isolated", "  Lab",
+                "# Host Only", "  Common", "  Isolated", "  Build Farm",
+                "# Bridged", "  Automatic",
+                "---", "None",
+                "---", Self.editNamedNetworks,
             ])
-        let header = try #require(popUp.menu?.items.first { $0.title == "Named Networks" })
-        #expect(header.isSectionHeader)
-    }
-
-    @Test("A qualified entry draws its qualifier as a smaller, secondary run on the title's line")
-    func qualifiedEntriesDrawTheQualifierAsASuffix() throws {
-        let (viewModel, _) = try makeViewModel(listing: [("Lab", .shared)])
-        let (vc, _) = makeNetworkController(viewModel: viewModel)
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-
-        for (title, name, qualifier) in [
-            ("Lab, Shared Network", "Lab", "Shared Network"),
-            ("Shared Network, Isolated", "Shared Network", "Isolated"),
-            ("Host Only, Isolated", "Host Only", "Isolated"),
-        ] {
-            let item = try #require(popUp.itemArray.first { $0.title == title })
-            #expect(item.subtitle == nil)
-            let attributed = try #require(item.attributedTitle)
-            #expect(attributed.string == "\(name) \(qualifier)")
-            let nameFont = try #require(attributed.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
-            var qualifierRange = NSRange()
-            let qualifierAt = attributed.length - qualifier.utf16.count
-            let qualifierFont = try #require(
-                attributed.attribute(.font, at: qualifierAt, effectiveRange: &qualifierRange) as? NSFont)
-            #expect(qualifierRange == NSRange(location: qualifierAt, length: qualifier.utf16.count))
-            #expect(qualifierFont.pointSize < nameFont.pointSize)
-            #expect(
-                attributed.attribute(.foregroundColor, at: qualifierAt, effectiveRange: nil) as? NSColor
-                    == .secondaryLabelColor)
-            #expect(attributed.attribute(.foregroundColor, at: 0, effectiveRange: nil) == nil)
-        }
-        // An entry with nothing to qualify keeps its plain title.
-        #expect(popUp.itemArray.first { $0.title == "Shared Network" }?.attributedTitle == nil)
-    }
-
-    @Test("A disabled qualified entry draws both runs disabled")
-    func disabledQualifiedEntryDrawsDisabled() throws {
-        let (vc, _) = makeNetworkController(membership: .network(UUID()))
-        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let item = try #require(popUp.selectedItem)
-        #expect(!item.isEnabled)
-        let attributed = try #require(item.attributedTitle)
-        for location in [0, attributed.length - 1] {
-            #expect(
-                attributed.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor
-                    == .disabledControlTextColor)
-        }
     }
 
     static let editNamedNetworks = "Edit Named Networks\u{2026}"
 
-    @Test("A library listing no network still offers Edit Named Networks… where the build can create one")
+    @Test("A library listing no network still offers Edit Named Networks… last, after a separator")
     func noNamedNetworksStillOffersEdit() throws {
         let (vc, _) = makeNetworkController()
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let titles = popUp.itemTitles
-        let none = try #require(titles.firstIndex(of: "None"))
-        #expect(Array(titles[(none + 1)...(none + 2)]) == ["Named Networks", Self.editNamedNetworks])
+        #expect(Array(menuOutline(popUp).suffix(4)) == ["---", "None", "---", Self.editNamedNetworks])
         #expect(popUp.menu?.items.first { $0.title == Self.editNamedNetworks }?.isEnabled == true)
     }
 
-    @Test("A build that cannot create a named network shows no Named Networks section")
-    func unentitledBuildShowsNoNamedNetworksSection() throws {
+    @Test("A build that cannot create a named network shows no edit entry, and nothing after None")
+    func unentitledBuildShowsNoEditEntry() throws {
         let (vc, _) = makeNetworkController(entitled: false)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(!popUp.itemTitles.contains("Named Networks"))
         #expect(!popUp.itemTitles.contains(Self.editNamedNetworks))
+        #expect(menuOutline(popUp).last == "None")
     }
 
     @Test(
@@ -413,15 +440,19 @@ struct VMSettingsNetworkPanelTests {
         vc.viewDidAppear()
         vc.showCategory(.network)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let selectedBefore = try #require(popUp.titleOfSelectedItem)
+        let closedBefore = closedTitle(popUp)
+        #expect(closedBefore == (onListedNetwork ? "NAT \u{2013} Lab" : "NAT \u{2013} Isolated"))
         let configBefore = instance.configuration
 
         try choose(Self.editNamedNetworks, in: popUp)
 
         #expect(requested == [onListedNetwork ? .network(listed[0].id) : .pane(.networks)])
         #expect(instance.configuration == configBefore)
-        #expect(popUp.titleOfSelectedItem == selectedBefore)
-        #expect(popUp.selectedItem?.representedObject as? NetworkModeChoice == NetworkModeChoice(configBefore))
+        #expect(closedTitle(popUp) == closedBefore)
+        let selected = try #require(item(NetworkModeChoice(configBefore), in: popUp))
+        #expect(popUp.selectedItem === selected)
+        #expect(selected.state == .on)
+        #expect(popUp.menu?.items.first { $0.title == Self.editNamedNetworks }?.state == .off)
     }
 
     @Test("Choosing a named network of the other mode writes its mode and the membership together")
@@ -430,14 +461,15 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        try choose("Build Farm, Host Only", in: popUp)
+        try choose(.vmnet(.hostOnly, .network(listed[0].id)), in: popUp)
 
         #expect(instance.configuration.networkMode == .hostOnly)
         #expect(instance.configuration.networkMembership == .network(listed[0].id))
-        #expect(popUp.titleOfSelectedItem == "Build Farm, Host Only")
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Build Farm")
+        #expect(popUp.titleOfSelectedItem == "Build Farm")
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(findLabel(withText: "Build Farm, Host Only", in: card) != nil)
+        #expect(findLabel(withText: "Host Only \u{2013} Build Farm", in: card) != nil)
     }
 
     @Test("Leaving a named network for the other mode's common network lands whole")
@@ -446,9 +478,9 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(
             membership: .network(listed[0].id), viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Lab, Shared Network")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Lab")
 
-        try choose("Host Only", in: popUp)
+        try choose(.hostOnly, in: popUp)
 
         #expect(instance.configuration.networkMode == .hostOnly)
         #expect(instance.configuration.networkMembership == .common)
@@ -459,14 +491,13 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(membership: .network(UUID()))
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Network Not in This Library, Shared Network")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Network Not in This Library")
+        #expect(popUp.titleOfSelectedItem == "Network Not in This Library")
         #expect(popUp.selectedItem?.isEnabled == false)
-        // The section ends with the edit entry, after the unlisted one.
-        let titles = popUp.itemTitles
-        let header = try #require(titles.firstIndex(of: "Named Networks"))
+        // Under its mode's header, after the mode's own entries.
         #expect(
-            Array(titles[header...(header + 2)]) == [
-                "Named Networks", "Network Not in This Library, Shared Network", Self.editNamedNetworks,
+            Array(menuOutline(popUp).prefix(5)) == [
+                "# NAT", "  Common", "  Isolated", "  Network Not in This Library", "# Host Only",
             ])
         // Not a listed network, so the edit entry opens the pane on no row.
         #expect(
@@ -483,33 +514,52 @@ struct VMSettingsNetworkPanelTests {
             preferences: preferences, networks: VMNetworkDirectory(fileURL: fileURL))
     }
 
-    @Test("With the network list unreadable, a VM on a named network shows one disabled, checked entry saying so")
+    static let unreadableNetworkList = "Network List Can\u{2019}t Be Read"
+
+    @Test("With the network list unreadable, a named network's VM has its mode's disabled entry saying so, checked")
     func unreadableListShowsTheNamedMembershipAsUnreadable() throws {
         let viewModel = try makeUnreadableNetworkListViewModel()
         let (vc, _) = makeNetworkController(membership: .network(UUID()), viewModel: viewModel)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Network List Can\u{2019}t Be Read")
+        #expect(closedTitle(popUp) == "NAT \u{2013} \(Self.unreadableNetworkList)")
+        #expect(popUp.titleOfSelectedItem == Self.unreadableNetworkList)
         #expect(popUp.selectedItem?.isEnabled == false)
-        let named = popUp.itemArray.drop { $0.title != "Named Networks" }.dropFirst()
-            .prefix { !$0.isSectionHeader }
-        #expect(named.map(\.title) == ["Network List Can\u{2019}t Be Read"])
+        #expect(popUp.selectedItem?.state == .on)
+        #expect(
+            menuOutline(popUp) == [
+                "# NAT", "  Common", "  Isolated", "  \(Self.unreadableNetworkList)",
+                "# Host Only", "  Common", "  Isolated", "  \(Self.unreadableNetworkList)",
+                "# Bridged", "  Automatic",
+                "---", "None",
+                "---", Self.editNamedNetworks,
+            ])
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(findLabel(withText: "Network List Can\u{2019}t Be Read", in: card) != nil)
+        #expect(findLabel(withText: "NAT \u{2013} \(Self.unreadableNetworkList)", in: card) != nil)
     }
 
-    @Test("With the network list unreadable, a VM on a common network sees one disabled entry under Named Networks")
+    @Test("With the network list unreadable, each vmnet mode shows one disabled entry in its named networks' place")
     func unreadableListOffersNoNamedNetwork() throws {
         let viewModel = try makeUnreadableNetworkListViewModel()
         let (vc, _) = makeNetworkController(viewModel: viewModel)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Shared Network")
-        let named = popUp.itemArray.drop { $0.title != "Named Networks" }.dropFirst()
-            .prefix { !$0.isSectionHeader }
-        #expect(named.map(\.title) == ["Network List Can\u{2019}t Be Read"])
-        #expect(named.allSatisfy { !$0.isEnabled })
+        #expect(closedTitle(popUp) == "NAT \u{2013} Common")
+        #expect(
+            menuOutline(popUp) == [
+                "# NAT", "  Common", "  Isolated", "  \(Self.unreadableNetworkList)",
+                "# Host Only", "  Common", "  Isolated", "  \(Self.unreadableNetworkList)",
+                "# Bridged", "  Automatic",
+                "---", "None",
+                "---", Self.editNamedNetworks,
+            ])
+        let unreadable = popUp.itemArray.filter { $0.title == Self.unreadableNetworkList }
+        #expect(unreadable.allSatisfy { !$0.isEnabled })
+        // No network to select, so the edit entry opens the pane on no row.
+        #expect(
+            popUp.itemArray.first { $0.title == Self.editNamedNetworks }?.representedObject
+                as? SettingsDestination == .pane(.networks))
     }
 
     @Test("Renaming the VM's named network re-titles the picker and the card")
@@ -524,10 +574,10 @@ struct VMSettingsNetworkPanelTests {
         // The pane repaints from its observation loop, a main-actor task the
         // rename enqueued.
         await drainMainQueue()
-        #expect(popUp.titleOfSelectedItem == "Staging, Shared Network")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Staging")
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(findLabel(withText: "Staging, Shared Network", in: card) != nil)
+        #expect(findLabel(withText: "NAT \u{2013} Staging", in: card) != nil)
     }
 
     @Test("An unentitled build offers no named network, but shows the one a VM is on")
@@ -538,9 +588,22 @@ struct VMSettingsNetworkPanelTests {
             membership: .network(listed[0].id), viewModel: viewModel)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Lab, Shared Network (unavailable)")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Lab (unavailable)")
         #expect(popUp.selectedItem?.isEnabled == false)
         #expect(!popUp.itemTitles.contains("Other"))
+    }
+
+    @Test("The Isolated paragraph names its mode's Common network")
+    func isolatedParagraphNamesTheCommonNetwork() {
+        let text = paragraphText(
+            VMSettingsNetworkPanelViewController.modeInfoParagraphs(
+                offered: [.shared], isolationOffered: true, namedNetworksOffered: false,
+                sharedAddressShown: false, guestOS: .macOS))
+        #expect(
+            text.contains {
+                $0.hasPrefix("Isolated: a network of the guest's own instead of its mode's Common network.")
+                    && $0.contains("for NAT, to the internet")
+            })
     }
 
     @Test("The Mode info describes isolation and named networks only where the build offers them")
@@ -560,8 +623,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(networkEnabled: false, macAddress: nil)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        popUp.selectItem(withTitle: "Host Only")
-        popUp.sendAction(popUp.action, to: popUp.target)
+        try choose(.hostOnly, in: popUp)
 
         #expect(instance.configuration.networkEnabled == true)
         #expect(instance.configuration.networkMode == .hostOnly)
@@ -575,7 +637,7 @@ struct VMSettingsNetworkPanelTests {
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi]), entitled: false)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.itemTitles == ["Shared Network", "None"])
+        #expect(menuOutline(popUp) == ["# NAT", "  Common", "---", "None"])
     }
 
     @Test("A host with nothing to bridge over shows one disabled placeholder")
@@ -597,9 +659,9 @@ struct VMSettingsNetworkPanelTests {
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         // A picker nobody has opened carries the fixed entries alone.
         #expect(
-            popUp.itemTitles == [
-                "Shared Network", "Shared Network, Isolated", "Host Only", "Host Only, Isolated",
-                "None", "Named Networks", Self.editNamedNetworks, "Bridged", "Automatic",
+            menuOutline(popUp) == [
+                "# NAT", "  Common", "  Isolated", "# Host Only", "  Common", "  Isolated",
+                "# Bridged", "  Automatic", "---", "None", "---", Self.editNamedNetworks,
             ])
 
         provider.available = [Self.wiFi, Self.ethernet]
@@ -616,13 +678,14 @@ struct VMSettingsNetworkPanelTests {
             mode: .bridged, bridgedInterfaceIdentifier: "en0",
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
 
-        // The row and the card both read the picker's title, so the menu
-        // carries an entry for the current choice without an enumeration.
+        // The menu carries an entry for the current choice without an
+        // enumeration, so the closed picker still selects and names it.
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         #expect(popUp.titleOfSelectedItem == "Wi-Fi (en0)")
+        #expect(closedTitle(popUp) == "Bridged \u{2013} Wi-Fi (en0)")
         vc.showOverview()
         let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(findLabel(withText: "Wi-Fi (en0)", in: card) != nil)
+        #expect(findLabel(withText: "Bridged \u{2013} Wi-Fi (en0)", in: card) != nil)
     }
 
     @Test("Choosing None writes the mode and hides the MAC row, leaving Mode to say so")
@@ -644,7 +707,7 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(networkEnabled: false)
         #expect(!visibleLabel("MAC address", in: vc.view))
         #expect(findLabel(containing: "no network device", in: vc.view) == nil)
-        #expect(settingsNetworkModePopUp(in: vc.view)?.titleOfSelectedItem == "None")
+        #expect(settingsNetworkModePopUp(in: vc.view).flatMap(closedTitle) == "None")
     }
 
     @Test("The Mode row carries the network info, and the panel header carries none")
@@ -662,7 +725,8 @@ struct VMSettingsNetworkPanelTests {
             VMSettingsNetworkPanelViewController.modeInfoParagraphs(
                 offered: offered, isolationOffered: false, namedNetworksOffered: false,
                 sharedAddressShown: false, guestOS: .macOS))
-        #expect(text.contains { $0.hasPrefix("Shared Network:") })
+        #expect(text.contains { $0.hasPrefix("NAT:") })
+        #expect(!text.contains { $0.contains("Shared Network") })
         #expect(text.contains { $0.hasPrefix("Host Only:") } == offered.contains(.hostOnly))
         #expect(text.contains { $0.contains("Bridged") } == offered.contains(.bridged))
     }
@@ -675,20 +739,20 @@ struct VMSettingsNetworkPanelTests {
         }
     }
 
-    @Test("A build without app-managed networking describes only Shared Network in the Mode info")
+    @Test("A build without app-managed networking describes only NAT in the Mode info")
     func unentitledModeInfoDescribesOnlyShared() throws {
         let (vc, _) = makeNetworkController(entitled: false)
         let button = try #require(infoButton(about: "Mode", in: vc.view))
         let text = paragraphText(button.paragraphs)
-        #expect(text.contains { $0.hasPrefix("Shared Network:") })
+        #expect(text.contains { $0.hasPrefix("NAT:") })
         #expect(!text.contains { $0.hasPrefix("Host Only:") })
         #expect(!text.contains { $0.contains("Bridged") })
     }
 
-    /// The Shared paragraph's reach clause, as the Mode info button would show it now.
+    /// The NAT paragraph's reach clause, as the Mode info button would show it now.
     private func sharedReachText(in vc: VMSettingsViewController) throws -> String {
         let button = try #require(infoButton(about: "Mode", in: vc.view))
-        return try #require(paragraphText(button.paragraphs).first { $0.hasPrefix("Shared Network:") })
+        return try #require(paragraphText(button.paragraphs).first { $0.hasPrefix("NAT:") })
     }
 
     @Test("The Mode info points at the IP address row only while it shows the Shared address")
@@ -733,7 +797,8 @@ struct VMSettingsNetworkPanelTests {
         // the user just chose from the open picker is not unavailable.
         let picked = try #require(popUp.menu?.items.first { $0.title == "Ethernet (en1)" })
         #expect(picked.isEnabled)
-        #expect(popUp.titleOfSelectedItem == "Ethernet (en1)")
+        #expect(popUp.selectedItem === picked)
+        #expect(closedTitle(popUp) == "Bridged \u{2013} Ethernet (en1)")
     }
 
     @Test("Choosing Automatic clears the persisted interface")
@@ -750,15 +815,14 @@ struct VMSettingsNetworkPanelTests {
         #expect(instance.configuration.bridgedInterfaceIdentifier == nil)
     }
 
-    @Test("Going back to Shared Network keeps the interface for the next bridged choice")
+    @Test("Going back to NAT keeps the interface for the next bridged choice")
     func selectingSharedRemembersTheInterface() throws {
         let (vc, instance) = makeNetworkController(
             mode: .bridged, bridgedInterfaceIdentifier: "en1",
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi, Self.ethernet]))
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        popUp.selectItem(withTitle: "Shared Network")
-        popUp.sendAction(popUp.action, to: popUp.target)
+        try choose(.shared, in: popUp)
 
         #expect(instance.configuration.networkEnabled == true)
         #expect(instance.configuration.networkMode == .shared)
@@ -775,6 +839,7 @@ struct VMSettingsNetworkPanelTests {
         let item = try #require(popUp.menu?.items.first { $0.title == "en9 (unavailable)" })
         #expect(!item.isEnabled)
         #expect(popUp.titleOfSelectedItem == "en9 (unavailable)")
+        #expect(closedTitle(popUp) == "Bridged \u{2013} en9 (unavailable)")
     }
 
     @Test("An identifier remembered from an earlier bridged choice adds no entry")
@@ -785,7 +850,7 @@ struct VMSettingsNetworkPanelTests {
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         #expect(popUp.menu?.items.first { $0.title == "en9 (unavailable)" } == nil)
-        #expect(popUp.titleOfSelectedItem == "Shared Network")
+        #expect(closedTitle(popUp) == "NAT \u{2013} Common")
     }
 
     @Test("An unentitled build still reports a bridged VM's mode")
@@ -793,20 +858,21 @@ struct VMSettingsNetworkPanelTests {
         let (vc, _) = makeNetworkController(mode: .bridged, entitled: false)
 
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        #expect(popUp.titleOfSelectedItem == "Bridged (unavailable)")
-        #expect(popUp.menu?.items.first { $0.title == "Bridged (unavailable)" }?.isEnabled == false)
+        #expect(closedTitle(popUp) == "Bridged \u{2013} Automatic (unavailable)")
+        #expect(
+            menuOutline(popUp) == ["# NAT", "  Common", "# Bridged", "  Automatic (unavailable)", "---", "None"])
+        #expect(item(.bridged(nil), in: popUp)?.isEnabled == false)
     }
 
     @Test("Turning networking on gives a VM without a MAC address a stable one")
     func enablingNetworkingMintsAMACAddress() throws {
-        // Shared Network, from a VM created with networking off.
+        // NAT, from a VM created with networking off.
         let (sharedVC, sharedInstance) = makeNetworkController(
             networkEnabled: false, macAddress: nil,
             interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"))
         let sharedPopUp = try #require(settingsNetworkModePopUp(in: sharedVC.view))
 
-        sharedPopUp.selectItem(withTitle: "Shared Network")
-        sharedPopUp.sendAction(sharedPopUp.action, to: sharedPopUp.target)
+        try choose(.shared, in: sharedPopUp)
 
         let sharedMAC = try #require(sharedInstance.configuration.macAddress)
         #expect(VZMACAddress(string: sharedMAC) != nil)
@@ -831,8 +897,7 @@ struct VMSettingsNetworkPanelTests {
             networkEnabled: false, macAddress: "aa:bb:cc:dd:ee:ff")
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        popUp.selectItem(withTitle: "Shared Network")
-        popUp.sendAction(popUp.action, to: popUp.target)
+        try choose(.shared, in: popUp)
 
         #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:ff")
     }
@@ -999,13 +1064,13 @@ struct VMSettingsNetworkPanelTests {
         let (vc, instance) = makeNetworkController(
             mode: .hostOnly, isReadOnly: true, phase: .running(sessionID: UUID()), viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
-        let shared = try #require(popUp.itemArray.first { $0.title == "Shared Network" })
-
-        popUp.select(shared)
-        popUp.sendAction(popUp.action, to: popUp.target)
+        try choose(.shared, in: popUp)
 
         #expect(instance.configuration.networkMode == .hostOnly)
-        #expect(popUp.titleOfSelectedItem == "Host Only")
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Common")
+        #expect(popUp.selectedItem === item(.hostOnly, in: popUp))
+        #expect(item(.hostOnly, in: popUp)?.state == .on)
+        #expect(item(.shared, in: popUp)?.state == .off)
         // The offer could not be shown here, so the refusal it stood for is.
         try await waitForChange { presenter.errorTitle != nil }
         #expect(presenter.macAddressRemedyRequests.map(\.prompt.offers.count) == [1])
@@ -1175,8 +1240,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(!visibleLabel("MAC address", in: vc.view))
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        popUp.selectItem(withTitle: "Shared Network")
-        popUp.sendAction(popUp.action, to: popUp.target)
+        try choose(.shared, in: popUp)
 
         #expect(visibleLabel("MAC address", in: vc.view))
         #expect(
@@ -1205,8 +1269,8 @@ struct VMSettingsNetworkPanelTests {
         let popUp = try openModeMenu(in: vc)
         #expect(popUp.isEnabled)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
-        #expect(popUp.menu?.items.first { $0.title == "Shared Network" }?.isEnabled == true)
-        #expect(popUp.menu?.items.first { $0.title == "Host Only" }?.isEnabled == true)
+        #expect(item(.shared, in: popUp)?.isEnabled == true)
+        #expect(item(.hostOnly, in: popUp)?.isEnabled == true)
         #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
     }
 

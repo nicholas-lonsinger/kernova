@@ -34,7 +34,7 @@ extension VMCommandCore {
                 membership != .isolated
             else {
                 return .invalidArgument(
-                    "Only a Shared Network or Host Only virtual machine on a network it shares can move to a network of its own."
+                    "Only a \(VMNetworkMode.shared.title) or \(VMNetworkMode.hostOnly.title) virtual machine on a network it shares can move to a network of its own."
                 )
             }
             var moved = configuration

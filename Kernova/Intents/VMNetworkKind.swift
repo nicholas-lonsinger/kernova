@@ -15,7 +15,7 @@ enum VMNetworkKind: String, AppEnum {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Network Kind")
 
     static let caseDisplayRepresentations: [VMNetworkKind: DisplayRepresentation] = [
-        .shared: "Shared Network",
+        .shared: "NAT",
         .hostOnly: "Host Only",
     ]
 

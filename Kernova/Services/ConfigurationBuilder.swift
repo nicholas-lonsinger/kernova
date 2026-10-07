@@ -1044,7 +1044,7 @@ enum ConfigurationBuilderError: LocalizedError {
         case .networkNotEntitled(let network):
             "This build of Kernova does not support \(network.entitledCapability). "
                 + (network.isCommon
-                    ? "Switch the VM's network mode to Shared Network."
+                    ? "Switch the VM's network mode to \(VMNetworkMode.shared.title)."
                     : "Move the VM to its mode\u{2019}s common network in its Network settings.")
         case .sharedDirectoryNotFound(_, let path, let label):
             "Shared folder '\(label)' not found at \(path)."

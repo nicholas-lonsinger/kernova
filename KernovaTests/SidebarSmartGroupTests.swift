@@ -198,19 +198,20 @@ struct SidebarSmartGroupTests {
                 subject: VMLibraryFilter.Subject(
                     guestOS: .macOS, state: .running, network: shared, guestAgent: .upToDate, isEphemeral: true,
                     hasSnapshots: false),
-                networkTitle: "Shared Network")
+                networkTitle: "NAT \u{2013} Common")
         ]
         let filter = VMLibraryFilter(
             guestOSes: [.macOS], states: [.running], networks: [shared], guestAgents: [.upToDate, .olderVersion],
             ephemeralOnly: true)
 
-        #expect(menu.suggestedName(for: filter, values: values) == "macOS \u{00B7} Running \u{00B7} Shared Network")
+        #expect(
+            menu.suggestedName(for: filter, values: values) == "macOS \u{00B7} Running \u{00B7} NAT \u{2013} Common")
         #expect(
             menu.suggestedName(for: VMLibraryFilter(guestAgents: [.upToDate, .olderVersion]), values: values)
                 == "Smart Group")
         #expect(
             menu.conditions(of: filter, values: values) == [
-                "Guest OS is macOS", "State is Running", "Network is Shared Network",
+                "Guest OS is macOS", "State is Running", "Network is NAT \u{2013} Common",
                 "Guest Agent is Up to Date or Older Version", "Ephemeral Mode",
             ])
 
@@ -234,7 +235,8 @@ struct SidebarSmartGroupTests {
     func namingSheetLaysOutItsConditions() throws {
         let conditions = [
             "Guest OS is macOS", "State is Running",
-            "Network is Shared Network, Host Only, or Network Not in This Library", "Ephemeral Mode",
+            "Network is NAT \u{2013} Common, Host Only \u{2013} Common, or Network Not in This Library",
+            "Ephemeral Mode",
         ]
         let sheet = SidebarNameSheet.newSmartGroup(suggestedName: "macOS", conditions: conditions) { _ in }
         let accessory = try #require(sheet.accessoryView)

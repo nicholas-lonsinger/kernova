@@ -168,10 +168,10 @@ struct VMOverviewSummaryTests {
     func networkFoldsModeAndAddress() {
         let instance = makeInstance()
         let resolved = VMOverviewResolved(
-            networkModeTitle: "Shared Network", ipAddress: .observed("192.168.66.4"))
+            networkModeLabel: NetworkChoiceLabel(mode: .shared, entry: "Common"), ipAddress: .observed("192.168.66.4"))
         let network = rows(.network, instance, resolved: resolved)
         #expect(network.count == 1)
-        #expect(network.first?.label == "Shared Network")
+        #expect(network.first?.label == "NAT \u{2013} Common")
         #expect(network.first?.value == "192.168.66.4")
         #expect(network.first?.copy == VMOverviewSummary.RowCopy(value: "192.168.66.4", name: "Copy IP Address"))
     }
@@ -179,9 +179,9 @@ struct VMOverviewSummaryTests {
     @Test("With no address yet the mode row stands alone, offering nothing to copy")
     func networkRowOffersNoCopyWithoutAnAddress() {
         let instance = makeInstance()
-        let resolved = VMOverviewResolved(networkModeTitle: "Wi-Fi (en0)")
+        let resolved = VMOverviewResolved(networkModeLabel: NetworkChoiceLabel(mode: .bridged, entry: "Wi-Fi (en0)"))
         let row = rows(.network, instance, resolved: resolved).first
-        #expect(row?.label == "Wi-Fi (en0)")
+        #expect(row?.label == "Bridged \u{2013} Wi-Fi (en0)")
         #expect(row?.value == "")
         #expect(row?.copy == nil)
     }
@@ -195,7 +195,8 @@ struct VMOverviewSummaryTests {
         ] {
             let row = rows(
                 .network, instance,
-                resolved: VMOverviewResolved(networkModeTitle: "Shared Network", ipAddress: address)
+                resolved: VMOverviewResolved(
+                    networkModeLabel: NetworkChoiceLabel(mode: .shared, entry: "Common"), ipAddress: address)
             ).first
             #expect(row?.value == text)
             #expect(row?.copy == nil)
@@ -209,7 +210,8 @@ struct VMOverviewSummaryTests {
             rows(
                 .network, off,
                 resolved: VMOverviewResolved(
-                    networkModeTitle: "None", ipAddress: .observed("192.168.66.4")))
+                    networkModeLabel: NetworkChoiceLabel(mode: nil, entry: "None"),
+                    ipAddress: .observed("192.168.66.4")))
                 == [VMOverviewSummary.Row(label: "Mode", value: "None")])
         // Nothing resolved yet reads the same way.
         #expect(rows(.network, makeInstance()) == [VMOverviewSummary.Row(label: "Mode", value: "None")])

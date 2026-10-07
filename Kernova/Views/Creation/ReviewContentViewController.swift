@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// Step 4 of the creation wizard: review the configuration before creating.
 ///
@@ -125,7 +126,12 @@ final class ReviewContentViewController: NSViewController {
 
         addSection(
             "Network",
-            rows: [valueRow("Mode", creationVM.networkEnabled ? "Shared Network" : "None")], to: summary)
+            rows: [
+                valueRow(
+                    "Mode",
+                    (creationVM.networkEnabled ? NetworkModeChoice.shared : .none).title(
+                        attachable: true, interfaces: [], networks: .listed([])))
+            ], to: summary)
 
         if creationVM.selectedOS == .macOS {
             var rows: [NSView] = []

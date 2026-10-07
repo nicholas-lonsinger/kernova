@@ -7,6 +7,15 @@ enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
     case bridged
     case hostOnly
 
+    /// How every surface the user reads names this mode.
+    var title: String {
+        switch self {
+        case .shared: "NAT"
+        case .bridged: "Bridged"
+        case .hostOnly: "Host Only"
+        }
+    }
+
     /// Whether a saved state taken on one network of this mode restores on
     /// another network of the same mode — what lets a VM holding one move
     /// between its mode's common network and a network of its own.
@@ -74,7 +83,7 @@ enum VMJoinedNetwork: Hashable, Sendable {
         switch id.scope {
         case .vm: return "isolating a virtual machine from other virtual machines"
         case .named: return "named networks"
-        case .common: return id.kind == .hostOnly ? "host-only networking" : "Shared Network"
+        case .common: return id.kind == .hostOnly ? "host-only networking" : "\(VMNetworkMode.shared.title) networking"
         }
     }
 }

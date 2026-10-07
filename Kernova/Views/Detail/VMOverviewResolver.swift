@@ -12,16 +12,25 @@ extension NetworkModeChoice {
         }
     }
 
-    /// The Mode picker's title for this choice, which is what the Network card
-    /// states beside the address: ``label(attachable:interfaces:networks:)`` as
-    /// one line of plain text.
+    /// The mode this choice puts the VM in, `nil` for None.
+    var mode: VMNetworkMode? {
+        switch self {
+        case .vmnet(let kind, _): kind.mode
+        case .none: nil
+        case .bridged: .bridged
+        }
+    }
+
+    /// The text naming this choice wherever one line names it — the Mode
+    /// picker's closed title, and the Network card beside the address.
     func title(
         attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
     ) -> String {
         label(attachable: attachable, interfaces: interfaces, networks: networks).text
     }
 
-    /// How this choice names itself. `networks` is the library's named networks.
+    /// How this choice names itself: its mode's group, and its entry within
+    /// that group. `networks` is the library's named networks.
     ///
     /// A network this build cannot attach (`attachable` false) still names
     /// itself, marked unavailable: the picker offers no entry for it, so this
@@ -29,64 +38,63 @@ extension NetworkModeChoice {
     func label(
         attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
     ) -> NetworkChoiceLabel {
+        let entry: String
         switch self {
         case .vmnet(let kind, let membership):
-            let label: NetworkChoiceLabel
             switch membership {
             case .common:
-                label = NetworkChoiceLabel(Self.kindTitle(kind))
+                entry = Self.commonTitle
             case .isolated:
-                label = NetworkChoiceLabel(Self.kindTitle(kind), qualifier: "Isolated")
+                entry = Self.isolatedTitle
             case .network(let id):
-                // A network the library does not list in this mode is one no
-                // surface can choose, so it never reads as merely unavailable.
                 switch networks {
                 case .unreadable:
-                    return NetworkChoiceLabel(Self.unreadableNetworkListTitle, qualifier: Self.kindTitle(kind))
+                    return NetworkChoiceLabel(mode: kind.mode, entry: Self.unreadableNetworkListTitle)
                 case .listed(let networks):
+                    // A network the library does not list in this mode is one
+                    // no surface can choose, so it never reads as merely
+                    // unavailable.
                     guard let network = networks.first(where: { $0.id == id && $0.kind == kind }) else {
-                        return NetworkChoiceLabel(Self.unlistedNetworkTitle, qualifier: Self.kindTitle(kind))
+                        return NetworkChoiceLabel(mode: kind.mode, entry: Self.unlistedNetworkTitle)
                     }
-                    label = NetworkChoiceLabel(network.name, qualifier: Self.kindTitle(kind))
+                    entry = network.name
                 }
             }
-            return attachable ? label : label.markedUnavailable
         case .none:
-            return NetworkChoiceLabel("None")
-        case .bridged(let identifier):
-            guard attachable else { return NetworkChoiceLabel("Bridged").markedUnavailable }
-            guard let identifier else { return NetworkChoiceLabel("Automatic") }
+            return NetworkChoiceLabel(mode: nil, entry: "None")
+        case .bridged(nil):
+            entry = "Automatic"
+        case .bridged(.some(let identifier)):
             guard let interface = interfaces.first(where: { $0.identifier == identifier }) else {
-                return NetworkChoiceLabel(identifier).markedUnavailable
+                return NetworkChoiceLabel(mode: .bridged, entry: identifier).markedUnavailable
             }
-            return NetworkChoiceLabel(Self.interfaceTitle(interface))
+            entry = Self.interfaceTitle(interface)
         }
+        let label = NetworkChoiceLabel(mode: mode, entry: entry)
+        return attachable ? label : label.markedUnavailable
     }
 
-    /// What `config`'s network reads as on every surface naming it: the
-    /// Network card, and the sidebar's network filter and groups.
-    /// `interfaces` is asked only when the choice names a host interface.
-    static func title(
+    /// How `config`'s network names itself on every surface naming it: the
+    /// Mode picker, the Network card, and the sidebar's network filter and
+    /// groups. `interfaces` is asked only when the choice names a host
+    /// interface.
+    static func label(
         of config: VMConfiguration, entitlements: EntitlementService,
         interfaces: () -> [BridgedInterface], networks: VMNetworkDirectory.State
-    ) -> String {
+    ) -> NetworkChoiceLabel {
         let choice = NetworkModeChoice(config)
-        return choice.title(
+        return choice.label(
             attachable: config.joinedNetwork.map(entitlements.canAttach) ?? true,
             interfaces: choice.namesAHostInterface ? interfaces() : [],
             networks: networks)
     }
 
+    /// The entry naming a mode's common network.
+    static let commonTitle = "Common"
+    /// The entry naming a network of the VM's own in its mode.
+    static let isolatedTitle = "Isolated"
     /// How a VM naming a network the library does not list names it.
     static let unlistedNetworkTitle = "Network Not in This Library"
-
-    /// How Shared Network or Host Only names itself.
-    static func kindTitle(_ kind: VmnetNetworkKind) -> String {
-        switch kind {
-        case .shared: "Shared Network"
-        case .hostOnly: "Host Only"
-        }
-    }
 
     /// How one bridgeable interface reads in the picker — `Wi-Fi (en0)`, or the
     /// bare identifier when the host names it nothing else.
@@ -98,31 +106,33 @@ extension NetworkModeChoice {
     }
 }
 
-/// How a network choice names itself: its name, and the qualifier that tells
-/// it from a same-named choice or says which mode it runs in.
+/// How a network choice names itself: the mode it is grouped under — the
+/// Mode menu's section header — and its entry within that group.
 ///
-/// Plain text joins the two (``text``); the Mode menu draws the qualifier as a
-/// suffix on the name's line.
-struct NetworkChoiceLabel: Equatable {
-    let name: String
-    let qualifier: String?
+/// A menu entry reads ``entry`` alone; every one-line surface reads ``text``.
+struct NetworkChoiceLabel: Equatable, Sendable {
+    /// The group's title, `nil` for the choice no mode groups (None).
+    let group: String?
+    let entry: String
 
-    init(_ name: String, qualifier: String? = nil) {
-        self.name = name
-        self.qualifier = qualifier
+    init(mode: VMNetworkMode?, entry: String) {
+        self.init(group: mode?.title, entry: entry)
     }
 
-    /// The label as one line of plain text: `Shared Network, Isolated`.
+    private init(group: String?, entry: String) {
+        self.group = group
+        self.entry = entry
+    }
+
+    /// The label as one line of plain text: `NAT – Isolated`, or the entry
+    /// alone when no group holds it.
     var text: String {
-        qualifier.map { "\(name), \($0)" } ?? name
+        group.map { "\($0) \u{2013} \(entry)" } ?? entry
     }
 
-    /// The label marked as naming a network this build cannot attach, the mark
-    /// on its last part so the plain text ends with it.
+    /// The label marked as naming a network this build cannot attach.
     var markedUnavailable: NetworkChoiceLabel {
-        let mark = " (unavailable)"
-        guard let qualifier else { return NetworkChoiceLabel(name + mark) }
-        return NetworkChoiceLabel(name, qualifier: qualifier + mark)
+        NetworkChoiceLabel(group: group, entry: entry + " (unavailable)")
     }
 }
 
@@ -318,7 +328,7 @@ final class VMOverviewResolver {
         // named again each pass, so a renamed network re-titles.
         if choice != titledNetworkChoice || !choice.namesAHostInterface {
             titledNetworkChoice = choice
-            resolved.networkModeTitle = NetworkModeChoice.title(
+            resolved.networkModeLabel = NetworkModeChoice.label(
                 of: config, entitlements: viewModel.entitlements,
                 interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state)
         }

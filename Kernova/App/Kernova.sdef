@@ -30,7 +30,7 @@
 		</enumeration>
 
 		<enumeration name="MAC conflict remedy" code="KvMR" description="A change to a virtual machine's network that lets it run while another active virtual machine uses its MAC address on the same network.">
-			<enumerator name="own network" code="KrOn" description="Move a Shared Network or Host Only virtual machine to a network of its own."/>
+			<enumerator name="own network" code="KrOn" description="Move a NAT or Host Only virtual machine to a network of its own."/>
 			<enumerator name="new MAC address" code="KrNa" description="Give it a new MAC address, discarding a saved state."/>
 			<enumerator name="no network" code="KrNn" description="Turn its networking off, discarding a saved state."/>
 		</enumeration>
@@ -86,7 +86,7 @@
 			<property name="network mode" code="KvNm" type="text" access="r" description="The network it joins, or missing value when networking is off.">
 				<cocoa key="networkMode"/>
 			</property>
-			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, isolated, a network of its own, or the identifier of a named network; missing value when it joins no Shared Network or Host Only network.">
+			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, isolated, a network of its own, or the identifier of a named network; missing value when it joins no NAT or Host Only network.">
 				<cocoa key="networkMembership"/>
 			</property>
 			<property name="network name" code="KvNa" type="text" access="r" description="The name of the named network it joins, &#8220;Network List Can&#8217;t Be Read&#8221; while this library&#8217;s list of networks can&#8217;t be read, or missing value when it joins none or one this library does not list.">
@@ -115,7 +115,7 @@
 			</property>
 		</class>
 
-		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a Shared Network unless kind names another. Deleting one first moves each virtual machine on it to a network of its own.">
+		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a NAT network unless kind names another. Deleting one first moves each virtual machine on it to a network of its own.">
 			<cocoa class="VMNetworkScriptObject"/>
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a virtual machine's network membership names.">
 				<cocoa key="uniqueID"/>

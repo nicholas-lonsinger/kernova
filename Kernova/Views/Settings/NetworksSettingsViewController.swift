@@ -63,7 +63,7 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// How the list names a network's kind.
     static func kindTitle(_ kind: NetworkKind) -> String {
-        NetworkModeChoice.kindTitle(VmnetNetworkKind(kind))
+        VmnetNetworkKind(kind).mode.title
     }
 
     /// The question Delete asks before `network` goes, naming the VMs on it.
@@ -153,7 +153,7 @@ final class NetworksSettingsViewController: NSViewController {
         nameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let kindPopUp = NSPopUpButton()
         for kind in kinds {
-            kindPopUp.addItem(withTitle: NetworkModeChoice.kindTitle(kind))
+            kindPopUp.addItem(withTitle: kind.mode.title)
             kindPopUp.lastItem?.representedObject = kind
         }
         let grid = NSGridView(views: [

@@ -133,10 +133,8 @@ extension VMInstance {
                     : "This VM's network is unavailable. Kernova reconnects automatically."
             }
             return switch configuration.networkMode {
-            case .hostOnly:
-                "The Host Only network is unavailable. Kernova reconnects automatically."
-            case .shared:
-                "The Shared Network is unavailable. Kernova reconnects automatically."
+            case .hostOnly, .shared:
+                "The \(configuration.networkMode.title) network is unavailable. Kernova reconnects automatically."
             case .bridged:
                 "The network interface is unavailable. Kernova reconnects automatically when one is available."
             }
