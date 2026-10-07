@@ -3145,7 +3145,7 @@ struct VMLibraryViewModelTests {
     // MARK: - MAC Address Uniqueness
 
     /// A library holding one VM on `held` and one on `editing`, both on the
-    /// shared network — the starting point for every uniqueness assertion.
+    /// NAT network — the starting point for every uniqueness assertion.
     private func makeLibrarySharingNoAddress(
         using vmnet: MockVmnetNetworkProvider, held: String, editing: String,
         storage: MockVMStorageService = MockVMStorageService()

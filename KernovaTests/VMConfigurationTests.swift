@@ -1305,7 +1305,7 @@ struct VMConfigurationTests {
         #expect(config.networkChoice == nil)
     }
 
-    @Test("A config carrying neither network key decodes as Shared Network")
+    @Test("A config carrying neither network key decodes as NAT")
     func networkModeKeysMissingUseDefaults() throws {
         // `makeBaseJSON` carries `networkEnabled` but neither mode key.
         let decoder = JSONDecoder()

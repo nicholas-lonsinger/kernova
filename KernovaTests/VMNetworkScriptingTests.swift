@@ -55,7 +55,7 @@ struct VMNetworkScriptingTests {
             networks.map(\.kind)
                 == [
                     NSNumber(value: VMScriptNetworkKind.hostOnly.code),
-                    NSNumber(value: VMScriptNetworkKind.sharedNetwork.code),
+                    NSNumber(value: VMScriptNetworkKind.nat.code),
                 ])
         #expect(networks[0].virtualMachines.map(\.uniqueID) == [alpha.id.uuidString])
         #expect(networks[1].virtualMachines.isEmpty)
@@ -80,7 +80,7 @@ struct VMNetworkScriptingTests {
         #expect(gateway.answeringCommand?.scriptErrorNumber == 0)
     }
 
-    @Test("A make that names no kind makes a Shared Network")
+    @Test("A make that names no kind makes a NAT network")
     func makeDefaultsToShared() throws {
         let commands = MockVMCommanding()
 

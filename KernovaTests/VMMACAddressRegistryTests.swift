@@ -47,7 +47,7 @@ struct VMMACAddressRegistryTests {
     private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
     private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
 
-    /// A VM on the shared network at `mac`, holding `snapshots`.
+    /// A VM on NAT at `mac`, holding `snapshots`.
     private func makeVM(
         _ name: String, mac: String?, snapshots: [VMSnapshot] = [],
         hostState: VMHostState = VMHostState(),

@@ -1092,7 +1092,7 @@ struct ConfigurationBuilderTests {
         #expect(try networkDevices(for: config).isEmpty)
     }
 
-    @Test("Shared Network without the entitlement attaches one virtio device over NAT")
+    @Test("NAT without the entitlement attaches one virtio device over NAT")
     func sharedModeAttachesNAT() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
@@ -1108,7 +1108,7 @@ struct ConfigurationBuilderTests {
         #expect(networks.requestedNetworks.isEmpty)
     }
 
-    @Test("Shared Network with the entitlement attaches the app-managed shared network")
+    @Test("NAT with the entitlement attaches the app-managed NAT network")
     func entitledSharedModeAttachesTheManagedNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
@@ -1123,7 +1123,7 @@ struct ConfigurationBuilderTests {
         #expect(networks.requestedNetworks == [.common(.shared)])
     }
 
-    @Test("A shared network that cannot be materialized builds the device detached")
+    @Test("A NAT network that cannot be materialized builds the device detached")
     func entitledSharedModeWithoutANetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
 

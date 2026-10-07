@@ -130,7 +130,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
-    @Test("An entitled build swaps a NAT attachment over to the vmnet shared network")
+    @Test("An entitled build swaps a NAT attachment over to the vmnet NAT network")
     func entitledSharedReplacesNATAttachment() {
         let h = makeHarness(
             choice: NetworkChoice(mode: .shared, bridgedInterfaceIdentifier: nil),
@@ -208,7 +208,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.coordinator.isPending)
 
         // The Host Only drive is still in flight; switching to Shared must
-        // replace it with one for the shared network, not be swallowed by the
+        // replace it with one for the NAT network, not be swallowed by the
         // single-flight guard — the old task's ladder would otherwise strand
         // the VM detached with no wake-up signal for the new kind. The
         // refusals lift only after the switch, so the supersede path (not a
