@@ -4,11 +4,12 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `GuestAgentDiskMenuItem.model(status:isInstallerMounted:)` —
-/// the single source of truth shared by `MainMenuController.validate` and
-/// `toggleGuestAgentDisk`, so the menu title can never disagree with the action.
-@Suite("GuestAgentDiskMenuItem.model", .caseScoped)
-struct GuestAgentDiskMenuTests {
+/// Unit tests for `GuestAgentDiskControl.model(status:isInstallerMounted:)` —
+/// the single source of truth every surface's title and
+/// `VMLibraryViewModel.toggleGuestAgentDisk` read, so no title can disagree with
+/// the action.
+@Suite("GuestAgentDiskControl.model", .caseScoped)
+struct GuestAgentDiskControlTests {
     @Test("Attached installer → eject mode, regardless of agent status")
     func attachedEjectsRegardlessOfStatus() {
         let statuses: [AgentStatus] = [
@@ -21,7 +22,7 @@ struct GuestAgentDiskMenuTests {
         ]
         for status in statuses {
             #expect(
-                GuestAgentDiskMenuItem.model(status: status, isInstallerMounted: true)
+                GuestAgentDiskControl.model(status: status, isInstallerMounted: true)
                     == .init(title: "Eject Guest Agent Media", isEnabled: true, action: .eject))
         }
     }
@@ -29,14 +30,14 @@ struct GuestAgentDiskMenuTests {
     @Test(".waiting → Install / enabled / mount(.install)")
     func waiting() {
         #expect(
-            GuestAgentDiskMenuItem.model(status: .waiting, isInstallerMounted: false)
+            GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false)
                 == .init(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install)))
     }
 
     @Test(".outdated → Update / enabled / mount(.install)")
     func outdated() {
         #expect(
-            GuestAgentDiskMenuItem.model(
+            GuestAgentDiskControl.model(
                 status: .outdated(installed: "0.9.0", bundled: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Update Guest Agent…", isEnabled: true, action: .mount(.install)))
     }
@@ -44,7 +45,7 @@ struct GuestAgentDiskMenuTests {
     @Test(".expectedMissing → Reinstall / enabled / mount(.install)")
     func expectedMissing() {
         #expect(
-            GuestAgentDiskMenuItem.model(
+            GuestAgentDiskControl.model(
                 status: .expectedMissing(expected: "0.9.0"), isInstallerMounted: false)
                 == .init(title: "Reinstall Guest Agent…", isEnabled: true, action: .mount(.install)))
     }
@@ -52,14 +53,14 @@ struct GuestAgentDiskMenuTests {
     @Test(".current → Manage / enabled / mount(.manage)")
     func current() {
         #expect(
-            GuestAgentDiskMenuItem.model(status: .current(version: "0.9.2"), isInstallerMounted: false)
+            GuestAgentDiskControl.model(status: .current(version: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Manage Guest Agent…", isEnabled: true, action: .mount(.manage)))
     }
 
     @Test(".unresponsive → Manage / enabled / mount(.manage) — not reliably transient")
     func unresponsive() {
         #expect(
-            GuestAgentDiskMenuItem.model(
+            GuestAgentDiskControl.model(
                 status: .unresponsive(version: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Manage Guest Agent…", isEnabled: true, action: .mount(.manage)))
     }
@@ -67,7 +68,7 @@ struct GuestAgentDiskMenuTests {
     @Test(".connecting → Install / disabled / mount(.install) — transient")
     func connecting() {
         #expect(
-            GuestAgentDiskMenuItem.model(
+            GuestAgentDiskControl.model(
                 status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Install Guest Agent…", isEnabled: false, action: .mount(.install)))
     }
@@ -78,8 +79,8 @@ struct GuestAgentDiskMenuTests {
         // hard gate rejects it, so it has to read as a neutral resting state
         // rather than as a claim about the selected VM.
         #expect(
-            GuestAgentDiskMenuItem.unavailableTitle
-                == GuestAgentDiskMenuItem.model(status: .waiting, isInstallerMounted: false).title)
+            GuestAgentDiskControl.unavailableTitle
+                == GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false).title)
     }
 }
 

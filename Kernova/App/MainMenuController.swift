@@ -364,7 +364,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let target = host?.menuCommandTarget(of: menuItem)
         switch menuItem.action {
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
-            menuItem.title = GuestAgentDiskMenuItem.unavailableTitle
+            menuItem.title = GuestAgentDiskControl.unavailableTitle
         case #selector(AppDelegate.cloneVM(_:)):
             menuItem.title = preferences.cloneMenuItems(for: target?.configuration).primary.title
         case #selector(AppDelegate.cloneVMAlternate(_:)):
@@ -392,9 +392,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // the mount/eject model that decides both title and enablement. The
             // unavailable title set above stands unless both hold.
             guard isAvailable, hasBundledGuestAgentDisk else { return false }
-            let model = GuestAgentDiskMenuItem.model(
-                status: instance.agentStatus,
-                isInstallerMounted: instance.hasGuestAgentInstallerMounted)
+            let model = GuestAgentDiskControl.model(for: instance)
             menuItem.title = model.title
             return model.isEnabled
         case #selector(AppDelegate.togglePopOut(_:)):
@@ -625,7 +623,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // attach state on every menu open.
         vmMenu.addItem(
             NSMenuItem(
-                title: GuestAgentDiskMenuItem.unavailableTitle,
+                title: GuestAgentDiskControl.unavailableTitle,
                 action: #selector(AppDelegate.toggleGuestAgentDisk(_:)),
                 keyEquivalent: ""
             ))

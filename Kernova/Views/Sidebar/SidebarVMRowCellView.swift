@@ -154,7 +154,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         isBusy: @escaping () -> Bool,
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
-        onMountAgent: @escaping () -> Void,
+        onAgentDiskControl: @escaping () -> Void,
         onDismissAgentNudge: @escaping () -> Void
     ) {
         let isRebindToDifferentVM = self.instance !== instance
@@ -170,7 +170,7 @@ final class SidebarVMRowCellView: NSTableCellView {
             agentButton.reset()
             ephemeralBadge.reset()
         }
-        agentButton.onMount = onMountAgent
+        agentButton.onDiskControl = onAgentDiskControl
         agentButton.onDismiss = onDismissAgentNudge
 
         applyLiveState()
@@ -198,6 +198,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.statusToolTip
                 _ = instance.statusDisplayNSColor
                 _ = instance.agentStatus
+                _ = instance.hasGuestAgentInstallerMounted
                 _ = instance.setupState
                 _ = instance.hostState.agentInstallNudgeDismissed
                 _ = instance.lastSeenAgentVersion
@@ -238,7 +239,9 @@ final class SidebarVMRowCellView: NSTableCellView {
             agentButton.isHidden = false
             let dismissible = agentStatus == .waiting
             agentButton.configure(
-                status: agentStatus, vmName: instance.name, hasDismissAction: dismissible
+                status: agentStatus,
+                isInstallerMounted: instance.hasGuestAgentInstallerMounted,
+                vmName: instance.name, hasDismissAction: dismissible
             )
         } else {
             // Dismiss any popover/spinner left from a prior state so nothing
@@ -314,7 +317,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         // Close any popover, stop the agent spinner, and drop the closures —
         // they capture the bound VMInstance and would otherwise keep it alive.
         agentButton.reset()
-        agentButton.onMount = nil
+        agentButton.onDiskControl = nil
         agentButton.onDismiss = nil
         agentButton.isHidden = true
         ephemeralBadge.reset()

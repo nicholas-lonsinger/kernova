@@ -580,6 +580,49 @@ private final class CopyOutcomeLatch {
     var didRender = false
 }
 
+/// The footer offers the same guest-agent disk control as the Virtual Machine
+/// menu, so its button follows the installer's attached state as well as the
+/// agent status.
+@Suite("ClipboardContentViewController guest-agent disk control", .caseScoped)
+@MainActor
+struct ClipboardAgentDiskControlTests {
+    private let stagingRoot = TestStagingRoot()
+    private let preferences = makeTestPreferences()
+
+    @Test("The footer's button tracks the installer's attached state through observation")
+    func footerTracksInstallerAttachment() async throws {
+        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        let viewModel = makeClipboardViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID()),
+            mutate: clipboardConfiguration(passthroughEnabled: false))
+        instance.beginSessionContextForTesting()
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: viewModel,
+            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+        _ = vc.view
+        #expect(vc.agentDiskControlTitleForTesting == "Install Guest Agent…")
+
+        viewModel.toggleGuestAgentDisk(on: instance)
+        #expect(instance.hasGuestAgentInstallerMounted)
+
+        // Genuine no-signal predicate: the observed effect is a button's title,
+        // a plain AppKit property.
+        try await waitUntil { vc.agentDiskControlTitleForTesting == "Eject Guest Agent Media" }
+    }
+
+    @Test("A Linux guest's footer offers no disk control")
+    func linuxFooterOffersNoControl() {
+        let instance = makeClipboardInstance()
+        let vc = ClipboardContentViewController(
+            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
+            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
+        _ = vc.view
+        #expect(instance.configuration.guestOS == .linux)
+        #expect(vc.agentDiskControlTitleForTesting == nil)
+    }
+}
+
 /// Verifies each terminal "Copy to Mac" outcome, and each transfer issue,
 /// reaches the indicator as its own sentence.
 ///

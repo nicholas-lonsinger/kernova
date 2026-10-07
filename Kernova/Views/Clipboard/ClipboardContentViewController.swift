@@ -404,6 +404,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     /// Whether the manual command actions are offered right now.
     var areCommandActionsEnabledForTesting: Bool { commandBar.pasteButton.isEnabled }
 
+    /// The footer's guest-agent disk control title, or `nil` while it is hidden.
+    var agentDiskControlTitleForTesting: String? {
+        actionButton.isHidden ? nil : actionButton.title
+    }
+
     /// Flips the footer switch as a click would, running the real write path.
     func togglePassthroughSwitchForTesting(_ isOn: Bool) {
         setPassthroughSwitchForTesting(isOn)
@@ -441,6 +446,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 _ = clipService?.isConnected
                 _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentStatus
+                _ = self.instance.hasGuestAgentInstallerMounted
                 _ = self.instance.configuration.clipboardPassthroughEnabled
             },
             apply: { [weak self] in
@@ -520,7 +526,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private func updateUI() {
         let service = instance.clipboardService
         let status = instance.agentStatus
-        let canInstallKernovaAgent = instance.configuration.guestOS == .macOS
+        // The disk carries the macOS agent, so a Linux guest is offered no control.
+        let diskControl =
+            instance.configuration.guestOS == .macOS
+            ? GuestAgentDiskControl.model(for: instance) : nil
 
         textView.isEditable = service != nil
 
@@ -536,7 +545,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             }
         }
 
-        applyStatus(status, canInstallKernovaAgent: canInstallKernovaAgent)
+        applyStatus(status, diskControl: diskControl)
         updatePassthroughChrome()
         triggerPreviewMaterialization()
     }
@@ -942,42 +951,39 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var isPassthroughOn: Bool { instance.configuration.clipboardPassthroughEnabled }
 
     @objc private func actionButtonClicked(_: Any?) {
-        viewModel?.mountGuestAgentInstaller(on: instance)
+        viewModel?.toggleGuestAgentDisk(on: instance)
     }
 
     // MARK: - Agent status bar
 
-    private func applyStatus(_ status: AgentStatus, canInstallKernovaAgent: Bool) {
+    /// Renders the status line, and the guest-agent disk control beside it
+    /// whenever `diskControl` is enabled.
+    private func applyStatus(_ status: AgentStatus, diskControl: GuestAgentDiskControl.Model?) {
+        if let diskControl, diskControl.isEnabled {
+            actionButton.isHidden = false
+            actionButton.title = diskControl.title
+        } else {
+            actionButton.isHidden = true
+        }
         switch status {
         case .waiting:
             statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Waiting for guest agent"
-            actionButton.isHidden = !canInstallKernovaAgent
-            actionButton.title = "Install Guest Agent…"
         case .outdated(let installed, let bundled):
             statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
-            actionButton.isHidden = !canInstallKernovaAgent
-            actionButton.title = "Update Guest Agent…"
         case .connecting(let expected):
-            // No install/reinstall affordance — the agent is expected to
-            // reconnect; the watchdog surfaces `.expectedMissing` if it doesn't.
             statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Connecting (was \(expected))"
-            actionButton.isHidden = true
         case .current(let version):
             statusCircle.contentTintColor = StatusColor.running
             statusLabel.stringValue = "Connected (\(version))"
-            actionButton.isHidden = true
         case .unresponsive(let version):
             statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Unresponsive (\(version))"
-            actionButton.isHidden = true
         case .expectedMissing(let expected):
             statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Didn't reconnect (was \(expected))"
-            actionButton.isHidden = !canInstallKernovaAgent
-            actionButton.title = "Reinstall Guest Agent…"
         }
     }
 

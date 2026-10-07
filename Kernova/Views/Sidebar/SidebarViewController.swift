@@ -602,9 +602,9 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 // Escape returns focus to the sidebar (and the blue selection).
                 self.restoreSidebarFocus()
             },
-            onMountAgent: { [weak self, weak instance] in
+            onAgentDiskControl: { [weak self, weak instance] in
                 guard let self, let instance else { return }
-                self.viewModel.mountGuestAgentInstaller(on: instance)
+                self.viewModel.toggleGuestAgentDisk(on: instance)
             },
             onDismissAgentNudge: { [weak self, weak instance] in
                 guard let self, let instance else { return }

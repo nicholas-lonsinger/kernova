@@ -11,9 +11,8 @@ import AppKit
 final class SidebarAgentStatusButtonView: NSView,
     AgentStatusPopoverContentViewControllerDelegate
 {
-    /// Invoked when the user activates the popover's action button for a status
-    /// that requires mounting the installer.
-    var onMount: (() -> Void)?
+    /// Invoked when the user activates the popover's guest-agent disk control.
+    var onDiskControl: (() -> Void)?
 
     /// Invoked when the user activates the popover's "Don't show again" link.
     var onDismiss: (() -> Void)?
@@ -28,6 +27,7 @@ final class SidebarAgentStatusButtonView: NSView,
     private let contentVC = AgentStatusPopoverContentViewController()
 
     private(set) var status: AgentStatus = .waiting
+    private(set) var isInstallerMounted = false
     private(set) var vmName: String = ""
     private(set) var hasDismissAction: Bool = false
 
@@ -56,19 +56,25 @@ final class SidebarAgentStatusButtonView: NSView,
         fatalError("SidebarAgentStatusButtonView does not support NSCoder")
     }
 
-    /// Applies a new status / VM name / dismiss-availability snapshot.
+    /// Applies a new status / installer state / VM name / dismiss-availability
+    /// snapshot.
     ///
-    /// An open popover is updated in place, so an in-flight status change
-    /// doesn't dismiss it.
-    func configure(status: AgentStatus, vmName: String, hasDismissAction: Bool) {
+    /// An open popover is updated in place, so an in-flight change doesn't
+    /// dismiss it.
+    func configure(
+        status: AgentStatus, isInstallerMounted: Bool, vmName: String, hasDismissAction: Bool
+    ) {
         self.status = status
+        self.isInstallerMounted = isInstallerMounted
         self.vmName = vmName
         self.hasDismissAction = hasDismissAction
 
         toolTip = Self.helpText(for: status)
         applyVisualState()
 
-        contentVC.update(status: status, vmName: vmName, hasDismissAction: hasDismissAction)
+        contentVC.update(
+            status: status, isInstallerMounted: isInstallerMounted, vmName: vmName,
+            hasDismissAction: hasDismissAction)
     }
 
     /// Closes any open popover and stops the spinner.
@@ -132,10 +138,12 @@ final class SidebarAgentStatusButtonView: NSView,
 
     // MARK: - AgentStatusPopoverContentViewControllerDelegate
 
-    func agentStatusPopoverDidTapAction(_ vc: AgentStatusPopoverContentViewController) {
-        if AgentStatusPopoverContentViewController.requiresMountAction(for: status) {
-            onMount?()
-        }
+    func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController) {
+        onDiskControl?()
+        popoverPresenter.close()
+    }
+
+    func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController) {
         popoverPresenter.close()
     }
 

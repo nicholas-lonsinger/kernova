@@ -5800,21 +5800,23 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Guest Agent Installer
 
-    @Test("mountGuestAgentInstaller appends DMG to removableMedia and shows alert")
-    func mountGuestAgentInstallerAppendsAndShowsAlert() async throws {
+    @Test("toggleGuestAgentDisk mounts with the control's purpose and shows the alert")
+    func toggleGuestAgentDiskMountsAndShowsAlert() async throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = viewModel.library.admitFixture(guestOS: .macOS)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
+        #expect(GuestAgentDiskControl.model(for: instance).action == .mount(.install))
 
-        viewModel.mountGuestAgentInstaller(on: instance)
+        viewModel.toggleGuestAgentDisk(on: instance)
 
         // Alert is set synchronously; reconcile attach is async.
         #expect(presenter.showInstallerMountedAlert == true)
         #expect(presenter.installerMountedVMName == instance.name)
         #expect(presenter.installerMountedPurpose == .install)
+        #expect(presenter.installerMountedDelivery == .usb)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
 
@@ -5824,8 +5826,11 @@ struct VMLibraryViewModelTests {
         #expect(mock.lastAttachedReadOnly == true)
     }
 
-    @Test("mountGuestAgentInstaller is a no-op when DMG already in removableMedia, but still surfaces alert")
-    func mountGuestAgentInstallerAlreadyMountedSurfacesAlert() throws {
+    /// Every surface — the menu, the sidebar popover, the Clipboard footer —
+    /// reaches the disk through this one call, so an attached installer is
+    /// ejected rather than mounted a second time.
+    @Test("toggleGuestAgentDisk ejects an attached installer without an alert")
+    func toggleGuestAgentDiskEjectsAttachedInstaller() throws {
         let installerURL = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
@@ -5835,31 +5840,18 @@ struct VMLibraryViewModelTests {
             ]
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        #expect(GuestAgentDiskControl.model(for: instance).action == .eject)
 
-        viewModel.mountGuestAgentInstaller(on: instance)
+        viewModel.toggleGuestAgentDisk(on: instance)
 
         #expect(mock.attachCallCount == 0)
-        #expect(presenter.showInstallerMountedAlert == true)
-        #expect(presenter.installerMountedVMName == instance.name)
-        // List unchanged
-        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(presenter.showInstallerMountedAlert == false)
+        #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("mountGuestAgentInstaller forwards the .manage purpose to the alert")
-    func mountGuestAgentInstallerManagePurpose() throws {
-        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
-        let (viewModel, _, _, _, _) = makeViewModel()
-        let instance = viewModel.library.admitFixture(guestOS: .macOS)
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        viewModel.mountGuestAgentInstaller(on: instance, purpose: .manage)
-
-        #expect(presenter.installerMountedPurpose == .manage)
-        #expect(presenter.installerMountedDelivery == .usb)
-    }
-
-    @Test("mountGuestAgentInstaller attaches nothing for a guest that takes the disk on virtio")
-    func mountGuestAgentInstallerVirtioAttachesNothing() async throws {
+    @Test("toggleGuestAgentDisk attaches nothing for a guest that takes the disk on virtio")
+    func toggleGuestAgentDiskVirtioAttachesNothing() async throws {
         _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
         let mock = MockRemovableMediaDeviceService()
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
@@ -5868,7 +5860,7 @@ struct VMLibraryViewModelTests {
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        viewModel.mountGuestAgentInstaller(on: instance)
+        viewModel.toggleGuestAgentDisk(on: instance)
         try await instance.waitUntilIdle()
 
         #expect(presenter.showInstallerMountedAlert == true)
