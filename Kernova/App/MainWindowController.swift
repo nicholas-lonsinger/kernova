@@ -60,7 +60,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         let sidebarVC = SidebarViewController(viewModel: viewModel)
         self.sidebarViewController = sidebarVC
         self.sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarVC)
-        sidebarItem.minimumThickness = 212
+        // The default sidebar-section items (New VM, Search, the sidebar
+        // toggle) all fit from 240 pt; narrower, AppKit moves Search into the
+        // overflow menu (measured macOS 27.0, window controls included). 12 pt
+        // of margin over that.
+        sidebarItem.minimumThickness = 252
         sidebarItem.maximumThickness = 400
         splitViewController.addSplitViewItem(sidebarItem)
 
