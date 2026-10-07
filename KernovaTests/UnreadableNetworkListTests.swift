@@ -136,7 +136,7 @@ struct UnreadableNetworkListTests {
         let failures = await harness.library.useDefaults(in: files)
 
         #expect(failures.isEmpty)
-        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Networks.json"])
+        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Network list \u{2014} Networks.json"])
         let listed = try harness.core.networks()
         #expect(listed.map(\.name) == ["Lab"])
         #expect(listed.map(\.kind) == [NetworkKind(VMNamedNetwork.defaultKind)])

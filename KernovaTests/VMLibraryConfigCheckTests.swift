@@ -181,7 +181,10 @@ struct VMLibraryConfigCheckTests {
 
         #expect(failures.isEmpty)
         #expect(try await harness.library.checkConfigFiles().isEmpty)
-        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["config.json"])
+        #expect(
+            fileSystem.trashedURLs.map(\.lastPathComponent) == [
+                "Dev \u{2014} snapshot \u{201C}Before update\u{201D} \u{2014} config.json"
+            ])
     }
 
     // MARK: - Use Defaults
@@ -219,7 +222,7 @@ struct VMLibraryConfigCheckTests {
                 == VMConfiguration(name: "", guestOS: .linux, bootMode: .efi).networkMode)
         #expect(harness.library.selectedID == repaired.id)
         #expect(configBytes(at: repairableURL, in: harness.storage) != repairableBytes)
-        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["config.json"])
+        #expect(fileSystem.trashedURLs.map(\.lastPathComponent) == ["Dev \u{2014} config.json"])
         // The unrepairable one is untouched, byte for byte, and still a row.
         #expect(configBytes(at: unrepairableURL, in: harness.storage) == unrepairableBytes)
         #expect(
@@ -247,6 +250,100 @@ struct VMLibraryConfigCheckTests {
         #expect(fileSystem.trashedURLs.isEmpty)
     }
 
+    @Test("Use Defaults refuses a file that changed since the check, and leaves it as it now is")
+    func useDefaultsRefusesChangedBytes() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let files = try await harness.library.checkConfigFiles()
+
+        // Another writer changes the file after the user reviewed the check.
+        let changed = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) {
+            $0["networkMode"] = "another-unrecognized-mode"
+        }
+        harness.storage.files.setData(changed, atRelativePath: VMBundleLayout.configRelativePath, in: url)
+
+        let failures = await harness.library.useDefaults(in: files)
+
+        #expect(failures.map(\.reason) == [ConfigFileRepairRefusal.changedSinceCheck.localizedDescription])
+        #expect(configBytes(at: url, in: harness.storage) == changed)
+        #expect(fileSystem.trashedURLs.isEmpty)
+    }
+
+    @Test("Use Defaults takes a file now gone that reads as its default as already readable")
+    func useDefaultsTakesAGoneDefaultedFileAsReadable() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage)
+        harness.storage.files.setData(
+            Data("not json".utf8), atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
+        await harness.library.loadVMs()
+        let files = try await harness.library.checkConfigFiles()
+        #expect(files.map(\.location) == [.bundle(url, .hostState)])
+        let checked = try #require(files.first)
+
+        harness.storage.files.setData(nil, atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
+
+        let repair = try VMBundleFiles(url: url, access: harness.storage.bundleFiles)
+            .repair(.hostState, as: checked, trashingOriginalWith: fileSystem)
+        #expect(repair == .alreadyReadable)
+        #expect(fileSystem.trashedURLs.isEmpty)
+    }
+
+    // MARK: - Move to Trash
+
+    @Test("Move to Trash refuses a bundle whose run lock another holder has, and moves it once free")
+    func moveToTrashTakesTheRunLock() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
+        harness.storage.files.holdElsewhere(url)
+
+        await #expect(throws: ConfigFileRepairRefusal.inUse) { try await harness.library.moveToTrash(row) }
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
+        #expect(configBytes(at: url, in: harness.storage) != nil)
+
+        harness.storage.files.releaseElsewhere(url)
+        try await harness.library.moveToTrash(row)
+        #expect(harness.storage.deleteVMBundleCallCount == 1)
+        #expect(harness.library.entries.compactMap(\.unreadable).isEmpty)
+    }
+
+    // MARK: - Reporting the bundle's other files
+
+    @Test("A load asks for the check once for a snapshot config it can't read, the VM loading as it is")
+    func aLoadReportsAnUnreadableSnapshotConfigOnce() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage)
+        let snapshotID = UUID()
+        let manifest = """
+            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Before update",
+              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
+            """
+        harness.storage.files.setData(
+            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
+        harness.storage.files.setData(
+            Data("not json".utf8), atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID),
+            in: url)
+
+        await harness.library.loadVMs()
+
+        #expect(harness.library.instances.map(\.name) == ["Dev"])
+        #expect(harness.checkRequests.count == 1)
+        harness.library.reconcileWithDisk()
+        harness.library.refreshFromOtherCopies()
+        #expect(harness.checkRequests.count == 1)
+    }
+
+    @Test("Return closes the check window; Use Defaults takes a click")
+    func returnCloses() throws {
+        let controller = ConfigCheckViewController(viewModel: makeSettingsViewModel(preferences: preferences))
+        controller.loadViewIfNeeded()
+
+        #expect(try #require(findButton(titled: "Close", in: controller.view)).keyEquivalent == "\r")
+        #expect(try #require(findButton(titled: "Use Defaults", in: controller.view)).keyEquivalent == "")
+    }
+
     @Test("The report counts the files, lists each problem, and says what Use Defaults does")
     func theReportWords() throws {
         let library = scratch.url
@@ -256,7 +353,7 @@ struct VMLibraryConfigCheckTests {
             problems: [
                 ConfigProblem(
                     path: ConfigValuePath([.key("networkMode")]),
-                    issue: .unrecognized(found: Self.unrecognized, default: "hostOnly"))
+                    issue: .unrecognized(found: Self.unrecognized), repair: .useDefault("hostOnly"))
             ])
         let unrepairable = UnreadableConfigFile(
             location: .networkList(library.appendingPathComponent("Networks.json")),

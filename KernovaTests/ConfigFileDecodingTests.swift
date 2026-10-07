@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTestSupport
 import Testing
 
 @testable import Kernova
@@ -6,7 +7,7 @@ import Testing
 /// The one decode a config file takes, in its two modes: strict, as every
 /// load reads, and collecting, as the check reads bytes the strict decode
 /// refused.
-@Suite("Config file decoding")
+@Suite("Config file decoding", .caseScoped)
 struct ConfigFileDecodingTests {
     /// A value no field of any config type takes.
     private static let unrecognized = "plan9-mode"
@@ -48,11 +49,10 @@ struct ConfigFileDecodingTests {
             diagnosis.problems == [
                 ConfigProblem(
                     path: ConfigValuePath([.key("displayHiDPI")]),
-                    issue: .unrecognized(found: "yes", default: "true")),
+                    issue: .unrecognized(found: "yes"), repair: .useDefault("true")),
                 ConfigProblem(
                     path: ConfigValuePath([.key("networkMode")]),
-                    issue: .unrecognized(
-                        found: Self.unrecognized, default: fresh.networkMode.rawValue)),
+                    issue: .unrecognized(found: Self.unrecognized), repair: .useDefault(fresh.networkMode.rawValue)),
             ])
         #expect(diagnosis.name == "Dev")
         let repaired = try VMConfiguration.makeJSONDecoder().decode(
@@ -85,7 +85,7 @@ struct ConfigFileDecodingTests {
             diagnosis.problems == [
                 ConfigProblem(
                     path: ConfigValuePath([.key("guestOS")]),
-                    issue: .unrecognized(found: Self.unrecognized, default: nil))
+                    issue: .unrecognized(found: Self.unrecognized))
             ])
         #expect(diagnosis.repaired == nil)
     }
@@ -166,6 +166,206 @@ struct ConfigFileDecodingTests {
                 == "$.storageDisks[1].notes: \u{201C}42\u{201D} is not a recognized value. Default: \u{201C}\u{201D}.")
     }
 
+    // MARK: - A list of entries
+
+    @Test("A bad entry in a defaulted list is its own problem, removed, with its cause; the rest are kept")
+    func aBadEntryIsRemovedAlone() throws {
+        let pairings = (0..<3).map {
+            USBAccessoryPairing(
+                key: "key-\($0)", form: .serialNumber, displayName: "Device \($0)", receptacleLabel: nil,
+                pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        }
+        let encoder = VMConfiguration.makeJSONEncoder()
+        var object = try #require(
+            try JSONSerialization.jsonObject(
+                with: encoder.encode(USBAccessoryPairingSet(pairings: pairings))) as? [String: Any])
+        var entries = try #require(object["pairings"] as? [[String: Any]])
+        entries[1]["form"] = Self.unrecognized
+        object["pairings"] = entries
+        let data = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(USBAccessoryPairingSet.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: USBAccessoryPairingSet.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: encoder)
+
+        let problem = try #require(diagnosis.problems.first)
+        #expect(diagnosis.problems.count == 1)
+        #expect(problem.path?.description == "$.pairings[1]")
+        #expect(problem.issuePath?.description == "$.pairings[1].form")
+        #expect(problem.repair == .removeEntry)
+        #expect(
+            problem.reportLine(fileName: "usb-accessories.json")
+                == "$.pairings[1].form: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
+                + "Use Defaults removes this entry.")
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            USBAccessoryPairingSet.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.pairings == [pairings[0], pairings[2]])
+    }
+
+    /// A preference whose value is a record, as a config file may hold one.
+    private struct Holder: Codable, Equatable {
+        struct Inner: Codable, Equatable {
+            var mode: VMNetworkMode
+        }
+        var inner: Inner
+
+        init(inner: Inner) { self.inner = inner }
+
+        init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .shared), in: decoder)
+        }
+    }
+
+    @Test("A record replaced whole by its default keeps the inner cause, not the value found")
+    func aReplacedValueKeepsItsCause() throws {
+        let data = Data(#"{"inner": {"mode": "plan9-mode"}}"#.utf8)
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: Holder.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        let problem = try #require(diagnosis.problems.first)
+        #expect(problem.path?.description == "$.inner")
+        #expect(problem.issuePath?.description == "$.inner.mode")
+        #expect(problem.issue == .unrecognized(found: Self.unrecognized))
+        #expect(
+            problem.reportLine(fileName: "x.json")
+                == "$.inner.mode: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
+                + "Default for $.inner: {\"mode\":\"shared\"}.")
+        #expect(
+            try JSONDecoder().decode(Holder.self, from: try #require(diagnosis.repaired))
+                == Holder(inner: Holder.Inner(mode: .shared)))
+    }
+
+    // MARK: - Facts
+
+    private func snapshotRecordJSON(kind: String?) -> Data {
+        let kindField = kind.map { ", \"kind\": \"\($0)\"" } ?? ""
+        return Data(
+            """
+            {"id": "\(UUID().uuidString)", "name": "Before", "createdAt": "2026-01-01T00:00:00Z", "notes": ""\(kindField)}
+            """.utf8)
+    }
+
+    @Test("A fact with no value reads as what its absence states, in both modes, as no problem")
+    func anAbsentFactIsItsStatedValue() throws {
+        let data = snapshotRecordJSON(kind: nil)
+        let strict = try VMConfiguration.makeJSONDecoder().decode(VMSnapshotRecord.self, from: data)
+        #expect(strict.kind == .warm)
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMSnapshotRecord.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+        #expect(diagnosis.problems.isEmpty)
+    }
+
+    @Test("A fact holding an unrecognized value is refused strictly, and recorded with no repair")
+    func anUnrecognizedFactHasNoRepair() throws {
+        let data = snapshotRecordJSON(kind: Self.unrecognized)
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMSnapshotRecord.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMSnapshotRecord.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+        #expect(
+            diagnosis.problems == [
+                ConfigProblem(path: ConfigValuePath([.key("kind")]), issue: .unrecognized(found: Self.unrecognized))
+            ])
+        #expect(diagnosis.repaired == nil)
+        #expect(
+            diagnosis.problems.first?.reportLine(fileName: "manifest.json")
+                == "$.kind: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
+                + "Kernova can\u{2019}t repair this file.")
+    }
+
+    // MARK: - Required, repairable
+
+    private func networkListJSON(kind: String?) -> Data {
+        let kindField = kind.map { ", \"kind\": \"\($0)\"" } ?? ""
+        return Data(
+            """
+            {"networks": [{"id": "\(UUID().uuidString)", "name": "Lab"\(kindField)}]}
+            """.utf8)
+    }
+
+    private func diagnoseNetworks(_ data: Data) -> ConfigFileDiagnosis {
+        ConfigFileDiagnosis(
+            decoding: [String: [VMNamedNetwork]].self, from: data, decoder: JSONDecoder(),
+            encoder: JSONEncoder())
+    }
+
+    @Test("A network's missing kind is refused strictly, and repaired to the default kind when collecting")
+    func aMissingRequiredKindIsRepairable() throws {
+        let data = networkListJSON(kind: nil)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode([String: [VMNamedNetwork]].self, from: data)
+        }
+        let diagnosis = diagnoseNetworks(data)
+        #expect(
+            diagnosis.problems == [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]), issue: .missing,
+                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
+            ])
+        let repaired = try JSONDecoder().decode(
+            [String: [VMNamedNetwork]].self, from: try #require(diagnosis.repaired))
+        #expect(repaired["networks"]?.map(\.kind) == [VMNamedNetwork.defaultKind])
+    }
+
+    @Test("A network's unrecognized kind is refused strictly, and repaired to the default kind when collecting")
+    func anUnrecognizedRequiredKindIsRepairable() throws {
+        let data = networkListJSON(kind: Self.unrecognized)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode([String: [VMNamedNetwork]].self, from: data)
+        }
+        #expect(
+            diagnoseNetworks(data).problems == [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]),
+                    issue: .unrecognized(found: Self.unrecognized),
+                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
+            ])
+    }
+
+    // MARK: - The snapshot's captured network
+
+    @Test("A snapshot's captured network reads past what its configuration no longer takes, keeping the address")
+    func theCapturedNetworkReadsPastBadValues() throws {
+        let data = try configJSON {
+            $0["guestOS"] = Self.unrecognized
+            $0["networkMode"] = Self.unrecognized
+            $0["networkEnabled"] = nil
+            $0["macAddress"] = "aa:bb:cc:dd:ee:ff"
+        }
+        let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
+        let new = VMCapturedNetwork.ofNewVM
+        #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
+        #expect(network.networkMode == new.networkMode)
+        #expect(network.networkEnabled == new.networkEnabled)
+    }
+
+    // MARK: - Trashed originals
+
+    @Test("The copy a repair trashes is named for whose file it is, then the file")
+    func trashedOriginalNames() {
+        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
+        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
+        func name(_ location: UnreadableConfigFile.Location, _ owner: UnreadableConfigFile.Owner) -> String {
+            UnreadableConfigFile(location: location, owner: owner, problems: problem).trashedOriginalName
+        }
+        #expect(name(.bundle(bundle, .configuration), .virtualMachine("Dev")) == "Dev \u{2014} config.json")
+        #expect(
+            name(.bundle(bundle, .snapshotConfiguration(UUID())), .snapshot(vm: "Dev", snapshot: "Before"))
+                == "Dev \u{2014} snapshot \u{201C}Before\u{201D} \u{2014} config.json")
+        #expect(
+            name(.networkList(URL(fileURLWithPath: "/tmp/Networks.json")), .networkList)
+                == "Network list \u{2014} Networks.json")
+        #expect(
+            name(.bundle(bundle, .configuration), .virtualMachine("A/B")) == "A:B \u{2014} config.json")
+    }
+
     @Test("The network list's kind takes the New Network sheet's default kind")
     func aNamedNetworksKindHasADefault() throws {
         let json = """
@@ -178,8 +378,8 @@ struct ConfigFileDecodingTests {
             diagnosis.problems == [
                 ConfigProblem(
                     path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]),
-                    issue: .unrecognized(
-                        found: Self.unrecognized, default: VMNamedNetwork.defaultKind.rawValue))
+                    issue: .unrecognized(found: Self.unrecognized),
+                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
             ])
         #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }

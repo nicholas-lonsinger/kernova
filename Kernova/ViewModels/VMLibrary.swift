@@ -423,19 +423,18 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     var customOrder: [UUID] = []
 
-    /// Bundle names whose unreadable files have already been reported through
-    /// ``onUnreadableFilesFound``.
-    ///
-    /// Keeps a bundle that stays unreadable from opening the check again at
-    /// every `reconcileWithDisk()`.
-    var reportedFailedBundles: Set<String> = []
+    /// The unreadable config files already reported through
+    /// ``onUnreadableFilesFound``, so a file that stays unreadable does not
+    /// open the check again at every read.
+    var unreadableReports = UnreadableFileReports()
 
-    /// Whether ``networks`` reading as unreadable has already been reported;
-    /// cleared once it reads again, so a later failure is reported anew.
-    var reportedUnreadableNetworks = false
+    /// Whether a read recorded a newly unreadable file that
+    /// ``reportNewlyUnreadable()`` has not yet reported.
+    var owesUnreadableReport = false
 
     /// Bundle names already reported as holding an identifier the library
-    /// knows at another bundle, for the same reason.
+    /// knows at another bundle, so a bundle that stays a duplicate is not
+    /// reported at every `reconcileWithDisk()`.
     var reportedDuplicateBundles: Set<String> = []
 
     // MARK: - Directory Watcher
@@ -572,7 +571,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
             instance.rebind(to: bundleFactory.make(scanned.read))
-            reportUnreadablePairings(of: scanned.read)
+            recordUnreadable(of: scanned.read)
             return .rebound(instance)
         }
     }
@@ -641,21 +640,20 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences)
         wireHooks(for: instance)
-        reportUnreadablePairings(of: scanned.read)
+        recordUnreadable(of: scanned.read)
         return instance
     }
 
-    /// Tells the user about a pairings file a read left in place because it
-    /// could not decode it.
-    private func reportUnreadablePairings(of read: VMBundleRead) {
-        guard let unreadable = read.pairingsUnreadable else { return }
-        #log(
-            Self.logger, .error,
-            "The USB accessory pairings of '\(read.configuration.name, privacy: .public)' could not be read and were left in place: \(unreadable.localizedDescription, privacy: .public)"
-        )
-        surfaceError(
-            "\u{201C}\(read.configuration.name)\u{201D} won\u{2019}t take any USB accessory back automatically. \(unreadable.localizedDescription)",
-            title: "USB Accessories Not Read")
+    /// Records the files `read` left in place for the check
+    /// (``recordUnreadable(_:under:)``).
+    private func recordUnreadable(of read: VMBundleRead) {
+        for unreadable in read.unreadableFiles {
+            #log(
+                Self.logger, .error,
+                "'\(read.configuration.name, privacy: .public)' left \(unreadable.fileName, privacy: .public) in place: \(String(describing: unreadable.problems), privacy: .public)"
+            )
+        }
+        recordUnreadable(read.unreadableFiles, under: read.files.url)
     }
 
     // MARK: - Arrival Rows
@@ -725,7 +723,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             case (.none, .some):
                 return false
             case (.none, .none):
-                return (lhs.configuration?.createdAt ?? .distantFuture) < (rhs.configuration?.createdAt ?? .distantFuture)
+                return (lhs.configuration?.createdAt ?? .distantFuture)
+                    < (rhs.configuration?.createdAt ?? .distantFuture)
             }
         }
     }

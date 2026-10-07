@@ -46,6 +46,9 @@ final class VMBundle {
     private(set) var hostState: VMHostState
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
+    /// The files the last read left in place because it could not read them
+    /// (``VMBundleRead/unreadableFiles``).
+    @ObservationIgnored private(set) var unreadableFiles: [UnreadableConfigFile]
 
     fileprivate init(
         _ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking,
@@ -58,6 +61,7 @@ final class VMBundle {
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
         usbPairings = read.usbPairings
+        unreadableFiles = read.unreadableFiles
     }
 
     /// What builds every ``VMBundle``, holding the machine-file work they share
@@ -137,19 +141,27 @@ final class VMBundle {
         (try? files.isRunLockedElsewhere()) ?? false
     }
 
-    /// Reads all four state files in one coordinated read and publishes what
-    /// they hold — for a bundle another copy of Kernova may have written
-    /// while this copy held no run lock.
+    /// Reads the state files in one coordinated read and publishes what they
+    /// hold — for a bundle another copy of Kernova may have written while
+    /// this copy held no run lock.
     ///
-    /// Throws, publishing nothing, when ``VMBundleFiles/read()`` does.
+    /// Throws, publishing nothing but the refusal as ``unreadableFiles``,
+    /// when ``VMBundleFiles/read()`` does.
     func refresh() throws {
-        let read = try files.read()
-        if let unreadable = read.pairingsUnreadable {
+        let read: VMBundleRead
+        do {
+            read = try files.read()
+        } catch {
+            unreadableFiles = [error]
+            throw error
+        }
+        for unreadable in read.unreadableFiles {
             #log(
                 Self.logger, .warning,
-                "Re-read '\(read.configuration.name, privacy: .public)' with no pairings: \(unreadable.localizedDescription, privacy: .public)"
+                "Re-read '\(read.configuration.name, privacy: .public)' leaving \(unreadable.fileName, privacy: .public) in place: \(unreadable.summary, privacy: .public)"
             )
         }
+        unreadableFiles = read.unreadableFiles
         publish(read.configuration, to: \.configuration)
         publish(read.hostState, to: \.hostState)
         publish(read.snapshotManifest, to: \.snapshotManifest)

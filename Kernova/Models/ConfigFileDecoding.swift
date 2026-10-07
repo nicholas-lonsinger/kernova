@@ -1,42 +1,159 @@
+import CryptoKit
 import Foundation
 import Synchronization
 
-// MARK: - Defaulted fields
+// MARK: - Config fields
 
+/// Every config field that a file can hold a value the field does not take
+/// decodes through one of these, chosen by what the field says:
+///
+/// | Field | Absent | Unrecognized, strict | Unrecognized, collecting |
+/// |---|---|---|---|
+/// | A preference (`default:`) | the default | throws | repaired to the default |
+/// | A list of entries (`default:` on an array) | the default | throws | each bad entry removed |
+/// | A fact (`absentMeans:`) | the stated value | throws | recorded, unrepairable |
+/// | Required, repairable (`repairingTo:`) | throws; collecting repairs | throws | repaired to the default |
+///
+/// A preference is a choice the user or the app made, which a new instance
+/// makes for itself; a fact records what exists on disk or what happened,
+/// which no default can stand in for.
 extension KeyedDecodingContainer {
-    /// The value at `key`, or `defaultValue` when the file holds none there —
-    /// the one way a config field with a default decodes.
+    /// A preference: the value at `key`, or `defaultValue` — the value a new
+    /// instance gets — when the file holds none there.
     ///
-    /// A value that is present but does not decode throws, unless `decoder`
-    /// is a ``ConfigFileDiagnosis``'s: there it is recorded as a problem whose
-    /// repair is `defaultValue`, and `defaultValue` is answered.
+    /// Collecting, a value that does not decode is recorded with
+    /// `defaultValue` as its repair, and `defaultValue` is answered.
     func decode<T: Codable>(
         _ type: T.Type, forKey key: Key, default defaultValue: @autoclosure () -> T,
         in decoder: any Decoder
     ) throws -> T {
-        guard let collector = decoder.userInfo[.configProblems] as? ConfigProblemCollector else {
+        try recording(at: key, in: decoder) {
+            try decodeIfPresent(type, forKey: key) ?? defaultValue()
+        } fallback: {
+            let value = defaultValue()
+            return (value, .useDefault(ConfigValueText.encoding(value)))
+        }
+    }
+
+    /// A list of entries: the list at `key`, or `defaultValue` when the file
+    /// holds none there.
+    ///
+    /// Collecting, an entry that does not decode is recorded at its own
+    /// index with removing it as its repair, and the others are kept; a value
+    /// that is no list at all is repaired to `defaultValue`.
+    func decode<Element: Codable>(
+        _ type: [Element].Type, forKey key: Key, default defaultValue: @autoclosure () -> [Element],
+        in decoder: any Decoder
+    ) throws -> [Element] {
+        guard let collector = decoder.collector else {
             return try decodeIfPresent(type, forKey: key) ?? defaultValue()
         }
+        let listPath = ConfigValuePath(codingPath: codingPath + [key])
+        var entries: any UnkeyedDecodingContainer
+        do {
+            guard contains(key), try !decodeNil(forKey: key) else { return defaultValue() }
+            entries = try nestedUnkeyedContainer(forKey: key)
+        } catch {
+            let value = defaultValue()
+            collector.replaceRecorded(
+                since: collector.mark,
+                with: ConfigProblemCollector.Recorded(
+                    path: listPath, failure: error, repair: .useDefault(ConfigValueText.encoding(value))))
+            return value
+        }
+        var kept: [Element] = []
+        while !entries.isAtEnd {
+            let index = entries.currentIndex
+            let mark = collector.mark
+            do {
+                kept.append(try entries.decode(Element.self))
+            } catch {
+                collector.replaceRecorded(
+                    since: mark,
+                    with: ConfigProblemCollector.Recorded(
+                        path: listPath.appending(.index(index)), failure: error, repair: .removeEntry))
+                // Past the entry that failed, wherever the failure left the
+                // container.
+                if entries.currentIndex == index { _ = try? entries.decode(SkippedEntry.self) }
+                guard entries.currentIndex > index else { break }
+            }
+        }
+        return kept
+    }
+
+    /// A fact: the value at `key`, or `stated` — what a file with no value
+    /// there has always meant — when the file holds none.
+    ///
+    /// Collecting, a value that does not decode is recorded with no repair:
+    /// no default stands in for what the file records.
+    func decode<T: Codable>(
+        _ type: T.Type, forKey key: Key, absentMeans stated: @autoclosure () -> T,
+        in decoder: any Decoder
+    ) throws -> T {
+        try recording(at: key, in: decoder) {
+            try decodeIfPresent(type, forKey: key) ?? stated()
+        } fallback: {
+            (stated(), nil)
+        }
+    }
+
+    /// A required field with a default: the value at `key`, which a strict
+    /// decode refuses to do without.
+    ///
+    /// Collecting, an absent or unrecognized value is recorded with
+    /// `defaultValue` as its repair, and `defaultValue` is answered.
+    func decode<T: Codable>(
+        _ type: T.Type, forKey key: Key, repairingTo defaultValue: @autoclosure () -> T,
+        in decoder: any Decoder
+    ) throws -> T {
+        try recording(at: key, in: decoder) {
+            try decode(type, forKey: key)
+        } fallback: {
+            let value = defaultValue()
+            return (value, .useDefault(ConfigValueText.encoding(value)))
+        }
+    }
+
+    /// `body`'s value; collecting, a failure is recorded at `key` with the
+    /// repair `fallback` names, and `fallback`'s value is answered.
+    ///
+    /// What the attempt recorded inside the value is dropped: the whole value
+    /// is what the repair replaces, and the failure is kept as its cause.
+    private func recording<T>(
+        at key: Key, in decoder: any Decoder, _ body: () throws -> T,
+        fallback: () -> (T, ConfigProblem.Repair?)
+    ) throws -> T {
+        guard let collector = decoder.collector else { return try body() }
         let mark = collector.mark
         do {
-            return try decodeIfPresent(type, forKey: key) ?? defaultValue()
+            return try body()
         } catch {
-            let fallback = defaultValue()
-            // What the attempt recorded inside the value is moot: the whole
-            // value is what the default replaces.
+            let (value, repair) = fallback()
             collector.replaceRecorded(
                 since: mark,
-                with: ConfigProblemCollector.Defaulted(
-                    path: ConfigValuePath(codingPath: codingPath + [key]),
-                    defaultText: ConfigValueText.encoding(fallback)))
-            return fallback
+                with: ConfigProblemCollector.Recorded(
+                    path: ConfigValuePath(codingPath: codingPath + [key]), failure: error, repair: repair))
+            return value
         }
+    }
+}
+
+/// Any JSON value, decoded only to step past it.
+private struct SkippedEntry: Decodable {
+    init(from decoder: any Decoder) throws {}
+}
+
+extension Decoder {
+    /// The collector a ``ConfigFileDiagnosis`` hands this decoder, `nil` for
+    /// a strict decode.
+    fileprivate var collector: ConfigProblemCollector? {
+        userInfo[.configProblems] as? ConfigProblemCollector
     }
 }
 
 extension CodingUserInfoKey {
     /// Where a ``ConfigFileDiagnosis`` hands its decoder the collector that
-    /// switches every defaulted field to recording.
+    /// switches every config field to recording.
     fileprivate static let configProblems: CodingUserInfoKey = {
         guard let key = CodingUserInfoKey(rawValue: "app.kernova.configProblems") else {
             preconditionFailure("CodingUserInfoKey refused a constant raw value")
@@ -45,26 +162,29 @@ extension CodingUserInfoKey {
     }()
 }
 
-/// The defaulted fields a collecting decode met a value it could not decode
+/// The config fields a collecting decode met a value it could not decode
 /// in, in the order it met them.
 final class ConfigProblemCollector: Sendable {
-    struct Defaulted: Sendable {
+    struct Recorded: Sendable {
+        /// The value the repair acts on.
         let path: ConfigValuePath
-        let defaultText: String
+        /// Why the value did not decode.
+        let failure: any Error
+        let repair: ConfigProblem.Repair?
     }
 
-    private let recorded = Mutex<[Defaulted]>([])
+    private let recorded = Mutex<[Recorded]>([])
 
     fileprivate var mark: Int { recorded.withLock { $0.count } }
 
-    fileprivate func replaceRecorded(since mark: Int, with defaulted: Defaulted) {
+    fileprivate func replaceRecorded(since mark: Int, with entry: Recorded) {
         recorded.withLock {
             $0.removeSubrange(mark...)
-            $0.append(defaulted)
+            $0.append(entry)
         }
     }
 
-    fileprivate var all: [Defaulted] { recorded.withLock { $0 } }
+    fileprivate var all: [Recorded] { recorded.withLock { $0 } }
 }
 
 // MARK: - Diagnosis
@@ -75,14 +195,16 @@ final class ConfigProblemCollector: Sendable {
 /// Run over bytes a strict decode refused, so the file is read once.
 struct ConfigFileDiagnosis: Sendable {
     /// Every problem met, in file order as the decode met them; the last is
-    /// one with no default when the decode could not finish.
+    /// one with no repair when the decode could not finish.
     let problems: [ConfigProblem]
-    /// The file's value with every problem's default in its place, encoded as
-    /// the file's own writes encode it — `nil` unless there is at least one
-    /// problem and every one has a default.
+    /// The file's value with every problem's repair made, encoded as the
+    /// file's own writes encode it — `nil` unless there is at least one
+    /// problem and every one has a repair.
     let repaired: Data?
     /// The string at `$.name`, when the file holds one there.
     let name: String?
+    /// The bytes diagnosed.
+    let digest: ConfigFileDigest
 
     /// Decodes `data` as `type` through `decoder`, which this configures to
     /// record; `encoder` is the file's own.
@@ -91,26 +213,56 @@ struct ConfigFileDiagnosis: Sendable {
     ) {
         let tree = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
         let collector = ConfigProblemCollector()
-        decoder.userInfo[.configProblems] = collector
         var value: T?
         var unrepairable: ConfigProblem?
         do {
-            value = try decoder.decode(type, from: data)
+            value = try decoder.decode(type, from: data, collectingInto: collector)
         } catch {
             unrepairable = ConfigProblem(decodingFailure: error, in: tree)
         }
-        let defaulted = collector.all.map {
-            ConfigProblem(
-                path: $0.path,
-                issue: .unrecognized(found: ConfigValueText.found(at: $0.path, in: tree), default: $0.defaultText))
+        let recorded = collector.all.map { entry in
+            let cause = ConfigProblem(decodingFailure: entry.failure, in: tree)
+            return ConfigProblem(
+                path: entry.path, issue: cause.issue, repair: entry.repair, issuePath: cause.path)
         }
-        problems = defaulted + [unrepairable].compactMap { $0 }
+        problems = recorded + [unrepairable].compactMap { $0 }
         if let value, !problems.isEmpty, problems.allSatisfy(\.isRepairable) {
             repaired = try? encoder.encode(value)
         } else {
             repaired = nil
         }
         name = (tree as? [String: Any])?["name"] as? String
+        digest = ConfigFileDigest(of: data)
+    }
+}
+
+extension JSONDecoder {
+    /// `data` decoded as `type` with each config field a problem was met in
+    /// at its fallback — a preference or a required field at its default, a
+    /// fact at what its absence states, a bad list entry left out — for a
+    /// read that must not refuse a value this build does not take. Throws for
+    /// a field no config-field form decodes.
+    func decodeRepairing<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try decode(type, from: data, collectingInto: ConfigProblemCollector())
+    }
+
+    /// `data` decoded as `type`, every config field recording into
+    /// `collector` rather than throwing.
+    fileprivate func decode<T: Decodable>(
+        _ type: T.Type, from data: Data, collectingInto collector: ConfigProblemCollector
+    ) throws -> T {
+        userInfo[.configProblems] = collector
+        return try decode(type, from: data)
+    }
+}
+
+/// A config file's bytes as a check read them, so a repair acts only on the
+/// bytes the user reviewed.
+struct ConfigFileDigest: Sendable, Hashable {
+    private let sha256: Data
+
+    init(of data: Data) {
+        sha256 = Data(SHA256.hash(data: data))
     }
 }
 
@@ -137,6 +289,10 @@ struct ConfigValuePath: Sendable, Hashable, CustomStringConvertible {
         }
     }
 
+    func appending(_ component: Component) -> ConfigValuePath {
+        ConfigValuePath(components + [component])
+    }
+
     var description: String {
         components.reduce("$") { path, component in
             switch component {
@@ -150,9 +306,8 @@ struct ConfigValuePath: Sendable, Hashable, CustomStringConvertible {
 /// One thing that keeps a config file from being read.
 struct ConfigProblem: Sendable, Equatable {
     enum Issue: Sendable, Equatable {
-        /// A value the field takes none of. `default` is what Use Defaults
-        /// puts in its place, `nil` for a field that has no default.
-        case unrecognized(found: String?, default: String?)
+        /// A value the field takes none of.
+        case unrecognized(found: String?)
         /// No value where the file needs one.
         case missing
         /// The bytes are not JSON.
@@ -165,13 +320,31 @@ struct ConfigProblem: Sendable, Equatable {
         case other(reason: String)
     }
 
-    /// Where the problem is; `nil` for one about the file as a whole.
+    /// What Use Defaults does about a problem.
+    enum Repair: Sendable, Equatable {
+        /// Puts this default, as the report writes it, in the value's place.
+        case useDefault(String)
+        /// Removes the list entry the problem is in.
+        case removeEntry
+    }
+
+    /// The value the problem is about, which its repair replaces or removes;
+    /// `nil` for one about the file as a whole.
     let path: ConfigValuePath?
     let issue: Issue
+    /// What Use Defaults does about it, `nil` when it can do nothing.
+    let repair: Repair?
+    /// Where inside the value at ``path`` the issue was met, `nil` when it is
+    /// that value itself.
+    let issuePath: ConfigValuePath?
 
-    init(path: ConfigValuePath?, issue: Issue) {
+    init(
+        path: ConfigValuePath?, issue: Issue, repair: Repair? = nil, issuePath: ConfigValuePath? = nil
+    ) {
         self.path = path
         self.issue = issue
+        self.repair = repair
+        self.issuePath = issuePath == path ? nil : issuePath
     }
 
     /// The problem a decode that threw `error` met, `tree` being the file's
@@ -191,9 +364,7 @@ struct ConfigProblem: Sendable, Equatable {
                 return
             }
             let path = ConfigValuePath(codingPath: context.codingPath)
-            self.init(
-                path: path,
-                issue: .unrecognized(found: ConfigValueText.found(at: path, in: tree), default: nil))
+            self.init(path: path, issue: .unrecognized(found: ConfigValueText.found(at: path, in: tree)))
         case nil:
             self.init(path: nil, issue: .other(reason: error.localizedDescription))
         @unknown default:
@@ -201,19 +372,16 @@ struct ConfigProblem: Sendable, Equatable {
         }
     }
 
-    /// Whether Use Defaults has a value to put in its place.
-    var isRepairable: Bool {
-        guard case .unrecognized(_, .some) = issue else { return false }
-        return true
-    }
+    /// Whether Use Defaults has something to do about it.
+    var isRepairable: Bool { repair != nil }
 
     /// The problem in one clause, in a file named `fileName`.
     func summary(fileName: String) -> String {
-        let at = path?.description ?? "$"
+        let at = (issuePath ?? path)?.description ?? "$"
         switch issue {
-        case .unrecognized(let found?, _):
+        case .unrecognized(let found?):
             return "\(at): \u{201C}\(found)\u{201D} is not a recognized value"
-        case .unrecognized(nil, _):
+        case .unrecognized(nil):
             return "\(at): the value is not a recognized one"
         case .missing:
             return "\(at): no value"
@@ -224,18 +392,24 @@ struct ConfigProblem: Sendable, Equatable {
         case .fileUnreadable(let reason):
             return "\(fileName) can\u{2019}t be opened: \(Self.clause(reason))"
         case .other(let reason):
-            return path == nil ? Self.clause(reason) : "\(at): \(Self.clause(reason))"
+            return path == nil && issuePath == nil ? Self.clause(reason) : "\(at): \(Self.clause(reason))"
         }
     }
 
     /// The problem as the check's report states it: what was found, and what
     /// Use Defaults does about it.
     func reportLine(fileName: String) -> String {
-        guard case .unrecognized(_, let defaultText?) = issue else {
-            return "\(summary(fileName: fileName)). Kernova can\u{2019}t repair this file."
+        let summary = summary(fileName: fileName)
+        switch repair {
+        case .useDefault(let defaultText)?:
+            let shown = defaultText.isEmpty ? "\u{201C}\u{201D}" : defaultText
+            guard issuePath != nil, let path else { return "\(summary). Default: \(shown)." }
+            return "\(summary). Default for \(path): \(shown)."
+        case .removeEntry?:
+            return "\(summary). Use Defaults removes this entry."
+        case nil:
+            return "\(summary). Kernova can\u{2019}t repair this file."
         }
-        let shown = defaultText.isEmpty ? "\u{201C}\u{201D}" : defaultText
-        return "\(summary(fileName: fileName)). Default: \(shown)."
     }
 
     /// `text` without the sentence's closing period, to sit inside another.
@@ -345,12 +519,18 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
     let owner: Owner
     /// Never empty.
     let problems: [ConfigProblem]
+    /// The bytes the problems were found in, `nil` when no bytes were read.
+    /// A repair acts only while the file still holds these.
+    let checkedDigest: ConfigFileDigest?
 
-    init(location: Location, owner: Owner, problems: [ConfigProblem]) {
+    init(
+        location: Location, owner: Owner, problems: [ConfigProblem], checkedDigest: ConfigFileDigest? = nil
+    ) {
         assert(!problems.isEmpty, "An unreadable file names at least one problem")
         self.location = location
         self.owner = owner
         self.problems = problems
+        self.checkedDigest = checkedDigest
     }
 
     /// The file a strict decode that threw `strictFailure` refused, its bytes
@@ -365,14 +545,23 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
             owner: owner ?? .virtualMachine(diagnosis.name ?? fallbackName),
             problems: diagnosis.problems.isEmpty
                 ? [ConfigProblem(path: nil, issue: .other(reason: strictFailure.localizedDescription))]
-                : diagnosis.problems)
+                : diagnosis.problems,
+            checkedDigest: diagnosis.digest)
     }
 
     var url: URL { location.url }
 
     var fileName: String { url.lastPathComponent }
 
-    /// Whether Use Defaults rewrites it: every problem has a default.
+    /// What the copy of the file a repair moves to the Trash is named:
+    /// whose file it is, then the file's own name, so the Trash tells one
+    /// `config.json` from another.
+    var trashedOriginalName: String {
+        // A slash cannot sit in a file name; the Finder shows a colon as one.
+        "\(owner.title) \u{2014} \(fileName)".replacingOccurrences(of: "/", with: ":")
+    }
+
+    /// Whether Use Defaults rewrites it: every problem has a repair.
     var isRepairable: Bool { problems.allSatisfy(\.isRepairable) }
 
     /// The first problem, in one clause.

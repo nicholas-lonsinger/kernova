@@ -999,7 +999,7 @@ struct SidebarViewControllerTests {
             problems: [
                 ConfigProblem(
                     path: ConfigValuePath([.key("networkMode")]),
-                    issue: .unrecognized(found: "plan9-mode", default: "hostOnly"))
+                    issue: .unrecognized(found: "plan9-mode"), repair: .useDefault("hostOnly"))
             ])
         let bundle = UnreadableVM(UnreadableBundle(url: url, file: file))
         let controller = SidebarViewController(viewModel: viewModel)

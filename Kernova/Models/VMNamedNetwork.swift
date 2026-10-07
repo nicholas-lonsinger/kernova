@@ -36,6 +36,6 @@ extension VMNamedNetwork {
             id: try c.decode(UUID.self, forKey: .id),
             name: try c.decode(String.self, forKey: .name),
             kind: try c.decode(
-                VmnetNetworkKind.self, forKey: .kind, default: Self.defaultKind, in: decoder))
+                VmnetNetworkKind.self, forKey: .kind, repairingTo: Self.defaultKind, in: decoder))
     }
 }

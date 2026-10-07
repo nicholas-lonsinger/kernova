@@ -77,28 +77,33 @@ struct CoordinatedJSONFile<Payload: Codable & Equatable & Sendable>: Sendable {
         return try outcome.get()
     }
 
-    /// Puts each problem's default in place in the file, moving what it held
-    /// to the Trash first — the check's Use Defaults.
+    /// Makes each repair `checked` lists in the file, moving what it held to
+    /// the Trash first — the check's Use Defaults.
     ///
-    /// Decides on what the file holds inside the coordinated write, and
+    /// Decides on what the file holds inside the coordinated write
+    /// (``ConfigFileRepair/replacement(for:current:reads:diagnose:)``), and
     /// writes it atomically after the copy of what it held is in the Trash,
     /// so the file is never absent or half-written.
-    func repair(trashingOriginalWith fileSystem: any FileSystemOperating) throws -> ConfigFileRepair {
+    func repair(
+        _ checked: UnreadableConfigFile, trashingOriginalWith fileSystem: any FileSystemOperating
+    ) throws -> ConfigFileRepair {
         try coordinatedWrite { coordinated in
             Result { () throws -> ConfigFileRepair in
-                let data: Data
+                let current: Data?
                 do {
-                    data = try Data(contentsOf: coordinated)
+                    current = try Data(contentsOf: coordinated)
                 } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-                    throw ConfigFileRepairRefusal.notRepairable
+                    current = nil
                 }
-                if (try? decode(data)) != nil { return .alreadyReadable }
-                guard let repaired = diagnose(data).repaired else {
-                    throw ConfigFileRepairRefusal.notRepairable
-                }
+                // No file reads as the empty payload.
+                guard
+                    let replacement = try ConfigFileRepair.replacement(
+                        for: checked, current: current,
+                        reads: { data in data.map { (try? decode($0)) != nil } ?? true }, diagnose: diagnose)
+                else { return .alreadyReadable }
                 try ConfigFileRepair.moveOriginalToTrash(
-                    data, named: coordinated.lastPathComponent, using: fileSystem)
-                try repaired.write(to: coordinated, options: .atomic)
+                    replacement.original, named: checked.trashedOriginalName, using: fileSystem)
+                try replacement.repaired.write(to: coordinated, options: .atomic)
                 return .repaired
             }
         }.get()

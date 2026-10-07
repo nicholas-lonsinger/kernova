@@ -70,16 +70,16 @@ struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
         self.kind = kind
     }
 
-    // Custom `init(from:)` for `kind`, whose default differs from what
-    // synthesized `Codable` would do: a `decode` of a non-optional field fails
-    // the whole manifest when the key is absent.
+    // Custom `init(from:)` for `kind`, a fact about what the snapshot holds on
+    // disk: a record with no kind states a warm snapshot, where synthesized
+    // `Codable` would fail the whole manifest.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
         self.name = try c.decode(String.self, forKey: .name)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.notes = try c.decode(String.self, forKey: .notes)
-        self.kind = try c.decode(VMSnapshotKind.self, forKey: .kind, default: .warm, in: decoder)
+        self.kind = try c.decode(VMSnapshotKind.self, forKey: .kind, absentMeans: .warm, in: decoder)
     }
 }
 
@@ -164,18 +164,26 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
         case networkEnabled, networkMode, networkMembership, bridgedInterfaceIdentifier, macAddress
     }
 
-    /// Each field read on its own, falling back to what
-    /// ``VMConfiguration``'s decoding falls back to, so a configuration that
-    /// no longer decodes whole still reserves its address.
+    /// What a new VM's network is, whatever its guest.
+    static var ofNewVM: VMCapturedNetwork {
+        VMCapturedNetwork(VMConfiguration(name: "", guestOS: .linux, bootMode: .efi))
+    }
+
+    /// Each field read on its own as a config field, falling back to a new
+    /// VM's — read through ``JSONDecoder/decodeRepairing(_:from:)``, so a
+    /// configuration that no longer decodes whole still reserves its address.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        networkEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .networkEnabled)) ?? false
-        networkMode = (try? c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode)) ?? .shared
-        networkMembership =
-            (try? c.decodeIfPresent(VMNetworkMembership.self, forKey: .networkMembership)) ?? .common
-        bridgedInterfaceIdentifier =
-            (try? c.decodeIfPresent(String.self, forKey: .bridgedInterfaceIdentifier)) ?? nil
-        macAddress = (try? c.decodeIfPresent(String.self, forKey: .macAddress)) ?? nil
+        let new = Self.ofNewVM
+        networkEnabled = try c.decode(
+            Bool.self, forKey: .networkEnabled, repairingTo: new.networkEnabled, in: decoder)
+        networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, default: new.networkMode, in: decoder)
+        networkMembership = try c.decode(
+            VMNetworkMembership.self, forKey: .networkMembership, default: new.networkMembership, in: decoder)
+        bridgedInterfaceIdentifier = try c.decode(
+            String?.self, forKey: .bridgedInterfaceIdentifier, default: new.bridgedInterfaceIdentifier,
+            in: decoder)
+        macAddress = try c.decode(String?.self, forKey: .macAddress, default: new.macAddress, in: decoder)
     }
 
     /// `configuration` with this network device in place of its own — the

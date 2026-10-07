@@ -822,7 +822,7 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
-        // The initial load reports the error and seeds reportedFailedBundles
+        // The initial load reports the error and seeds unreadableReports
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         #expect(failures.checkRequests == 1)
@@ -890,7 +890,7 @@ struct VMLibraryTests {
 
     /// Pairings are made again by attaching the device once, so an unreadable
     /// file costs the VM nothing more than them.
-    @Test("A bundle whose pairings cannot be read loads with none, is reported, and keeps the file")
+    @Test("A bundle whose pairings cannot be read loads with none, asks for the check once, and keeps the file")
     func unreadablePairingsLoadEmpty() async throws {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
@@ -908,7 +908,12 @@ struct VMLibraryTests {
         #expect(
             storage.files.data(atRelativePath: VMBundleLayout.usbPairingsRelativePath, in: bundleURL)
                 == unreadable)
-        #expect(failures.errorMessage?.contains("Paired VM") == true)
+        // The check lists the file; no alert of its own.
+        #expect(failures.errorMessage == nil)
+        #expect(failures.checkRequests == 1)
+        library.reconcileWithDisk()
+        library.refreshFromOtherCopies()
+        #expect(failures.checkRequests == 1)
     }
 
     @Test("reconcileWithDisk keeps out, and reports once, a new bundle whose host state cannot be read")

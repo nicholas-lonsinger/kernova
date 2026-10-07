@@ -479,6 +479,34 @@ struct VMBundleMachineFilesTests {
         }
     }
 
+    @Test("A snapshot whose recorded configuration can't be read is refused as unreadable, not as missing")
+    func planRefusesAnUnreadableConfiguration() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem())
+        let snapshotID = UUID()
+        let snapshotLayout = fixture.layout.snapshotLayout(id: snapshotID)
+        try FileManager.default.createDirectory(
+            at: snapshotLayout.bundleURL, withIntermediateDirectories: true)
+        try Data("saved-state".utf8).write(to: snapshotLayout.saveFileURL)
+
+        #expect {
+            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
+        } throws: { error in
+            guard case .snapshotMissingConfiguration = error as? VMSnapshotError else { return false }
+            return true
+        }
+
+        try Data("not json".utf8).write(to: snapshotLayout.configURL)
+
+        #expect {
+            _ = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .warm)
+        } throws: { error in
+            guard case .snapshotConfigurationUnreadable = error as? VMSnapshotError else { return false }
+            return error.localizedDescription
+                == "Kernova can\u{2019}t read this snapshot\u{2019}s settings. Choose File > Check Config Files\u{2026} to review it."
+        }
+    }
+
     @Test("A snapshot neither captures the host state nor writes it back")
     func hostStateStaysOutOfSnapshots() throws {
         let fixture = try makeFixture()

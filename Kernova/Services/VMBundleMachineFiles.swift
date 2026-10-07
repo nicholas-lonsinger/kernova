@@ -155,8 +155,13 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         {
             throw VMSnapshotError.snapshotMissingSavedState
         }
-        guard let configuration = try? VMConfiguration.load(fromBundle: sourceLayout.bundleURL) else {
+        let configuration: VMConfiguration
+        do {
+            configuration = try VMConfiguration.load(fromBundle: sourceLayout.bundleURL)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             throw VMSnapshotError.snapshotMissingConfiguration
+        } catch {
+            throw VMSnapshotError.snapshotConfigurationUnreadable
         }
         let relativePaths = Self.capturedRelativePaths(
             for: configuration, layout: sourceLayout)
@@ -407,6 +412,9 @@ enum VMSnapshotError: LocalizedError {
     /// The snapshot holds no record of the configuration it was captured under,
     /// which VZ requires back before it restores the saved state.
     case snapshotMissingConfiguration
+    /// The snapshot's record of the configuration it was captured under is
+    /// there and does not read — the config check lists it.
+    case snapshotConfigurationUnreadable
     /// The snapshot holds no copy of a file its own configuration names.
     case snapshotMissingFile(String)
 
@@ -418,6 +426,8 @@ enum VMSnapshotError: LocalizedError {
             "This snapshot has no saved state, so it can't be reverted to."
         case .snapshotMissingConfiguration:
             "This snapshot has no record of the virtual machine's settings, so it can't be reverted to."
+        case .snapshotConfigurationUnreadable:
+            "Kernova can\u{2019}t read this snapshot\u{2019}s settings. Choose File > Check Config Files\u{2026} to review it."
         case .snapshotMissingFile(let path):
             "This snapshot doesn't include \u{201C}\(path)\u{201D}, so it can't be reverted to."
         }

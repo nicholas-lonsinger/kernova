@@ -46,6 +46,12 @@ final class VMNetworkDirectory {
             guard case .listed(let networks) = self else { return nil }
             return networks
         }
+
+        /// The file as the read refused it, `nil` while it is listed.
+        var unreadable: UnreadableConfigFile? {
+            guard case .unreadable(let file) = self else { return nil }
+            return file
+        }
     }
 
     private(set) var state: State = .listed([])

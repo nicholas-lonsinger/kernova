@@ -220,7 +220,7 @@ struct VMBundleTests {
             let read = try onDisk(url)
 
             #expect(read.usbPairings.isEmpty)
-            #expect(read.pairingsUnreadable?.fileName == "usb-accessories.json")
+            #expect(read.unreadableFiles.map(\.fileName) == ["usb-accessories.json"])
             #expect(try Data(contentsOf: pairingsURL) == corrupt)
         }
     }
@@ -310,7 +310,7 @@ struct VMBundleTests {
             #expect(read.hostState == VMHostState())
             #expect(read.snapshotManifest.isEmpty)
             #expect(read.usbPairings.isEmpty)
-            #expect(read.pairingsUnreadable == nil)
+            #expect(read.unreadableFiles.isEmpty)
         }
     }
 
@@ -445,7 +445,7 @@ struct VMBundleTests {
             let read = try onDisk(url)
 
             #expect(read.usbPairings.isEmpty)
-            #expect(read.pairingsUnreadable == nil)
+            #expect(read.unreadableFiles.isEmpty)
         }
     }
 

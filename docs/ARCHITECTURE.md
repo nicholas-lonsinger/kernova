@@ -68,7 +68,7 @@ through `adopt`; a bundle no read can take is listed as an `UnreadableVM`
 instead. Every config file decodes through one decoder whose collecting mode
 (`ConfigFileDiagnosis`) yields an `UnreadableConfigFile`; the config check
 (`VMLibrary+ConfigCheck.swift`) reads them all and rewrites a file no read can
-take through `VMBundleFiles.repair` or `VMNetworkDirectory.repair`.
+take through `VMBundleFiles.repair` or `CoordinatedJSONFile.repair`.
 `VMBundleLayout` derives every in-bundle path.
 
 Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and

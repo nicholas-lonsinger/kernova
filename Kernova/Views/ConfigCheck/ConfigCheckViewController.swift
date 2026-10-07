@@ -67,7 +67,8 @@ final class ConfigCheckViewController: NSViewController {
         configure(showInFinderButton, title: "Show in Finder", action: #selector(showInFinder))
         configure(closeButton, title: "Close", action: #selector(closeWindow))
         configure(useDefaultsButton, title: "Use Defaults", action: #selector(useDefaults))
-        useDefaultsButton.keyEquivalent = "\r"
+        // Use Defaults rewrites files, so it takes a click: Return closes.
+        closeButton.keyEquivalent = "\r"
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -161,8 +162,6 @@ final class ConfigCheckViewController: NSViewController {
         useDefaultsButton.isHidden = !offersUseDefaults
         useDefaultsButton.isEnabled = !isWorking
         showInFinderButton.isEnabled = !isWorking
-        // Return closes the window when there is nothing to repair.
-        closeButton.keyEquivalent = offersUseDefaults ? "\u{1b}" : "\r"
     }
 
     // MARK: - Actions

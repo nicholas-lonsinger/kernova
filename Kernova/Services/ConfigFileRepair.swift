@@ -12,6 +12,31 @@ enum ConfigFileRepair: Sendable, Equatable {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ConfigFileRepair")
 
+    /// What a repair of `checked` writes over the file, given what the file
+    /// holds now — `current`, `nil` when there is no file — or `nil` when
+    /// the file reads as it is, which `reads` decides. Every repair decides
+    /// through this, inside the coordinated write that makes it.
+    ///
+    /// Refuses bytes other than the ones the check reported, so a repair
+    /// acts only on what the user reviewed.
+    static func replacement(
+        for checked: UnreadableConfigFile, current: Data?, reads: (Data?) -> Bool,
+        diagnose: (Data) -> ConfigFileDiagnosis
+    ) throws(ConfigFileRepairRefusal) -> Replacement? {
+        if reads(current) { return nil }
+        guard let current, let digest = checked.checkedDigest, ConfigFileDigest(of: current) == digest else {
+            throw .changedSinceCheck
+        }
+        guard let repaired = diagnose(current).repaired else { throw .notRepairable }
+        return Replacement(original: current, repaired: repaired)
+    }
+
+    /// The bytes a repair replaces, and what it writes in their place.
+    struct Replacement {
+        let original: Data
+        let repaired: Data
+    }
+
     /// Moves a copy of `data` to the Trash as a file named `name` — what a
     /// repair does with the bytes it replaces, before it replaces them.
     ///
@@ -41,15 +66,20 @@ enum ConfigFileRepair: Sendable, Equatable {
 
 /// Why a repair left a config file as it was.
 enum ConfigFileRepairRefusal: LocalizedError, Equatable {
-    /// What the file holds now has a problem with no default, or is gone.
+    /// The file holds bytes other than the ones the check reported — or none
+    /// where it must hold some — so what it holds now has not been reviewed.
+    case changedSinceCheck
+    /// The file has a problem with no repair.
     case notRepairable
     /// A copy of Kernova holds the bundle's run lock.
     case inUse
 
     var errorDescription: String? {
         switch self {
+        case .changedSinceCheck:
+            "The file changed since the check. Review what it holds now before using defaults."
         case .notRepairable:
-            "The file changed since the check, and Kernova can\u{2019}t repair what it holds now."
+            "Kernova can\u{2019}t repair this file."
         case .inUse:
             "A copy of Kernova is using the virtual machine."
         }
