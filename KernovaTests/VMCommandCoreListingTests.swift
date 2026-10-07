@@ -97,24 +97,24 @@ struct VMCommandCoreListingTests {
         #expect(try listed(harness, VMListQuery(sort: .manual)) == ["beta", "Alpha 10", "Alpha 9", "Twin"])
     }
 
-    @Test("--sort lastRun lists live VMs first, then most recent, then never run, as the sidebar sorts them")
+    @Test("--sort lastRun lists live VMs first, then most recent, then none recorded, as the sidebar sorts them")
     func lastRunSortMatchesTheSidebar() throws {
         let harness = makeHarness()
         let base = Date(timeIntervalSince1970: 1_800_000_000)
-        makeInstance(in: harness, name: "Never")
+        makeInstance(in: harness, name: "No record")
         makeInstance(in: harness, name: "Older", hostState: VMHostState(lastRunAt: base))
         // A live VM's record is its session's start, older than either ended run.
         makeInstance(
             in: harness, name: "Live", phase: .running(sessionID: UUID()),
             hostState: VMHostState(lastRunAt: base.addingTimeInterval(-3600)))
         makeInstance(in: harness, name: "Recent", hostState: VMHostState(lastRunAt: base.addingTimeInterval(60)))
-        makeInstance(in: harness, name: "Also never")
+        makeInstance(in: harness, name: "Also no record")
 
         harness.library.sidebarOptions.sort = .lastRun
         let sidebar = names(in: harness.library.sidebarLayout.sections.last)
 
         #expect(try listed(harness, VMListQuery(sort: .lastRun)) == sidebar)
-        #expect(sidebar == ["Live", "Recent", "Older", "Also never", "Never"])
+        #expect(sidebar == ["Live", "Recent", "Older", "Also no record", "No record"])
     }
 
     // MARK: - Filter

@@ -146,6 +146,56 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         case guestSetup
         /// The caller cancelled the action before the VM's turn came.
         case cancelled
+
+        private enum CodingKeys: String, CodingKey {
+            case refused
+        }
+
+        private enum RefusedKeys: String, CodingKey {
+            case error
+        }
+
+        /// The name a reason carrying nothing codes as, `nil` for one carrying
+        /// data.
+        private var bareName: String? {
+            switch self {
+            case .state: "state"
+            case .guestSetup: "guestSetup"
+            case .cancelled: "cancelled"
+            case .refused: nil
+            }
+        }
+
+        /// Reads the shape ``encode(to:)`` writes.
+        public init(from decoder: Decoder) throws {
+            if let name = try? decoder.singleValueContainer().decode(String.self) {
+                guard let reason = [Self.state, .guestSetup, .cancelled].first(where: { $0.bareName == name })
+                else {
+                    throw DecodingError.dataCorrupted(
+                        DecodingError.Context(
+                            codingPath: decoder.codingPath, debugDescription: "\(name) names no reason"))
+                }
+                self = reason
+                return
+            }
+            let refused = try decoder.container(keyedBy: CodingKeys.self)
+                .nestedContainer(keyedBy: RefusedKeys.self, forKey: .refused)
+            self = .refused(error: try refused.decode(CommandErrorDTO.self, forKey: .error))
+        }
+
+        /// Writes a reason carrying nothing as its bare name — `"state"`,
+        /// `"guestSetup"`, `"cancelled"` — and ``refused(error:)`` as
+        /// `{"refused": {"error": …}}`.
+        public func encode(to encoder: Encoder) throws {
+            if case .refused(let error) = self {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                var refused = container.nestedContainer(keyedBy: RefusedKeys.self, forKey: .refused)
+                try refused.encode(error, forKey: .error)
+            } else {
+                var container = encoder.singleValueContainer()
+                try container.encode(bareName)
+            }
+        }
     }
 
     /// Whether the action concerned the VM and left it undone.

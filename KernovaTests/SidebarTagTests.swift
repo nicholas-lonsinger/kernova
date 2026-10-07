@@ -309,6 +309,51 @@ struct SidebarTagTests {
         #expect(vm.hostState.tags == [work.id])
     }
 
+    @Test("A tag's item shows the same swatch, opted in to showing, in a VM's Tags menu and the filter's Tags row")
+    func tagItemsShareTheSwatch() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        let lab = try library.createTag(named: "Lab", color: .green)
+        let vm = library.admitFixture(name: "A", hostState: VMHostState(tags: [work.id]))
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        let vmMenu = try #require(controller.buildContextMenu(for: vm).items.first { $0.title == "Tags" }?.submenu)
+        let filterMenu = try #require(
+            controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" }?.submenu)
+
+        for tag in [work, lab] {
+            let fromVM = try #require(vmMenu.items.first { $0.title == tag.name })
+            let fromFilter = try #require(filterMenu.items.first { $0.title == tag.name })
+            let expected = tag.color.dotImage()
+            for item in [fromVM, fromFilter] {
+                let image = try #require(item.image, "\(tag.name)")
+                #expect(image.size == expected.size, "\(tag.name)")
+                #expect(image.accessibilityDescription == tag.color.title, "\(tag.name)")
+                #expect(image.tiffRepresentation == expected.tiffRepresentation, "\(tag.name)")
+                if #available(macOS 27, *) {
+                    #expect(item.preferredImageVisibility == .visible, "\(tag.name)")
+                }
+            }
+        }
+        // The swatches tell the colors apart, so the comparison is not vacuous.
+        #expect(work.color.dotImage().tiffRepresentation != lab.color.dotImage().tiffRepresentation)
+    }
+
+    @Test("The Settings color pop-up lists every color with its swatch, opted in to showing")
+    func colorPopUpShowsSwatches() throws {
+        let popUp = TagsSettingsViewController.colorPopUp(selecting: .green)
+        #expect(popUp.itemArray.map(\.title) == VMTagColor.allCases.map(\.title))
+        #expect(popUp.titleOfSelectedItem == VMTagColor.green.title)
+        for item in popUp.itemArray {
+            let image = try #require(item.image, "\(item.title)")
+            #expect(image.accessibilityDescription == item.title)
+            if #available(macOS 27, *) {
+                #expect(item.preferredImageVisibility == .visible, "\(item.title)")
+            }
+        }
+    }
+
     @Test("With no tags, a VM's Tags menu offers only Edit Tags…")
     func contextMenuWithoutTags() throws {
         let viewModel = makeViewModel()

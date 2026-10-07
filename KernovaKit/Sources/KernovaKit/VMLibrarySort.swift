@@ -7,7 +7,7 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
     /// Newest first.
     case dateCreated
     /// Most recent first: VMs live now, then by when each last ran, then
-    /// those never run; ties A→Z.
+    /// those with no run recorded; ties A→Z.
     case lastRun
     /// The library's own order, or a folder's own for its members — the
     /// order dragging a sidebar row there changes.
@@ -47,8 +47,9 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
         case live
         /// Last ran at this moment.
         case ended(Date)
-        /// Never run.
-        case never
+        /// No run recorded: never run, or last run only by a build that
+        /// recorded none.
+        case unrecorded
     }
 
     /// `elements`, given in their manual order, in this order; elements the
@@ -81,9 +82,9 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
     /// Whether `lhs` ran more recently, `nil` where they tie.
     private static func precedes(_ lhs: LastRun, _ rhs: LastRun) -> Bool? {
         switch (lhs, rhs) {
-        case (.live, .live), (.never, .never): nil
-        case (.live, _), (_, .never): true
-        case (_, .live), (.never, _): false
+        case (.live, .live), (.unrecorded, .unrecorded): nil
+        case (.live, _), (_, .unrecorded): true
+        case (_, .live), (.unrecorded, _): false
         case (.ended(let lhs), .ended(let rhs)): lhs == rhs ? nil : lhs > rhs
         }
     }
