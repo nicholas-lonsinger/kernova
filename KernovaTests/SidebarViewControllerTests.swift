@@ -511,7 +511,7 @@ struct SidebarViewControllerTests {
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         #expect(rowNames(in: outline) == ["A", "B", "C", "D"])
-        viewModel.selectedID = c.id
+        viewModel.selectRevealing(c.id)
         // The outline view offers no observable to await its selection by.
         try await waitUntil { outline.selectedRow == 3 }
 
@@ -946,7 +946,7 @@ struct SidebarViewControllerTests {
         let controller = SidebarViewController(viewModel: viewModel)
 
         let cell = SidebarArrivalRowCellView()
-        cell.configure(arrival: arrival)
+        cell.configure(arrival: arrival, detail: { nil })
         #expect(cell.textField?.stringValue == "Copying")
         #expect(cell.toolTip == "Cloning\u{2026}")
 

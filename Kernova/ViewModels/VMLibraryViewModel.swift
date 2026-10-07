@@ -69,10 +69,7 @@ final class VMLibraryViewModel {
 
     var arrivals: [VMArrival] { library.arrivals }
 
-    var selectedID: UUID? {
-        get { library.selectedID }
-        set { library.selectedID = newValue }
-    }
+    var selectedID: UUID? { library.selectedID }
 
     var selection: SidebarRowKey? {
         get { library.selection }

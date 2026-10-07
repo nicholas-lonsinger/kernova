@@ -78,6 +78,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// How a macOS guest's agent stands against the one the app bundles, `nil`
     /// for a guest no Kernova agent runs in.
     public let guestAgent: VMGuestAgentBucket?
+    /// The coarse state the VM is in, by whether a session is live in the
+    /// copy answering.
+    public let stateBucket: VMStateBucket
     /// Where the VM's bundle lives.
     public let bundlePath: String
     /// Whether the app last found another running copy of Kernova holding the
@@ -104,6 +107,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         snapshotCount: Int,
         hasSnapshots: Bool,
         guestAgent: VMGuestAgentBucket?,
+        stateBucket: VMStateBucket,
         bundlePath: String,
         heldByAnotherCopy: Bool
     ) {
@@ -125,6 +129,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.snapshotCount = snapshotCount
         self.hasSnapshots = hasSnapshots
         self.guestAgent = guestAgent
+        self.stateBucket = stateBucket
         self.bundlePath = bundlePath
         self.heldByAnotherCopy = heldByAnotherCopy
     }

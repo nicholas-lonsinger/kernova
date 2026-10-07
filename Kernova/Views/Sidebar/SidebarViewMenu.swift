@@ -12,8 +12,8 @@ final class SidebarViewMenu: NSObject {
     /// One library entry as the menu counts it.
     struct Value {
         let subject: VMLibraryFilter.Subject
-        /// What the entry's network reads as, which is what the Network
-        /// submenu lists it under.
+        /// What the entry's network reads as, which titles its Network
+        /// submenu row.
         let networkTitle: String
     }
 
@@ -30,10 +30,10 @@ final class SidebarViewMenu: NSObject {
 
     private let apply: (SidebarViewOptions) -> Void
     /// What a network the filter names reads as once no VM is on it.
-    private let networkTitle: (NetworkModeChoice) -> String
+    private let networkTitle: (VMLibraryFilter.Network) -> String
 
     init(
-        networkTitle: @escaping (NetworkModeChoice) -> String,
+        networkTitle: @escaping (VMLibraryFilter.Network) -> String,
         apply: @escaping (SidebarViewOptions) -> Void
     ) {
         self.networkTitle = networkTitle
@@ -204,13 +204,9 @@ final class SidebarViewMenu: NSObject {
             title: "Network", allTitle: "All Networks", isActive: !filter.networks.isEmpty,
             cleared: with { $0.networks = [] },
             choices: networkChoices(filter: filter, values: values).map { choice in
-                let isOn = !choice.members.isDisjoint(with: filter.networks)
-                return Attribute.Choice(
-                    title: choice.title, count: choice.count, isOn: isOn,
-                    picked: with {
-                        $0.networks =
-                            isOn ? $0.networks.subtracting(choice.members) : $0.networks.union(choice.members)
-                    })
+                Attribute.Choice(
+                    title: choice.title, count: choice.count, isOn: filter.networks.contains(choice.network),
+                    picked: with { $0.networks = toggled($0.networks, choice.network) })
             })
         let guestAgent = Attribute(
             title: "Guest Agent", allTitle: "All", isActive: !filter.guestAgents.isEmpty,
@@ -238,31 +234,30 @@ final class SidebarViewMenu: NSObject {
         return [guestOS, state, network, guestAgent, other]
     }
 
-    /// The Network submenu's choices: one per title the library's networks
-    /// read as — several networks the library does not list read alike — in
-    /// the Mode picker's order. A network the filter names but no VM is on
-    /// any more stays listed, so it can be turned off.
+    /// The Network submenu's choices: one per network the library's VMs are
+    /// on — every network the library does not list being one — in the Mode
+    /// picker's order. A network the filter names but no VM is on any more
+    /// stays listed, so it can be turned off.
     private func networkChoices(
         filter: VMLibraryFilter, values: [Value]
-    ) -> [(title: String, members: Set<NetworkModeChoice>, count: Int, rank: Int)] {
-        var byTitle: [String: (members: Set<NetworkModeChoice>, count: Int, rank: Int)] = [:]
+    ) -> [(network: VMLibraryFilter.Network, title: String, count: Int)] {
+        var order: [VMLibraryFilter.Network] = []
+        var byNetwork: [VMLibraryFilter.Network: (title: String, count: Int)] = [:]
         for value in values {
-            let rank = SidebarLayout.networkRank(value.subject.network)
-            var entry = byTitle[value.networkTitle] ?? ([], 0, rank)
-            entry.members.insert(value.subject.network)
-            entry.count += 1
-            entry.rank = min(entry.rank, rank)
-            byTitle[value.networkTitle] = entry
+            let network = value.subject.network
+            if byNetwork[network] == nil { order.append(network) }
+            byNetwork[network, default: (value.networkTitle, 0)].count += 1
         }
-        let listed = byTitle.values.reduce(into: Set<NetworkModeChoice>()) { $0.formUnion($1.members) }
-        for orphan in filter.networks.subtracting(listed) {
-            byTitle[networkTitle(orphan), default: ([], 0, SidebarLayout.networkRank(orphan))].members
-                .insert(orphan)
+        for orphan in filter.networks where byNetwork[orphan] == nil {
+            order.append(orphan)
+            byNetwork[orphan] = (networkTitle(orphan), 0)
         }
-        return byTitle.map { (title: $0.key, members: $0.value.members, count: $0.value.count, rank: $0.value.rank) }
-            .sorted {
-                $0.rank != $1.rank
-                    ? $0.rank < $1.rank : $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        return order.compactMap { network in byNetwork[network].map { (network, $0.title, $0.count) } }
+            .sorted { lhs, rhs in
+                let left = SidebarLayout.networkRank(lhs.network)
+                let right = SidebarLayout.networkRank(rhs.network)
+                return left != right
+                    ? left < right : lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
     }
 }

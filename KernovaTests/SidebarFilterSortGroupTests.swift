@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import Synchronization
 import Testing
 
 @testable import Kernova
@@ -13,11 +14,17 @@ extension SidebarLayout.Context {
         bundledAgentVersion: String? = "2.0", networks: [VMNamedNetwork] = []
     ) -> SidebarLayout.Context {
         SidebarLayout.Context(
-            bundledAgentVersion: bundledAgentVersion,
+            bundledAgentVersion: bundledAgentVersion, networks: networks,
             networkTitle: {
                 NetworkModeChoice.title(of: $0, entitlements: .entitled, interfaces: { [] }, networks: networks)
             })
     }
+}
+
+/// `choice` as a filter tells it apart, in a library listing every named
+/// network.
+private func net(_ choice: NetworkModeChoice) -> VMLibraryFilter.Network {
+    VMLibraryFilter.Network(choice) { _, _ in true }
 }
 
 /// The library section's filter, sort and grouping: the projection they drive,
@@ -92,8 +99,8 @@ struct SidebarFilterSortGroupTests {
         #expect(shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux]))) == ["Ephemeral", "Snapshotted"])
         #expect(shownNames(entries, options(VMLibraryFilter(states: [.running]))) == ["Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(states: [.suspended]))) == ["Ephemeral"])
-        #expect(shownNames(entries, options(VMLibraryFilter(networks: [.none]))) == ["Bare Mac"])
-        #expect(shownNames(entries, options(VMLibraryFilter(networks: [.hostOnly]))) == ["Snapshotted"])
+        #expect(shownNames(entries, options(VMLibraryFilter(networks: [net(.none)]))) == ["Bare Mac"])
+        #expect(shownNames(entries, options(VMLibraryFilter(networks: [net(.hostOnly)]))) == ["Snapshotted"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion]))) == ["Old Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.neverConnected]))) == ["Bare Mac"])
@@ -102,7 +109,7 @@ struct SidebarFilterSortGroupTests {
         #expect(shownNames(entries, options(VMLibraryFilter(withSnapshotsOnly: true))) == ["Snapshotted"])
         // ANDed: Linux and not Host Only.
         #expect(
-            shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [.shared])))
+            shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [net(.shared)])))
                 == ["Ephemeral"])
     }
 
@@ -197,23 +204,35 @@ struct SidebarFilterSortGroupTests {
         #expect(byState.map(\.names) == [["Alpha"], ["Mac"], ["Zed"]])
     }
 
-    @Test("Group by Network titles each network as the Mode picker does, unlisted networks together")
+    @Test("Group by Network keeps one header per network, every unlisted one together")
     func groupByNetwork() {
         let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
+        // A named network titled like a built-in choice is still its own.
+        let lookalike = VMNamedNetwork(id: UUID(), name: "Host Only", kind: .hostOnly)
         let entries = [
             vm("Off") { $0.networkEnabled = false },
             vm("Gone A") { $0.networkMembership = .network(UUID()) },
             vm("Common") { $0.networkMode = .shared },
             vm("Lab VM") { $0.networkMembership = .network(lab.id) },
+            vm("Built-in Host Only") { $0.networkMode = .hostOnly },
+            vm("Lookalike") {
+                $0.networkMode = .hostOnly
+                $0.networkMembership = .network(lookalike.id)
+            },
             vm("Gone B") {
                 $0.networkMode = .hostOnly
                 $0.networkMembership = .network(UUID())
             },
         ]
         let byNetwork = groups(
-            entries, SidebarViewOptions(grouping: .network), context: .testing(networks: [lab]))
-        #expect(byNetwork.map(\.title) == ["Shared Network", "Lab", "Network Not in This Library", "None"])
-        #expect(byNetwork[2].names == ["Gone A", "Gone B"])
+            entries, SidebarViewOptions(grouping: .network), context: .testing(networks: [lab, lookalike]))
+        #expect(
+            byNetwork.map(\.title) == [
+                "Shared Network", "Lab", "Host Only", "Host Only", "Network Not in This Library", "None",
+            ])
+        #expect(byNetwork[2].names == ["Built-in Host Only"])
+        #expect(byNetwork[3].names == ["Lookalike"])
+        #expect(byNetwork[4].names == ["Gone A", "Gone B"])
     }
 
     @Test("Grouping keeps a filter: a group lists only the VMs the filter admits")
@@ -247,7 +266,7 @@ struct SidebarFilterSortGroupTests {
         let viewModel = makeViewModel()
         let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        viewModel.selectedID = mac.id
+        viewModel.selectRevealing(mac.id)
 
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
 
@@ -258,7 +277,7 @@ struct SidebarFilterSortGroupTests {
     func groupingMovesSelectionOntoGroupedRow() {
         let viewModel = makeViewModel()
         let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.selectedID = mac.id
+        viewModel.selectRevealing(mac.id)
 
         viewModel.sidebarOptions.grouping = .guestOS
 
@@ -273,7 +292,7 @@ struct SidebarFilterSortGroupTests {
         let selected = viewModel.library.admitFixture(name: "Selected", guestOS: .linux)
         let other = viewModel.library.admitFixture(name: "Other", guestOS: .linux)
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-        viewModel.selectedID = selected.id
+        viewModel.selectRevealing(selected.id)
 
         viewModel.library.evict(selected)
 
@@ -284,7 +303,7 @@ struct SidebarFilterSortGroupTests {
     func hiddenArrivalIsNotSelected() async {
         let viewModel = makeViewModel()
         let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.selectedID = mac.id
+        viewModel.selectRevealing(mac.id)
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
 
         let hiddenGate = GatedStep()
@@ -357,7 +376,7 @@ struct SidebarFilterSortGroupTests {
 
     private func value(
         _ guestOS: VMGuestOS = .linux, state: VMStateBucket = .stopped,
-        network: NetworkModeChoice = .shared, title: String = "Shared Network",
+        network: VMLibraryFilter.Network = net(.shared), title: String = "Shared Network",
         isEphemeral: Bool = false
     ) -> SidebarViewMenu.Value {
         SidebarViewMenu.Value(
@@ -416,23 +435,36 @@ struct SidebarFilterSortGroupTests {
         #expect(picked(suspended)?.filter.states == [.suspended])
     }
 
-    @Test("Network lists one row per title, which toggles every network reading as it")
-    func networkRowsMergeByTitle() throws {
-        let gone1 = NetworkModeChoice.vmnet(.shared, .network(UUID()))
-        let gone2 = NetworkModeChoice.vmnet(.hostOnly, .network(UUID()))
+    @Test("Network lists one row per network, every unlisted one a single row, look-alikes apart")
+    func networkRowsByNetwork() throws {
+        let lookalike = net(.vmnet(.hostOnly, .network(UUID())))
         let values = [
-            value(network: .none, title: "None"),
-            value(network: gone1, title: "Network Not in This Library"),
-            value(network: .shared, title: "Shared Network"),
-            value(network: gone2, title: "Network Not in This Library"),
+            value(network: net(.none), title: "None"),
+            value(network: .unlisted, title: "Network Not in This Library"),
+            value(network: net(.shared), title: "Shared Network"),
+            value(network: lookalike, title: "None"),
+            value(network: .unlisted, title: "Network Not in This Library"),
         ]
         let network = try #require(menu(SidebarViewOptions(), values: values).items[2].submenu)
         #expect(
             network.items.map(\.title) == [
-                "All Networks", "", "Shared Network", "Network Not in This Library", "None",
+                "All Networks", "", "Shared Network", "None", "Network Not in This Library", "None",
             ])
-        #expect(network.items[3].badge?.itemCount == 2)
-        #expect(picked(network.items[3])?.filter.networks == [gone1, gone2])
+        #expect(network.items[4].badge?.itemCount == 2)
+        #expect(picked(network.items[4])?.filter.networks == [.unlisted])
+        #expect(picked(network.items[3])?.filter.networks == [lookalike])
+        #expect(picked(network.items[5])?.filter.networks == [net(.none)])
+    }
+
+    @Test("A network the filter names but no VM is on stays listed, checked, to turn off")
+    func orphanNetworkStaysListed() throws {
+        let gone = net(.bridged("en9"))
+        let built = menu(
+            SidebarViewOptions(filter: VMLibraryFilter(networks: [gone])), values: [value()])
+        let network = try #require(built.items[2].submenu)
+        let row = try #require(network.items.first { $0.title == gone.rawValue })
+        #expect(row.state == .on)
+        #expect(picked(row)?.filter.networks == [])
     }
 
     @Test("Show Details and the group and sort rows set their options")
@@ -501,6 +533,8 @@ struct SidebarFilterSortGroupTests {
         let showHide = try #require(
             rowView.subviews.first { $0.identifier == NSOutlineView.showHideButtonIdentifier })
 
+        // The control the documented `makeView` route captured is the row's.
+        #expect((outline as? SidebarOutlineView)?.showHideButton(in: rowView) === showHide)
         #expect(button.convert(button.bounds, to: rowView).maxX <= showHide.frame.minX)
     }
 
@@ -521,7 +555,7 @@ struct SidebarFilterSortGroupTests {
         let started = viewModel.library.admitFixture(name: "Started")
         let other = viewModel.library.admitFixture(name: "Other")
         viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
-        viewModel.selectedID = started.id
+        viewModel.selectRevealing(started.id)
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
@@ -541,7 +575,7 @@ struct SidebarFilterSortGroupTests {
             outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
         #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("1 of 2"))
 
-        viewModel.selectedID = other.id
+        viewModel.selectRevealing(other.id)
 
         // The projection's own observation loop offers no test-facing signal.
         try await waitUntil { outline.numberOfRows == 2 }
@@ -549,25 +583,136 @@ struct SidebarFilterSortGroupTests {
         #expect(viewModel.selectedID == other.id)
     }
 
-    @Test("An options edit while the selected VM no longer matches hides it and clears the selection")
-    func optionsEditDropsRetainedVM() {
+    @Test("The layout's counts follow a retained VM's own changes, which its observation tracks")
+    func countFollowsRetainedVM() {
+        let viewModel = makeViewModel()
+        let started = viewModel.library.admitFixture(name: "Started")
+        viewModel.library.admitFixture(name: "Other")
+        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
+        viewModel.selectRevealing(started.id)
+        started.activity.placeForTesting(.running(sessionID: UUID()))
+        #expect(
+            viewModel.sidebarLayout.sections.first?.filterCounts
+                == SidebarLayout.FilterCounts(matching: 1, total: 2))
+
+        // The rows stay the same, so only the retained VM's own state can wake
+        // the pass that recounts: an observation of the layout must track it.
+        let woke = Mutex(false)
+        withObservationTracking {
+            _ = viewModel.sidebarLayout
+        } onChange: {
+            woke.withLock { $0 = true }
+        }
+        started.activity.placeForTesting(.stopped)
+
+        #expect(woke.withLock { $0 })
+        #expect(
+            viewModel.sidebarLayout.sections.first?.filterCounts
+                == SidebarLayout.FilterCounts(matching: 2, total: 2))
+    }
+
+    @Test("A filter edit while the selected VM no longer matches hides it and clears the selection")
+    func filterEditDropsRetainedVM() {
+        let viewModel = makeViewModel()
+        let started = viewModel.library.admitFixture(name: "Started")
+        viewModel.library.admitFixture(name: "Other")
+        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
+        viewModel.selectRevealing(started.id)
+        started.activity.placeForTesting(.running(sessionID: UUID()))
+        #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+
+        viewModel.sidebarOptions.filter.states = [.stopped, .suspended]
+
+        #expect(viewModel.selection == nil)
+        #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+    }
+
+    @Test("A sort, grouping or details edit keeps a retained VM listed and selected")
+    func viewEditsKeepRetainedVM() {
         for edit: (inout SidebarViewOptions) -> Void in [
-            { $0.filter.states = [.stopped, .suspended] },
-            { $0.sort = .name },
+            { $0.sort = .name }, { $0.grouping = .state }, { $0.showsDetails = true },
         ] {
             let viewModel = makeViewModel()
             let started = viewModel.library.admitFixture(name: "Started")
             viewModel.library.admitFixture(name: "Other")
             viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
-            viewModel.selectedID = started.id
+            viewModel.selectRevealing(started.id)
             started.activity.placeForTesting(.running(sessionID: UUID()))
-            #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
 
             edit(&viewModel.sidebarOptions)
 
-            #expect(viewModel.selection == nil)
-            #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+            #expect(viewModel.selectedID == started.id)
+            #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
         }
+    }
+
+    @Test("A reveal through the command core shows a VM the filter hides and selects it")
+    func commandRevealUnderFilter() throws {
+        let viewModel = makeViewModel()
+        let linux = viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
+
+        try viewModel.commands.reveal(.id(linux.id))
+
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
+        #expect(viewModel.selectedID == linux.id)
+        #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == linux.id })
+    }
+
+    @Test("Show Details adds the detail line to an arrival's row too")
+    func arrivalRowShowsDetail() async throws {
+        let viewModel = makeViewModel()
+        let gate = GatedStep()
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        viewModel.sidebarOptions.showsDetails = true
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        let cell = try #require(
+            outline.view(atColumn: 0, row: 1, makeIfNecessary: true) as? SidebarArrivalRowCellView)
+
+        #expect(
+            allSubviews(NSTextField.self, in: cell).contains {
+                !$0.isHidden && $0.stringValue == arrival.displayLabel
+            })
+
+        gate.release()
+        _ = await arrival.settle()
+    }
+
+    // MARK: - State buckets
+
+    @Test("A VM is running while a session is live, and rests where it rests otherwise")
+    func stateBucketFollowsLiveness() {
+        let session = UUID()
+        #expect(VMLifecyclePhase.running(sessionID: session).stateBucket == .running)
+        #expect(VMLifecyclePhase.livePaused(sessionID: session).stateBucket == .running)
+        #expect(VMLifecyclePhase.suspended.stateBucket == .suspended)
+        for resting: VMLifecyclePhase in [.stopped, .initialBoot, .failed(message: "x"), .removed] {
+            #expect(resting.stateBucket == .stopped)
+        }
+    }
+
+    @Test("An operation with no live session is in the bucket it started from, whatever its status")
+    func operationWithoutSessionKeepsItsRest() {
+        let instance = VMInstanceFixture.make(phase: .stopped)
+        // A cold snapshot capture shows "Taking Snapshot" while nothing is live.
+        instance.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
+        #expect(instance.status == .snapshotting)
+        #expect(instance.stateBucket == .stopped)
+
+        let suspended = VMInstanceFixture.make(phase: .suspended)
+        suspended.activity.placeForTesting(.operating(.deletingSnapshot, from: .suspended))
+        #expect(suspended.stateBucket == .suspended)
+    }
+
+    @Test("Another copy's hold outranks this copy's view of the VM")
+    func heldByAnotherCopyBucket() {
+        let instance = VMInstanceFixture.make(phase: .stopped)
+        instance.activity.recordOtherCopyHold(heldElsewhere: true)
+        #expect(instance.stateBucket == .heldByAnotherCopy)
     }
 
     @Test("Show Details adds the sort key's value under each name")

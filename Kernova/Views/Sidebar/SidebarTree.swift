@@ -117,7 +117,8 @@ final class SidebarTree {
     /// The root's children.
     private(set) var sections: [SidebarSection] = []
 
-    private var layout = SidebarLayout(sections: [])
+    /// The layout the tree lists.
+    private(set) var layout = SidebarLayout(sections: [])
     private var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
     private var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
     private var rowsByKey: [SidebarRowKey: SidebarRow] = [:]

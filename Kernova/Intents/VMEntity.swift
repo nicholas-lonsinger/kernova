@@ -98,9 +98,7 @@ struct VMEntity: IndexedEntity {
         self.heldByAnotherCopy = info.heldByAnotherCopy
         self.name = info.name
         self.status = info.status
-        self.stateGroup =
-            VMStateBucket(wireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)?
-            .rawValue ?? info.status
+        self.stateGroup = info.stateBucket.rawValue
         self.guestOS = info.guestOS
         self.cpuCount = info.cpuCount
         self.memoryBytes = Int(clamping: info.memoryBytes)

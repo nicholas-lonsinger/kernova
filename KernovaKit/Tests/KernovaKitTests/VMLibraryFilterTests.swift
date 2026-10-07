@@ -6,7 +6,13 @@ import Testing
 
 @Suite("VMLibraryFilter", .caseScoped)
 struct VMLibraryFilterTests {
+    /// The one named network these tests' library lists.
     private static let named = UUID()
+
+    /// `choice` as a library listing only ``named`` tells it apart.
+    private static func network(_ choice: NetworkModeChoice) -> VMLibraryFilter.Network {
+        VMLibraryFilter.Network(choice) { _, id in id == named }
+    }
 
     private func subject(
         guestOS: VMGuestOS = .macOS, state: VMStateBucket = .stopped,
@@ -14,7 +20,7 @@ struct VMLibraryFilterTests {
         isEphemeral: Bool = false, hasSnapshots: Bool = false
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
-            guestOS: guestOS, state: state, network: network, guestAgent: guestAgent,
+            guestOS: guestOS, state: state, network: Self.network(network), guestAgent: guestAgent,
             isEphemeral: isEphemeral, hasSnapshots: hasSnapshots)
     }
 
@@ -46,7 +52,9 @@ struct VMLibraryFilterTests {
 
     @Test("Network admits only the choices in its set, membership included")
     func network() {
-        let filter = VMLibraryFilter(networks: [.vmnet(.shared, .network(Self.named)), .none])
+        let filter = VMLibraryFilter(networks: [
+            Self.network(.vmnet(.shared, .network(Self.named))), Self.network(.none),
+        ])
         #expect(filter.admits(subject(network: .vmnet(.shared, .network(Self.named)))))
         #expect(filter.admits(subject(network: .none)))
         #expect(!filter.admits(subject(network: .shared)))
@@ -73,7 +81,7 @@ struct VMLibraryFilterTests {
     @Test("Attributes are ANDed")
     func attributesAnd() {
         let filter = VMLibraryFilter(
-            guestOSes: [.macOS], states: [.running], networks: [.shared], guestAgents: [.upToDate],
+            guestOSes: [.macOS], states: [.running], networks: [Self.network(.shared)], guestAgents: [.upToDate],
             ephemeralOnly: true, withSnapshotsOnly: true)
         let passing = subject(
             state: .running, network: .shared, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true)
@@ -81,7 +89,7 @@ struct VMLibraryFilterTests {
         var failsOne = [passing, passing, passing, passing, passing, passing]
         failsOne[0].guestOS = .linux
         failsOne[1].state = .stopped
-        failsOne[2].network = .none
+        failsOne[2].network = Self.network(.none)
         failsOne[3].guestAgent = .olderVersion
         failsOne[4].isEphemeral = false
         failsOne[5].hasSnapshots = false
@@ -106,10 +114,12 @@ struct VMLibraryFilterTests {
     func codableRoundTrip() throws {
         let filter = VMLibraryFilter(
             guestOSes: [.macOS, .linux], states: [.suspended],
-            networks: [
-                .shared, .vmnet(.hostOnly, .isolated), .vmnet(.shared, .network(Self.named)),
-                .bridged(nil), .bridged("en0"), .none,
-            ],
+            networks: Set(
+                [
+                    .shared, .vmnet(.hostOnly, .isolated), .vmnet(.shared, .network(Self.named)),
+                    .bridged(nil), .bridged("en0"), .none,
+                ].map(Self.network)
+            ).union([.unlisted]),
             guestAgents: [.neverConnected], ephemeralOnly: true, withSnapshotsOnly: true)
 
         let data = try JSONEncoder().encode(filter)
@@ -145,30 +155,50 @@ struct VMLibraryFilterTests {
         }
     }
 
-    // MARK: - State buckets
+    // MARK: - Network key
 
-    @Test("Every status lands in the bucket its live session puts it in")
-    func everyStatusHasABucket() {
-        let expected: [VMStatus: VMStateBucket] = [
-            .running: .running, .paused: .running, .starting: .running, .restoring: .running,
-            .installing: .running, .saving: .running, .snapshotting: .running, .cloning: .running,
-            .suspended: .suspended,
-            .stopped: .stopped, .initialBoot: .stopped, .error: .stopped,
-        ]
-        #expect(Set(expected.keys) == Set(VMStatus.allCases))
-        for status in VMStatus.allCases {
-            #expect(VMStateBucket(status, heldByAnotherCopy: false) == expected[status])
-            // Another copy's hold says nothing about what the VM is doing.
-            #expect(VMStateBucket(status, heldByAnotherCopy: true) == .heldByAnotherCopy)
+    @Test("Every named network the library does not list is one network to a filter")
+    func unlistedNetworksAreOne() {
+        let elsewhere = VMLibraryFilter.Network(.vmnet(.shared, .network(UUID()))) { _, _ in false }
+        let elsewhereToo = VMLibraryFilter.Network(.vmnet(.hostOnly, .network(UUID()))) { _, _ in false }
+        #expect(elsewhere == .unlisted)
+        #expect(elsewhereToo == .unlisted)
+        #expect(elsewhere.choice == nil)
+
+        // A filter set to it admits a VM on any network the library does not
+        // list — one imported later included.
+        let filter = VMLibraryFilter(networks: [elsewhere])
+        #expect(filter.admits(subject(network: .vmnet(.hostOnly, .network(UUID())))))
+        #expect(!filter.admits(subject(network: .vmnet(.shared, .network(Self.named)))))
+    }
+
+    @Test("A listed named network, and every other choice, is itself")
+    func listedNetworksStayThemselves() {
+        let listed = Self.network(.vmnet(.shared, .network(Self.named)))
+        #expect(listed.choice == .vmnet(.shared, .network(Self.named)))
+        // The kind is part of what is listed: the same identifier under the
+        // other kind is a network the library does not list.
+        let otherKind = VMLibraryFilter.Network(.vmnet(.hostOnly, .network(Self.named))) { kind, id in
+            kind == .shared && id == Self.named
+        }
+        #expect(otherKind == .unlisted)
+        for choice: NetworkModeChoice in [.none, .shared, .hostOnly, .bridged(nil), .bridged("en0")] {
+            #expect(VMLibraryFilter.Network(choice) { _, _ in false }.choice == choice)
         }
     }
 
-    @Test("Wire statuses bucket like statuses, preparing included")
-    func wireNames() {
-        #expect(VMStateBucket(wireName: "paused", heldByAnotherCopy: false) == .running)
-        #expect(VMStateBucket(wireName: VMStatus.preparingWireName, heldByAnotherCopy: false) == .preparing)
-        #expect(VMStateBucket(wireName: "stopped", heldByAnotherCopy: true) == .heldByAnotherCopy)
-        #expect(VMStateBucket(wireName: "levitating", heldByAnotherCopy: false) == nil)
+    @Test("A network key codes as one string and reads back")
+    func networkKeyRawValues() throws {
+        #expect(VMLibraryFilter.Network.unlisted.rawValue == "unlisted")
+        #expect(VMLibraryFilter.Network(rawValue: "unlisted") == .unlisted)
+        let shared = Self.network(.shared)
+        #expect(shared.rawValue == "shared:common")
+        #expect(VMLibraryFilter.Network(rawValue: "shared:common") == shared)
+        #expect(VMLibraryFilter.Network(rawValue: "nowhere") == nil)
+        #expect(
+            try JSONDecoder().decode(
+                VMLibraryFilter.Network.self, from: JSONEncoder().encode(VMLibraryFilter.Network.unlisted))
+                == .unlisted)
     }
 
     // MARK: - Guest agent buckets

@@ -49,6 +49,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// The named networks VMs join together.
     let networks: VMNetworkDirectory
 
+    /// The host interfaces a network naming one is titled from.
+    @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
+
     // MARK: - Collaborators
 
     /// Drives a running VM's XHCI removable-media list to what its
@@ -139,6 +142,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var hasLoadedLibrary = false
 
     /// The selected sidebar row, whose entry is ``selectedID``.
+    ///
+    /// The sidebar writes the row the user picks. Everything else selects
+    /// through ``selectRevealing(_:)``, which first makes the entry listed.
     var selection: SidebarRowKey? {
         didSet {
             let entryID = selection?.entryID
@@ -155,21 +161,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// keeps a selected message the filter no longer matches.
     ///
     /// Follows the selection onto any entry the filter admits, so it lapses as
-    /// soon as the selection moves off; an options edit drops it before it
+    /// soon as the selection moves off; a filter edit drops it before it
     /// re-applies, so an edit still hides the VM and clears the selection.
     private(set) var retainedEntryID: UUID?
 
     private func sidebarFilterAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
-        return sidebarOptions.filter.admits(
-            entry.filterSubject(bundledAgentVersion: sidebarContext.bundledAgentVersion))
+        return sidebarOptions.filter.admits(sidebarContext.subject(of: entry))
     }
 
     /// The selected entry's identifier.
     ///
     /// Setting a different entry selects its library row; setting the entry
-    /// already selected leaves the row it is selected in.
-    var selectedID: UUID? {
+    /// already selected leaves the row it is selected in. Set only here, so
+    /// nothing outside the library selects an entry the sidebar hides.
+    private(set) var selectedID: UUID? {
         get { selection?.entryID }
         set {
             guard newValue != selection?.entryID else { return }
@@ -180,11 +186,15 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// How the sidebar narrows, orders and groups the library.
     ///
     /// Beside ``selection`` because every rule that moves the selection reads
-    /// what the sidebar shows: a change that hides the selected VM clears the
-    /// selection.
+    /// what the sidebar shows: a filter edit that hides the selected VM clears
+    /// the selection, and a sort, grouping or details edit keeps it.
     var sidebarOptions = SidebarViewOptions() {
         didSet {
             guard sidebarOptions != oldValue else { return }
+            guard sidebarOptions.filter != oldValue.filter else {
+                reconcileSelection()
+                return
+            }
             retainedEntryID = nil
             reconcileSelection()
             retainedEntryID = selection?.entryID
@@ -200,19 +210,28 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             entries: entries, options: sidebarOptions, retaining: retainedEntryID, context: sidebarContext)
     }
 
-    /// What the sidebar's projection and its filter menu read besides the
-    /// entries.
+    /// What the sidebar's projection, its filter menu and every ``VMInfo``
+    /// read besides the entries.
     var sidebarContext: SidebarLayout.Context {
-        let entitlements = entitlements
-        let networks = networks
+        let named = networks.networks
         return SidebarLayout.Context(
-            bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion,
-            networkTitle: { config in
-                NetworkModeChoice.title(
-                    of: config, entitlements: entitlements,
-                    interfaces: HostBridgedInterfaceProvider().interfaces,
-                    networks: networks.networks)
-            })
+            bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
+            networkTitle: { [weak self] config in self?.networkTitle(of: config, networks: named) ?? "" })
+    }
+
+    /// Where the titles of networks naming a host interface are kept: only
+    /// they cost an enumeration, so each is enumerated once, as
+    /// ``VMOverviewResolver`` does for the VM it shows.
+    @ObservationIgnored private var hostInterfaceTitles: [NetworkModeChoice: String] = [:]
+
+    private func networkTitle(of config: VMConfiguration, networks: [VMNamedNetwork]) -> String {
+        let choice = NetworkModeChoice(config)
+        if choice.namesAHostInterface, let title = hostInterfaceTitles[choice] { return title }
+        let title = NetworkModeChoice.title(
+            of: config, entitlements: entitlements, interfaces: bridgedInterfaces.interfaces,
+            networks: networks)
+        if choice.namesAHostInterface { hostInterfaceTitles[choice] = title }
+        return title
     }
 
     /// Moves ``selection`` onto what `layout` — by default the current
@@ -224,12 +243,24 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     /// Selects the entry `id`, first dropping each sidebar filter attribute
-    /// that hides it — what every reveal lands on.
+    /// that hides it — what every reveal, and every selection made other than
+    /// by clicking a row, lands on.
     func selectRevealing(_ id: UUID) {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
-        sidebarOptions.filter = sidebarOptions.filter.admitting(
-            entry.filterSubject(bundledAgentVersion: sidebarContext.bundledAgentVersion))
+        sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
         selectedID = id
+    }
+
+    /// Selects what a library read lands on when nothing listed is selected:
+    /// the last-selected VM while the sidebar lists it, else the first row.
+    func restoreSelection() {
+        guard selectedID == nil || !entries.contains(where: { $0.id == selectedID }) else { return }
+        if let savedID = preferences.lastSelectedVMID, sidebarShows(savedID) {
+            selectedID = savedID
+            #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
+        } else {
+            selectedID = firstShownEntryID
+        }
     }
 
     /// Whether the sidebar lists the entry `id`.
@@ -332,9 +363,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         networks: VMNetworkDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore(),
+        bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
         activationCenter: NotificationCenter = .default
     ) {
         self.storageService = storageService
+        self.bridgedInterfaces = bridgedInterfaces
         self.activationCenter = activationCenter
         self.networks = networks
         self.guestAccountPasswords = guestAccountPasswords

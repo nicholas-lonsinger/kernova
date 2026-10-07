@@ -200,6 +200,7 @@ struct CLIWaitTests {
                     networkMembership: "common", networkName: nil,
                     macAddress: nil, ipAddress: .unavailable, agentStatus: agentStatus,
                     hasSavedState: false, isEphemeral: false, snapshotCount: 0, hasSnapshots: false, guestAgent: nil,
+                    stateBucket: .stopped,
                     bundlePath: "/Users/somebody/Alpha.kernova", heldByAnotherCopy: false)))
     }
 

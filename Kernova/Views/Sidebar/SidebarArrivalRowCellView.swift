@@ -1,17 +1,21 @@
 import AppKit
 
 /// Leaf-row cell for an arrival — a create, clone or import still writing its
-/// bundle: a spinner in the icon slot, the name, and the arrival's label as the
-/// tooltip, which follows its stage ("Cancelling…").
+/// bundle: a spinner in the icon slot, the name, the detail line Show Details
+/// adds, and the arrival's label as the tooltip, which follows its stage
+/// ("Cancelling…").
 @MainActor
 final class SidebarArrivalRowCellView: NSTableCellView {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("SidebarArrivalRowCell")
 
     private weak var arrival: VMArrival?
+    /// Reads the row's detail line, live, `nil` when rows show none.
+    private var detail: (() -> String?)?
     private var observation: ObservationLoop?
 
     private let spinner = NSProgressIndicator()
     private let nameLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
 
     init() {
         super.init(frame: .zero)
@@ -35,7 +39,19 @@ final class SidebarArrivalRowCellView: NSTableCellView {
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [spinner, nameLabel])
+        // Set like ``SidebarVMRowCellView``'s detail line.
+        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.isHidden = true
+
+        let nameColumn = NSStackView(views: [nameLabel, detailLabel])
+        nameColumn.orientation = .vertical
+        nameColumn.alignment = .leading
+        nameColumn.spacing = 0
+
+        let row = NSStackView(views: [spinner, nameColumn])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Spacing.small
@@ -53,19 +69,26 @@ final class SidebarArrivalRowCellView: NSTableCellView {
         ])
     }
 
-    func configure(arrival: VMArrival) {
+    func configure(arrival: VMArrival, detail: @escaping () -> String?) {
         self.arrival = arrival
+        self.detail = detail
         nameLabel.stringValue = arrival.name
         spinner.startAnimation(nil)
-        applyLabel()
+        applyLiveState()
         observation?.cancel()
         observation = observeRecurring(
-            track: { [weak self] in _ = self?.arrival?.displayLabel },
-            apply: { [weak self] in self?.applyLabel() })
+            track: { [weak self] in
+                _ = self?.arrival?.displayLabel
+                _ = self?.detail?()
+            },
+            apply: { [weak self] in self?.applyLiveState() })
     }
 
-    private func applyLabel() {
+    private func applyLiveState() {
         toolTip = arrival?.displayLabel
+        let detailText = detail?()
+        detailLabel.stringValue = detailText ?? ""
+        detailLabel.isHidden = detailText == nil
     }
 
     override func prepareForReuse() {
@@ -73,6 +96,8 @@ final class SidebarArrivalRowCellView: NSTableCellView {
         observation?.cancel()
         observation = nil
         arrival = nil
+        detail = nil
+        detailLabel.isHidden = true
         spinner.stopAnimation(nil)
         toolTip = nil
     }

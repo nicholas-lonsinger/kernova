@@ -7,7 +7,7 @@ import Foundation
 /// ``displayName`` is what a person reads. Nothing is *decided* here: a
 /// predicate belongs to the phase, which distinguishes the cases a status
 /// conflates.
-public enum VMStatus: String, CaseIterable, Sendable {
+public enum VMStatus: String, Sendable {
     case stopped
     case starting
     case running

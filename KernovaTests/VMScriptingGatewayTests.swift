@@ -205,7 +205,7 @@ struct VMScriptingGatewayTests {
             networkName: "Lab",
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.3"),
             agentStatus: "connected", hasSavedState: true, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
-            guestAgent: nil,
+            guestAgent: nil, stateBucket: .stopped,
             bundlePath: "/VMs/Alpha.kernova", heldByAnotherCopy: false)
 
         let vm = try #require(makeGateway(commands).virtualMachines().first)

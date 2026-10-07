@@ -1,9 +1,12 @@
 import Foundation
 
 /// Which coarse state a VM is in, as a filter, a group and a Shortcuts query
-/// read it.
+/// read it. The app derives it from whether a session is live, not from the
+/// status it reports, which names an operation without saying whether a
+/// session is live.
 public enum VMStateBucket: String, Codable, CaseIterable, Sendable {
-    /// Live in this copy of Kernova, paused or on its way in or out included.
+    /// A session is live in this copy of Kernova, paused or under an operation
+    /// included.
     case running
     /// At rest with a saved session it resumes from.
     case suspended
@@ -14,35 +17,6 @@ public enum VMStateBucket: String, Codable, CaseIterable, Sendable {
     case heldByAnotherCopy
     /// A create, clone or import still writing the VM's bundle.
     case preparing
-
-    /// The bucket a VM reporting `status` lands in.
-    public init(_ status: VMStatus, heldByAnotherCopy: Bool) {
-        if heldByAnotherCopy {
-            self = .heldByAnotherCopy
-            return
-        }
-        switch status {
-        case .running, .paused, .starting, .restoring, .installing, .saving, .snapshotting,
-            .cloning:
-            self = .running
-        case .suspended:
-            self = .suspended
-        case .stopped, .initialBoot, .error:
-            self = .stopped
-        }
-    }
-
-    /// The bucket a VM reporting the wire status `wireName` lands in, `nil` for
-    /// a name that is neither a ``VMStatus`` nor ``VMStatus/preparingWireName``.
-    public init?(wireName: String, heldByAnotherCopy: Bool) {
-        if wireName == VMStatus.preparingWireName {
-            self = .preparing
-        } else if let status = VMStatus(rawValue: wireName) {
-            self.init(status, heldByAnotherCopy: heldByAnotherCopy)
-        } else {
-            return nil
-        }
-    }
 
     /// What a person reads for this bucket.
     public var displayName: String {
@@ -97,6 +71,68 @@ public enum VMGuestAgentBucket: String, Codable, CaseIterable, Sendable {
 /// An empty include-set and a `false` flag constrain nothing, so the default
 /// value admits every VM.
 public struct VMLibraryFilter: Codable, Hashable, Sendable {
+    /// A network as a filter tells networks apart: the network a VM is set
+    /// to, except that every named network the library does not list is the
+    /// one value ``unlisted`` — they all read "Network Not in This Library",
+    /// and nothing else tells them apart.
+    ///
+    /// Coded as one string: ``unlisted``'s `unlisted`, else the choice's
+    /// ``NetworkModeChoice/rawValue``.
+    public struct Network: Hashable, Sendable, Codable {
+        /// The choice, `nil` for ``unlisted``.
+        public let choice: NetworkModeChoice?
+
+        /// Every named network the library does not list.
+        public static let unlisted = Network(storing: nil)
+
+        private static let unlistedValue = "unlisted"
+
+        private init(storing choice: NetworkModeChoice?) {
+            self.choice = choice
+        }
+
+        /// `choice` as a filter tells it apart: ``unlisted`` when it names a
+        /// network `isListed` does not answer for — its kind and identifier.
+        public init(_ choice: NetworkModeChoice, isListed: (VmnetNetworkKind, UUID) -> Bool) {
+            if case .vmnet(let kind, .network(let id)) = choice, !isListed(kind, id) {
+                self = .unlisted
+            } else {
+                self.init(storing: choice)
+            }
+        }
+
+        /// The value `rawValue` spells, `nil` for a string that spells none.
+        public init?(rawValue: String) {
+            if rawValue == Self.unlistedValue {
+                self = .unlisted
+            } else if let choice = NetworkModeChoice(rawValue: rawValue) {
+                self.init(storing: choice)
+            } else {
+                return nil
+            }
+        }
+
+        /// The coded spelling.
+        public var rawValue: String { choice?.rawValue ?? Self.unlistedValue }
+
+        /// Reads the one string ``rawValue`` spells.
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            guard let network = Self(rawValue: text) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container, debugDescription: "\(text) names no network")
+            }
+            self = network
+        }
+
+        /// Writes ``rawValue``.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+    }
+
     /// What a filter reads of one VM.
     public struct Subject: Hashable, Sendable {
         /// The guest the VM runs.
@@ -104,7 +140,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// The coarse state the VM is in.
         public var state: VMStateBucket
         /// The network the VM is set to.
-        public var network: NetworkModeChoice
+        public var network: Network
         /// `nil` for a guest no Kernova agent runs in (Linux).
         public var guestAgent: VMGuestAgentBucket?
         /// Whether Ephemeral Mode is on.
@@ -115,7 +151,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
 
         /// A subject reading as given.
         public init(
-            guestOS: VMGuestOS, state: VMStateBucket, network: NetworkModeChoice,
+            guestOS: VMGuestOS, state: VMStateBucket, network: Network,
             guestAgent: VMGuestAgentBucket?, isEphemeral: Bool, hasSnapshots: Bool
         ) {
             self.guestOS = guestOS
@@ -132,7 +168,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     /// Admits only the state buckets in the set.
     public var states: Set<VMStateBucket>
     /// Admits only the networks in the set.
-    public var networks: Set<NetworkModeChoice>
+    public var networks: Set<Network>
     /// Admits only guests with an agent bucket in the set, so a Linux guest
     /// never passes a non-empty one.
     public var guestAgents: Set<VMGuestAgentBucket>
@@ -146,7 +182,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     /// nothing.
     public init(
         guestOSes: Set<VMGuestOS> = [], states: Set<VMStateBucket> = [],
-        networks: Set<NetworkModeChoice> = [], guestAgents: Set<VMGuestAgentBucket> = [],
+        networks: Set<Network> = [], guestAgents: Set<VMGuestAgentBucket> = [],
         ephemeralOnly: Bool = false, withSnapshotsOnly: Bool = false
     ) {
         self.guestOSes = guestOSes
@@ -209,7 +245,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         self.init(
             guestOSes: try c.decodeIfPresent(Set<VMGuestOS>.self, forKey: .guestOSes) ?? [],
             states: try c.decodeIfPresent(Set<VMStateBucket>.self, forKey: .states) ?? [],
-            networks: try c.decodeIfPresent(Set<NetworkModeChoice>.self, forKey: .networks) ?? [],
+            networks: try c.decodeIfPresent(Set<Network>.self, forKey: .networks) ?? [],
             guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
                 ?? [],
             ephemeralOnly: try c.decodeIfPresent(Bool.self, forKey: .ephemeralOnly) ?? false,

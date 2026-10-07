@@ -23,6 +23,7 @@ struct CLIRenderingTests {
             memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
+            stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
 
@@ -91,6 +92,7 @@ struct CLIRenderingTests {
             macAddress: base.macAddress, ipAddress: .notObserved,
             agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, hasSnapshots: base.hasSnapshots, guestAgent: base.guestAgent,
+            stateBucket: .heldByAnotherCopy,
             bundlePath: base.bundlePath, heldByAnotherCopy: true)
         let status = try #require(
             TableRenderer.render(heldInfo, quiet: false).components(separatedBy: "\n")

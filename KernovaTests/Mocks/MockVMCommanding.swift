@@ -327,6 +327,7 @@ final class MockVMCommanding: VMCommanding {
             hasSavedState: false,
             isEphemeral: false,
             snapshotCount: 0, hasSnapshots: false, guestAgent: nil,
+            stateBucket: .stopped,
             bundlePath: "/tmp/\(summary.id.uuidString).kernova", heldByAnotherCopy: false)
     }
 

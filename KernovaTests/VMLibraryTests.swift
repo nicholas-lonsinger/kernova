@@ -186,7 +186,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         let secondID = library.instances.last?.id
-        library.selectedID = secondID
+        secondID.map(library.selectRevealing)
 
         await library.loadVMs()
 
@@ -200,7 +200,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary()
         let instance = library.admitFixture()
 
-        library.selectedID = instance.id
+        library.selectRevealing(instance.id)
 
         #expect(preferences.lastSelectedVMID == instance.id)
     }
@@ -209,9 +209,9 @@ struct VMLibraryTests {
     func selectedIDClearsUserDefaults() {
         let (library, _, _, _) = makeLibrary()
         let instance = library.admitFixture()
-        library.selectedID = instance.id
+        library.selectRevealing(instance.id)
 
-        library.selectedID = nil
+        library.selection = nil
 
         #expect(preferences.lastSelectedVMID == nil)
     }
@@ -559,7 +559,7 @@ struct VMLibraryTests {
     func selectedInstance() {
         let (library, _, _, _) = makeLibrary()
         let instance = library.admitFixture()
-        library.selectedID = instance.id
+        library.selectRevealing(instance.id)
 
         #expect(library.selectedInstance?.id == instance.id)
     }
@@ -567,7 +567,7 @@ struct VMLibraryTests {
     @Test("selectedInstance returns nil when no match")
     func selectedInstanceNil() {
         let (library, _, _, _) = makeLibrary()
-        library.selectedID = UUID()
+        library.selection = .library(UUID())
 
         #expect(library.selectedInstance == nil)
     }
@@ -740,7 +740,7 @@ struct VMLibraryTests {
         let remaining = library.admitFixture(name: "Remaining")
         let removed = library.admitFixture(name: "Removed")
         removed.activity.placeForTesting(.stopped)
-        library.selectedID = removed.id
+        library.selectRevealing(removed.id)
 
         // Only keep the remaining instance's bundle on disk
         let bundleURL = scratch.url
