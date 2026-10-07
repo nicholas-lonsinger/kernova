@@ -76,11 +76,9 @@ extension VMCommandCore {
             try setConfiguration(
                 .id(instance.instanceID), assignments: [key.assigning(isolated)], consent: .none)
         }
-        do {
-            try library.removeNetworkFromFilters(network.id)
-        } catch {
-            throw CommandError.operationFailed(verb: .deleteNetwork, message: error.localizedDescription)
-        }
+        // A filter naming the network keeps naming it, and admits no VM from
+        // here on: one naming a network the library does not list is on
+        // ``VMLibraryFilter/Network/unlisted``, never on the network itself.
         try library.networks.remove(network.id, verb: .deleteNetwork)
         #log(
             Self.logger, .notice,

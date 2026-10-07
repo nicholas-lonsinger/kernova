@@ -35,14 +35,6 @@ extension VMLibrary {
         reconcileSelection()
     }
 
-    /// Drops the named network `id`, which is being deleted, from every
-    /// filter naming it — each smart group's and the library section's.
-    func removeNetworkFromFilters(_ id: UUID) throws {
-        try organization.removeNetwork(id)
-        sidebarOptions.filter = sidebarOptions.filter.removingNetwork(id)
-        reconcileSelection()
-    }
-
     /// Moves the smart group `id` identifies to just before the one
     /// `successor` identifies, or after every other when `successor` is `nil`.
     func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {

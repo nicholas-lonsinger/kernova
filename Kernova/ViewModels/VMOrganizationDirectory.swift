@@ -186,15 +186,6 @@ final class VMOrganizationDirectory {
         try commit { file in Self.edit(id, in: &file.smartGroups) { $0.filter = filter } }
     }
 
-    /// Drops the named network `id` from every smart group's filter.
-    func removeNetwork(_ id: UUID) throws {
-        try commit { file in
-            for index in file.smartGroups.indices {
-                file.smartGroups[index].filter = file.smartGroups[index].filter.removingNetwork(id)
-            }
-        }
-    }
-
     /// Stops listing the smart group `id` identifies.
     func removeSmartGroup(_ id: UUID) throws {
         try commit { file in file.smartGroups.removeAll { $0.id == id } }

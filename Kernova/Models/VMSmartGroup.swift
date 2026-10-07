@@ -15,21 +15,6 @@ struct VMSmartGroup: Codable, Sendable, Hashable, Identifiable {
     var filter: VMLibraryFilter
 }
 
-extension VMLibraryFilter {
-    /// This filter less the named network `id` — what deleting that network
-    /// leaves of a filter naming it, since no VM can be on it again: one
-    /// naming an identifier the library does not list is on
-    /// ``VMLibraryFilter/Network/unlisted``.
-    func removingNetwork(_ id: UUID) -> VMLibraryFilter {
-        var pruned = self
-        pruned.networks = networks.filter { network in
-            guard case .vmnet(_, let membership)? = network.choice else { return true }
-            return membership.namedNetwork != id
-        }
-        return pruned
-    }
-}
-
 extension SidebarSectionID {
     private static let smartGroupPrefix = "smartGroup:"
 

@@ -238,6 +238,24 @@ struct SidebarLayout {
         network == .unlisted ? NetworkModeChoice.unlistedNetworkTitle : context.networkTitle(configuration)
     }
 
+    /// What a network a filter holds reads as where no VM is on it to name it.
+    ///
+    /// A named network the library no longer lists — deleted since the filter
+    /// was saved — reads apart from ``VMLibraryFilter/Network/unlisted``: the
+    /// filter still holds it, and it admits no VM.
+    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: [VMNamedNetwork]) -> String {
+        guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
+        if case .vmnet(let kind, .network(let id)) = choice,
+            !networks.contains(where: { $0.id == id && $0.kind == kind })
+        {
+            return heldUnlistedNetworkTitle
+        }
+        return choice.title(attachable: true, interfaces: [], networks: networks)
+    }
+
+    /// How a filter names a network it holds that the library no longer lists.
+    static let heldUnlistedNetworkTitle = "Network No Longer in This Library"
+
     /// Where a network sorts among others: the order the Mode picker lists
     /// its choices in, with every network the library does not list after
     /// the vmnet networks it does.

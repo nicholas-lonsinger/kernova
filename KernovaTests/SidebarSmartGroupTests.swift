@@ -366,34 +366,50 @@ struct SidebarSmartGroupTests {
         #expect((outline.item(atRow: 0) as? SidebarSection)?.id == .library)
     }
 
-    @Test("Deleting a named network prunes it from every smart group's filter and the library's")
-    func deletingANetworkPrunesIt() throws {
+    @Test("Deleting a named network leaves each filter naming it, which then admits no VM and says so")
+    func deletingANetworkKeepsItsCondition() throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "A")
-        viewModel.library.admitFixture(name: "B", guestOS: .macOS)
         let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        viewModel.library.admitFixture(name: "A") { $0.networkMembership = .network(lab.id) }
+        viewModel.library.admitFixture(name: "B", guestOS: .macOS)
         let onLab = VMLibraryFilter.Network(.vmnet(.shared, .network(lab.id))) { _, _ in true }
         let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
         viewModel.sidebarOptions.filter = VMLibraryFilter(networks: [onLab])
-        try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Lab")
+        let labGroup = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Lab")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux off the LAN")
         viewModel.sidebarOptions.filter = VMLibraryFilter(networks: [onLab, shared])
+        let group = VMGroupReference(.smartGroup, named: labGroup.id.uuidString)
+        #expect(names(in: viewModel.sidebarLayout.sections[0]) == ["A"])
+        #expect(viewModel.groupActionCounts(for: group)?[.start] == 1)
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
         #expect(viewModel.networks.networks.isEmpty)
         #expect(
             viewModel.library.smartGroups.map(\.filter) == [
-                VMLibraryFilter(), VMLibraryFilter(guestOSes: [.linux], networks: [.unlisted]),
+                VMLibraryFilter(networks: [onLab]), VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted]),
             ])
-        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(networks: [shared]))
-        // Its only condition gone, "Lab" lists every VM.
-        #expect(names(in: viewModel.sidebarLayout.sections[0]) == ["A", "B"])
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(networks: [onLab, shared]))
+        // Its only condition names a network no VM can be on, so "Lab" lists
+        // nothing — and a group action on it acts on nothing.
+        #expect(names(in: viewModel.sidebarLayout.sections[0]).isEmpty)
+        #expect(viewModel.groupActionCounts(for: group) == [.start: 0, .suspend: 0, .stop: 0])
+
+        // The menu names the condition it still holds, and clears it.
+        let controller = SidebarViewController(viewModel: viewModel)
+        let menu = try #require(controller.viewMenu(for: .smartGroup(labGroup.id)))
+        let network = try #require(menu.items.first { $0.title == "Network" })
+        #expect(network.badge?.stringValue == "Network No Longer in This Library")
+        let submenu = try #require(network.submenu)
+        let held = try #require(submenu.items.firstIndex { $0.title == "Network No Longer in This Library" })
+        #expect(submenu.items[held].state == .on)
+        submenu.performActionForItem(at: held)
+        #expect(viewModel.library.smartGroups.first?.filter == VMLibraryFilter())
     }
 
-    @Test("A network whose prune the smart groups' file refuses is not deleted")
-    func unreadableOrganizationRefusesNetworkDelete() throws {
+    @Test("A network is deleted without touching the smart groups' file, readable or not")
+    func networkDeleteLeavesTheOrganizationFileAlone() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         let organizationURL = scratch.url.appendingPathComponent("Organization.json")
         try Data("not json".utf8).write(to: organizationURL)
@@ -403,9 +419,9 @@ struct SidebarSmartGroupTests {
             organization: VMOrganizationDirectory(fileURL: organizationURL))
         let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
 
-        #expect(throws: CommandError.self) { try viewModel.commands.deleteNetwork(lab.id.uuidString) }
+        try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
-        #expect(VMNetworkDirectory(fileURL: networksURL).networks.map(\.id) == [lab.id])
+        #expect(VMNetworkDirectory(fileURL: networksURL).networks.isEmpty)
         #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
     }
 

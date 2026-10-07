@@ -284,4 +284,21 @@ struct VMLibraryFilterTests {
         #expect(sorted(rows, by: .dateCreated) == ["Alpha 10", "Alpha 9", "beta", "Twin"])
         #expect(VMLibrarySort.allCases.map(\.rawValue) == ["name", "dateCreated", "manual"])
     }
+
+    @Test("A named network the library stops listing, still held by a filter, admits no VM")
+    func heldUnlistedNetworkAdmitsNothing() {
+        let id = UUID()
+        let held = VMLibraryFilter.Network(.vmnet(.shared, .network(id))) { _, _ in true }
+        let filter = VMLibraryFilter(networks: [held])
+        // A VM still naming it reads as on a network the library does not
+        // list, which is not the held value; every other VM is on its own.
+        let stillNaming = VMLibraryFilter.Network(.vmnet(.shared, .network(id))) { _, _ in false }
+        #expect(stillNaming == .unlisted)
+        for network in [stillNaming, VMLibraryFilter.Network(.vmnet(.shared, .isolated)) { _, _ in true }] {
+            let subject = VMLibraryFilter.Subject(
+                guestOS: .linux, state: .stopped, network: network, guestAgent: nil, isEphemeral: false,
+                hasSnapshots: false)
+            #expect(!filter.admits(subject))
+        }
+    }
 }

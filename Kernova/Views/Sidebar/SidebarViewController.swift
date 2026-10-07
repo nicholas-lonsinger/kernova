@@ -32,9 +32,7 @@ final class SidebarViewController: NSViewController {
     /// runs its command.
     lazy var viewMenu = SidebarViewMenu(
         networkTitle: { [weak self] network in
-            network.choice?.title(
-                attachable: true, interfaces: [], networks: self?.viewModel.networks.networks ?? [])
-                ?? NetworkModeChoice.unlistedNetworkTitle
+            SidebarLayout.heldNetworkTitle(network, networks: self?.viewModel.networks.networks ?? [])
         },
         perform: { [weak self] command in self?.perform(command) })
 
