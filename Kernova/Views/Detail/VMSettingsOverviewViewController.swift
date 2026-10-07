@@ -1,3 +1,4 @@
+import KernovaKit
 import AppKit
 
 /// What an overview card asks the settings pane to do.

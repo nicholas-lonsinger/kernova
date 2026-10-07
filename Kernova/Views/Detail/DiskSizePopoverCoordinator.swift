@@ -1,3 +1,4 @@
+import KernovaKit
 import AppKit
 
 /// Drives a "choose a disk size" popover (``DiskSizePopoverContentViewController``)

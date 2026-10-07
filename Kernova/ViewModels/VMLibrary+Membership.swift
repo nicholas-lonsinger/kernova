@@ -183,13 +183,11 @@ extension VMLibrary {
         customOrder = entries.map(\.id)
 
         if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
-            if let savedID = preferences.lastSelectedVMID,
-                entries.contains(where: { $0.id == savedID })
-            {
+            if let savedID = preferences.lastSelectedVMID, sidebarShows(savedID) {
                 selectedID = savedID
                 #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
             } else {
-                selectedID = entries.first?.id
+                selectedID = firstShownEntryID
             }
         }
         #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")

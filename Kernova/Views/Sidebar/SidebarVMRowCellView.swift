@@ -34,6 +34,8 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// it, so every observable read inside it wakes the row — including the
     /// lifecycle operation no ``VMStatus`` case represents.
     private var isBusy: (() -> Bool)?
+    /// Reads the row's detail line, live, `nil` when rows show none.
+    private var detail: (() -> String?)?
 
     /// `true` while the name label is in its editable rename state.
     var isRenaming: Bool { nameLabel.isEditing }
@@ -48,6 +50,8 @@ final class SidebarVMRowCellView: NSTableCellView {
     private let nameLabel = InlineEditableLabel(
         text: "", font: Typography.body, textColor: .labelColor, placeholder: "",
         controlsEnabled: true, clickHandling: .delegatedToEnclosingView)
+    /// The second line Show Details adds: the value the rows are sorted by.
+    private let detailLabel = NSTextField(labelWithString: "")
     private let ephemeralBadge = SidebarEphemeralBadgeView()
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
@@ -113,15 +117,32 @@ final class SidebarVMRowCellView: NSTableCellView {
         // time, and both are pinned to the same width so the name field doesn't
         // shift when they swap. The agent badge stays outermost — it is the one
         // that asks for action, where the ephemeral badge only states a policy.
+        // No gap between the name and its filler.
+        let nameLine = NSStackView(views: [nameLabel, nameSpacer])
+        nameLine.orientation = .horizontal
+        nameLine.alignment = .centerY
+        nameLine.spacing = 0
+        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.isHidden = true
+        // The detail line sits under the name only; the trailing accessories
+        // stay centered on the row.
+        let nameColumn = NSStackView(views: [nameLine, detailLabel])
+        nameColumn.orientation = .vertical
+        nameColumn.alignment = .width
+        nameColumn.spacing = 0
+        nameColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         let row = NSStackView(views: [
-            iconView, spinner, nameLabel, nameSpacer, ephemeralBadge, agentButton,
+            iconView, spinner, nameColumn, ephemeralBadge, agentButton,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.distribution = .fill
         row.spacing = Spacing.small
-        // No gap between the name and its filler.
-        row.setCustomSpacing(0, after: nameLabel)
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
@@ -149,6 +170,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         isRenaming: Bool,
         installPromptDisabled: @escaping () -> Bool,
         isBusy: @escaping () -> Bool,
+        detail: @escaping () -> String?,
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
         onAgentDiskControl: @escaping () -> Void,
@@ -158,6 +180,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         self.instance = instance
         self.installPromptDisabled = installPromptDisabled
         self.isBusy = isBusy
+        self.detail = detail
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
@@ -201,6 +224,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.lastSeenAgentVersion
                 _ = instance.hostState.ephemeralModeEnabled
                 _ = self.installPromptDisabled?()
+                _ = self.detail?()
             },
             apply: { [weak self] in
                 self?.applyLiveState()
@@ -213,6 +237,10 @@ final class SidebarVMRowCellView: NSTableCellView {
 
         // Self-guards mid-rename, leaving the open box's text alone.
         nameLabel.update(text: instance.name, controlsEnabled: true)
+
+        let detailText = detail?()
+        detailLabel.stringValue = detailText ?? ""
+        detailLabel.isHidden = detailText == nil
 
         let busy = isBusy?() ?? false
         if busy {
@@ -311,6 +339,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         onCommitRename = nil
         onCancelRename = nil
         isBusy = nil
+        detail = nil
+        detailLabel.isHidden = true
         installPromptDisabled = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —

@@ -72,6 +72,12 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let isEphemeral: Bool
     /// How many named restore points the bundle holds.
     public let snapshotCount: Int
+    /// Whether the bundle holds a snapshot other than the Ephemeral Mode
+    /// baseline.
+    public let hasSnapshots: Bool
+    /// How a macOS guest's agent stands against the one the app bundles, `nil`
+    /// for a guest no Kernova agent runs in.
+    public let guestAgent: VMGuestAgentBucket?
     /// Where the VM's bundle lives.
     public let bundlePath: String
     /// Whether the app last found another running copy of Kernova holding the
@@ -96,6 +102,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         hasSavedState: Bool,
         isEphemeral: Bool,
         snapshotCount: Int,
+        hasSnapshots: Bool,
+        guestAgent: VMGuestAgentBucket?,
         bundlePath: String,
         heldByAnotherCopy: Bool
     ) {
@@ -115,6 +123,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.hasSavedState = hasSavedState
         self.isEphemeral = isEphemeral
         self.snapshotCount = snapshotCount
+        self.hasSnapshots = hasSnapshots
+        self.guestAgent = guestAgent
         self.bundlePath = bundlePath
         self.heldByAnotherCopy = heldByAnotherCopy
     }
@@ -254,7 +264,7 @@ public struct NetworkSummary: Codable, Sendable, Hashable {
     public let name: String
     /// The mode every virtual machine on it runs in.
     public let kind: NetworkKind
-    /// The virtual machines that join it, in the order the sidebar shows them.
+    /// The virtual machines that join it, in library order.
     public let members: [VMSummary]
 
     /// Describes one named network.

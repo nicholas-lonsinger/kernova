@@ -508,14 +508,14 @@ extension VMCommandCore {
             // directory) — select it rather than re-importing.
             switch library.entries.first(where: { $0.id == config.id }) {
             case .vm(let existing):
-                library.selectedID = existing.id
+                library.selectRevealing(existing.id)
                 #log(
                     Self.logger, .info,
                     "VM '\(config.name, privacy: .public)' already in library — selected existing instance"
                 )
                 return .existing(existing)
             case .arriving(let arrival):
-                library.selectedID = arrival.id
+                library.selectRevealing(arrival.id)
                 return .joined(arrival)
             case nil:
                 break

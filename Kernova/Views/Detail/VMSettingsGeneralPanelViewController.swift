@@ -1,3 +1,4 @@
+import KernovaKit
 import AppKit
 import KernovaLogging
 
@@ -272,7 +273,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     // MARK: Startup
 
     /// The info paragraphs of the "Start when Kernova opens" row. The launch
-    /// pass walks the library in sidebar order, so that is the order the marked
+    /// pass walks the library in manual order, so that is the order the marked
     /// VMs come up in.
     static let autoStartInfo: [InfoPopoverParagraph] = [
         .body(

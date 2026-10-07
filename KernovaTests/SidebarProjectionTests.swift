@@ -23,7 +23,8 @@ struct SidebarProjectionTests {
     private func layout(
         library: [LibraryEntry], grouped: [(SidebarGroupID, [LibraryEntry])] = []
     ) -> SidebarLayout {
-        var sections = SidebarLayout.project(entries: library).sections
+        var sections = SidebarLayout.project(entries: library, options: SidebarViewOptions(), context: .testing())
+            .sections
         if !grouped.isEmpty {
             sections.append(
                 SidebarLayout.Section(
@@ -47,7 +48,7 @@ struct SidebarProjectionTests {
     @Test("The library projection is one section listing every entry in manual order")
     func libraryProjection() {
         let entries = [vm("A"), vm("B"), vm("C")]
-        let layout = SidebarLayout.project(entries: entries)
+        let layout = SidebarLayout.project(entries: entries, options: SidebarViewOptions(), context: .testing())
 
         #expect(layout.sections.map(\.id) == [.library])
         #expect(layout.rowKeys == entries.map { SidebarRowKey.library($0.id) })

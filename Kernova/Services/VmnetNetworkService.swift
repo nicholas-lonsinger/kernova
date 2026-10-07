@@ -1,18 +1,10 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 import Virtualization
 import vmnet
 
-/// The vmnet mode an app-managed network runs in.
-enum VmnetNetworkKind: String, Codable, CaseIterable, Sendable {
-    /// Host Only: guests reach the host and the other guests on their network,
-    /// never the LAN or the internet.
-    case hostOnly
-    /// Shared Network: guests reach the internet through the host's connection
-    /// (NAT44/NAT66, DHCP, DNS proxy), and the host reaches them at the
-    /// addresses they hold on its subnet.
-    case shared
-
+extension VmnetNetworkKind {
     /// The network mode a VM on a network of this kind has.
     var mode: VMNetworkMode {
         switch self {

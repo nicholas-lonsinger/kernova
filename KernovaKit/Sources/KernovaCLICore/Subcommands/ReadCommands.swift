@@ -3,7 +3,7 @@ import Foundation
 import KernovaKit
 
 extension KernovaCommand {
-    /// `kernova list` — every virtual machine, in the order the sidebar shows.
+    /// `kernova list` — every virtual machine, in library order.
     struct List: VerbCommand {
         /// What `kernova list --help` says.
         static let configuration = CommandConfiguration(

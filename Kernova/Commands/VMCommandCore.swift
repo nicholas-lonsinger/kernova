@@ -616,6 +616,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: instance.hasSaveFile,
             isEphemeral: instance.hostState.ephemeralModeEnabled,
             snapshotCount: instance.snapshotManifest.snapshots.count,
+            hasSnapshots: instance.hasSnapshotsBesideBaseline,
+            guestAgent: instance.guestAgentBucket(bundledVersion: KernovaMacOSAgentInfo.bundledVersion),
             bundlePath: instance.bundleURL.path(percentEncoded: false),
             heldByAnotherCopy: instance.heldByAnotherCopy
         )
@@ -642,6 +644,8 @@ final class VMCommandCore: VMCommanding {
             hasSavedState: false,
             isEphemeral: false,
             snapshotCount: 0,
+            hasSnapshots: false,
+            guestAgent: nil,
             bundlePath: arrival.destinationURL.path(percentEncoded: false),
             heldByAnotherCopy: false
         )

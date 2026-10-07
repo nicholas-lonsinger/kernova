@@ -1,3 +1,4 @@
+import KernovaKit
 import Darwin
 import Foundation
 import KernovaTestSupport

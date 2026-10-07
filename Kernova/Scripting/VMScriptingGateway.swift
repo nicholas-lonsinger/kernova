@@ -61,7 +61,7 @@ final class VMScriptingGateway {
 
     // MARK: - Reads
 
-    /// Every VM in the library, in the order the sidebar shows them — or
+    /// Every VM in the library, in library order — or
     /// nothing, with the command asking deferred, until the library has landed.
     func virtualMachines() -> [VMScriptObject] {
         guard !deferUntilLanded() else { return [] }

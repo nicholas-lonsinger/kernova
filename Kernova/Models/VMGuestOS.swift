@@ -1,18 +1,7 @@
 import Foundation
 import KernovaKit
 
-/// The guest operating system type for a virtual machine.
-enum VMGuestOS: String, Codable, CaseIterable, Sendable {
-    case macOS
-    case linux
-
-    var displayName: String {
-        switch self {
-        case .macOS: "macOS"
-        case .linux: "Linux"
-        }
-    }
-
+extension VMGuestOS {
     var iconName: String {
         switch self {
         case .macOS: "apple.logo"

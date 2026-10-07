@@ -28,6 +28,11 @@ struct VMEntity: IndexedEntity {
     @Property(title: "State")
     var status: String
 
+    /// The VM's coarse state — a ``VMStateBucket`` wire name, the buckets the
+    /// sidebar filters and groups by.
+    @Property(title: "State Group")
+    var stateGroup: String
+
     @Property(title: "Guest Operating System")
     var guestOS: String
 
@@ -63,6 +68,11 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Guest Agent Status")
     var agentStatus: String
 
+    /// How the guest agent stands against the bundled one — a
+    /// ``VMGuestAgentBucket`` wire name — `nil` for a Linux guest.
+    @Property(title: "Guest Agent Version")
+    var guestAgentVersion: String?
+
     @Property(title: "Has Saved State")
     var hasSavedState: Bool
 
@@ -71,6 +81,10 @@ struct VMEntity: IndexedEntity {
 
     @Property(title: "Snapshot Count")
     var snapshotCount: Int
+
+    /// Whether the VM holds a snapshot other than its Ephemeral Mode baseline.
+    @Property(title: "Has Snapshots")
+    var hasSnapshots: Bool
 
     @Property(title: "Bundle Path")
     var bundlePath: String
@@ -84,6 +98,9 @@ struct VMEntity: IndexedEntity {
         self.heldByAnotherCopy = info.heldByAnotherCopy
         self.name = info.name
         self.status = info.status
+        self.stateGroup =
+            VMStateBucket(wireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)?
+            .rawValue ?? info.status
         self.guestOS = info.guestOS
         self.cpuCount = info.cpuCount
         self.memoryBytes = Int(clamping: info.memoryBytes)
@@ -94,9 +111,11 @@ struct VMEntity: IndexedEntity {
         self.macAddress = info.macAddress
         self.ipAddress = info.ipAddress.address
         self.agentStatus = info.agentStatus
+        self.guestAgentVersion = info.guestAgent?.rawValue
         self.hasSavedState = info.hasSavedState
         self.isEphemeral = info.isEphemeral
         self.snapshotCount = info.snapshotCount
+        self.hasSnapshots = info.hasSnapshots
         self.bundlePath = info.bundlePath
     }
 
@@ -218,6 +237,10 @@ struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, Ent
             EqualToComparator { value in { @Sendable in $0.status == value } }
             NotEqualToComparator { value in { @Sendable in $0.status != value } }
         }
+        Property(\VMEntity.$stateGroup) {
+            EqualToComparator { value in { @Sendable in $0.stateGroup == value } }
+            NotEqualToComparator { value in { @Sendable in $0.stateGroup != value } }
+        }
         Property(\VMEntity.$guestOS) {
             EqualToComparator { value in { @Sendable in $0.guestOS == value } }
             NotEqualToComparator { value in { @Sendable in $0.guestOS != value } }
@@ -225,6 +248,13 @@ struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, Ent
         Property(\VMEntity.$agentStatus) {
             EqualToComparator { value in { @Sendable in $0.agentStatus == value } }
             NotEqualToComparator { value in { @Sendable in $0.agentStatus != value } }
+        }
+        Property(\VMEntity.$guestAgentVersion) {
+            EqualToComparator { value in { @Sendable in $0.guestAgentVersion == value } }
+            NotEqualToComparator { value in { @Sendable in $0.guestAgentVersion != value } }
+        }
+        Property(\VMEntity.$hasSnapshots) {
+            EqualToComparator { value in { @Sendable in $0.hasSnapshots == value } }
         }
         Property(\VMEntity.$snapshotCount) {
             EqualToComparator { value in { @Sendable in $0.snapshotCount == value } }

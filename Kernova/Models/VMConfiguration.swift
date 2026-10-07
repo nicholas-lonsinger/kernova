@@ -45,67 +45,6 @@ enum VMSystemKeyForwarding: String, Codable, Sendable, Equatable, CaseIterable {
     case always
 }
 
-/// Which network of its mode a Shared or Host Only VM joins — membership,
-/// which is what expresses guest↔guest reach (docs/NETWORKING.md).
-///
-/// Persisted as one string, ``rawValue``: `common`, `isolated`, or a named
-/// network's identifier.
-enum VMNetworkMembership: Hashable, Sendable, Codable {
-    /// The mode's common network, which every VM of the mode on it shares.
-    case common
-    /// A network of the VM's own, which no other guest joins.
-    case isolated
-    /// The named network with this identifier, which every VM of its kind
-    /// naming it joins together (``VMNamedNetwork``).
-    case network(UUID)
-
-    static let commonValue = "common"
-    static let isolatedValue = "isolated"
-
-    /// The membership `rawValue` spells, `nil` for a string that spells none.
-    init?(rawValue: String) {
-        switch rawValue {
-        case Self.commonValue: self = .common
-        case Self.isolatedValue: self = .isolated
-        default:
-            guard let id = UUID(uuidString: rawValue) else { return nil }
-            self = .network(id)
-        }
-    }
-
-    /// The persisted spelling, which the `network.membership` key reads and
-    /// takes back.
-    var rawValue: String {
-        switch self {
-        case .common: Self.commonValue
-        case .isolated: Self.isolatedValue
-        case .network(let id): id.uuidString
-        }
-    }
-
-    /// The named network this membership names, `nil` for the mode's common
-    /// network and the VM's own.
-    var namedNetwork: UUID? {
-        guard case .network(let id) = self else { return nil }
-        return id
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let text = try container.decode(String.self)
-        guard let membership = Self(rawValue: text) else {
-            throw DecodingError.dataCorruptedError(
-                in: container, debugDescription: "\(text) names no network membership")
-        }
-        self = membership
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-}
-
 /// A network a VM's device can join.
 enum VMJoinedNetwork: Hashable, Sendable {
     /// The host's LAN through a bridged interface — any interface, since

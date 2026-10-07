@@ -1,13 +1,14 @@
 import Foundation
+import KernovaKit
 
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:)`` is the one function from the library to a layout;
-/// ``SidebarTree`` turns a layout into the outline view's items. Each list a
-/// layout holds — its sections, a section's groups, a list's entries — keeps
-/// the first of any repeated identifier: a repeat would be a second outline
-/// item under one key.
+/// ``project(entries:options:context:)`` is the one function from the library
+/// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
+/// Each list a layout holds — its sections, a section's groups, a list's
+/// entries — keeps the first of any repeated identifier: a repeat would be a
+/// second outline item under one key.
 @MainActor
 struct SidebarLayout {
     @MainActor
@@ -15,12 +16,22 @@ struct SidebarLayout {
         let id: SidebarSectionID
         let title: String
         let content: Content
+        /// What the section lists in place of rows when it has none; `nil` to
+        /// list nothing.
+        var emptyText: String? = nil
     }
 
     @MainActor
     enum Content {
         case rows(Rows)
         case groups(Groups)
+
+        var isEmpty: Bool {
+            switch self {
+            case .rows(let rows): rows.entries.isEmpty
+            case .groups(let groups): groups.groups.allSatisfy { $0.rows.entries.isEmpty }
+            }
+        }
     }
 
     @MainActor
@@ -50,6 +61,19 @@ struct SidebarLayout {
         }
     }
 
+    /// What the projection reads besides the entries and the options.
+    @MainActor
+    struct Context {
+        /// The guest-agent version this build bundles, `nil` when unknown.
+        let bundledAgentVersion: String?
+        /// What a VM's network reads as —
+        /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
+        /// in the app. Asked only while grouping by network.
+        let networkTitle: (VMConfiguration) -> String
+    }
+
+    static let noMatchesText = "No matching VMs"
+
     /// The sections in display order, each identifier at most once.
     let sections: [Section]
 
@@ -65,11 +89,94 @@ struct SidebarLayout {
     }
 
     /// The layout the sidebar shows for `entries`: the library section, listing
-    /// every entry in manual order.
-    static func project(entries: [LibraryEntry]) -> SidebarLayout {
-        SidebarLayout(sections: [
-            Section(id: .library, title: "Virtual Machines", content: .rows(Rows(entries)))
+    /// the entries `options` admits, in its order, under its groups.
+    static func project(
+        entries: [LibraryEntry], options: SidebarViewOptions, context: Context
+    ) -> SidebarLayout {
+        let shown = options.sort.ordered(
+            entries.filter {
+                options.filter.admits($0.filterSubject(bundledAgentVersion: context.bundledAgentVersion))
+            })
+        let content: Content =
+            switch options.grouping {
+            case .none: .rows(Rows(shown))
+            case let grouping: .groups(Groups(groups(of: shown, by: grouping, context: context)))
+            }
+        return SidebarLayout(sections: [
+            Section(
+                id: .library, title: "Virtual Machines", content: content,
+                emptyText: options.filter.isActive && !entries.isEmpty ? noMatchesText : nil)
         ])
+    }
+
+    /// One group per distinct value of `grouping` among `entries`, in that
+    /// value's order, each listing its entries in `entries`' order.
+    private static func groups(
+        of entries: [LibraryEntry], by grouping: SidebarGrouping, context: Context
+    ) -> [Group] {
+        var members: [GroupKey: [LibraryEntry]] = [:]
+        for entry in entries {
+            members[groupKey(of: entry, by: grouping, context: context), default: []].append(entry)
+        }
+        return members.keys.sorted().map { key in
+            Group(
+                id: SidebarGroupID(rawValue: "\(grouping.rawValue):\(key.title)"), title: key.title,
+                rows: Rows(members[key] ?? []))
+        }
+    }
+
+    /// A group's title and where it sorts. Groups are told apart by title
+    /// alone, so values that read alike — several networks the library does
+    /// not list — share one header.
+    private struct GroupKey: Hashable, Comparable {
+        let rank: Int
+        let title: String
+
+        static func < (lhs: GroupKey, rhs: GroupKey) -> Bool {
+            if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+
+        static func == (lhs: GroupKey, rhs: GroupKey) -> Bool { lhs.title == rhs.title }
+        func hash(into hasher: inout Hasher) { hasher.combine(title) }
+    }
+
+    private static func groupKey(
+        of entry: LibraryEntry, by grouping: SidebarGrouping, context: Context
+    ) -> GroupKey {
+        let subject = entry.filterSubject(bundledAgentVersion: context.bundledAgentVersion)
+        switch grouping {
+        case .none:
+            preconditionFailure("An ungrouped section has no groups")
+        case .guestOS:
+            return GroupKey(
+                rank: VMGuestOS.allCases.firstIndex(of: subject.guestOS) ?? 0,
+                title: subject.guestOS.displayName)
+        case .state:
+            return GroupKey(
+                rank: VMStateBucket.allCases.firstIndex(of: subject.state) ?? 0,
+                title: subject.state.displayName)
+        case .network:
+            return GroupKey(
+                rank: networkRank(subject.network), title: context.networkTitle(entry.configuration))
+        }
+    }
+
+    /// Where a network sorts among others: the order the Mode picker lists
+    /// its choices in.
+    static func networkRank(_ choice: NetworkModeChoice) -> Int {
+        switch choice {
+        case .vmnet(let kind, let membership):
+            let base = kind == .shared ? 0 : 3
+            switch membership {
+            case .common: return base
+            case .isolated: return base + 1
+            case .network: return base + 2
+            }
+        case .bridged(nil): return 6
+        case .bridged: return 7
+        case .none: return 8
+        }
     }
 
     /// Every row's key, in display order.
@@ -97,6 +204,18 @@ struct SidebarLayout {
         let sameEntry = keys.filter { $0.entryID == selection.entryID }
         return sameEntry.first { $0.section == selection.section }
             ?? sameEntry.first { $0.section == .library }
+    }
+
+    /// Where `selection` stands once this layout is shown: on the row it
+    /// resolves to; on nothing when its entry is still in the library
+    /// (`libraryHolds`) but no row lists it; on the first row when its entry
+    /// has left the library.
+    func reconciled(
+        _ selection: SidebarRowKey?, libraryHolds: (UUID) -> Bool
+    ) -> SidebarRowKey? {
+        guard let selection else { return nil }
+        if let row = resolve(selection) { return row }
+        return libraryHolds(selection.entryID) ? nil : rowKeys.first
     }
 
     /// The `toOffset` that `Array.move(fromOffsets:toOffset:)` takes to move

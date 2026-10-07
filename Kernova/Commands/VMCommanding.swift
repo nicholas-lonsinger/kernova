@@ -33,7 +33,7 @@ import KernovaKit
 protocol VMCommanding: AnyObject {
     // MARK: - Reads
 
-    /// Every VM in the library, in the order the sidebar shows them.
+    /// Every VM in the library, in library order.
     func list() -> [VMSummary]
 
     func info(_ selector: VMSelector) throws -> VMInfo

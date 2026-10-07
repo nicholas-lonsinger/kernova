@@ -1,7 +1,7 @@
 import Foundation
 
 /// An item of the sidebar's outline view: a ``SidebarSection``, a
-/// ``SidebarGroupHeader`` or a ``SidebarRow``.
+/// ``SidebarGroupHeader``, a ``SidebarPlaceholder`` or a ``SidebarRow``.
 ///
 /// `NSOutlineView` keys items on object identity, so ``SidebarTree`` keeps one
 /// node per key for as long as its layouts list that key.
@@ -35,6 +35,15 @@ final class SidebarGroupHeader: SidebarNode {
     fileprivate init(id: SidebarGroupID, title: String) {
         self.id = id
         self.title = title
+    }
+}
+
+/// The line a section lists in place of rows when it has none.
+final class SidebarPlaceholder: SidebarNode {
+    fileprivate(set) var text: String
+
+    fileprivate init(text: String) {
+        self.text = text
     }
 }
 
@@ -112,10 +121,19 @@ final class SidebarTree {
     private var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
     private var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
     private var rowsByKey: [SidebarRowKey: SidebarRow] = [:]
+    private var placeholdersBySection: [SidebarSectionID: SidebarPlaceholder] = [:]
 
     /// The row listed under `key`.
     func row(for key: SidebarRowKey) -> SidebarRow? {
         rowsByKey[key]
+    }
+
+    /// Every row `section` lists, under any header.
+    func rows(in section: SidebarSection) -> [SidebarRow] {
+        section.children.flatMap { child -> [SidebarRow] in
+            if let row = child as? SidebarRow { return [row] }
+            return child.children.compactMap { $0 as? SidebarRow }
+        }
     }
 
     /// The row `selection` lands on, by ``SidebarLayout/resolve(_:)``.
@@ -130,6 +148,7 @@ final class SidebarTree {
         var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
         var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
         var rowsByKey: [SidebarRowKey: SidebarRow] = [:]
+        var placeholdersBySection: [SidebarSectionID: SidebarPlaceholder] = [:]
 
         func retitle(_ node: SidebarNode, from old: String, to new: String, apply: () -> Void) {
             guard old != new else { return }
@@ -196,11 +215,22 @@ final class SidebarTree {
                 changes.created.append(section)
             }
             sectionsByID[spec.id] = section
-            let children: [SidebarNode] =
-                switch spec.content {
-                case .rows(let entries): rows(entries, section: spec.id, group: nil)
-                case .groups(let groups): groups.groups.map { header($0, in: spec.id) }
+            let children: [SidebarNode]
+            if spec.content.isEmpty, let text = spec.emptyText {
+                let existing = self.placeholdersBySection[spec.id]
+                let placeholder = existing ?? SidebarPlaceholder(text: text)
+                if let existing {
+                    retitle(existing, from: existing.text, to: text) { existing.text = text }
                 }
+                placeholdersBySection[spec.id] = placeholder
+                children = [placeholder]
+            } else {
+                children =
+                    switch spec.content {
+                    case .rows(let entries): rows(entries, section: spec.id, group: nil)
+                    case .groups(let groups): groups.groups.map { header($0, in: spec.id) }
+                    }
+            }
             setChildren(of: section, to: children, isNew: existing == nil)
             newSections.append(section)
         }
@@ -213,10 +243,11 @@ final class SidebarTree {
         let kept = Set(
             sectionsByID.values.map { ObjectIdentifier($0) }
                 + headersByKey.values.map { ObjectIdentifier($0) }
-                + rowsByKey.values.map { ObjectIdentifier($0) })
+                + rowsByKey.values.map { ObjectIdentifier($0) }
+                + placeholdersBySection.values.map { ObjectIdentifier($0) })
         let previous: [SidebarNode] =
             Array(self.sectionsByID.values) + Array(self.headersByKey.values)
-            + Array(self.rowsByKey.values)
+            + Array(self.rowsByKey.values) + Array(self.placeholdersBySection.values)
         for node in previous where !kept.contains(ObjectIdentifier(node)) {
             changes.detached.insert(ObjectIdentifier(node))
         }
@@ -226,6 +257,7 @@ final class SidebarTree {
         self.sectionsByID = sectionsByID
         self.headersByKey = headersByKey
         self.rowsByKey = rowsByKey
+        self.placeholdersBySection = placeholdersBySection
         return changes
     }
 

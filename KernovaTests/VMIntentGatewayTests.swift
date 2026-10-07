@@ -178,7 +178,7 @@ struct VMIntentGatewayTests {
 
     // MARK: - Filtering and Sorting
 
-    /// The library the property query narrows, in the order the sidebar shows.
+    /// The library the property query narrows, in library order.
     private var mixedLibrary: [VMEntity] {
         [
             VMEntity(VMIntentFixtures.info(name: "Ubuntu", status: "running", snapshotCount: 2)),

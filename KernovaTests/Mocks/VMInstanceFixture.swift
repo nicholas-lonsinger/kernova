@@ -1,3 +1,4 @@
+import KernovaKit
 import Foundation
 import KernovaTestSupport
 @testable import Kernova
