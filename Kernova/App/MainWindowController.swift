@@ -314,13 +314,13 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
-    // The leading flexible space right-aligns Search, New VM and the toggle
+    // The leading flexible space right-aligns New VM, Search and the toggle
     // against the sidebar's trailing edge.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
-            Self.toolbarSearch,
             Self.toolbarNewVM,
+            Self.toolbarSearch,
             .toggleSidebar,
             .sidebarTrackingSeparator,
         ] + toolbarManager.defaultItemIdentifiers
