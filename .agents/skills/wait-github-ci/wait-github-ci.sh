@@ -13,13 +13,14 @@
 #      registers pull_request-triggered checks at all — that is detected via
 #      the PR's mergeable state and reported (exit 7) instead of being
 #      indistinguishable from slow registration until the deadline.
-#   3. Run one unpiped `gh pr checks --watch --fail-fast`.
+#   3. Run one unpiped `gh pr checks --watch --fail-fast` (`--required` when
+#      a required list exists).
 #   4. Verify the final status rollup directly — the watch's exit code is
 #      never trusted (it is 0 for "no checks yet" and for cancelled runs).
 #
 # The verdict gates on the base branch's REQUIRED checks (discovered from
-# rulesets and legacy branch protection); if none are configured, it gates
-# on ALL reported checks.
+# rulesets and legacy branch protection) and neither waits on nor fails for
+# any other check; if none are configured, it gates on ALL reported checks.
 #
 # Usage:
 #   .agents/skills/wait-github-ci/wait-github-ci.sh [<pr-number>] [--sha <sha>] [--timeout <seconds>]
@@ -207,17 +208,15 @@ $REQUIRED
 EOF
 }
 
-# Failures that gate the verdict: required-only when a required list exists,
-# otherwise every failure.
-gating_failures() {
-  if [ -z "$REQUIRED" ]; then printf '%s\n' "$FAILED_LIST" | grep . || true; return 0; fi
+# Filter stdin's "<name>" or "<name> (<state>)" lines to those that gate the
+# verdict: required-only when a required list exists, otherwise every line.
+gating() {
+  if [ -z "$REQUIRED" ]; then grep . || true; return 0; fi
   while IFS= read -r _line; do
     [ -z "$_line" ] && continue
     _name=${_line% (*}
     printf '%s\n' "$REQUIRED" | grep -Fxq -- "$_name" && printf '%s\n' "$_line"
-  done <<EOF
-$FAILED_LIST
-EOF
+  done
   return 0
 }
 
@@ -261,7 +260,11 @@ conflict_check() {
 # One unpiped watch, bounded by the overall deadline. Its exit code is
 # ignored: the caller re-verifies the rollup afterwards.
 bounded_watch() {
-  gh pr checks "$PR" --watch --fail-fast >/dev/null 2>&1 &
+  if [ -n "$REQUIRED" ]; then
+    gh pr checks "$PR" --watch --fail-fast --required >/dev/null 2>&1 &
+  else
+    gh pr checks "$PR" --watch --fail-fast >/dev/null 2>&1 &
+  fi
   _wpid=$!
   while kill -0 "$_wpid" 2>/dev/null; do
     if [ "$SECONDS" -ge "$DEADLINE" ]; then
@@ -419,22 +422,26 @@ while :; do
   CONFLICT_SINCE=""
 
   # A required check already failed: no point waiting for the rest.
-  GATING=$(gating_failures)
+  GATING=$(printf '%s\n' "$FAILED_LIST" | gating)
   if [ -n "$GATING" ]; then
     report_table
     finish 2 failed "not green — failing: $(oneline "$GATING")"
   fi
 
-  if [ -n "$PENDING_LIST" ]; then
-    progress "$(printf '%s\n' "$PENDING_LIST" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
+  GATING_PENDING=$(printf '%s\n' "$PENDING_LIST" | gating)
+  if [ -n "$GATING_PENDING" ]; then
+    progress "$(printf '%s\n' "$GATING_PENDING" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
     bounded_watch
-    deadline_check "still pending: $(oneline "$PENDING_LIST")"
+    deadline_check "still pending: $(oneline "$GATING_PENDING")"
     nap 5
     continue
   fi
 
-  # Nothing pending, everything registered: final verdict.
+  # Nothing gating is pending and everything required registered: final verdict.
   report_table
+  if [ -n "$PENDING_LIST" ]; then
+    say "note: non-required check(s) still running: $(oneline "$PENDING_LIST")"
+  fi
   if [ -n "$FAILED_LIST" ]; then
     say "note: non-required check(s) not green: $(oneline "$FAILED_LIST")"
   fi
