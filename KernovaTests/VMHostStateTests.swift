@@ -14,7 +14,7 @@ struct VMHostStateTests {
         var hostState = VMHostState(
             startsAutomaticallyOnLaunch: true, displayPreference: .popOut,
             lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true,
-            tags: [UUID(), UUID()])
+            tags: [UUID(), UUID()], lastRunAt: Date(timeIntervalSince1970: 1_700_000_000))
         hostState.applyEphemeralMode(
             enabled: true, baseline: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"))
         return hostState
@@ -31,6 +31,7 @@ struct VMHostStateTests {
         #expect(hostState.lastFullscreenDisplayID == nil)
         #expect(!hostState.agentInstallNudgeDismissed)
         #expect(hostState.tags.isEmpty)
+        #expect(hostState.lastRunAt == nil)
     }
 
     @Test("An encoded host state decodes back as itself")
@@ -51,20 +52,29 @@ struct VMHostStateTests {
                 == VMHostState(displayPreference: .fullscreen))
     }
 
-    @Test("A copy arrives with its tags, never set to start at launch")
-    func copyArrivesWithItsTags() {
-        let tags: Set<UUID> = [UUID(), UUID()]
-        var copy = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut, tags: tags)
-
-        copy.arriveAsCopy()
-
-        #expect(copy == VMHostState(displayPreference: .popOut, tags: tags))
-    }
-
     @Test("A New Machine clone starts from a new VM's host state, carrying the source's tags")
     func newMachineCarriesTags() {
         let source = everyFieldSet()
 
         #expect(VMHostState.newMachine(cloning: source) == VMHostState(tags: source.tags))
+    }
+
+    @Test("A copy arrives with no run recorded and not starting at launch, keeping everything else")
+    func copyArrivesWithNoRunRecorded() {
+        var copied = everyFieldSet()
+        var expected = copied
+        expected.startsAutomaticallyOnLaunch = false
+        expected.lastRunAt = nil
+
+        copied.arriveAsCopy()
+
+        #expect(copied == expected)
+    }
+
+    @Test("A host state with no last run decodes as nil, which means no run is recorded")
+    func absentLastRunIsNoRunRecorded() throws {
+        let data = Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8)
+
+        #expect(try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data).lastRunAt == nil)
     }
 }

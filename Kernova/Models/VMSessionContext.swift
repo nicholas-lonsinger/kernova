@@ -25,6 +25,11 @@ final class VMSessionContext {
     /// `VZVirtualMachine` and its device objects.
     var session: VMSession?
 
+    /// When this session first settled running, `nil` until it has: a fact
+    /// about this session, not the guest's uptime — a restore from a saved
+    /// state starts a new session on a guest that ran before it.
+    var runningSince: Date?
+
     /// Security-scoped access grants this session holds, opened before the
     /// configuration build and drained in ``tearDown()``.
     @ObservationIgnored let fileAccess = RuntimeFileAccess()

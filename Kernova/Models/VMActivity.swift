@@ -1101,12 +1101,13 @@ final class VMActivity {
     /// Releases the session context, if one is open, every accessory the
     /// session held, and every follow-up scoped to it.
     private func releaseSession() {
-        sessionContext?.tearDown()
+        let ended = sessionContext
+        ended?.tearDown()
         sessionContext = nil
         dropSessionFollowUps()
         guard let owner else { return }
         accessoryHolders?.releaseAll(of: owner, AccessoryHoldersKey())
-        owner.sessionDidEnd()
+        owner.sessionDidEnd(afterRunning: ended?.runningSince != nil)
     }
 
     // MARK: - USB Accessories
