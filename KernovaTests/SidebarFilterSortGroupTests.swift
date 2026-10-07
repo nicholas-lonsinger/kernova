@@ -375,7 +375,7 @@ struct SidebarFilterSortGroupTests {
         SidebarViewMenu(
             networkTitle: { $0.rawValue }, tags: { [] },
             perform: { command in
-                if case .setOptions(let options) = command { picked(options) }
+                if case .editOptions(let edit) = command { picked(options.applying(edit)) }
             }
         ).menu(options: options, values: values)
     }
@@ -393,11 +393,12 @@ struct SidebarFilterSortGroupTests {
             networkTitle: title)
     }
 
+    /// The options picking `item` leaves default options with.
     private func picked(_ item: NSMenuItem?) -> SidebarViewOptions? {
-        guard case .setOptions(let options)? = (item?.representedObject as? SidebarViewMenu.Pick)?.command else {
+        guard case .editOptions(let edit)? = (item?.representedObject as? SidebarViewMenu.Pick)?.command else {
             return nil
         }
-        return options
+        return SidebarViewOptions().applying(edit)
     }
 
     @Test(

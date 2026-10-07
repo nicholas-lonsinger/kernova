@@ -11,6 +11,26 @@ struct SidebarViewOptions: Codable, Hashable, Sendable {
     var grouping: SidebarGrouping = .none
     /// Whether each row carries a second line stating its sort key's value.
     var showsDetails = false
+
+    /// One option set to a value, every other option left as it stands.
+    enum Edit: Equatable, Sendable {
+        case filter(VMLibraryFilter)
+        case sort(VMLibrarySort)
+        case grouping(SidebarGrouping)
+        case showsDetails(Bool)
+    }
+
+    /// These options with `edit` made.
+    func applying(_ edit: Edit) -> SidebarViewOptions {
+        var edited = self
+        switch edit {
+        case .filter(let filter): edited.filter = filter
+        case .sort(let sort): edited.sort = sort
+        case .grouping(let grouping): edited.grouping = grouping
+        case .showsDetails(let showsDetails): edited.showsDetails = showsDetails
+        }
+        return edited
+    }
 }
 
 extension LibraryEntry {

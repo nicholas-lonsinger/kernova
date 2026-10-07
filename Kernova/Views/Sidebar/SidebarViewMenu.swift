@@ -3,14 +3,15 @@ import KernovaKit
 
 /// The menus a sidebar section's header opens — from its button or a
 /// right-click: the library section's filter, group and sort menu, a smart
-/// group's own filter menu, and a folder's menu — and the folder and tag
-/// items of a VM row's menu.
+/// group's own filter menu, and a folder's menu — the folder and tag items of
+/// a VM row's menu, and the View menu's sidebar items, built from the same
+/// rows as the header menus.
 ///
 /// Each item carries the ``Command`` picking it runs, so a menu is a pure
 /// function of what it is built over, and a pick only hands its command to
 /// ``perform``.
 @MainActor
-final class SidebarViewMenu: NSObject {
+final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     /// One library entry as the menu counts it.
     struct Value {
         let subject: VMLibraryFilter.Subject
@@ -21,8 +22,9 @@ final class SidebarViewMenu: NSObject {
 
     /// What picking an item does.
     enum Command: Equatable {
-        /// Sets the library section's options.
-        case setOptions(SidebarViewOptions)
+        /// Sets one of the library section's options, leaving the others as
+        /// they stand when the pick lands.
+        case editOptions(SidebarViewOptions.Edit)
         /// Asks for a name to save the library section's filter under as a
         /// smart group.
         case saveAsSmartGroup
@@ -49,6 +51,8 @@ final class SidebarViewMenu: NSObject {
         /// Opens the Settings pane that creates, renames, recolors and
         /// deletes the library's tags.
         case editTags
+        /// Expands every sidebar section, or collapses every one.
+        case setSectionsExpanded(Bool)
     }
 
     /// An item's command, as its represented object.
@@ -66,6 +70,30 @@ final class SidebarViewMenu: NSObject {
     /// How a filter names a tag it holds that the library no longer defines.
     nonisolated static let heldUndefinedTagTitle = "Tag No Longer in This Library"
 
+    /// The orders Sort By lists above its separator; Manual is below it.
+    nonisolated static let sortChoices = VMLibrarySort.allCases.filter { $0 != .manual }
+    /// The modifiers every Sort By key equivalent is typed with, as Finder's
+    /// View ▸ Sort By.
+    nonisolated static let sortModifiers: NSEvent.ModifierFlags = [.control, .option, .command]
+
+    /// `sort`'s key equivalent, typed with ``sortModifiers``: 0 for Manual,
+    /// as Finder's None, and each other order its place in Sort By from 1 —
+    /// none past the ninth.
+    nonisolated static func sortKeyEquivalent(_ sort: VMLibrarySort) -> String {
+        guard sort != .manual else { return "0" }
+        guard let index = sortChoices.firstIndex(of: sort), index < 9 else { return "" }
+        return String(index + 1)
+    }
+
+    /// What the View menu's route to the selected row's section is called
+    /// for a section of `kind`.
+    nonisolated static func groupKindTitle(_ kind: VMGroupKind) -> String {
+        switch kind {
+        case .smartGroup: "Smart Group"
+        case .folder: "Folder"
+        }
+    }
+
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
     private let networkTitle: (VMLibraryFilter.Network) -> String
@@ -82,9 +110,37 @@ final class SidebarViewMenu: NSObject {
         self.perform = perform
     }
 
+    /// A menu over `viewModel`'s library and networks whose picks run
+    /// `perform`.
+    convenience init(viewModel: VMLibraryViewModel, perform: @escaping (Command) -> Void) {
+        self.init(
+            networkTitle: { [weak viewModel] network in
+                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.networks ?? [])
+            },
+            tags: { [weak viewModel] in viewModel?.library.tags ?? [] },
+            perform: perform)
+    }
+
+    /// `viewModel`'s library as the menus count it.
+    static func values(of viewModel: VMLibraryViewModel) -> [Value] {
+        let context = viewModel.sidebarContext
+        return viewModel.entries.map { entry in
+            let subject = context.subject(of: entry)
+            return Value(
+                subject: subject,
+                networkTitle: SidebarLayout.networkTitle(subject.network, of: entry.configuration, context: context))
+        }
+    }
+
     @objc private func pick(_ sender: NSMenuItem) {
         guard let pick = sender.representedObject as? Pick else { return }
         perform(pick.command)
+    }
+
+    /// An item's enablement is decided where it is built; a menu that
+    /// autoenables its items — the View menu — keeps it.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.isEnabled
     }
 
     // MARK: - Menus
@@ -94,54 +150,90 @@ final class SidebarViewMenu: NSObject {
     func menu(options: SidebarViewOptions, values: [Value]) -> NSMenu {
         let menu = NSMenu(title: Self.accessibilityLabel)
         menu.autoenablesItems = false
-        let filter = options.filter
-        addFilterRows(
-            to: menu, filter: filter, values: values,
-            picking: { picked in
-                var changed = options
-                changed.filter = picked
-                return .setOptions(changed)
-            })
-
+        for row in filterRows(filter: options.filter, values: values, picking: { .editOptions(.filter($0)) }) {
+            menu.addItem(row)
+        }
         menu.addItem(.separator())
-        menu.addItem(
-            choiceMenu(
-                "Group By", current: options.grouping,
-                // Tag only while the library has tags, as the Tags filter row.
-                cases: [.guestOS, .state, .network] + (tags().isEmpty ? [] : [.tag]), trailing: .none,
-                title: \.title
-            ) { grouping in
-                var picked = options
-                picked.grouping = grouping
-                return .setOptions(picked)
-            })
-        menu.addItem(
-            choiceMenu(
-                "Sort By", current: options.sort, cases: [.name, .dateCreated, .lastRun], trailing: .manual,
-                title: \.title
-            ) { sort in
-                var picked = options
-                picked.sort = sort
-                return .setOptions(picked)
-            })
-
+        menu.addItem(groupByItem(options))
+        menu.addItem(sortByItem(options))
         menu.addItem(.separator())
-        var toggledDetails = options
-        toggledDetails.showsDetails.toggle()
-        menu.addItem(
-            pickItem("Show Details", state: options.showsDetails ? .on : .off, command: .setOptions(toggledDetails)))
-
+        menu.addItem(showDetailsItem(options))
         menu.addItem(.separator())
         let save = pickItem("Save as Smart Group\u{2026}", state: .off, command: .saveAsSmartGroup)
-        save.isEnabled = filter.isActive
+        save.isEnabled = options.filter.isActive
         menu.addItem(save)
         menu.addItem(pickItem("New Folder\u{2026}", state: .off, command: .newFolder(adding: nil)))
-        var cleared = options
-        cleared.filter = VMLibraryFilter()
-        let clear = pickItem("Clear Filters", state: .off, command: .setOptions(cleared))
-        clear.isEnabled = filter.isActive
-        menu.addItem(clear)
+        menu.addItem(clearFiltersItem(options))
         return menu
+    }
+
+    /// The View menu's sidebar items for `options` over a library of
+    /// `values`, built from the library section menu's own rows: Sort By,
+    /// Group By, a Filter submenu of the filter rows, Clear Filters and Show
+    /// Details; Expand All and Collapse All Sections, each enabled while a
+    /// section it would change is listed; then a Smart Group and a Folder
+    /// item, each opening `selectedGroup`'s menu while the selected row's
+    /// section is of its kind and disabled otherwise.
+    ///
+    /// A Sort By item sets only the sort, whenever it was built, so its
+    /// shortcut acts the same before the menu is next opened.
+    func menuBarItems(
+        options: SidebarViewOptions, values: [Value],
+        hasCollapsedSection: Bool, hasExpandedSection: Bool,
+        selectedGroup: (kind: VMGroupKind, menu: NSMenu)?
+    ) -> [NSMenuItem] {
+        let filter = NSMenuItem(title: "Filter", action: nil, keyEquivalent: "")
+        let filterMenu = NSMenu(title: "Filter")
+        filterMenu.autoenablesItems = false
+        for row in filterRows(filter: options.filter, values: values, picking: { .editOptions(.filter($0)) }) {
+            filterMenu.addItem(row)
+        }
+        filter.submenu = filterMenu
+
+        let expand = pickItem("Expand All Sections", state: .off, command: .setSectionsExpanded(true))
+        expand.isEnabled = hasCollapsedSection
+        let collapse = pickItem("Collapse All Sections", state: .off, command: .setSectionsExpanded(false))
+        collapse.isEnabled = hasExpandedSection
+
+        let routes = VMGroupKind.allCases.map { kind in
+            let item = NSMenuItem(title: Self.groupKindTitle(kind), action: nil, keyEquivalent: "")
+            // An item with neither an action nor a submenu is disabled.
+            if let selectedGroup, selectedGroup.kind == kind { item.submenu = selectedGroup.menu }
+            return item
+        }
+
+        return [
+            sortByItem(options), groupByItem(options), filter, clearFiltersItem(options), .separator(),
+            showDetailsItem(options), .separator(), expand, collapse, .separator(),
+        ] + routes
+    }
+
+    private func groupByItem(_ options: SidebarViewOptions) -> NSMenuItem {
+        choiceMenu(
+            "Group By", current: options.grouping,
+            // Tag only while the library has tags, as the Tags filter row.
+            cases: [.guestOS, .state, .network] + (tags().isEmpty ? [] : [.tag]), trailing: .none,
+            title: \.title
+        ) { .editOptions(.grouping($0)) }
+    }
+
+    private func sortByItem(_ options: SidebarViewOptions) -> NSMenuItem {
+        choiceMenu(
+            "Sort By", current: options.sort, cases: Self.sortChoices, trailing: .manual, title: \.title,
+            keyEquivalent: { (Self.sortKeyEquivalent($0), Self.sortModifiers) }
+        ) { .editOptions(.sort($0)) }
+    }
+
+    private func showDetailsItem(_ options: SidebarViewOptions) -> NSMenuItem {
+        pickItem(
+            "Show Details", state: options.showsDetails ? .on : .off,
+            command: .editOptions(.showsDetails(!options.showsDetails)))
+    }
+
+    private func clearFiltersItem(_ options: SidebarViewOptions) -> NSMenuItem {
+        let clear = pickItem("Clear Filters", state: .off, command: .editOptions(.filter(VMLibraryFilter())))
+        clear.isEnabled = options.filter.isActive
+        return clear
     }
 
     /// `group`'s menu over a library of `values`: its filter's rows, the
@@ -151,9 +243,9 @@ final class SidebarViewMenu: NSObject {
         let menu = NSMenu(title: Self.smartGroupAccessibilityLabel)
         menu.autoenablesItems = false
         menu.addItem(.sectionHeader(title: "Show VMs in \u{201C}\(group.name)\u{201D} where"))
-        addFilterRows(
-            to: menu, filter: group.filter, values: values,
-            picking: { .setSmartGroupFilter(group.id, $0) })
+        for row in filterRows(filter: group.filter, values: values, picking: { .setSmartGroupFilter(group.id, $0) }) {
+            menu.addItem(row)
+        }
         menu.addItem(.separator())
         addGroupActions(
             to: menu, group: VMGroupReference(.smartGroup, named: group.id.uuidString), counts: actionCounts)
@@ -285,11 +377,11 @@ final class SidebarViewMenu: NSObject {
         return picked.isEmpty ? "Smart Group" : picked.joined(separator: " \u{00B7} ")
     }
 
-    private func addFilterRows(
-        to menu: NSMenu, filter: VMLibraryFilter, values: [Value],
-        picking: (VMLibraryFilter) -> Command
-    ) {
-        for attribute in attributes(of: filter, values: values) {
+    /// One row per filter attribute, each opening a submenu of its choices.
+    private func filterRows(
+        filter: VMLibraryFilter, values: [Value], picking: (VMLibraryFilter) -> Command
+    ) -> [NSMenuItem] {
+        attributes(of: filter, values: values).map { attribute in
             let item = NSMenuItem(title: attribute.title, action: nil, keyEquivalent: "")
             item.badge = NSMenuItemBadge(string: attribute.summary)
             let submenu = NSMenu(title: attribute.title)
@@ -309,7 +401,7 @@ final class SidebarViewMenu: NSObject {
                 submenu.addItem(choiceItem)
             }
             item.submenu = submenu
-            menu.addItem(item)
+            return item
         }
     }
 
@@ -337,22 +429,28 @@ final class SidebarViewMenu: NSObject {
     }
 
     /// A row whose submenu picks one of `cases`, then `trailing` below a
-    /// separator.
+    /// separator, each with the shortcut `keyEquivalent` gives it.
     private func choiceMenu<Choice: Equatable>(
         _ title: String, current: Choice, cases: [Choice], trailing: Choice,
-        title choiceTitle: (Choice) -> String, picking: (Choice) -> Command
+        title choiceTitle: (Choice) -> String,
+        keyEquivalent: (Choice) -> (key: String, modifiers: NSEvent.ModifierFlags)? = { _ in nil },
+        picking: (Choice) -> Command
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.badge = NSMenuItemBadge(string: choiceTitle(current))
         let submenu = NSMenu(title: title)
         submenu.autoenablesItems = false
-        for choice in cases {
-            submenu.addItem(
-                pickItem(choiceTitle(choice), state: choice == current ? .on : .off, command: picking(choice)))
+        func choiceItem(_ choice: Choice) -> NSMenuItem {
+            let item = pickItem(choiceTitle(choice), state: choice == current ? .on : .off, command: picking(choice))
+            if let shortcut = keyEquivalent(choice), !shortcut.key.isEmpty {
+                item.keyEquivalent = shortcut.key
+                item.keyEquivalentModifierMask = shortcut.modifiers
+            }
+            return item
         }
+        for choice in cases { submenu.addItem(choiceItem(choice)) }
         submenu.addItem(.separator())
-        submenu.addItem(
-            pickItem(choiceTitle(trailing), state: trailing == current ? .on : .off, command: picking(trailing)))
+        submenu.addItem(choiceItem(trailing))
         item.submenu = submenu
         return item
     }

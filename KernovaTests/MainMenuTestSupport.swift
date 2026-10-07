@@ -8,16 +8,19 @@ import Testing
 /// every suite that needs a mocked ``VMLibraryViewModel`` to build an app
 /// component over.
 
-/// Stands in for `AppDelegate` as the menu's host, answering with one fixed VM.
+/// Stands in for `AppDelegate` as the menu's host, answering with one fixed VM
+/// and sidebar.
 ///
 /// The sender is ignored: the `representedObject` rule that makes a sidebar
 /// context-menu item name its own row lives with the actions on `AppDelegate`.
 @MainActor
 final class StubMenuHost: MainMenuHosting {
     var instance: VMInstance?
+    var librarySidebar: SidebarViewController?
 
-    init(instance: VMInstance? = nil) {
+    init(instance: VMInstance? = nil, librarySidebar: SidebarViewController? = nil) {
         self.instance = instance
+        self.librarySidebar = librarySidebar
     }
 
     func menuCommandTarget(of sender: Any?) -> VMInstance? { instance }
