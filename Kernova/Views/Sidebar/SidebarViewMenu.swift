@@ -63,8 +63,8 @@ final class SidebarViewMenu: NSObject {
     nonisolated static let accessibilityLabel = "Filter and Sort"
     nonisolated static let smartGroupAccessibilityLabel = "Smart Group Options"
     nonisolated static let folderAccessibilityLabel = "Folder Options"
-    /// What a filter's condition on a tag the library no longer defines reads.
-    nonisolated static let deletedTagTitle = "Deleted Tag"
+    /// How a filter names a tag it holds that the library no longer defines.
+    nonisolated static let heldUndefinedTagTitle = "Tag No Longer in This Library"
 
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
@@ -429,7 +429,7 @@ final class SidebarViewMenu: NSObject {
             }
                 + deleted.map { id in
                     Attribute.Choice(
-                        title: Self.deletedTagTitle, count: 0, isOn: true,
+                        title: Self.heldUndefinedTagTitle, count: 0, isOn: true,
                         picked: with { $0.tags.remove(id) })
                 })
         let guestAgent = Attribute(

@@ -364,7 +364,7 @@ struct SidebarTagTests {
         #expect(groupBy.submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "", "None"])
     }
 
-    @Test("A condition on a deleted tag stays listed, checked, as Deleted Tag, in the library's and a group's menu")
+    @Test("A condition on a deleted tag stays listed and checked in the library's and a group's menu")
     func deletedTagConditionShows() throws {
         let viewModel = makeViewModel()
         let library = viewModel.library
@@ -382,14 +382,15 @@ struct SidebarTagTests {
         for section in [SidebarSectionID.library, .smartGroup(group.id)] {
             let menu = try #require(controller.viewMenu(for: section))
             let row = try #require(menu.items.first { $0.title == "Tags" }, "\(section)")
-            #expect(row.badge?.stringValue == SidebarViewMenu.deletedTagTitle, "\(section)")
+            #expect(row.badge?.stringValue == SidebarViewMenu.heldUndefinedTagTitle, "\(section)")
             let submenu = try #require(row.submenu)
-            #expect(submenu.items.map(\.title) == ["All Tags", "", SidebarViewMenu.deletedTagTitle], "\(section)")
+            #expect(
+                submenu.items.map(\.title) == ["All Tags", "", SidebarViewMenu.heldUndefinedTagTitle], "\(section)")
             #expect(submenu.items.last?.state == .on, "\(section)")
         }
         #expect(
             controller.viewMenu.activeFilterDescription(filter: VMLibraryFilter(tags: [work.id]), values: [])
-                == "Tags: \(SidebarViewMenu.deletedTagTitle)")
+                == "Tags: \(SidebarViewMenu.heldUndefinedTagTitle)")
         // Picking it clears the condition.
         let libraryRow = try #require(controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" })
         libraryRow.submenu?.performActionForItem(at: 2)
