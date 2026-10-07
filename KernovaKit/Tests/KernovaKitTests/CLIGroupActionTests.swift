@@ -133,6 +133,53 @@ struct CLIGroupActionTests {
         #expect(json.contains(#""groupName" : "Lab""#))
     }
 
+    @Test("Each outcome encodes in one stable shape: a reason carrying nothing is its bare name")
+    func outcomeJSONShape() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let no = CommandErrorDTO.invalidArgument(message: "No.")
+        let expected: [(VMGroupActionOutcome, String)] = [
+            (.done(verb: .start), #"{"done":{"verb":"start"}}"#),
+            (.passedOver(reason: .state), #"{"passedOver":{"reason":"state"}}"#),
+            (.passedOver(reason: .guestSetup), #"{"passedOver":{"reason":"guestSetup"}}"#),
+            (.passedOver(reason: .cancelled), #"{"passedOver":{"reason":"cancelled"}}"#),
+            (
+                .passedOver(reason: .refused(error: no)),
+                #"{"passedOver":{"reason":{"refused":{"error":{"invalidArgument":{"message":"No."}}}}}}"#
+            ),
+            (
+                .needsAnswer(verb: .resume, question: no),
+                #"{"needsAnswer":{"question":{"invalidArgument":{"message":"No."}},"verb":"resume"}}"#
+            ),
+            (.failed(error: no), #"{"failed":{"error":{"invalidArgument":{"message":"No."}}}}"#),
+        ]
+        for (outcome, json) in expected {
+            #expect(String(decoding: try encoder.encode(outcome), as: UTF8.self) == json)
+            #expect(try JSONDecoder().decode(VMGroupActionOutcome.self, from: Data(json.utf8)) == outcome)
+        }
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMGroupActionOutcome.self, from: Data(#"{"passedOver":{"reason":"busy"}}"#.utf8))
+        }
+
+        let id = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let report = VMGroupActionReport(
+            action: .stop, groupKind: .smartGroup, groupID: id, groupName: "Running",
+            results: [
+                VMGroupActionResult(
+                    vm: VMSummary(
+                        id: id, name: "Web", status: "stopped", ipAddress: .observed("192.168.64.4"),
+                        heldByAnotherCopy: false),
+                    outcome: .passedOver(reason: .state))
+            ])
+        let reportJSON = String(decoding: try encoder.encode(report), as: UTF8.self)
+        #expect(
+            reportJSON
+                == #"{"action":"stop","groupID":"11111111-2222-3333-4444-555555555555","groupKind":"smartGroup","#
+                + #""groupName":"Running","results":[{"outcome":{"passedOver":{"reason":"state"}},"#
+                + #""vm":{"heldByAnotherCopy":false,"id":"11111111-2222-3333-4444-555555555555","#
+                + #""ipAddress":{"address":"192.168.64.4","state":"observed"},"name":"Web","status":"stopped"}}]}"#)
+    }
+
     @Test("Stop and suspend word what they did in their own terms")
     func stopAndSuspendLines() {
         let vm = summary("Web")

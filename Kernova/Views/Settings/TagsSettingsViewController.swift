@@ -203,6 +203,11 @@ final class TagsSettingsViewController: NSViewController {
             popUp.addItem(withTitle: color.title)
             popUp.lastItem?.representedObject = color
             popUp.lastItem?.image = color.dotImage()
+            // The dot is the color the item picks, which macOS 27 hides
+            // unless the item opts in (`NSMenuItem.h`).
+            if #available(macOS 27, *) {
+                popUp.lastItem?.preferredImageVisibility = .visible
+            }
         }
         popUp.selectItem(at: VMTagColor.allCases.firstIndex(of: selected) ?? 0)
         popUp.setAccessibilityLabel("Color")
