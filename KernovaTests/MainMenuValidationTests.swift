@@ -113,7 +113,7 @@ struct MainMenuValidationTests {
 
         #expect(fixture.viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
         #expect(!fixture.controller.validate(item))
-        #expect(item.title == GuestAgentDiskMenuItem.unavailableTitle)
+        #expect(item.title == GuestAgentDiskControl.unavailableTitle)
     }
 
     @Test("A bundled guest-agent disk hands title and enablement to the item model")
@@ -121,9 +121,7 @@ struct MainMenuValidationTests {
         let instance = makeMenuInstance(phase: .running(sessionID: UUID()))
         let fixture = makeFixture(instance: instance)
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
-        let model = GuestAgentDiskMenuItem.model(
-            status: instance.agentStatus,
-            isInstallerMounted: instance.hasGuestAgentInstallerMounted)
+        let model = GuestAgentDiskControl.model(for: instance)
 
         #expect(fixture.controller.validate(item) == model.isEnabled)
         #expect(item.title == model.title)

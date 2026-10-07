@@ -1335,26 +1335,26 @@ final class VMLibraryViewModel {
 
     // MARK: - Guest Agent Installer
 
-    /// Mounts the bundled `KernovaMacOSAgent.dmg` so the user can run
-    /// `install.command` inside the guest, then shows the next-step alert.
+    /// Performs the action `GuestAgentDiskControl.model(for:)` resolves for
+    /// `instance` now — the one executor every surface showing that control
+    /// calls.
     ///
-    /// The alert is the whole action on two of the verb's three paths — an
-    /// image already mounted, and a guest that takes it on virtio for the whole
-    /// session — so every outcome presents it.
-    func mountGuestAgentInstaller(
-        on instance: VMInstance, purpose: GuestAgentInstallerPurpose = .install
-    ) {
-        runEdit(on: instance) {
-            let outcome = try self.commands.mountGuestAgentDisk(.id(instance.id))
-            self.presenter?.presentInstallerMounted(
-                vmName: instance.name, purpose: purpose, delivery: outcome.delivery)
+    /// Ejecting removes the bundled installer from `removableMedia`, and the
+    /// reconcile flow performs the runtime detach. Mounting attaches it and
+    /// shows the next-step alert on every outcome: the alert is the whole action
+    /// on two of the verb's three paths — an image already mounted, and a guest
+    /// that takes it on virtio for the whole session.
+    func toggleGuestAgentDisk(on instance: VMInstance) {
+        switch GuestAgentDiskControl.model(for: instance).action {
+        case .eject:
+            runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
+        case .mount(let purpose):
+            runEdit(on: instance) {
+                let outcome = try self.commands.mountGuestAgentDisk(.id(instance.id))
+                self.presenter?.presentInstallerMounted(
+                    vmName: instance.name, purpose: purpose, delivery: outcome.delivery)
+            }
         }
-    }
-
-    /// Removes the bundled guest agent installer entry from `removableMedia` if
-    /// currently present. The reconcile flow performs the runtime detach.
-    func unmountGuestAgentInstaller(from instance: VMInstance) {
-        runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
     }
 
     /// Marks this VM's `.waiting` install nudge as dismissed and persists the choice.

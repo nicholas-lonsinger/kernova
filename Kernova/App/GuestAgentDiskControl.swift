@@ -1,14 +1,15 @@
 import Foundation
 
-/// Pure presentation logic for the single Virtual Machine-menu guest-agent disk
-/// item — the one place that maps (agent status, whether the installer disk is
-/// attached) to a title, enabled state, and action.
+/// The guest-agent disk control every surface offers — the Virtual Machine menu
+/// item, the sidebar agent popover, the Clipboard window's footer — and the one
+/// place that maps (agent status, whether the installer disk is attached) to a
+/// title, enabled state, and action.
 ///
-/// Models only the status→item mapping: the hard gates that disable the item
-/// regardless of status (no live VM for USB hot-plug, missing bundled DMG) stay
-/// in `MainMenuController.validate`.
-enum GuestAgentDiskMenuItem {
-    /// What clicking the item does in its current mode.
+/// Models only the status→control mapping: the hard gates that withhold the
+/// menu item regardless of status (no live VM for USB hot-plug, missing bundled
+/// DMG) stay in `MainMenuController.validate`.
+enum GuestAgentDiskControl {
+    /// What clicking the control does in its current mode.
     enum Action: Equatable {
         /// The installer disk is attached — detach it.
         case eject
@@ -17,7 +18,7 @@ enum GuestAgentDiskMenuItem {
         case mount(GuestAgentInstallerPurpose)
     }
 
-    /// The item's resolved title, enabled state, and action.
+    /// The control's resolved title, enabled state, and action.
     struct Model: Equatable {
         let title: String
         let isEnabled: Bool
@@ -33,14 +34,22 @@ enum GuestAgentDiskMenuItem {
     /// "Eject Guest Agent Media" on a VM that can never have it.
     static let unavailableTitle = "Install Guest Agent…"
 
-    /// Resolves the menu item for the given state.
+    /// Resolves the control for `instance`'s current state.
+    @MainActor
+    static func model(for instance: VMInstance) -> Model {
+        model(
+            status: instance.agentStatus,
+            isInstallerMounted: instance.hasGuestAgentInstallerMounted)
+    }
+
+    /// Resolves the control for the given state.
     ///
     /// `isInstallerMounted` takes precedence (eject mode) over `status`: once the
-    /// disk is attached the item always ejects, whatever the agent is doing.
+    /// disk is attached the control always ejects, whatever the agent is doing.
     /// `.unresponsive` is treated like `.current` — it persists when the user
     /// disables, uninstalls or kills the agent in the guest, exactly when
     /// re-mounting is wanted — so only the genuinely-transient `.connecting`
-    /// leaves the item disabled.
+    /// leaves the control disabled.
     static func model(status: AgentStatus, isInstallerMounted: Bool) -> Model {
         if isInstallerMounted {
             return Model(title: "Eject Guest Agent Media", isEnabled: true, action: .eject)

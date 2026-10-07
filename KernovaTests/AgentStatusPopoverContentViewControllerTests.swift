@@ -9,7 +9,7 @@ struct AgentStatusPopoverContentViewControllerTests {
     @Test("default state — title/body/action-button reflect .waiting")
     func defaultState() {
         let vc = AgentStatusPopoverContentViewController()
-        vc.update(status: .waiting, vmName: "TestVM", hasDismissAction: true)
+        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         #expect(titleLabel(in: vc.view)?.stringValue == "Set up the Kernova guest agent")
@@ -31,10 +31,10 @@ struct AgentStatusPopoverContentViewControllerTests {
                     .outdated(installed: "0.9.1", bundled: "0.9.2"),
                     "Update available", "Update Guest Agent…", "0.9.1"
                 ),
-                (.current(version: "0.9.2"), "Guest agent connected", "Done", "0.9.2"),
+                (.current(version: "0.9.2"), "Guest agent connected", "Manage Guest Agent…", "0.9.2"),
                 (
                     .unresponsive(version: "0.9.2"),
-                    "Guest agent unresponsive", "Done", "stopped responding"
+                    "Guest agent unresponsive", "Manage Guest Agent…", "stopped responding"
                 ),
                 (
                     .connecting(expected: "0.9.2"),
@@ -47,7 +47,7 @@ struct AgentStatusPopoverContentViewControllerTests {
             ]
 
         for testCase in cases {
-            vc.update(status: testCase.status, vmName: "TestVM", hasDismissAction: false)
+            vc.update(status: testCase.status, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: false)
             #expect(titleLabel(in: vc.view)?.stringValue == testCase.title)
             #expect(actionButton(in: vc.view)?.title == testCase.action)
             #expect(bodyLabel(in: vc.view)?.stringValue.contains(testCase.bodyContains) == true)
@@ -60,11 +60,11 @@ struct AgentStatusPopoverContentViewControllerTests {
         // boot, so neither may claim a boot happened, nor guess why the agent
         // is gone.
         let connecting = AgentStatusPopoverContentViewController.bodyText(
-            for: .connecting(expected: "0.9.2"), vmName: "TestVM")
+            for: .connecting(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
         #expect(!connecting.contains("boot"))
 
         let missing = AgentStatusPopoverContentViewController.bodyText(
-            for: .expectedMissing(expected: "0.9.2"), vmName: "TestVM")
+            for: .expectedMissing(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
         #expect(!missing.contains("boot"))
         #expect(!missing.contains("LaunchAgent"))
     }
@@ -74,24 +74,82 @@ struct AgentStatusPopoverContentViewControllerTests {
         let vc = AgentStatusPopoverContentViewController()
         vc.loadViewIfNeeded()
 
-        vc.update(status: .waiting, vmName: "TestVM", hasDismissAction: true)
+        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
         #expect(dismissButton(in: vc.view)?.isHidden == false)
 
-        vc.update(status: .waiting, vmName: "TestVM", hasDismissAction: false)
+        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: false)
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
 
-    @Test("action button click fires delegate")
-    func actionFiresDelegate() {
+    /// Clicks the action button for `status` and returns what reached the
+    /// delegate, alongside the title the button carried.
+    private func tapAction(status: AgentStatus, isInstallerMounted: Bool) -> (
+        title: String?, delegate: MockDelegate
+    ) {
         let vc = AgentStatusPopoverContentViewController()
         let delegate = MockDelegate()
         vc.delegate = delegate
-        vc.update(status: .waiting, vmName: "TestVM", hasDismissAction: true)
+        vc.update(
+            status: status, isInstallerMounted: isInstallerMounted, vmName: "TestVM",
+            hasDismissAction: false)
         vc.loadViewIfNeeded()
+        let button = actionButton(in: vc.view)
+        button?.performClick(nil)
+        return (button?.title, delegate)
+    }
 
-        actionButton(in: vc.view)?.performClick(nil)
-        #expect(delegate.actionCount == 1)
-        #expect(delegate.dismissCount == 0)
+    @Test(
+        "With the installer attached the button ejects, whatever the status",
+        arguments: [
+            AgentStatus.waiting,
+            .outdated(installed: "0.9.1", bundled: "0.9.2"),
+            .expectedMissing(expected: "0.9.2"),
+            .unresponsive(version: "0.9.2"),
+            .connecting(expected: "0.9.2"),
+        ])
+    func installerAttachedEjects(status: AgentStatus) {
+        let (title, delegate) = tapAction(status: status, isInstallerMounted: true)
+        #expect(title == "Eject Guest Agent Media")
+        #expect(
+            GuestAgentDiskControl.model(status: status, isInstallerMounted: true).action == .eject)
+        #expect(delegate.diskControlCount == 1)
+        #expect(delegate.doneCount == 0)
+    }
+
+    @Test("An unresponsive agent is offered Manage, which re-mounts the disk")
+    func unresponsiveOffersManage() {
+        let status = AgentStatus.unresponsive(version: "0.9.2")
+        let (title, delegate) = tapAction(status: status, isInstallerMounted: false)
+        #expect(title == "Manage Guest Agent…")
+        #expect(
+            GuestAgentDiskControl.model(status: status, isInstallerMounted: false).action
+                == .mount(.manage))
+        #expect(delegate.diskControlCount == 1)
+        #expect(delegate.doneCount == 0)
+    }
+
+    @Test("While the control is disabled the button reads Done and only closes")
+    func disabledControlIsDone() {
+        let (title, delegate) = tapAction(
+            status: .connecting(expected: "0.9.2"), isInstallerMounted: false)
+        #expect(title == "Done")
+        #expect(delegate.doneCount == 1)
+        #expect(delegate.diskControlCount == 0)
+    }
+
+    @Test(
+        "With the installer attached the body says so instead of telling the user to mount it",
+        arguments: [
+            AgentStatus.waiting,
+            .outdated(installed: "0.9.1", bundled: "0.9.2"),
+            .expectedMissing(expected: "0.9.2"),
+        ])
+    func installerAttachedBody(status: AgentStatus) {
+        let body = AgentStatusPopoverContentViewController.bodyText(
+            for: status, isInstallerMounted: true, vmName: "TestVM")
+        #expect(body.contains("installer disk is attached"))
+        #expect(!body.contains("Mounting"))
+        #expect(!body.contains("Reinstalling presents"))
     }
 
     @Test("dismiss button click fires delegate")
@@ -99,43 +157,29 @@ struct AgentStatusPopoverContentViewControllerTests {
         let vc = AgentStatusPopoverContentViewController()
         let delegate = MockDelegate()
         vc.delegate = delegate
-        vc.update(status: .waiting, vmName: "TestVM", hasDismissAction: true)
+        vc.update(status: .waiting, isInstallerMounted: false, vmName: "TestVM", hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         dismissButton(in: vc.view)?.performClick(nil)
         #expect(delegate.dismissCount == 1)
-        #expect(delegate.actionCount == 0)
-    }
-
-    @Test("requiresMountAction true for .waiting/.outdated/.expectedMissing only")
-    func requiresMountAction() {
-        let mountStatuses: [AgentStatus] = [
-            .waiting,
-            .outdated(installed: "0.9.1", bundled: "0.9.2"),
-            .expectedMissing(expected: "0.9.2"),
-        ]
-        let noMountStatuses: [AgentStatus] = [
-            .current(version: "0.9.2"),
-            .unresponsive(version: "0.9.2"),
-            .connecting(expected: "0.9.2"),
-        ]
-        for status in mountStatuses {
-            #expect(AgentStatusPopoverContentViewController.requiresMountAction(for: status))
-        }
-        for status in noMountStatuses {
-            #expect(!AgentStatusPopoverContentViewController.requiresMountAction(for: status))
-        }
+        #expect(delegate.diskControlCount == 0)
+        #expect(delegate.doneCount == 0)
     }
 
     // MARK: - Helpers
 
     @MainActor
     private final class MockDelegate: AgentStatusPopoverContentViewControllerDelegate {
-        var actionCount = 0
+        var diskControlCount = 0
+        var doneCount = 0
         var dismissCount = 0
 
-        func agentStatusPopoverDidTapAction(_ vc: AgentStatusPopoverContentViewController) {
-            actionCount += 1
+        func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController) {
+            diskControlCount += 1
+        }
+
+        func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController) {
+            doneCount += 1
         }
 
         func agentStatusPopoverDidTapDismiss(_ vc: AgentStatusPopoverContentViewController) {

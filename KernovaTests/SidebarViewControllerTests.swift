@@ -215,7 +215,7 @@ struct SidebarViewControllerTests {
     /// The cell holds its instance weakly, so the caller keeps `instance` alive:
     /// binding a temporary would leave the row on a deallocated VM, and its
     /// observation loop registering nothing.
-    private func makeBusyStateRow(instance: VMInstance, isBusy: Bool) -> SidebarVMRowCellView {
+    private func makeRow(instance: VMInstance, isBusy: Bool) -> SidebarVMRowCellView {
         let cell = SidebarVMRowCellView()
         cell.configure(
             instance: instance,
@@ -224,7 +224,7 @@ struct SidebarViewControllerTests {
             isBusy: { isBusy },
             onCommitRename: { _, _ in },
             onCancelRename: {},
-            onMountAgent: {},
+            onAgentDiskControl: {},
             onDismissAgentNudge: {})
         return cell
     }
@@ -235,14 +235,39 @@ struct SidebarViewControllerTests {
     @Test("The row swaps its OS icon for the spinner while busy")
     func rowSpinsWhileBusy() {
         let busyInstance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        let busy = makeBusyStateRow(instance: busyInstance, isBusy: true)
+        let busy = makeRow(instance: busyInstance, isBusy: true)
         #expect(firstSubview(NSProgressIndicator.self, in: busy)?.isHidden == false)
         #expect(firstSubview(NSImageView.self, in: busy)?.isHidden == true)
 
         let idleInstance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        let idle = makeBusyStateRow(instance: idleInstance, isBusy: false)
+        let idle = makeRow(instance: idleInstance, isBusy: false)
         #expect(firstSubview(NSProgressIndicator.self, in: idle)?.isHidden == true)
         #expect(firstSubview(NSImageView.self, in: idle)?.isHidden == false)
+    }
+
+    /// The badge's popover offers the guest-agent disk control, whose mode
+    /// turns on the installer's attached state as well as the agent status — so
+    /// attaching the disk with the status unchanged must still reach the badge.
+    @Test("The agent badge follows the installer's attached state")
+    func agentBadgeFollowsInstallerAttachment() async throws {
+        _ = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        let cell = makeRow(instance: instance, isBusy: false)
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.status == .waiting)
+        #expect(!badge.isInstallerMounted)
+
+        viewModel.toggleGuestAgentDisk(on: instance)
+        #expect(instance.hasGuestAgentInstallerMounted)
+        #expect(instance.agentStatus == .waiting)
+
+        // The cell's observation applies on a later main-actor turn, with no
+        // observable of its own to await.
+        try await waitUntil { badge.isInstallerMounted }
     }
 
     /// Re-arming an observation reports only changes made *after* it registers.
@@ -288,7 +313,7 @@ struct SidebarViewControllerTests {
             isBusy: { false },
             onCommitRename: onCommitRename,
             onCancelRename: {},
-            onMountAgent: {},
+            onAgentDiskControl: {},
             onDismissAgentNudge: {})
         return cell
     }
@@ -1060,7 +1085,7 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
             isBusy: { false },
             onCommitRename: { _, _ in },
             onCancelRename: {},
-            onMountAgent: {},
+            onAgentDiskControl: {},
             onDismissAgentNudge: {}
         )
         return cell

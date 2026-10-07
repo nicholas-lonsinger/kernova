@@ -1,14 +1,15 @@
 import AppKit
 
-/// Delegate for ``AgentStatusPopoverContentViewController``.
-///
-/// The host decides which view-model action to invoke from `vc.status`, and
-/// closes the popover.
+/// Delegate for ``AgentStatusPopoverContentViewController``; the host closes
+/// the popover after each callback.
 @MainActor
 protocol AgentStatusPopoverContentViewControllerDelegate: AnyObject {
-    /// Invoked when the user clicks the trailing action button
-    /// (Install / Update / Reinstall / Done).
-    func agentStatusPopoverDidTapAction(_ vc: AgentStatusPopoverContentViewController)
+    /// Invoked when the user clicks the trailing button while it presents the
+    /// guest-agent disk control.
+    func agentStatusPopoverDidTapDiskControl(_ vc: AgentStatusPopoverContentViewController)
+
+    /// Invoked when the user clicks the trailing button while it reads "Done".
+    func agentStatusPopoverDidTapDone(_ vc: AgentStatusPopoverContentViewController)
 
     /// Invoked when the user clicks the "Don't show again" link, which only the
     /// host's `hasDismissAction` surfaces.
@@ -18,15 +19,41 @@ protocol AgentStatusPopoverContentViewControllerDelegate: AnyObject {
 /// Popover content shown when the user clicks the sidebar agent-status
 /// button (the small SF Symbol or spinner next to each VM row).
 ///
-/// State is mutable in place via ``update(status:vmName:hasDismissAction:)``
-/// so the host can refresh the popover when `status` flips while it is open,
-/// without dismiss/re-present flicker.
+/// State is mutable in place via
+/// ``update(status:isInstallerMounted:vmName:hasDismissAction:)`` so the host
+/// can refresh the popover when either input flips while it is open, without
+/// dismiss/re-present flicker.
 @MainActor
 final class AgentStatusPopoverContentViewController: NSViewController {
+    /// What the trailing button does.
+    enum ActionButton: Equatable {
+        /// Presents the guest-agent disk control under its title.
+        case diskControl(title: String)
+        /// Only closes the popover: the disk control is disabled, and a popover
+        /// still needs a way out.
+        case done
+
+        init(_ control: GuestAgentDiskControl.Model) {
+            self = control.isEnabled ? .diskControl(title: control.title) : .done
+        }
+
+        var title: String {
+            switch self {
+            case .diskControl(let title): title
+            case .done: "Done"
+            }
+        }
+    }
+
     weak var delegate: AgentStatusPopoverContentViewControllerDelegate?
 
-    /// Current status driving the popover's content + action.
+    /// Current status driving the popover's title and body.
     private(set) var status: AgentStatus = .waiting
+    /// Whether the bundled installer disk is attached to the VM.
+    private(set) var isInstallerMounted = false
+    /// The trailing button, resolved from the guest-agent disk control.
+    private(set) var actionButtonRole = ActionButton(
+        GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false))
     /// VM name interpolated into the body text.
     private(set) var vmName: String = ""
     /// When `true`, surfaces the "Don't show again" link in the action row.
@@ -106,10 +133,15 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Replaces the popover's status, VM name, and dismiss-action flag and
-    /// refreshes every label and button in place.
-    func update(status: AgentStatus, vmName: String, hasDismissAction: Bool) {
+    /// Replaces the popover's status, installer state, VM name, and
+    /// dismiss-action flag and refreshes every label and button in place.
+    func update(
+        status: AgentStatus, isInstallerMounted: Bool, vmName: String, hasDismissAction: Bool
+    ) {
         self.status = status
+        self.isInstallerMounted = isInstallerMounted
+        actionButtonRole = ActionButton(
+            GuestAgentDiskControl.model(status: status, isInstallerMounted: isInstallerMounted))
         self.vmName = vmName
         self.hasDismissAction = hasDismissAction
         if isViewLoaded {
@@ -158,15 +190,19 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
-        bodyLabel.stringValue = Self.bodyText(for: status, vmName: vmName)
-        actionButton.title = Self.actionButtonTitle(for: status)
+        bodyLabel.stringValue = Self.bodyText(
+            for: status, isInstallerMounted: isInstallerMounted, vmName: vmName)
+        actionButton.title = actionButtonRole.title
         dismissButton.isHidden = !hasDismissAction
     }
 
     // MARK: - Actions
 
     @objc private func actionTapped(_: NSButton) {
-        delegate?.agentStatusPopoverDidTapAction(self)
+        switch actionButtonRole {
+        case .diskControl: delegate?.agentStatusPopoverDidTapDiskControl(self)
+        case .done: delegate?.agentStatusPopoverDidTapDone(self)
+        }
     }
 
     @objc private func dismissTapped(_: NSButton) {
@@ -174,15 +210,6 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     }
 
     // MARK: - Per-status strings
-
-    /// `true` when the action button should fire `onMount` (otherwise the
-    /// host should just close the popover).
-    static func requiresMountAction(for status: AgentStatus) -> Bool {
-        switch status {
-        case .waiting, .outdated, .expectedMissing: true
-        case .current, .unresponsive, .connecting: false
-        }
-    }
 
     static func title(for status: AgentStatus) -> String {
         switch status {
@@ -195,14 +222,22 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    static func bodyText(for status: AgentStatus, vmName: String) -> String {
+    /// The popover's body; where it tells the user how to install, it says the
+    /// installer is already attached when it is, since the button then ejects.
+    static func bodyText(
+        for status: AgentStatus, isInstallerMounted: Bool, vmName: String
+    ) -> String {
+        let attachedStep =
+            "The installer disk is attached to \(vmName) — inside the VM, open it in Finder and run install.command."
+        let mountStep =
+            "Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
         switch status {
         case .waiting:
             return
-                "The Kernova guest agent enables clipboard sync with \(vmName). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+                "The Kernova guest agent enables clipboard sync with \(vmName). \(isInstallerMounted ? attachedStep : mountStep)"
         case .outdated(let installed, let bundled):
             return
-                "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
+                "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). \(isInstallerMounted ? attachedStep : mountStep)"
         case .connecting(let expected):
             return
                 "Waiting for guest agent \(expected) on \(vmName) to connect."
@@ -212,17 +247,12 @@ final class AgentStatusPopoverContentViewController: NSViewController {
             return
                 "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
         case .expectedMissing(let expected):
+            let reinstallStep =
+                isInstallerMounted
+                ? attachedStep
+                : "Reinstalling presents the installer as a disk — open it in Finder and run install.command."
             return
-                "\(vmName) had guest agent \(expected) installed, but it isn't connected now. Reinstalling presents the installer as a disk — open it in Finder and run install.command."
-        }
-    }
-
-    static func actionButtonTitle(for status: AgentStatus) -> String {
-        switch status {
-        case .waiting: "Install Guest Agent…"
-        case .outdated: "Update Guest Agent…"
-        case .current, .unresponsive, .connecting: "Done"
-        case .expectedMissing: "Reinstall Guest Agent…"
+                "\(vmName) had guest agent \(expected) installed, but it isn't connected now. \(reinstallStep)"
         }
     }
 }
