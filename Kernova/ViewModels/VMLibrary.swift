@@ -270,7 +270,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarLayout: SidebarLayout {
         .project(
             entries: entries, options: sidebarOptions, search: sidebarSearch, retaining: retainedEntryID,
-            smartGroups: organization.smartGroups, folders: organization.folders, context: sidebarContext)
+            sections: organization.sections, context: sidebarContext)
+    }
+
+    /// Moves the section `id` identifies — a smart group, a folder or the
+    /// library — to just before the one `successor` identifies, or after every
+    /// other when `successor` is `nil`.
+    func moveSection(_ id: SidebarSectionID, before successor: SidebarSectionID?) throws {
+        try organization.moveSection(id, before: successor)
     }
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``

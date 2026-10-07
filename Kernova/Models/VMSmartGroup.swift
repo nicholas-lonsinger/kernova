@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 /// A named, saved library filter, which the sidebar lists as a section of its
-/// own above the library.
+/// own.
 ///
 /// Lives at library level, in ``VMOrganizationDirectory``. Its name is unique
 /// in the library ignoring case; ``id`` is what everything keeping state about

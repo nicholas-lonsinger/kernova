@@ -33,9 +33,8 @@ extension SidebarViewController: NSOutlineViewDataSource {
     func outlineView(
         _ outlineView: NSOutlineView, pasteboardWriterForItem item: Any
     ) -> NSPasteboardWriting? {
-        // A smart group's or folder's header drags to reorder its kind.
+        // Any section's header drags to reorder the sections.
         if let section = item as? SidebarSection {
-            guard Self.kind(of: section.id) != nil else { return nil }
             let pbItem = NSPasteboardItem()
             pbItem.setString(section.id.rawValue, forType: Self.sectionPasteboardType)
             return pbItem
@@ -59,7 +58,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         /// The dragged row moves to the gap `index` of `parent`, within its
         /// own list.
         case reorder(parent: SidebarNode, index: Int)
-        /// The dragged header moves to the root gap `index`, among its kind.
+        /// The dragged header moves to the root gap `index`.
         case moveSection(SidebarSectionID, index: Int)
         /// The bundles are imported, then join `folder` when there is one.
         case importBundles(into: SidebarSection?)
@@ -78,7 +77,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     /// The spot under `location`, in window coordinates; `nil` below every
-    /// row.
+    /// row. Where no row is under the pointer but one is below it — the
+    /// outline's top inset, the spacing between rows — it is that row's upper
+    /// half.
     ///
     /// Every drop is decided from this alone, never from the item and index
     /// AppKit proposes: at the boundary between one section's last row and
@@ -86,8 +87,14 @@ extension SidebarViewController: NSOutlineViewDataSource {
     /// the pointer is over the second.
     private func spot(at location: NSPoint) -> Spot? {
         let point = outlineView.convert(location, from: nil)
-        let row = outlineView.row(at: point)
-        guard row >= 0, let node = outlineView.item(atRow: row) as? SidebarNode else { return nil }
+        var row = outlineView.row(at: point)
+        if row < 0 {
+            guard
+                let below = (0..<outlineView.numberOfRows).first(where: { outlineView.rect(ofRow: $0).minY > point.y })
+            else { return nil }
+            row = below
+        }
+        guard let node = outlineView.item(atRow: row) as? SidebarNode else { return nil }
         var top = node
         while let parent = top.parent { top = parent }
         guard let section = top as? SidebarSection, let offset = tree.sections.firstIndex(where: { $0 === section })
@@ -107,8 +114,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
     ///   below every row, it goes to the end of the last section's list;
     /// - a row over any other section is refused. A smart group lists by its
     ///   filter and takes no drop, its own rows' included;
-    /// - a header moves among its own kind's headers: before the section
-    ///   under the upper half of its header, else after it;
+    /// - a header moves among the sections, of any kind: before the section
+    ///   under the upper half of its header, else after it; below every row,
+    ///   after the last;
     /// - bundles over a folder are imported into it; anywhere else, imported.
     private func drop(of info: NSDraggingInfo) -> Drop {
         let spot = spot(at: info.draggingLocation)
@@ -120,9 +128,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
             return .importBundles(into: spot?.section.id.folderID == nil ? nil : spot?.section)
         }
         if let section = draggedSection(info) {
-            guard let run = sectionRun(of: section) else { return .refused }
-            let target = spot.map { $0.gap == nil && $0.isUpperHalf ? $0.offset : $0.offset + 1 } ?? run.upperBound
-            return .moveSection(section, index: min(max(target, run.lowerBound), run.upperBound))
+            guard tree.sections.contains(where: { $0.id == section }) else { return .refused }
+            let target = spot.map { $0.gap == nil && $0.isUpperHalf ? $0.offset : $0.offset + 1 }
+            return .moveSection(section, index: target ?? tree.sections.count)
         }
         guard let source = draggedRow(info) else { return .refused }
         if let spot, spot.section.id != source.key.section {
@@ -201,36 +209,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
         }
     }
 
-    /// Which kind of reorderable section `id` is, `nil` for the library.
-    private static func kind(of id: SidebarSectionID) -> VMGroupKind? {
-        if id.smartGroupID != nil { return .smartGroup }
-        if id.folderID != nil { return .folder }
-        return nil
-    }
-
-    /// The root offsets of the sections of `section`'s kind, which the
-    /// projection lists together.
-    private func sectionRun(of section: SidebarSectionID) -> Range<Int>? {
-        guard let kind = Self.kind(of: section) else { return nil }
-        let offsets = tree.sections.indices.filter { Self.kind(of: tree.sections[$0].id) == kind }
-        guard let first = offsets.first, let last = offsets.last else { return nil }
-        return first..<(last + 1)
-    }
-
-    /// Moves the dragged header's smart group or folder to the root offset it
-    /// was dropped at, among its kind.
+    /// Moves the dragged header's section to the root offset it was dropped
+    /// at.
     private func acceptSectionMove(_ moved: SidebarSectionID, toSectionIndex index: Int) -> Bool {
-        guard let run = sectionRun(of: moved) else { return false }
-        let successor = index < run.upperBound ? tree.sections[index].id : nil
+        let successor = tree.sections.indices.contains(index) ? tree.sections[index].id : nil
         guard successor != moved else { return false }
         let library = viewModel.library
-        if let id = moved.smartGroupID {
-            attempt("Couldn\u{2019}t Move the Smart Group") {
-                try library.moveSmartGroup(id, before: successor?.smartGroupID)
-            }
-        } else if let id = moved.folderID {
-            attempt("Couldn\u{2019}t Move the Folder") { try library.moveFolder(id, before: successor?.folderID) }
-        }
+        attempt("Couldn\u{2019}t Move the Section") { try library.moveSection(moved, before: successor) }
         return true
     }
 
