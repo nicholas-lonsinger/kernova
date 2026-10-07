@@ -293,6 +293,85 @@ struct SidebarNameSearchTests {
         try await waitUntil { field.stringValue == "sonoma" }
     }
 
+    /// `subject`'s search field holding the keyboard, and its field editor.
+    private func editField(of subject: Window) throws -> NSTextView {
+        subject.window.makeKeyAndOrderFront(nil)
+        subject.controller.sidebarViewController.focusSearchField()
+        return try #require(subject.field.currentEditor() as? NSTextView)
+    }
+
+    @Test("Text typed but not yet sent survives a sync pass")
+    func unsentTextSurvivesSync() throws {
+        let viewModel = makeViewModel()
+        let subject = try makeWindow(viewModel)
+        let editor = try editField(of: subject)
+
+        editor.insertText("ubu", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(!viewModel.library.sidebarSearch.isActive)
+        // A pass the search did not cause: a VM arriving.
+        viewModel.library.admitFixture(name: "Ubuntu")
+        subject.controller.sidebarViewController.viewDidAppear()
+
+        #expect(editor.string == "ubu")
+        #expect(subject.field.currentEditor() === editor)
+    }
+
+    @Test("Marked text being composed survives a sync pass")
+    func markedTextSurvivesSync() throws {
+        let viewModel = makeViewModel()
+        let subject = try makeWindow(viewModel)
+        let editor = try editField(of: subject)
+
+        editor.setMarkedText(
+            "う", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(editor.hasMarkedText())
+        viewModel.library.admitFixture(name: "Ubuntu")
+        subject.controller.sidebarViewController.viewDidAppear()
+
+        #expect(editor.hasMarkedText())
+        #expect(editor.string == "う")
+    }
+
+    @Test("A search written from outside the field while it is idle shows in it on the next sync pass")
+    func outsideWriteShowsWhenIdle() throws {
+        let viewModel = makeViewModel()
+        let subject = try makeWindow(viewModel)
+        subject.window.makeKeyAndOrderFront(nil)
+        let sidebar = subject.controller.sidebarViewController
+        sidebar.viewDidAppear()
+
+        viewModel.library.showSearchResults(for: "sonoma")
+        sidebar.viewDidAppear()
+        #expect(subject.field.stringValue == "sonoma")
+
+        // The same text the field already shows is no outside write.
+        subject.field.stringValue = "sonoma"
+        _ = subject.field.sendAction(subject.field.action, to: subject.field.target)
+        viewModel.library.showSearchResults(for: "")
+        sidebar.viewDidAppear()
+        #expect(subject.field.stringValue == "")
+    }
+
+    @Test("A library window opens with the keyboard in the outline, not the search field")
+    func libraryOpensWithTheOutlineFocused() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Ubuntu")
+        let autosave = WindowAutosaveScope.unsaved()
+        let registry = AppWindowRegistry(
+            viewModel: viewModel,
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+            autosaveScope: autosave)
+
+        registry.showLibrary(bringToFront: true)
+
+        let window = try #require(registry.libraryWindow)
+        adoptAppWindow(window)
+        let sidebar = try #require(registry.librarySidebar)
+        #expect(window.firstResponder === sidebar.outlineView)
+        #expect((window.firstResponder as? NSText)?.delegate !== sidebar.searchField)
+    }
+
     @Test("Find VM expands a collapsed sidebar and puts the keyboard in the search field")
     func findVMWithSidebarCollapsed() async throws {
         let subject = try makeWindow(makeViewModel())

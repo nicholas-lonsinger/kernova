@@ -85,6 +85,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // `minSize` first lets the fitting size overwrite it.
         window.minSize = NSSize(width: 800, height: 500)
         window.autorecalculatesKeyViewLoop = true
+        // The outline, not the sidebar's search field — the first key view
+        // AppKit would otherwise pick — so typing and arrow keys reach the
+        // rows until a click or Find VM puts the keyboard in the field.
+        window.initialFirstResponder = sidebarVC.outlineView
 
         super.init(window: window)
         window.delegate = self

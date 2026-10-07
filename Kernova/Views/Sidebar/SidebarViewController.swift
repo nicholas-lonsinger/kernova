@@ -23,6 +23,14 @@ final class SidebarViewController: NSViewController {
     let outlineView = SidebarOutlineView()
     /// Writes and shows the library's ``VMLibrary/sidebarSearch``.
     let searchField = NSSearchField()
+    /// The search text the field and the library last agreed on: what the
+    /// field last sent, or the last outside write shown in it.
+    ///
+    /// The field is written only when the library's text differs from this,
+    /// never by comparing against the field: `NSSearchField` sends its action
+    /// after a typing delay, and not at all while marked text is composing, so
+    /// the field routinely holds text the library has not seen yet.
+    private var agreedSearchText = ""
     private let scrollView = NSScrollView()
     let tree = SidebarTree()
 
@@ -113,7 +121,8 @@ final class SidebarViewController: NSViewController {
 
         searchField.placeholderString = "Search"
         searchField.setAccessibilityLabel("Search virtual machines by name")
-        searchField.stringValue = viewModel.library.sidebarSearch.text
+        agreedSearchText = viewModel.library.sidebarSearch.text
+        searchField.stringValue = agreedSearchText
         searchField.target = self
         searchField.action = #selector(searchFieldChanged(_:))
         searchField.translatesAutoresizingMaskIntoConstraints = false
@@ -190,9 +199,7 @@ final class SidebarViewController: NSViewController {
     /// idempotent, so a pass the outline view's own callbacks start in the
     /// middle of another changes nothing the outer pass then undoes.
     private func sync() {
-        if searchField.stringValue != viewModel.library.sidebarSearch.text {
-            searchField.stringValue = viewModel.library.sidebarSearch.text
-        }
+        applyOutsideSearch()
         applyProjection()
         applySelectionFromModel()
         applyRenameState()
@@ -296,7 +303,18 @@ final class SidebarViewController: NSViewController {
     // MARK: - Search
 
     @objc private func searchFieldChanged(_ field: NSSearchField) {
+        agreedSearchText = field.stringValue
         viewModel.library.sidebarSearch = SidebarNameSearch(text: field.stringValue)
+    }
+
+    /// Shows a search the library took from somewhere other than the field —
+    /// an App Intent, a reveal clearing it — leaving the field's own pending
+    /// edit alone otherwise.
+    private func applyOutsideSearch() {
+        let text = viewModel.library.sidebarSearch.text
+        guard text != agreedSearchText else { return }
+        agreedSearchText = text
+        searchField.stringValue = text
     }
 
     /// Puts the keyboard in the search field.
