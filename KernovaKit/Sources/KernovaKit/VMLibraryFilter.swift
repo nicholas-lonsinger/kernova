@@ -72,9 +72,10 @@ public enum VMGuestAgentBucket: String, Codable, CaseIterable, Sendable {
 /// value admits every VM.
 public struct VMLibraryFilter: Codable, Hashable, Sendable {
     /// A network as a filter tells networks apart: the network a VM is set
-    /// to, except that every named network the library does not list is the
-    /// one value ``unlisted`` — they all read "Network Not in This Library",
-    /// and nothing else tells them apart.
+    /// to, except that a VM on any named network the library does not list
+    /// reads as the one value ``unlisted``. A filter can still hold a named
+    /// network the library has stopped listing, as its own value, which no VM
+    /// reads as — so it admits none.
     ///
     /// Coded as one string: ``unlisted``'s `unlisted`, else the choice's
     /// ``NetworkModeChoice/rawValue``.

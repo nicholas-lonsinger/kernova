@@ -257,8 +257,9 @@ struct SidebarLayout {
     static let heldUnlistedNetworkTitle = "Network No Longer in This Library"
 
     /// Where a network sorts among others: the order the Mode picker lists
-    /// its choices in, with every network the library does not list after
-    /// the vmnet networks it does.
+    /// its choices in, with ``VMLibraryFilter/Network/unlisted`` after the
+    /// vmnet networks. A named network a filter holds sorts with its mode's
+    /// named networks, listed or not.
     static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
         guard let choice = network.choice else { return 6 }
         switch choice {
