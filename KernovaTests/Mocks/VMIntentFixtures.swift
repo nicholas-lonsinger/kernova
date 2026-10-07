@@ -38,7 +38,7 @@ enum VMIntentFixtures {
             diskSizeInGB: diskSizeInGB,
             networkMode: networkMode,
             networkMembership: networkMembership,
-            networkName: networkName,
+            networkName: networkName, networkNameUnreadable: false,
             macAddress: macAddress,
             ipAddress: ipAddress,
             agentStatus: agentStatus,

@@ -252,7 +252,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private struct NetworkMenuBasis: Equatable {
         let choice: NetworkModeChoice
         let reach: NetworkPickerReach
-        let networks: [VMNamedNetwork]
+        let networks: VMNetworkDirectory.State
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -287,7 +287,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         menu.removeAllItems()
         let basis = NetworkMenuBasis(
             choice: NetworkModeChoice(instance.configuration), reach: networkPickerReach,
-            networks: viewModel.networks.state.networks ?? [])
+            networks: viewModel.networks.state)
         renderedNetworkMenu = basis
         let current = basis.choice
 
@@ -298,29 +298,20 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
         addNetworkModeItem("None", choice: .none, to: menu, enabled: isTaken(.none, basis: basis))
 
-        let named = basis.networks.filter {
-            offers(.vmnet($0.kind, .network($0.id))) || current == .vmnet($0.kind, .network($0.id))
-        }
-        let unlisted: Bool
-        if case .vmnet(let kind, .network(let id)) = current {
-            unlisted = !basis.networks.contains { $0.id == id && $0.kind == kind }
-        } else {
-            unlisted = false
-        }
-        if !named.isEmpty || unlisted {
+        switch basis.networks {
+        case .listed(let networks):
+            addNamedNetworkEntries(networks, basis: basis, to: menu)
+        case .unreadable:
+            // No named network can be offered, and the one the VM may be on
+            // has no name to show: one entry says why, standing for the VM's
+            // current choice when that is a named network, so it still selects.
             menu.addItem(.sectionHeader(title: "Named Networks"))
-            for network in named {
-                addNetworkEntry(
-                    .vmnet(network.kind, .network(network.id)), basis: basis, to: menu,
-                    subtitle: NetworkModeChoice.kindTitle(network.kind))
-            }
-            if unlisted, case .vmnet(let kind, _) = current {
-                // A network another library listed — an import, or a revert
-                // to a snapshot taken before a delete: the VM still joins it,
-                // and no surface here can choose it.
+            if case .vmnet(let kind, .network) = current {
                 addNetworkModeItem(
-                    NetworkModeChoice.unlistedNetworkTitle, choice: current, to: menu,
+                    NetworkModeChoice.unreadableNetworkListTitle, choice: current, to: menu,
                     enabled: false, subtitle: NetworkModeChoice.kindTitle(kind))
+            } else {
+                addNetworkModePlaceholder(NetworkModeChoice.unreadableNetworkListTitle, to: menu)
             }
         }
 
@@ -360,6 +351,39 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
 
         selectNetworkModeItem()
+    }
+
+    /// Appends the Named Networks section over the listed `networks`: each one
+    /// the picker offers or the VM is on, and a disabled entry for a network
+    /// the VM is on that the library does not list.
+    private func addNamedNetworkEntries(
+        _ networks: [VMNamedNetwork], basis: NetworkMenuBasis, to menu: NSMenu
+    ) {
+        let current = basis.choice
+        let named = networks.filter {
+            offers(.vmnet($0.kind, .network($0.id))) || current == .vmnet($0.kind, .network($0.id))
+        }
+        let unlisted: Bool
+        if case .vmnet(let kind, .network(let id)) = current {
+            unlisted = !networks.contains { $0.id == id && $0.kind == kind }
+        } else {
+            unlisted = false
+        }
+        guard !named.isEmpty || unlisted else { return }
+        menu.addItem(.sectionHeader(title: "Named Networks"))
+        for network in named {
+            addNetworkEntry(
+                .vmnet(network.kind, .network(network.id)), basis: basis, to: menu,
+                subtitle: NetworkModeChoice.kindTitle(network.kind))
+        }
+        if unlisted, case .vmnet(let kind, _) = current {
+            // A network another library listed — an import, or a revert to a
+            // snapshot taken before a delete: the VM still joins it, and no
+            // surface here can choose it.
+            addNetworkModeItem(
+                NetworkModeChoice.unlistedNetworkTitle, choice: current, to: menu,
+                enabled: false, subtitle: NetworkModeChoice.kindTitle(kind))
+        }
     }
 
     /// Appends `choice`'s entry when the picker offers it, and otherwise —
@@ -467,7 +491,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkLockHint?.isHidden = live
         let basis = NetworkMenuBasis(
             choice: NetworkModeChoice(instance.configuration), reach: reach,
-            networks: viewModel.networks.state.networks ?? [])
+            networks: viewModel.networks.state)
         if basis != renderedNetworkMenu {
             rebuildNetworkModeMenu()
         }

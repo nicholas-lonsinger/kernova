@@ -31,7 +31,7 @@ extension VMInstance {
     /// What a ``VMLibraryFilter`` reads of this VM, with `networks` the
     /// library's named networks and `tags` its tags.
     func filterSubject(
-        bundledAgentVersion: String?, networks: [VMNamedNetwork], tags: [VMTag]
+        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: lastSeenAgentVersion, state: stateBucket,
@@ -44,7 +44,7 @@ extension VMInstance {
 extension VMArrival {
     /// What a ``VMLibraryFilter`` reads of this arrival: preparing, with no
     /// session, no Ephemeral Mode, no snapshots and no tags.
-    func filterSubject(bundledAgentVersion: String?, networks: [VMNamedNetwork]) -> VMLibraryFilter.Subject {
+    func filterSubject(bundledAgentVersion: String?, networks: VMNetworkDirectory.State) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
             isEphemeral: false, hasSnapshots: false, tags: [], bundledAgentVersion: bundledAgentVersion,
@@ -57,7 +57,7 @@ extension LibraryEntry {
     /// library's named networks and `tags` its tags; `nil` for a bundle
     /// Kernova can't read, which holds nothing a filter reads.
     func filterSubject(
-        bundledAgentVersion: String?, networks: [VMNamedNetwork], tags: [VMTag]
+        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject? {
         switch self {
         case .vm(let instance):
@@ -73,12 +73,14 @@ extension VMLibraryFilter.Subject {
     fileprivate init(
         _ configuration: VMConfiguration, lastSeenAgentVersion: String?, state: VMStateBucket,
         isEphemeral: Bool, hasSnapshots: Bool, tags: Set<UUID>, bundledAgentVersion: String?,
-        networks: [VMNamedNetwork]
+        networks: VMNetworkDirectory.State
     ) {
         self.init(
             guestOS: configuration.guestOS, state: state,
             network: VMLibraryFilter.Network(NetworkModeChoice(configuration)) { kind, id in
-                networks.contains { $0.id == id && $0.kind == kind }
+                // While the list can't be read, no named network is known to
+                // be one the library does not list.
+                networks.networks?.contains { $0.id == id && $0.kind == kind } ?? true
             },
             guestAgent: configuration.guestOS == .macOS
                 ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)

@@ -115,7 +115,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     convenience init(viewModel: VMLibraryViewModel, perform: @escaping (Command) -> Void) {
         self.init(
             networkTitle: { [weak viewModel] network in
-                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.state.networks ?? [])
+                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.state ?? .listed([]))
             },
             tags: { [weak viewModel] in viewModel?.library.tags ?? [] },
             perform: perform)

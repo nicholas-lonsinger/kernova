@@ -36,10 +36,10 @@ struct VMConfigurationWriteContext: Sendable {
     let entitlements: EntitlementService
     /// The library's named networks, which a membership names and whose kind
     /// a VM on one runs in.
-    let networks: [VMNamedNetwork]
+    let networks: VMNetworkDirectory.State
 
     init(
-        snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: [VMNamedNetwork]
+        snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: VMNetworkDirectory.State
     ) {
         self.snapshots = snapshots
         self.entitlements = entitlements
@@ -49,7 +49,7 @@ struct VMConfigurationWriteContext: Sendable {
     /// What `instance` holds, in a build authorizing `entitlements` whose
     /// library lists `networks`, for a key's write to read.
     @MainActor
-    init(_ instance: VMInstance, entitlements: EntitlementService, networks: [VMNamedNetwork]) {
+    init(_ instance: VMInstance, entitlements: EntitlementService, networks: VMNetworkDirectory.State) {
         self.init(
             snapshots: instance.snapshotManifest, entitlements: entitlements, networks: networks)
     }
@@ -229,7 +229,7 @@ struct VMConfigurationKey: Sendable {
     @MainActor
     func accepts(
         _ value: String, for instance: VMInstance, entitlements: EntitlementService,
-        networks: [VMNamedNetwork]
+        networks: VMNetworkDirectory.State
     ) -> Bool {
         accepts(
             value, settings: instance.settings,
@@ -526,12 +526,15 @@ enum VMConfigurationKeyRegistry {
     ) throws -> VMNetworkMembership {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if let membership = VMNetworkMembership(rawValue: trimmed) { return membership }
-        if let network = context.networks.first(where: {
+        guard let networks = context.networks.networks else {
+            throw CommandError.invalidArgument(VMNetworkDirectory.unreadableMessage)
+        }
+        if let network = networks.first(where: {
             $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
         }) {
             return .network(network.id)
         }
-        let named = context.networks.map(\.name)
+        let named = networks.map(\.name)
         throw CommandError.invalidArgument(
             "network.membership takes common, isolated, or a network\u{2019}s name or identifier"
                 + (named.isEmpty ? "" : " (\(named.joined(separator: ", ")))")
@@ -549,7 +552,8 @@ enum VMConfigurationKeyRegistry {
         guard let joined = config.joinedNetwork, case .vmnet(let id) = joined,
             case .named(let networkID) = id.scope
         else { return nil }
-        guard let network = context.networks.first(where: { $0.id == networkID }) else {
+        guard let networks = context.networks.networks else { return VMNetworkDirectory.unreadableMessage }
+        guard let network = networks.first(where: { $0.id == networkID }) else {
             return unlistedNetworkRefusal
         }
         guard network.kind != id.kind else { return nil }
@@ -566,10 +570,9 @@ enum VMConfigurationKeyRegistry {
     private static func membershipRefusal(
         _ config: VMConfiguration, context: VMConfigurationWriteContext
     ) -> String? {
-        if let networkID = config.networkMembership.namedNetwork,
-            !context.networks.contains(where: { $0.id == networkID })
-        {
-            return unlistedNetworkRefusal
+        if let networkID = config.networkMembership.namedNetwork {
+            guard let networks = context.networks.networks else { return VMNetworkDirectory.unreadableMessage }
+            if !networks.contains(where: { $0.id == networkID }) { return unlistedNetworkRefusal }
         }
         return namedNetworkRefusal(config, context: context)
     }

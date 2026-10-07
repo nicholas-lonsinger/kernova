@@ -300,7 +300,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// when a VM's network names one: a pass titles every bridged VM from one
     /// enumeration, and the next pass sees the host as it is then.
     var sidebarContext: SidebarLayout.Context {
-        let named = networks.state.networks ?? []
+        let named = networks.state
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(

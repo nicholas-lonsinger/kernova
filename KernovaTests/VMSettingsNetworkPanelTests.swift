@@ -12,6 +12,7 @@ import Virtualization
 @MainActor
 struct VMSettingsNetworkPanelTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMSettingsNetworkPanelTests")
 
     private func makeViewModel(
         vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
@@ -371,6 +372,44 @@ struct VMSettingsNetworkPanelTests {
         #expect(popUp.selectedItem?.isEnabled == false)
         #expect(popUp.selectedItem?.subtitle == "Shared Network")
         #expect(popUp.itemTitles.contains("Named Networks"))
+    }
+
+    /// A library whose network list can't be read.
+    private func makeUnreadableNetworkListViewModel() throws -> VMLibraryViewModel {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let fileURL = scratch.url.appendingPathComponent("Networks.json")
+        try Data("not json".utf8).write(to: fileURL)
+        return makeSettingsViewModel(
+            preferences: preferences, networks: VMNetworkDirectory(fileURL: fileURL))
+    }
+
+    @Test("With the network list unreadable, a VM on a named network shows one disabled, checked entry saying so")
+    func unreadableListShowsTheNamedMembershipAsUnreadable() throws {
+        let viewModel = try makeUnreadableNetworkListViewModel()
+        let (vc, _) = makeNetworkController(membership: .network(UUID()), viewModel: viewModel)
+
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(popUp.titleOfSelectedItem == "Network List Can\u{2019}t Be Read")
+        #expect(popUp.selectedItem?.isEnabled == false)
+        let named = popUp.itemArray.drop { $0.title != "Named Networks" }.dropFirst()
+            .prefix { !$0.isSectionHeader }
+        #expect(named.map(\.title) == ["Network List Can\u{2019}t Be Read"])
+        vc.showOverview()
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(findLabel(withText: "Network List Can\u{2019}t Be Read", in: card) != nil)
+    }
+
+    @Test("With the network list unreadable, a VM on a common network sees one disabled entry under Named Networks")
+    func unreadableListOffersNoNamedNetwork() throws {
+        let viewModel = try makeUnreadableNetworkListViewModel()
+        let (vc, _) = makeNetworkController(viewModel: viewModel)
+
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(popUp.titleOfSelectedItem == "Shared Network")
+        let named = popUp.itemArray.drop { $0.title != "Named Networks" }.dropFirst()
+            .prefix { !$0.isSectionHeader }
+        #expect(named.map(\.title) == ["Network List Can\u{2019}t Be Read"])
+        #expect(named.allSatisfy { !$0.isEnabled })
     }
 
     @Test("Renaming the VM's named network re-titles the picker and the card")

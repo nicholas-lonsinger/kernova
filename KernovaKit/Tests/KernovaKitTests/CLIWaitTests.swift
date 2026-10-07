@@ -197,7 +197,7 @@ struct CLIWaitTests {
                 VMInfo(
                     id: alpha, name: "Alpha", status: status, guestOS: "macOS", cpuCount: 4,
                     memoryBytes: 8 * 1024 * 1024 * 1024, diskSizeInGB: 64, networkMode: "shared",
-                    networkMembership: "common", networkName: nil,
+                    networkMembership: "common", networkName: nil, networkNameUnreadable: false,
                     macAddress: nil, ipAddress: .unavailable, agentStatus: agentStatus,
                     hasSavedState: false, isEphemeral: false, snapshotCount: 0, hasSnapshots: false, guestAgent: nil,
                     stateBucket: .stopped,

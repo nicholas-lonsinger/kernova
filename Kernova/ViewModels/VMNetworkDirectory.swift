@@ -32,7 +32,7 @@ final class VMNetworkDirectory {
     }
 
     /// What the file held the last time it was read.
-    enum State: Equatable {
+    enum State: Equatable, Sendable {
         /// Every named network, ordered by name — none when there is no file
         /// yet.
         case listed([VMNamedNetwork])
@@ -104,6 +104,13 @@ final class VMNetworkDirectory {
             network.kind == id.kind
         else { return nil }
         return network
+    }
+
+    /// Whether a VM under `configuration` joins a named network this
+    /// directory can't name, because the file can't be read.
+    func cannotNameNetwork(of configuration: VMConfiguration) -> Bool {
+        guard case .unreadable = state else { return false }
+        return configuration.effectiveNetworkMembership?.namedNetwork != nil
     }
 
     /// The network `text` names — by identifier, or by name ignoring case —
@@ -195,7 +202,7 @@ final class VMNetworkDirectory {
         verb: VMVerb, _ change: ([VMNamedNetwork]) throws -> [VMNamedNetwork]
     ) throws {
         guard let file else {
-            state = .listed(Self.ordered(try change(state.networks ?? [])))
+            state = .listed(Self.ordered(try change(try listedNetworks(verb: verb))))
             return
         }
         do {

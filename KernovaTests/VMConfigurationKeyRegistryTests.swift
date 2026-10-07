@@ -36,7 +36,7 @@ struct VMConfigurationKeyRegistryTests {
         networks: [VMNamedNetwork] = []
     ) -> VMConfigurationWriteContext {
         VMConfigurationWriteContext(
-            snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: networks)
+            snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: .listed(networks))
     }
 
     /// Writes `key` into whichever half of `settings` holds it.

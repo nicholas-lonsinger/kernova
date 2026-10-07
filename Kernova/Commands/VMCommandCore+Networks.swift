@@ -66,7 +66,7 @@ extension VMCommandCore {
                 isolated, to: &settings,
                 context: VMConfigurationWriteContext(
                     instance, entitlements: library.entitlements,
-                    networks: library.networks.state.networks ?? []))
+                    networks: library.networks.state))
         }
         let inert = naming.filter { instance in
             !members.contains { $0 === instance }

@@ -97,6 +97,10 @@ public enum NetworkModeChoice: Hashable, Sendable, Codable {
     /// Host Only's common network.
     public static let hostOnly = NetworkModeChoice.vmnet(.hostOnly, .common)
 
+    /// How a VM naming a named network reads it while the library's list of
+    /// networks can't be read.
+    public static let unreadableNetworkListTitle = "Network List Can\u{2019}t Be Read"
+
     private static let noneValue = "none"
     private static let bridgedValue = "bridged"
 

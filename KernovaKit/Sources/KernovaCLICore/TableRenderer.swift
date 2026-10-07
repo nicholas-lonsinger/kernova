@@ -45,7 +45,10 @@ enum TableRenderer {
             (
                 "Network",
                 info.networkMode.map {
-                    [$0, info.networkName ?? info.networkMembership].compactMap(\.self).joined(separator: ", ")
+                    let joined =
+                        info.networkNameUnreadable
+                        ? NetworkModeChoice.unreadableNetworkListTitle : info.networkName ?? info.networkMembership
+                    return [$0, joined].compactMap(\.self).joined(separator: ", ")
                 }
                     ?? "Off"
             ),

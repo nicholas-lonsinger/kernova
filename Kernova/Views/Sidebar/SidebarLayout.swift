@@ -71,7 +71,7 @@ struct SidebarLayout {
         let bundledAgentVersion: String?
         /// The library's named networks: a VM naming any other is on
         /// ``VMLibraryFilter/Network/unlisted``.
-        let networks: [VMNamedNetwork]
+        let networks: VMNetworkDirectory.State
         /// The library's tags, in their order: a VM carries only these.
         let tags: [VMTag]
         /// What a VM's network reads as —
@@ -319,10 +319,10 @@ struct SidebarLayout {
     /// A named network the library no longer lists — deleted since the filter
     /// was saved — reads apart from ``VMLibraryFilter/Network/unlisted``: the
     /// filter still holds it, and it admits no VM.
-    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: [VMNamedNetwork]) -> String {
+    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice,
-            !networks.contains(where: { $0.id == id && $0.kind == kind })
+        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.networks,
+            !listed.contains(where: { $0.id == id && $0.kind == kind })
         {
             return heldUnlistedNetworkTitle
         }

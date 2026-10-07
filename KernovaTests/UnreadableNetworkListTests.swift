@@ -85,6 +85,56 @@ struct UnreadableNetworkListTests {
         #expect(try Data(contentsOf: fileURL) == unreadableBytes)
     }
 
+    /// A VM in `harness`'s library naming the network `id`.
+    @discardableResult
+    private func registerMember(of id: UUID, in harness: Harness) -> VMInstance {
+        RegisteredVMInstanceFixture.register(
+            name: "Member", phase: .stopped, guestOS: .linux, library: harness.library,
+            preferences: preferences,
+            mutate: {
+                $0.applyNetworkMode(.shared)
+                $0.networkMembership = .network(id)
+            })
+    }
+
+    @Test("info reports a VM's named network as unreadable, never as its bare identifier")
+    func infoReportsTheNameAsUnreadable() throws {
+        let harness = try makeHarness()
+        let member = registerMember(of: UUID(), in: harness)
+
+        let info = try harness.core.info(.id(member.instanceID))
+
+        #expect(info.networkName == nil)
+        #expect(info.networkNameUnreadable)
+    }
+
+    @Test("A membership write naming a network is refused with the unreadable list's message")
+    func aNamedMembershipWriteIsRefused() throws {
+        let harness = try makeHarness()
+        let member = RegisteredVMInstanceFixture.register(
+            name: "Member", phase: .stopped, guestOS: .linux, library: harness.library,
+            preferences: preferences, mutate: { $0.applyNetworkMode(.shared) })
+
+        for value in ["Lab", "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"] {
+            #expect {
+                try harness.core.setConfiguration(
+                    .id(member.instanceID),
+                    assignments: [ConfigurationEntry(key: "network.membership", value: value)],
+                    consent: .none)
+            } throws: { error in
+                (error as? LocalizedError)?.errorDescription?.contains(VMNetworkDirectory.unreadableMessage)
+                    == true
+            }
+        }
+        #expect(member.configuration.networkMembership == .common)
+        // A membership that names no network still writes.
+        try harness.core.setConfiguration(
+            .id(member.instanceID),
+            assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")],
+            consent: .none)
+        #expect(member.configuration.networkMembership == .isolated)
+    }
+
     @Test("The wire answers the listing with the refusal")
     func theRouterRefuses() async throws {
         let harness = try makeHarness()

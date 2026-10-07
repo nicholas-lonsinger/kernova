@@ -60,6 +60,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// The name of the named network the VM joins, `nil` where it joins none
     /// or one the library does not list.
     public let networkName: String?
+    /// Whether the VM's membership names a network whose name is unknown
+    /// because the library's list of networks can't be read.
+    public let networkNameUnreadable: Bool
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -98,6 +101,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         networkMode: String?,
         networkMembership: String?,
         networkName: String?,
+        networkNameUnreadable: Bool,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,
@@ -120,6 +124,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.networkMode = networkMode
         self.networkMembership = networkMembership
         self.networkName = networkName
+        self.networkNameUnreadable = networkNameUnreadable
         self.macAddress = macAddress
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus
