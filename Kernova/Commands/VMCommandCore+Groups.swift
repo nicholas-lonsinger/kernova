@@ -45,9 +45,9 @@ struct VMResolvedGroup {
     }
 }
 
-/// The listing and the library's groups: which VMs a filter, a network or a
-/// group admits, by the same subjects and the same filter the sidebar lists
-/// them by.
+/// The listing and the library's groups: which VMs a filter, a network, a
+/// tag or a group admits, by the same subjects and the same filter the
+/// sidebar lists them by.
 extension VMCommandCore {
     // MARK: - Reads
 
@@ -98,6 +98,13 @@ extension VMCommandCore {
         if !query.networks.isEmpty { library.networks.reload() }
         for text in query.networks {
             filter.networks.insert(try network(spelledBy: text))
+        }
+        if !query.tags.isEmpty { try readOrganization(verb: verb) }
+        for text in query.tags {
+            guard let tag = library.organization.tag(named: text) else {
+                throw CommandError.itemNotFoundOnHost(item: "tag named \u{201C}\(text)\u{201D}")
+            }
+            filter.tags.insert(tag.id)
         }
         return VMLibrarySelection(
             filter: filter, groups: try query.groups.map { try membership(of: $0, verb: verb) },
@@ -151,13 +158,14 @@ extension VMCommandCore {
         try group(reference, verb: verb).membership
     }
 
-    /// Reads the library's smart groups and folders as their file holds them
-    /// now, refusing when the file cannot be read rather than answering none.
+    /// Reads the library's smart groups, folders and tags as their file holds
+    /// them now, refusing when the file cannot be read rather than answering
+    /// none.
     private func readOrganization(verb: VMVerb) throws {
         library.organization.reload()
         if let reason = library.organization.readFailure {
             throw CommandError.operationFailed(
-                verb: verb, message: "Kernova couldn\u{2019}t read its smart groups and folders: \(reason)")
+                verb: verb, message: "Kernova couldn\u{2019}t read its smart groups, folders and tags: \(reason)")
         }
     }
 }

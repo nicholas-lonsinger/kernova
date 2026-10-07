@@ -274,12 +274,13 @@ extension VMCommandCore {
         // Run directly rather than on the bounded `copyQueue`: the source is
         // held for as long as the copy takes, and an APFS clone takes
         // milliseconds where a queued import copy can take minutes.
+        let knownTags = library.organization.tagIDs
         let copied: VMOutcome
         do {
             copied = try instance.activity.launchCopyOut(mode) { context in
                 let copy = CloneCopy(
                     of: context.operation.instance.bundle, outcome: resolved, mode: context.mode,
-                    machineIdentifier: machineIdentifier)
+                    machineIdentifier: machineIdentifier, knownTags: knownTags)
                 let source = context.operation.bundle.url
                 guard context.mode == .live else {
                     try await Task.detached {
@@ -343,14 +344,16 @@ extension VMCommandCore {
         /// the copy brought across.
         let machineIdentifier: Data?
         /// What the clone's own state files start from — the defaults for a
-        /// New Machine, the source's for an Exact Copy.
+        /// New Machine, the source's for an Exact Copy, its tags either way.
         let hostState: VMHostState
         let snapshotManifest: VMSnapshotManifest
 
+        /// The copy of `source`, into a library defining the tags `knownTags`
+        /// identifies.
         @MainActor
         init(
             of source: VMBundle, outcome: CloneOutcome, mode: VMCaptureMode,
-            machineIdentifier: Data?
+            machineIdentifier: Data?, knownTags: Set<UUID>
         ) {
             self.outcome = outcome
             self.mode = mode
@@ -358,11 +361,11 @@ extension VMCommandCore {
             self.machineIdentifier = machineIdentifier
             switch outcome {
             case .newMachine:
-                hostState = VMHostState()
+                hostState = .newMachine(cloning: source.hostState, knownTags: knownTags)
                 snapshotManifest = VMSnapshotManifest()
             case .exactCopy:
                 var carried = source.hostState
-                carried.arriveAsCopy()
+                carried.arriveAsCopy(knownTags: knownTags)
                 hostState = carried
                 snapshotManifest = source.snapshotManifest
             }
@@ -521,6 +524,7 @@ extension VMCommandCore {
                 break
             }
 
+            let knownTags = library.organization.tagIDs
             return .started(
                 library.beginArrival(
                     kind: .importing, configuration: config,
@@ -530,7 +534,7 @@ extension VMCommandCore {
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)
-                            try staged.update(.hostState) { $0.arriveAsCopy() }
+                            try staged.update(.hostState) { $0.arriveAsCopy(knownTags: knownTags) }
                         }
                     }))
         } catch {

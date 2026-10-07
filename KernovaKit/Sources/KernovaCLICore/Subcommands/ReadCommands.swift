@@ -28,7 +28,10 @@ extension KernovaCommand {
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .list(VMListQuery(filter: filter.filter, networks: filter.networks, groups: groups.groups, sort: sort))
+            .list(
+                VMListQuery(
+                    filter: filter.filter, networks: filter.networks, tags: filter.tags, groups: groups.groups,
+                    sort: sort))
         }
 
         /// Reads the library and writes it.

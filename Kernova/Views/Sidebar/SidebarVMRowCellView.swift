@@ -36,6 +36,9 @@ final class SidebarVMRowCellView: NSTableCellView {
     private var isBusy: (() -> Bool)?
     /// Reads the row's detail line, live, `nil` when rows show none.
     private var detail: (() -> String?)?
+    /// Reads the tags the VM carries, live, in the library's order of its
+    /// tags.
+    private var tags: (() -> [VMTag])?
 
     /// `true` while the name label is in its editable rename state.
     var isRenaming: Bool { nameLabel.isEditing }
@@ -52,6 +55,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         controlsEnabled: true, clickHandling: .delegatedToEnclosingView)
     /// The second line Show Details adds: the value the rows are sorted by.
     private let detailLabel = NSTextField(labelWithString: "")
+    private let tagDots = SidebarTagDotsView()
     private let ephemeralBadge = SidebarEphemeralBadgeView()
     private let agentButton = SidebarAgentStatusButtonView()
     private let spinner = NSProgressIndicator()
@@ -107,10 +111,11 @@ final class SidebarVMRowCellView: NSTableCellView {
 
         // Keep the trailing accessories rigid so the name field is the sole
         // flexible element, truncating only when genuinely out of room.
-        for accessory in [ephemeralBadge, agentButton] as [NSView] {
+        for accessory in [tagDots, ephemeralBadge, agentButton] as [NSView] {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
+        tagDots.isHidden = true
         ephemeralBadge.isHidden = true
 
         // The icon and spinner share the leading slot: exactly one is visible at a
@@ -137,7 +142,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         nameColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let row = NSStackView(views: [
-            iconView, spinner, nameColumn, ephemeralBadge, agentButton,
+            iconView, spinner, nameColumn, tagDots, ephemeralBadge, agentButton,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -175,6 +180,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         installPromptDisabled: @escaping () -> Bool,
         isBusy: @escaping () -> Bool,
         detail: @escaping () -> String?,
+        tags: @escaping () -> [VMTag],
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
         onAgentDiskControl: @escaping () -> Void,
@@ -185,6 +191,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         self.installPromptDisabled = installPromptDisabled
         self.isBusy = isBusy
         self.detail = detail
+        self.tags = tags
         self.onCommitRename = onCommitRename
         self.onCancelRename = onCancelRename
 
@@ -229,6 +236,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.hostState.ephemeralModeEnabled
                 _ = self.installPromptDisabled?()
                 _ = self.detail?()
+                _ = self.tags?()
             },
             apply: { [weak self] in
                 self?.applyLiveState()
@@ -258,6 +266,13 @@ final class SidebarVMRowCellView: NSTableCellView {
             applyIconStateColor()
             iconView.toolTip = instance.statusToolTip
         }
+
+        // The dots show the colors only, so the names are the row's
+        // accessibility value.
+        let carried = tags?() ?? []
+        tagDots.colors = carried.map(\.color)
+        tagDots.isHidden = carried.isEmpty
+        setAccessibilityValue(carried.isEmpty ? nil : carried.map(\.name).joined(separator: ", "))
 
         let showsEphemeral = instance.hostState.ephemeralModeEnabled
         if !showsEphemeral { ephemeralBadge.reset() }
@@ -345,6 +360,10 @@ final class SidebarVMRowCellView: NSTableCellView {
         isBusy = nil
         detail = nil
         detailLabel.isHidden = true
+        tags = nil
+        tagDots.colors = []
+        tagDots.isHidden = true
+        setAccessibilityValue(nil)
         installPromptDisabled = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —
@@ -364,15 +383,19 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// selected, which is the widest the name is ever drawn.
     ///
     /// `detail` is the row's Show Details line, which the name column widens
-    /// to when it is the longer of the two.
+    /// to when it is the longer of the two; `tagCount` is how many tag dots
+    /// the row shows.
     static func contentWidth(
         forName name: String, detail: String? = nil, showsAgentAccessory: Bool,
-        showsEphemeralAccessory: Bool
+        showsEphemeralAccessory: Bool, tagCount: Int = 0
     ) -> CGFloat {
         let nameWidth = max(ceil(measuredNameWidth(for: name)), detail.map { ceil(measuredDetailWidth(for: $0)) } ?? 0)
         var width =
             Self.rowLeadingInset + Self.iconSlotWidth + Spacing.small + nameWidth
             + Self.rowTrailingInset
+        if tagCount > 0 {
+            width += Spacing.small + SidebarTagDotsView.width(forCount: tagCount)
+        }
         if showsEphemeralAccessory {
             width += Spacing.small + SidebarEphemeralBadgeView.width
         }

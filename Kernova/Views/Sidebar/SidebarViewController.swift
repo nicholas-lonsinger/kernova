@@ -28,12 +28,13 @@ final class SidebarViewController: NSViewController {
     /// loop doesn't restart an in-flight edit.
     private var editingRow: SidebarRow?
 
-    /// Builds each section header's menu and a row's folder items; a pick
-    /// runs its command.
+    /// Builds each section header's menu and a row's folder and tag items; a
+    /// pick runs its command.
     lazy var viewMenu = SidebarViewMenu(
         networkTitle: { [weak self] network in
             SidebarLayout.heldNetworkTitle(network, networks: self?.viewModel.networks.networks ?? [])
         },
+        tags: { [weak self] in self?.viewModel.library.tags ?? [] },
         perform: { [weak self] command in self?.perform(command) })
 
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
@@ -448,7 +449,8 @@ final class SidebarViewController: NSViewController {
             forName: instance.name, detail: detail,
             showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                 for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
-            showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled
+            showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
+            tagCount: viewModel.library.tags(of: instance).count
         )
     }
 
@@ -572,6 +574,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 instance?.phase.operation != nil
             },
             detail: rowDetail { [weak instance] in instance.map(LibraryEntry.vm) },
+            tags: { [weak self, weak instance] in
+                guard let self, let instance else { return [] }
+                return self.viewModel.library.tags(of: instance)
+            },
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
@@ -814,6 +820,12 @@ extension SidebarViewController {
         if let folder = section.folderID {
             menu.addItem(viewMenu.removeFromFolderItem(entry: instance.id, folder: folder))
         }
+
+        // Tags
+        menu.addItem(
+            viewMenu.tagsItem(
+                entry: instance.id, assigned: Set(viewModel.library.tags(of: instance).map(\.id)),
+                isEnabled: capabilities.isAvailable(.editTags, on: instance)))
 
         menu.addItem(.separator())
 

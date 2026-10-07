@@ -37,8 +37,13 @@ struct ListFilterOptions: ParsableArguments {
     @Flag(name: .customLong("has-snapshots"), help: "List only VMs holding a snapshot.")
     var withSnapshotsOnly = false
 
-    /// The filter these flags spell but for the networks, which go as typed:
-    /// only the library tells a mode from a named network of the same name.
+    @Option(
+        name: .customLong("tag"),
+        help: ArgumentHelp("List only VMs carrying this tag, by name or identifier.", valueName: "tag"))
+    var tags: [String] = []
+
+    /// The filter these flags spell but for the networks and the tags, which
+    /// go as typed: only the library knows its named networks and its tags.
     var filter: VMLibraryFilter {
         VMLibraryFilter(
             guestOSes: Set(guestOSes), states: Set(states), guestAgents: Set(guestAgents),

@@ -93,6 +93,7 @@ struct VMCapabilityCatalogTests {
         .switchNetworkMembership: .edit(.networkMembership),
         .clone: .operation(.copyingOut(.stopped)),
         .rename: .edit(.rename),
+        .editTags: .edit(.hostPresentation),
         .delete: .operation(.deleting),
         .showInFinder: .affordance(.inspect),
         .togglePopOut: .affordance(.externalDisplay),

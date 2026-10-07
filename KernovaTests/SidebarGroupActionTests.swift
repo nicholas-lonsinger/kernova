@@ -33,7 +33,7 @@ struct SidebarGroupActionTests {
     }
 
     private func menu() -> SidebarViewMenu {
-        SidebarViewMenu(networkTitle: { $0.rawValue }, perform: { _ in })
+        SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { _ in })
     }
 
     /// The three group action items of `menu`, by title.
@@ -73,7 +73,7 @@ struct SidebarGroupActionTests {
     @Test("Picking an action hands its command to the sidebar, naming the group by identifier")
     func pickRunsTheCommand() throws {
         var picked: [SidebarViewMenu.Command] = []
-        let viewMenu = SidebarViewMenu(networkTitle: { $0.rawValue }, perform: { picked.append($0) })
+        let viewMenu = SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { picked.append($0) })
         let folder = VMFolder(id: UUID(), name: "Lab", members: [])
         let built = viewMenu.menu(folder: folder, actionCounts: [.start: 1, .suspend: 1, .stop: 1])
 
