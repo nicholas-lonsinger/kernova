@@ -40,8 +40,8 @@ struct VMLastRunTests {
         #expect(instance.hostState.lastRunAt == date)
     }
 
-    @Test("A VM that never ran has no last run")
-    func neverRunHasNoLastRun() {
+    @Test("A VM with no run recorded has no last run")
+    func noRunRecordedHasNoLastRun() {
         let library = makeWiredLibrary()
         let instance = library.registerFixture()
 

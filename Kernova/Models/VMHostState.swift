@@ -54,7 +54,7 @@ struct VMHostState: Codable, Sendable, Equatable {
     // MARK: - History
 
     /// The last moment this VM was running — written as a session first runs
-    /// and again as it ends — `nil` for a VM that has never run.
+    /// and again as it ends; `nil` means no run is recorded.
     var lastRunAt: Date?
 
     init(
@@ -109,8 +109,8 @@ struct VMHostState: Codable, Sendable, Equatable {
     /// action, so it is local intent rather than something a copy carries in:
     /// a VM arriving pre-marked would boot on the next launch without ever
     /// being asked for, and an Exact Copy would start beside its source.
-    /// The last run is the source's history, not the copy's: a copy arrives
-    /// never run.
+    /// The last run is the source's history, not the copy's, so a copy
+    /// arrives with `nil`: `nil` means no run is recorded.
     mutating func arriveAsCopy() {
         startsAutomaticallyOnLaunch = false
         lastRunAt = nil
