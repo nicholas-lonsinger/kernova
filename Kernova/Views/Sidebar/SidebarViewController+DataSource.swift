@@ -77,7 +77,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     /// The spot under `location`, in window coordinates; `nil` below every
-    /// row.
+    /// row. Where no row is under the pointer but one is below it — the
+    /// outline's top inset, the spacing between rows — it is that row's upper
+    /// half.
     ///
     /// Every drop is decided from this alone, never from the item and index
     /// AppKit proposes: at the boundary between one section's last row and
@@ -85,8 +87,14 @@ extension SidebarViewController: NSOutlineViewDataSource {
     /// the pointer is over the second.
     private func spot(at location: NSPoint) -> Spot? {
         let point = outlineView.convert(location, from: nil)
-        let row = outlineView.row(at: point)
-        guard row >= 0, let node = outlineView.item(atRow: row) as? SidebarNode else { return nil }
+        var row = outlineView.row(at: point)
+        if row < 0 {
+            guard
+                let below = (0..<outlineView.numberOfRows).first(where: { outlineView.rect(ofRow: $0).minY > point.y })
+            else { return nil }
+            row = below
+        }
+        guard let node = outlineView.item(atRow: row) as? SidebarNode else { return nil }
         var top = node
         while let parent = top.parent { top = parent }
         guard let section = top as? SidebarSection, let offset = tree.sections.firstIndex(where: { $0 === section })

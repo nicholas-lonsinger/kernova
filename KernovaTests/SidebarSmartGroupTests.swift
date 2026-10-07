@@ -288,14 +288,17 @@ struct SidebarSmartGroupTests {
         if let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .alertSecondButtonReturn) }
     }
 
-    @Test("A new smart group goes after every section, the library included, and scrolls into view")
+    @Test("A new smart group goes after every section, the library included, and scrolls into view past a selected VM")
     func newSmartGroupScrollsIntoView() async throws {
         let viewModel = makeViewModel()
+        let first = viewModel.library.admitFixture(name: "Mac 0", guestOS: .macOS)
         for index in 1...60 { viewModel.library.admitFixture(name: "Mac \(index)", guestOS: .macOS) }
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
+        viewModel.selection = .library(first.id)
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         let window = try #require(outline.window)
+        #expect(outline.selectedRow == self.row(.library(first.id), in: outline))
         outline.scrollRowToVisible(0)
         #expect(!outline.visibleRect.contains(outline.rect(ofRow: outline.numberOfRows - 1)))
         let menu = try #require(controller.viewMenu(for: .library))
@@ -306,6 +309,11 @@ struct SidebarSmartGroupTests {
         try await waitUntil { viewModel.library.smartGroups.count == 1 }
         let group = try #require(viewModel.library.smartGroups.first)
         #expect(viewModel.library.organization.sections.map(\.id) == [.library, .smartGroup(group.id)])
+        // The sync the organization change queued, and any later one, keeps
+        // the view where the new section put it.
+        controller.viewDidAppear()
+        controller.viewDidAppear()
+        #expect(viewModel.selection == .library(first.id))
         let header =
             (0..<outline.numberOfRows).first {
                 (outline.item(atRow: $0) as? SidebarSection)?.id == .smartGroup(group.id)

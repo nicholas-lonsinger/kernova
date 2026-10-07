@@ -306,16 +306,18 @@ struct SidebarFolderTests {
             ])
     }
 
-    @Test("A new folder goes after every section, the library included, and scrolls into view")
+    @Test("A new folder goes after every section, the library included, and scrolls into view past a selected VM")
     func newFolderScrollsIntoView() async throws {
         let viewModel = makeViewModel()
         let a = viewModel.library.admitFixture(name: "A")
         for index in 1...60 { viewModel.library.admitFixture(name: "VM \(index)") }
         let clients = try viewModel.library.createFolder(named: "Clients")
         try viewModel.library.moveSection(.folder(clients.id), before: .library)
+        viewModel.selection = .library(a.id)
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         let window = try #require(outline.window)
+        #expect(outline.selectedRow == self.row(.library(a.id), in: outline))
         outline.scrollRowToVisible(0)
         #expect(!outline.visibleRect.contains(outline.rect(ofRow: outline.numberOfRows - 1)))
         let submenu = try #require(
@@ -328,9 +330,49 @@ struct SidebarFolderTests {
         let made = try #require(viewModel.library.folders.last)
         #expect(
             viewModel.library.organization.sections.map(\.id) == [.folder(clients.id), .library, .folder(made.id)])
+        // The sync the organization change queued, and any later one, keeps
+        // the view where the new section put it.
+        controller.viewDidAppear()
+        controller.viewDidAppear()
+        #expect(viewModel.selection == .library(a.id))
         let header = row(of: .folder(made.id), in: outline)
         #expect(header > 0)
         #expect(outline.visibleRect.contains(outline.rect(ofRow: header)))
+    }
+
+    @Test("Upper half of the first section's header puts a dragged header before it; the lower half, after it")
+    func headerDropHalves() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "A")
+        let x = try viewModel.library.createFolder(named: "X")
+        let y = try viewModel.library.createFolder(named: "Y")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func shown() -> [SidebarSectionID] {
+            controller.viewDidAppear()
+            return (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.id }
+        }
+        func header(_ section: SidebarSectionID) throws -> NSPasteboardWriting {
+            try writer(ofRow: row(of: section, in: outline), in: outline, controller: controller)
+        }
+        #expect(shown() == [.library, .folder(x.id), .folder(y.id)])
+        #expect(row(of: .library, in: outline) == 0)
+        let first = outline.rect(ofRow: 0)
+
+        #expect(drag([try header(.folder(y.id))], to: NSPoint(x: 100, y: first.midY - 1), in: outline) == .move)
+        #expect(shown() == [.folder(y.id), .library, .folder(x.id)])
+
+        let library = outline.rect(ofRow: row(of: .library, in: outline))
+        #expect(drag([try header(.folder(y.id))], to: NSPoint(x: 100, y: library.midY + 1), in: outline) == .move)
+        #expect(shown() == [.library, .folder(y.id), .folder(x.id)])
+
+        // Above the first row, in the outline's top inset, is before the first
+        // section too — not after the last, as below every row is.
+        let aboveFirst = NSPoint(x: 100, y: outline.rect(ofRow: 0).minY - 2)
+        #expect(aboveFirst.y > 0)
+        #expect(outline.row(at: aboveFirst) == -1)
+        #expect(drag([try header(.folder(x.id))], to: aboveFirst, in: outline) == .move)
+        #expect(shown() == [.folder(x.id), .library, .folder(y.id)])
     }
 
     @Test("New Folder… under Add to Folder makes a folder holding that VM")

@@ -249,12 +249,15 @@ final class SidebarViewController: NSViewController {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
-        if outlineView.selectedRow != row {
+        let moved = outlineView.selectedRow != row
+        if moved {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
         }
         // NSOutlineView doesn't auto-scroll programmatic selection into view, so a
-        // created/cloned/imported VM's row could land off-screen.
-        outlineView.scrollRowToVisible(row)
+        // created/cloned/imported VM's row could land off-screen. A pass that
+        // leaves the selection where it was scrolls nothing: the view stays
+        // where the user, or a section just made, put it.
+        if moved || revealing { outlineView.scrollRowToVisible(row) }
     }
 
     /// Brings the outline view to the model, then scrolls the header of the
