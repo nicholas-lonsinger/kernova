@@ -72,6 +72,52 @@ struct NetworksSettingsViewControllerTests {
         }
     }
 
+    @Test("A network list Kernova can't read shows as unreadable, offers the check, and takes no change")
+    func anUnreadableListShowsItsState() throws {
+        let scratch = TestScratchDirectory(prefix: "NetworksSettingsUnreadable")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let fileURL = scratch.url.appendingPathComponent("Networks.json")
+        let bytes = Data("not json".utf8)
+        try bytes.write(to: fileURL)
+        let viewModel = VMLibraryViewModel(
+            storageService: MockVMStorageService(), diskImageService: MockDiskImageService(),
+            virtualizationService: MockVirtualizationService(),
+            installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
+            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
+            entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL))
+        var checks = 0
+        viewModel.onShowConfigCheck = { checks += 1 }
+
+        let pane = makePane(viewModel)
+
+        #expect(pane.isUnreadable)
+        #expect(pane.networks.isEmpty)
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
+        }
+        let addRemove = try #require(find(NSSegmentedControl.self, in: pane.view).first)
+        #expect(!addRemove.isEnabled(forSegment: 0))
+        #expect(!addRemove.isEnabled(forSegment: 1))
+        let check = try #require(
+            find(NSButton.self, in: pane.view).first { $0.title == "Check Config Files\u{2026}" })
+        #expect(check.isHiddenOrHasHiddenAncestor == false)
+        check.performClick(nil)
+        #expect(checks == 1)
+
+        do {
+            try pane.create(name: "Lab", kind: .shared)
+            Issue.record("A create over an unreadable list went through")
+        } catch let error as CommandError {
+            #expect(
+                error.message
+                    == "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
+            )
+        }
+        #expect(try Data(contentsOf: fileURL) == bytes)
+    }
+
     // MARK: - List
 
     @Test("The list shows each network's name, mode and the VMs on it")
@@ -125,8 +171,8 @@ struct NetworksSettingsViewControllerTests {
 
         try pane.create(name: "Lab", kind: .hostOnly)
 
-        #expect(viewModel.networks.networks.map(\.name) == ["Lab"])
-        #expect(viewModel.networks.networks.first?.kind == .hostOnly)
+        #expect(viewModel.networks.state.networks?.map(\.name) == ["Lab"])
+        #expect(viewModel.networks.state.networks?.first?.kind == .hostOnly)
         #expect(pane.networks.map(\.name) == ["Lab"])
     }
 
@@ -151,7 +197,7 @@ struct NetworksSettingsViewControllerTests {
         #expect(pane.networks.map(\.name) == ["Staging"])
 
         #expect(throws: CommandError.self) { try pane.rename(id, to: "  ") }
-        #expect(viewModel.networks.networks.map(\.name) == ["Staging"])
+        #expect(viewModel.networks.state.networks?.map(\.name) == ["Staging"])
     }
 
     @Test("Delete stops listing the network and moves each VM on it to a network of its own")

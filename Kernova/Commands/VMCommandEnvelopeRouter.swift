@@ -147,7 +147,7 @@ struct VMCommandEnvelopeRouter {
             try commands.forgetUSBPairing(selector, key: key)
             return .ok
         case .networks:
-            return .networks(commands.networks())
+            return .networks(try commands.networks())
         case .createNetwork(let name, let kind):
             return .network(try commands.createNetwork(name: name, kind: kind))
         case .renameNetwork(let network, let newName):

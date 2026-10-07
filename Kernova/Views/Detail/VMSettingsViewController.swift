@@ -259,7 +259,7 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.viewModel.guestAddress(for: self.instance)
                 // The library's named networks, which the Mode picker lists
                 // and the Network card names the VM's by.
-                _ = self.viewModel.networks.networks
+                _ = self.viewModel.networks.state
                 // Registers the library's arrivals, so the Storage lock
                 // follows a clone of *this* VM starting and finishing.
                 _ = self.viewModel.capabilities.isAvailable(.editStorageDisks, on: self.instance)

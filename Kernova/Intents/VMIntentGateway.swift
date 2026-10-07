@@ -342,20 +342,19 @@ final class VMIntentGateway {
 
     /// Every named network, ordered by name, each with the VMs on it read in
     /// full — read the same way as ``vms()``.
-    func networks() async -> [NetworkEntity] {
-        await ready()
-        return commands.networks().map(entity(for:))
+    func networks() async throws -> [NetworkEntity] {
+        try await perform(.networks, on: nil) { try self.commands.networks().map(self.entity(for:)) }
     }
 
     /// The networks `ids` names, skipping any that have since been deleted.
-    func networks(withIDs ids: [UUID]) async -> [NetworkEntity] {
+    func networks(withIDs ids: [UUID]) async throws -> [NetworkEntity] {
         let wanted = Set(ids)
-        return await networks().filter { wanted.contains($0.id) }
+        return try await networks().filter { wanted.contains($0.id) }
     }
 
     /// Every network whose name contains `text`, ignoring case.
-    func networks(matching text: String) async -> [NetworkEntity] {
-        await networks().filter { $0.name.localizedCaseInsensitiveContains(text) }
+    func networks(matching text: String) async throws -> [NetworkEntity] {
+        try await networks().filter { $0.name.localizedCaseInsensitiveContains(text) }
     }
 
     func createNetwork(name: String, kind: NetworkKind) async throws -> NetworkEntity {

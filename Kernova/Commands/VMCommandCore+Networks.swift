@@ -7,9 +7,9 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Reads
 
-    func networks() -> [NetworkSummary] {
+    func networks() throws -> [NetworkSummary] {
         library.networks.reload()
-        return library.networks.networks.map(summary)
+        return try library.networks.listedNetworks(verb: .networks).map(summary)
     }
 
     /// `network` as every read surface reports it, with the VMs on it.
@@ -41,14 +41,14 @@ extension VMCommandCore {
 
     func renameNetwork(_ network: String, to newName: String) throws {
         library.networks.reload()
-        let network = try library.networks.requireNetwork(named: network)
+        let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
         try library.networks.rename(network.id, to: newName, verb: .renameNetwork)
         #log(Self.logger, .notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
     }
 
     func deleteNetwork(_ network: String) throws {
         library.networks.reload()
-        let network = try library.networks.requireNetwork(named: network)
+        let network = try library.networks.requireNetwork(named: network, verb: .deleteNetwork)
         let key = VMConfigurationKeyRegistry.networkMembership
         let isolated = VMNetworkMembership.isolated.rawValue
         let naming = library.instances.filter {
@@ -66,7 +66,7 @@ extension VMCommandCore {
                 isolated, to: &settings,
                 context: VMConfigurationWriteContext(
                     instance, entitlements: library.entitlements,
-                    networks: library.networks.networks))
+                    networks: library.networks.state.networks ?? []))
         }
         let inert = naming.filter { instance in
             !members.contains { $0 === instance }

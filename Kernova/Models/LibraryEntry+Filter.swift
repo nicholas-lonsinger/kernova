@@ -27,36 +27,62 @@ extension VMInstance {
     var stateBucket: VMStateBucket {
         heldByAnotherCopy ? .heldByAnotherCopy : phase.stateBucket
     }
+
+    /// What a ``VMLibraryFilter`` reads of this VM, with `networks` the
+    /// library's named networks and `tags` its tags.
+    func filterSubject(
+        bundledAgentVersion: String?, networks: [VMNamedNetwork], tags: [VMTag]
+    ) -> VMLibraryFilter.Subject {
+        VMLibraryFilter.Subject(
+            configuration, lastSeenAgentVersion: lastSeenAgentVersion, state: stateBucket,
+            isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: !snapshotManifest.isEmpty,
+            tags: Set(tags.assigned(hostState.tags).map(\.id)),
+            bundledAgentVersion: bundledAgentVersion, networks: networks)
+    }
+}
+
+extension VMArrival {
+    /// What a ``VMLibraryFilter`` reads of this arrival: preparing, with no
+    /// session, no Ephemeral Mode, no snapshots and no tags.
+    func filterSubject(bundledAgentVersion: String?, networks: [VMNamedNetwork]) -> VMLibraryFilter.Subject {
+        VMLibraryFilter.Subject(
+            configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
+            isEphemeral: false, hasSnapshots: false, tags: [], bundledAgentVersion: bundledAgentVersion,
+            networks: networks)
+    }
 }
 
 extension LibraryEntry {
     /// What a ``VMLibraryFilter`` reads of this entry, with `networks` the
-    /// library's named networks and `tags` its tags. An arrival is preparing,
-    /// with no session, no Ephemeral Mode, no snapshots and no tags.
+    /// library's named networks and `tags` its tags; `nil` for a bundle
+    /// Kernova can't read, which holds nothing a filter reads.
     func filterSubject(
         bundledAgentVersion: String?, networks: [VMNamedNetwork], tags: [VMTag]
-    ) -> VMLibraryFilter.Subject {
-        let configuration = configuration
-        let network = VMLibraryFilter.Network(NetworkModeChoice(configuration)) { kind, id in
-            networks.contains { $0.id == id && $0.kind == kind }
-        }
-        let guestAgent =
-            configuration.guestOS == .macOS
-            ? VMGuestAgentBucket(
-                lastSeenVersion: vm?.lastSeenAgentVersion ?? configuration.lastSeenAgentVersion,
-                bundledVersion: bundledAgentVersion)
-            : nil
+    ) -> VMLibraryFilter.Subject? {
         switch self {
         case .vm(let instance):
-            return VMLibraryFilter.Subject(
-                guestOS: configuration.guestOS, state: instance.stateBucket, network: network,
-                guestAgent: guestAgent, isEphemeral: instance.hostState.ephemeralModeEnabled,
-                hasSnapshots: !instance.snapshotManifest.isEmpty,
-                tags: Set(tags.assigned(instance.hostState.tags).map(\.id)))
-        case .arriving:
-            return VMLibraryFilter.Subject(
-                guestOS: configuration.guestOS, state: .preparing, network: network,
-                guestAgent: guestAgent, isEphemeral: false, hasSnapshots: false)
+            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+        case .arriving(let arrival):
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+        case .unreadable: nil
         }
+    }
+}
+
+extension VMLibraryFilter.Subject {
+    fileprivate init(
+        _ configuration: VMConfiguration, lastSeenAgentVersion: String?, state: VMStateBucket,
+        isEphemeral: Bool, hasSnapshots: Bool, tags: Set<UUID>, bundledAgentVersion: String?,
+        networks: [VMNamedNetwork]
+    ) {
+        self.init(
+            guestOS: configuration.guestOS, state: state,
+            network: VMLibraryFilter.Network(NetworkModeChoice(configuration)) { kind, id in
+                networks.contains { $0.id == id && $0.kind == kind }
+            },
+            guestAgent: configuration.guestOS == .macOS
+                ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)
+                : nil,
+            isEphemeral: isEphemeral, hasSnapshots: hasSnapshots, tags: tags)
     }
 }

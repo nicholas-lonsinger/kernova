@@ -142,4 +142,48 @@ struct DetailContainerLibraryLoadTests {
         gate.release()
         await arrival.settle()
     }
+
+    /// A library holding one bundle whose `config.json` names "Bad VM" and
+    /// holds a network mode no mode spells.
+    private func storageHoldingAnUnreadableBundle() throws -> MockVMStorageService {
+        let storage = MockVMStorageService()
+        let config = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        var object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["networkMode"] = "plan9-mode"
+        storage.files.setData(
+            try JSONSerialization.data(withJSONObject: object),
+            atRelativePath: VMBundleLayout.configRelativePath, in: try storage.bundleURL(for: config))
+        return storage
+    }
+
+    @Test("A selected unreadable bundle shows the empty state naming it, with the config check")
+    func selectedUnreadableBundleShowsTheEmptyState() async throws {
+        let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        present(controller)
+        await viewModel.loadVMs()
+        await drainMainActor()
+
+        #expect(viewModel.selectedEntry?.unreadable?.name == "Bad VM")
+        #expect(labels(in: controller).contains("Kernova can\u{2019}t read \u{201C}Bad VM\u{201D}"))
+    }
+
+    @Test("A load that finds an unreadable file brings up the check once a presenter attaches")
+    func theCheckWaitsForAPresenter() async throws {
+        let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
+        var checks = 0
+        viewModel.onShowConfigCheck = { checks += 1 }
+
+        await viewModel.loadVMs()
+        #expect(checks == 0)
+
+        let controller = DetailContainerViewController(viewModel: viewModel)
+        #expect(viewModel.presenter === controller)
+        #expect(checks == 1)
+
+        // Reported once: a reconcile that finds the same bundle asks for nothing.
+        viewModel.reconcileWithDisk()
+        #expect(checks == 1)
+    }
 }

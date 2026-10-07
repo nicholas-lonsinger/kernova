@@ -218,9 +218,15 @@ final class TagsSettingsViewController: NSViewController {
 // MARK: - SettingsNamedListSource
 
 extension TagsSettingsViewController: SettingsNamedListSource {
-    func listedIDs() -> [UUID] {
+    func listedIDs() -> [UUID]? {
         tags = library.tags
         return tags.map(\.id)
+    }
+
+    var unreadableText: String { "Kernova can\u{2019}t read its tags." }
+
+    func showConfigCheck() {
+        viewModel.showConfigCheck()
     }
 
     private func tag(_ id: UUID) -> VMTag? {

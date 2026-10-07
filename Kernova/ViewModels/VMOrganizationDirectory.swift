@@ -174,7 +174,7 @@ final class VMOrganizationDirectory {
         case nameRequired(Element)
         case nameTaken(String, Element)
         case nameIsIdentifier(String, Element)
-        case unreadable(String)
+        case unreadable
         case unsaved(String)
 
         var errorDescription: String? {
@@ -185,8 +185,8 @@ final class VMOrganizationDirectory {
                 "A \(kind.noun) named \u{201C}\(name)\u{201D} already exists. Give this one another name."
             case .nameIsIdentifier(let name, let kind):
                 "\u{201C}\(name)\u{201D} can\u{2019}t name a \(kind.noun): an identifier already names one."
-            case .unreadable(let reason):
-                "Kernova couldn\u{2019}t read its smart groups, folders and tags, so it changes none: \(reason)"
+            case .unreadable:
+                "Kernova can\u{2019}t read its smart groups, folders and tags. Choose File > Check Config Files\u{2026} to review them."
             case .unsaved(let reason):
                 "Kernova couldn\u{2019}t save its smart groups, folders and tags: \(reason)"
             }
@@ -209,33 +209,38 @@ final class VMOrganizationDirectory {
     /// Every tag, in the order every list of them shows them.
     var tags: [VMTag] { current.tags }
 
-    /// Why the file could not be read the last time, `nil` when it was, or
-    /// holds nothing yet. A change reads the file again first and refuses
-    /// when that read fails, so an unread file is never overwritten.
-    private(set) var readFailure: String?
+    /// The file as the last read refused it, `nil` when it was read, or holds
+    /// nothing yet. A change reads the file again first and refuses when that
+    /// read fails, so an unread file is never overwritten.
+    private(set) var readFailure: UnreadableConfigFile?
 
     /// The file the organization persists in, `nil` to keep it in memory only.
-    @ObservationIgnored private let file: CoordinatedJSONFile<File>?
+    @ObservationIgnored nonisolated let file: CoordinatedJSONFile<File>?
 
     /// The organization `fileURL` holds — none when there is no file yet.
     init(fileURL: URL?) {
-        self.file = fileURL.map { CoordinatedJSONFile(url: $0, empty: File()) }
+        self.file = fileURL.map(Self.file(at:))
         reload()
+    }
+
+    /// The organization file at `url`, as the library's own reads and writes
+    /// take it.
+    nonisolated static func file(at url: URL) -> CoordinatedJSONFile<File> {
+        CoordinatedJSONFile(location: .organization(url), owner: .organization, empty: File())
     }
 
     /// Reads the file again, taking in what another copy of Kernova sharing
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        do {
+        do throws(UnreadableConfigFile) {
             show(try file.read())
             readFailure = nil
         } catch {
-            let reason = error.reason
-            readFailure = reason
+            readFailure = error
             #log(
                 Self.logger, .error,
-                "Couldn't read the library organization at \(file.url.path(percentEncoded: false), privacy: .public): \(reason, privacy: .public)"
+                "Couldn't read the library organization at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: error.problems), privacy: .public)"
             )
         }
     }
@@ -511,7 +516,9 @@ final class VMOrganizationDirectory {
             show(try file.update(changed))
         } catch let failure as CoordinatedJSONFile<File>.Failure {
             switch failure {
-            case .unreadable: throw ChangeError.unreadable(failure.reason)
+            case .unreadable(let unreadable):
+                readFailure = unreadable
+                throw ChangeError.unreadable
             case .unsaved: throw ChangeError.unsaved(failure.reason)
             }
         }

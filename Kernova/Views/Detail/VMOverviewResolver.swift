@@ -279,7 +279,7 @@ final class VMOverviewResolver {
             titledNetworkChoice = choice
             resolved.networkModeTitle = NetworkModeChoice.title(
                 of: config, entitlements: viewModel.entitlements,
-                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.networks)
+                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state.networks ?? [])
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)
     }

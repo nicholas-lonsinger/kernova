@@ -1,15 +1,37 @@
 import AppKit
 
-/// Centered empty state shown in the detail pane when no VM is selected.
+/// Centered state shown in the detail pane when it has no VM to show: none
+/// selected, or a selected bundle Kernova can't read — a symbol, a title, an
+/// optional line under it, and one push button.
 @MainActor
 final class DetailEmptyStateView: NSView {
-    private let onNewVM: () -> Void
+    private let action: () -> Void
+    private let titleLabel = NSTextField(labelWithString: "")
 
-    init(onNewVM: @escaping () -> Void) {
-        self.onNewVM = onNewVM
+    init(
+        symbolName: String, title: String, message: String?, buttonTitle: String,
+        action: @escaping () -> Void
+    ) {
+        self.action = action
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        build()
+        build(symbolName: symbolName, title: title, message: message, buttonTitle: buttonTitle)
+    }
+
+    /// No VM selected, offering a new one.
+    static func noSelection(onNewVM: @escaping () -> Void) -> DetailEmptyStateView {
+        DetailEmptyStateView(
+            symbolName: "desktopcomputer", title: "No Virtual Machine Selected",
+            message: "Select a virtual machine from the sidebar or create a new one.",
+            buttonTitle: "New Virtual Machine", action: onNewVM)
+    }
+
+    /// A selected bundle Kernova can't read, offering the config check; its
+    /// title is set per bundle through ``setTitle(_:)``.
+    static func unreadable(onCheck: @escaping () -> Void) -> DetailEmptyStateView {
+        DetailEmptyStateView(
+            symbolName: "exclamationmark.triangle", title: "", message: nil,
+            buttonTitle: "Check Config Files\u{2026}", action: onCheck)
     }
 
     @available(*, unavailable)
@@ -17,33 +39,43 @@ final class DetailEmptyStateView: NSView {
         fatalError("DetailEmptyStateView does not support NSCoder")
     }
 
-    private func build() {
-        let icon = NSImageView(
-            image: .systemSymbol("desktopcomputer", accessibilityDescription: ""))
+    var title: String { titleLabel.stringValue }
+
+    func setTitle(_ title: String) {
+        titleLabel.stringValue = title
+    }
+
+    private func build(symbolName: String, title: String, message: String?, buttonTitle: String) {
+        let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 48, weight: .regular)
         icon.contentTintColor = .secondaryLabelColor
 
-        let title = NSTextField(labelWithString: "No Virtual Machine Selected")
-        title.font = .preferredFont(forTextStyle: .title2)
-        title.alignment = .center
-        title.isSelectable = false
+        titleLabel.stringValue = title
+        titleLabel.font = .preferredFont(forTextStyle: .title2)
+        titleLabel.alignment = .center
+        titleLabel.isSelectable = false
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.maximumNumberOfLines = 0
 
-        let description = NSTextField(
-            wrappingLabelWithString: "Select a virtual machine from the sidebar or create a new one.")
-        description.font = Typography.body
-        description.textColor = .secondaryLabelColor
-        description.alignment = .center
-        description.isSelectable = false
-        description.maximumNumberOfLines = 0
+        var views: [NSView] = [icon, titleLabel]
+        if let message {
+            let description = NSTextField(wrappingLabelWithString: message)
+            description.font = Typography.body
+            description.textColor = .secondaryLabelColor
+            description.alignment = .center
+            description.isSelectable = false
+            description.maximumNumberOfLines = 0
+            views.append(description)
+        }
 
-        let button = NSButton(title: "New Virtual Machine", target: self, action: #selector(newVMTapped))
+        let button = NSButton(title: buttonTitle, target: self, action: #selector(buttonTapped))
         button.bezelStyle = .push
 
-        let stack = NSStackView(views: [icon, title, description, button])
+        let stack = NSStackView(views: views + [button])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = Spacing.standard
-        stack.setCustomSpacing(16, after: description)
+        if let last = views.last { stack.setCustomSpacing(16, after: last) }
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(stack)
@@ -54,7 +86,7 @@ final class DetailEmptyStateView: NSView {
         ])
     }
 
-    @objc private func newVMTapped() {
-        onNewVM()
+    @objc private func buttonTapped() {
+        action()
     }
 }

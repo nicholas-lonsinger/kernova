@@ -12,6 +12,14 @@ final class MockLibraryFailureSink {
     /// Parallel to `errors`: the alert title each message was raised under.
     private(set) var errorTitles: [String] = []
 
+    /// How many times the library asked for the config check to come up.
+    private(set) var checkRequests = 0
+
+    /// Wire this to `VMLibrary.onUnreadableFilesFound`.
+    func recordCheckRequest() {
+        checkRequests += 1
+    }
+
     /// Fired after each recorded failure.
     let recorded = AsyncGate()
 
@@ -31,5 +39,6 @@ final class MockLibraryFailureSink {
     func reset() {
         errors.removeAll()
         errorTitles.removeAll()
+        checkRequests = 0
     }
 }

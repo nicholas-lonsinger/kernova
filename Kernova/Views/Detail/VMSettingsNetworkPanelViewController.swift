@@ -287,7 +287,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         menu.removeAllItems()
         let basis = NetworkMenuBasis(
             choice: NetworkModeChoice(instance.configuration), reach: networkPickerReach,
-            networks: viewModel.networks.networks)
+            networks: viewModel.networks.state.networks ?? [])
         renderedNetworkMenu = basis
         let current = basis.choice
 
@@ -467,7 +467,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkLockHint?.isHidden = live
         let basis = NetworkMenuBasis(
             choice: NetworkModeChoice(instance.configuration), reach: reach,
-            networks: viewModel.networks.networks)
+            networks: viewModel.networks.state.networks ?? [])
         if basis != renderedNetworkMenu {
             rebuildNetworkModeMenu()
         }

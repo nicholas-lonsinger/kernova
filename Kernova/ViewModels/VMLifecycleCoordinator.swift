@@ -24,8 +24,9 @@ final class VMLifecycleCoordinator {
     /// cannot — see ``USBAccessorySupport/makeService(entitlements:)``.
     let usbAccessoryService: (any USBAccessoryProviding)?
 
-    /// Trashes an image that failed verification.
-    private let fileSystem: any FileSystemOperating
+    /// Trashes what the user can see: an image that failed verification, the
+    /// original of a config file Use Defaults rewrote.
+    let fileSystem: any FileSystemOperating
 
     /// The directory downloads must land in — the one location the sandbox's
     /// downloads entitlement covers.

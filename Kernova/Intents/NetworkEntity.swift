@@ -52,14 +52,14 @@ struct NetworkEntityQuery: EntityStringQuery, EnumerableEntityQuery {
     @Dependency private var gateway: VMIntentGateway
 
     func entities(for identifiers: [UUID]) async throws -> [NetworkEntity] {
-        await gateway.networks(withIDs: identifiers)
+        try await gateway.networks(withIDs: identifiers)
     }
 
     func entities(matching string: String) async throws -> [NetworkEntity] {
-        await gateway.networks(matching: string)
+        try await gateway.networks(matching: string)
     }
 
     func allEntities() async throws -> [NetworkEntity] {
-        await gateway.networks()
+        try await gateway.networks()
     }
 }

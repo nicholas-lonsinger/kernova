@@ -5,8 +5,14 @@ import KernovaLogging
 /// tags — supplies to the ``SettingsNamedListEditor`` that shows them.
 @MainActor
 protocol SettingsNamedListSource: AnyObject {
-    /// The items, read afresh, by identifier in list order.
-    func listedIDs() -> [UUID]
+    /// The items, read afresh, by identifier in list order; `nil` while the
+    /// file listing them can't be read.
+    func listedIDs() -> [UUID]?
+    /// What the pane says in place of the list while it can't be read.
+    var unreadableText: String { get }
+    /// Opens the config file check, from the notice that stands in for a
+    /// list that can't be read.
+    func showConfigCheck()
     /// The name of the item `id` identifies, which its name cell shows and
     /// takes a rename in.
     func name(of id: UUID) -> String
@@ -38,7 +44,8 @@ protocol SettingsNamedListSource: AnyObject {
 ///
 /// A refusal is shown as a sheet on the Settings window. A change arriving
 /// while a name is being edited repaints once the edit ends, since a reload
-/// would end the edit.
+/// would end the edit. While the list can't be read, a notice pointing to the
+/// config file check stands in for it, and the control offers nothing.
 @MainActor
 final class SettingsNamedListEditor: NSObject {
     /// One table column.
@@ -55,12 +62,18 @@ final class SettingsNamedListEditor: NSObject {
     private weak var source: (any SettingsNamedListSource)?
 
     let tableView = NSTableView()
+    private let scrollView = NSScrollView()
+    private let unreadableNotice = NSStackView()
+    private let unreadableLabel = NSTextField(wrappingLabelWithString: "")
     private let addRemoveControl = NSSegmentedControl()
     private static let addSegment = 0
     private static let removeSegment = 1
 
     /// The items the table shows, by identifier.
     private(set) var ids: [UUID] = []
+    /// Whether the last read found the list unreadable, which the pane shows
+    /// in place of the table.
+    private(set) var isUnreadable = false
     /// The name field being edited, while one is.
     private var editingNameField: NSTextField?
     private var reloadAfterEditing = false
@@ -85,7 +98,7 @@ final class SettingsNamedListEditor: NSObject {
         let header = makeGroupedFormSectionHeader(header)
         let caption = makeGroupedFormContentText(caption)
 
-        let scrollView = NSScrollView()
+        configureUnreadableNotice()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
@@ -103,7 +116,7 @@ final class SettingsNamedListEditor: NSObject {
         addRemoveControl.target = self
         addRemoveControl.action = #selector(addRemoveClicked)
 
-        let content = NSStackView(views: [header, caption, scrollView, addRemoveControl])
+        let content = NSStackView(views: [header, caption, scrollView, unreadableNotice, addRemoveControl])
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = Spacing.small
@@ -122,8 +135,27 @@ final class SettingsNamedListEditor: NSObject {
             caption.widthAnchor.constraint(equalTo: content.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: content.widthAnchor),
             scrollView.heightAnchor.constraint(equalToConstant: 180),
+            unreadableNotice.widthAnchor.constraint(equalTo: content.widthAnchor),
+            unreadableNotice.heightAnchor.constraint(equalTo: scrollView.heightAnchor),
         ])
         return SettingsPaneRootView(content: root)
+    }
+
+    /// What the pane shows in place of the table while the list can't be
+    /// read.
+    private func configureUnreadableNotice() {
+        unreadableLabel.font = Typography.body
+        unreadableLabel.textColor = .secondaryLabelColor
+        unreadableLabel.alignment = .center
+        let check = NSButton(
+            title: "Check Config Files\u{2026}", target: self, action: #selector(checkConfigFiles))
+        check.bezelStyle = .push
+        unreadableNotice.setViews([unreadableLabel, check], in: .center)
+        unreadableNotice.orientation = .vertical
+        unreadableNotice.alignment = .centerX
+        unreadableNotice.spacing = Spacing.standard
+        unreadableNotice.translatesAutoresizingMaskIntoConstraints = false
+        unreadableNotice.isHidden = true
     }
 
     private func configureTable(_ columns: [Column]) {
@@ -173,7 +205,12 @@ final class SettingsNamedListEditor: NSObject {
         }
         guard let source else { return }
         let selected = selectedID
-        ids = source.listedIDs()
+        let listed = source.listedIDs()
+        ids = listed ?? []
+        isUnreadable = listed == nil
+        unreadableLabel.stringValue = source.unreadableText
+        scrollView.isHidden = isUnreadable
+        unreadableNotice.isHidden = !isUnreadable
         tableView.reloadData()
         if let selected { select(selected) }
         refreshControls()
@@ -199,11 +236,15 @@ final class SettingsNamedListEditor: NSObject {
     }
 
     private func refreshControls() {
-        addRemoveControl.setEnabled(source?.canCreate ?? false, forSegment: Self.addSegment)
+        addRemoveControl.setEnabled(!isUnreadable && source?.canCreate == true, forSegment: Self.addSegment)
         addRemoveControl.setEnabled(selectedID != nil, forSegment: Self.removeSegment)
     }
 
     // MARK: - Actions
+
+    @objc private func checkConfigFiles() {
+        source?.showConfigCheck()
+    }
 
     @objc private func addRemoveClicked() {
         switch addRemoveControl.selectedSegment {

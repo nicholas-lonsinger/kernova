@@ -30,6 +30,7 @@ struct WindowAutosaveScope: Sendable {
     var mainWindowFrame: NSWindow.FrameAutosaveName { frame("KernovaMainWindow") }
     var mainSplit: NSSplitView.AutosaveName? { savesState ? "KernovaMainSplit" : nil }
     var settingsFrame: NSWindow.FrameAutosaveName { frame("KernovaSettings") }
+    var configCheckFrame: NSWindow.FrameAutosaveName { frame("KernovaConfigCheck") }
 
     func displayFrame(for vmID: UUID) -> NSWindow.FrameAutosaveName { frame("VMDisplay-\(vmID)") }
 

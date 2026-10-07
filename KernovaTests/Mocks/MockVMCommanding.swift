@@ -884,7 +884,13 @@ final class MockVMCommanding: VMCommanding {
     private(set) var renameNetworkCalls: [(network: String, newName: String)] = []
     private(set) var deleteNetworkCalls: [String] = []
 
-    func networks() -> [NetworkSummary] { networksToReturn }
+    /// Thrown by every network listing when set.
+    var networksListingError: (any Error)?
+
+    func networks() throws -> [NetworkSummary] {
+        if let networksListingError { throw networksListingError }
+        return networksToReturn
+    }
 
     func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary {
         createNetworkCalls.append((name, kind))

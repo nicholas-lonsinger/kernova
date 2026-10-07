@@ -32,9 +32,22 @@ extension VMLibrary {
     func refreshFromOtherCopies(only ids: Set<UUID>? = nil) {
         networks.reload()
         organization.reload()
+        reportNetworksReadability()
         for instance in instances where ids?.contains(instance.id) ?? true {
             instance.activity.refreshFromBundle()
         }
+    }
+
+    /// Reports ``networks`` through ``onUnreadableFilesFound`` the first time
+    /// a read finds it unreadable, and arms the report again once it reads.
+    private func reportNetworksReadability() {
+        guard case .unreadable = networks.state else {
+            reportedUnreadableNetworks = false
+            return
+        }
+        guard !reportedUnreadableNetworks else { return }
+        reportedUnreadableNetworks = true
+        onUnreadableFilesFound?()
     }
 
     /// Removes the restore staging directory an interrupted revert left in any
@@ -70,10 +83,11 @@ extension VMLibrary {
     /// What a bundle is read through, gathered so the reads can run off the
     /// main actor.
     ///
-    /// A bundle enters the library whole or not at all: one whose
-    /// configuration, host state or snapshot manifest cannot be read stays
-    /// out, so no write can replace a file whose contents were never known.
-    /// Pairings are the exception ``VMBundleFiles/read()`` states.
+    /// A bundle enters the library as a VM whole or not at all: one whose
+    /// configuration, host state or snapshot manifest cannot be read becomes
+    /// an ``UnreadableVM`` instead, so no write can replace a file whose
+    /// contents were never known. Pairings are the exception
+    /// ``VMBundleFiles/read()`` states.
     struct BundleReader: Sendable {
         let storage: any VMStorageProviding
 
@@ -82,7 +96,7 @@ extension VMLibrary {
         }
 
         /// Reads the bundle and the phase it rests in.
-        func bundle(at bundleURL: URL) throws -> ScannedBundle {
+        func bundle(at bundleURL: URL) throws(UnreadableConfigFile) -> ScannedBundle {
             let read = try read(at: bundleURL)
             return ScannedBundle(
                 read: read,
@@ -94,7 +108,7 @@ extension VMLibrary {
         ///
         /// Blocks on the filesystem, so it runs where the other bundle reads
         /// do.
-        func read(at bundleURL: URL) throws -> VMBundleRead {
+        func read(at bundleURL: URL) throws(UnreadableConfigFile) -> VMBundleRead {
             try files(at: bundleURL).read()
         }
     }
@@ -114,8 +128,9 @@ extension VMLibrary {
     /// The whole library as read from disk in one pass.
     struct LibraryScan: Sendable {
         var bundles: [ScannedBundle] = []
-        /// Bundle names that could not be read.
-        var failedBundleNames: [String] = []
+        /// The bundles that could not be read, each with the file that kept
+        /// it out.
+        var unreadable: [UnreadableBundle] = []
     }
 
     /// Reads every bundle under the VMs directory, in ``bundleNameOrder(_:_:)``.
@@ -128,14 +143,24 @@ extension VMLibrary {
             do {
                 scan.bundles.append(try reader.bundle(at: bundleURL))
             } catch {
-                #log(
-                    logger, .error,
-                    "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
-                )
-                scan.failedBundleNames.append(bundleURL.deletingPathExtension().lastPathComponent)
+                logUnreadable(bundleURL, error)
+                scan.unreadable.append(UnreadableBundle(url: bundleURL, file: error))
             }
         }
         return scan
+    }
+
+    /// Logs what kept the bundle at `url` out, coding path and all.
+    nonisolated private static func logUnreadable(_ url: URL, _ file: UnreadableConfigFile) {
+        #log(
+            logger, .error,
+            "Failed to load VM from \(url.lastPathComponent, privacy: .public): \(file.fileName, privacy: .public) \(String(describing: file.problems), privacy: .public)"
+        )
+    }
+
+    /// The name a bundle's unreadable files are reported under, once.
+    nonisolated private static func reportName(_ url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent
     }
 
     /// Adopts every bundle on disk into the library.
@@ -168,12 +193,9 @@ extension VMLibrary {
         for scanned in scan.bundles {
             _ = adopt(scanned)
         }
+        admitUnreadable(scan.unreadable)
         macAddresses.logDuplicateMACAddressHolders()
-
-        if !scan.failedBundleNames.isEmpty {
-            reportedFailedBundles.formUnion(scan.failedBundleNames)
-            presentError(LoadError.bundleLoadFailed(names: scan.failedBundleNames))
-        }
+        reportNewlyUnreadable(scan.unreadable.map { Self.reportName($0.url) })
 
         if let savedOrder = preferences.vmOrder {
             customOrder = savedOrder
@@ -186,6 +208,21 @@ extension VMLibrary {
 
         restoreSelection()
         #log(Self.logger, .notice, "Loaded \(self.instances.count, privacy: .public) VMs")
+    }
+
+    /// Reports through ``onUnreadableFilesFound`` the bundles named `failed`
+    /// that no earlier read reported.
+    private func reportNewlyUnreadable(_ failed: [String]) {
+        let new = failed.filter { !reportedFailedBundles.contains($0) }
+        if new.count < failed.count {
+            #log(
+                Self.logger, .debug,
+                "Suppressed \(failed.count - new.count, privacy: .public) already-reported unreadable bundle(s)"
+            )
+        }
+        guard !new.isEmpty else { return }
+        reportedFailedBundles.formUnion(new)
+        onUnreadableFilesFound?()
     }
 
     // MARK: - Directory Watcher
@@ -225,20 +262,26 @@ extension VMLibrary {
             let reader = bundleReader
 
             var failedBundles: [String] = []
+            // The bundles that become unreadable rows: those this pass could
+            // not read that no VM in the library is built from.
+            var unreadable: [UnreadableBundle] = []
+            func noteUnreadable(_ bundleURL: URL, _ file: UnreadableConfigFile) {
+                Self.logUnreadable(bundleURL, file)
+                failedBundles.append(Self.reportName(bundleURL))
+                // A VM already built from the bundle keeps its row, for the
+                // reason the eviction below is keyed on the listing.
+                guard !instances.contains(where: { isSameBundle($0.bundleURL, bundleURL) }) else { return }
+                unreadable.append(UnreadableBundle(url: bundleURL, file: file))
+            }
             // The VMs this pass found in a listed bundle it could read.
             var confirmedIDs: Set<UUID> = []
             var didChange = false
             for bundleURL in diskBundles {
-                let bundleName = bundleURL.deletingPathExtension().lastPathComponent
                 let id: UUID
                 do {
                     id = try reader.files(at: bundleURL).readConfiguration().id
                 } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to load config from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedBundles.append(bundleName)
+                    noteUnreadable(bundleURL, error)
                     continue
                 }
                 if let known = entries.first(where: { $0.id == id })?.vm,
@@ -264,14 +307,11 @@ extension VMLibrary {
                         break
                     }
                 } catch {
-                    #log(
-                        Self.logger, .error,
-                        "Failed to load VM from \(bundleURL.lastPathComponent, privacy: .public) during reconciliation: \(error.localizedDescription, privacy: .public)"
-                    )
-                    failedBundles.append(bundleName)
+                    noteUnreadable(bundleURL, error)
                 }
             }
-            let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
+            if admitUnreadable(unreadable) { didChange = true }
+            let currentDiskNames = Set(diskBundles.map(Self.reportName))
             reportedFailedBundles.subtract(currentDiskNames.subtracting(failedBundles))
 
             // Keyed on the listing rather than on what was read, so a bundle
@@ -299,18 +339,7 @@ extension VMLibrary {
                 macAddresses.logDuplicateMACAddressHolders()
             }
 
-            let newFailures = failedBundles.filter { !reportedFailedBundles.contains($0) }
-            let suppressedCount = failedBundles.count - newFailures.count
-            if suppressedCount > 0 {
-                #log(
-                    Self.logger, .debug,
-                    "reconcileWithDisk: suppressed \(suppressedCount, privacy: .public) already-reported bundle failure(s)"
-                )
-            }
-            if !newFailures.isEmpty {
-                reportedFailedBundles.formUnion(newFailures)
-                presentError(LoadError.bundleLoadFailed(names: newFailures))
-            }
+            reportNewlyUnreadable(failedBundles)
 
             // Prune names of bundles no longer on disk so a new bundle with the same name
             // is not silently suppressed.
@@ -527,6 +556,7 @@ extension VMLibrary {
                 switch entry {
                 case .vm(let instance): instance.bundleURL
                 case .arriving(let arrival): arrival.destinationURL
+                case .unreadable(let bundle): bundle.bundleURL
                 }
             guard VMBundleIdentity.nameKey(url.deletingLastPathComponent()) == vmsDirKey else {
                 return nil

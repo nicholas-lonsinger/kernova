@@ -27,8 +27,12 @@ final class DetailContainerViewController: NSViewController {
     // MARK: - Detail content layer
 
     private let contentContainer = NSView()
-    private lazy var emptyStateView = DetailEmptyStateView { [weak self] in
+    private lazy var emptyStateView = DetailEmptyStateView.noSelection { [weak self] in
         self?.presentCreationWizard()
+    }
+    /// What a selected bundle Kernova can't read shows.
+    private lazy var unreadableStateView = DetailEmptyStateView.unreadable { [weak self] in
+        self?.viewModel.showConfigCheck()
     }
     /// Shown until the library's first read lands — a bare pane, because at that
     /// point the app knows of no VM to show and cannot yet say there is none.
@@ -128,6 +132,12 @@ final class DetailContainerViewController: NSViewController {
             }
             placeholder.configure(label: arrival.displayLabel)
             showContentView(placeholder.view)
+            return
+        }
+        if case .unreadable(let bundle)? = viewModel.selectedEntry {
+            displayedInstanceID = nil
+            unreadableStateView.setTitle("Kernova can\u{2019}t read \u{201C}\(bundle.name)\u{201D}")
+            showContentView(unreadableStateView)
             return
         }
         if let selected = viewModel.selectedInstance {

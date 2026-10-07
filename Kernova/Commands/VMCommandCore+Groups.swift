@@ -76,8 +76,9 @@ extension VMCommandCore {
 
     /// The entries `selection` admits, in its order: each one its filter
     /// admits and in every group it names, under the manual sort in the
-    /// order of the folder it names, else the library's.
-    func entries(in selection: VMLibrarySelection) -> [LibraryEntry] {
+    /// order of the folder it names, else the library's. A bundle Kernova
+    /// can't read is never one of them.
+    func entries(in selection: VMLibrarySelection) -> [AddressableEntry] {
         let context = library.sidebarContext
         let candidates: [LibraryEntry]
         if let order = selection.manualOrder {
@@ -87,10 +88,10 @@ extension VMCommandCore {
             candidates = library.entries
         }
         let admitted = candidates.filter { entry in
-            let subject = context.subject(of: entry)
+            guard let subject = context.subject(of: entry) else { return false }
             return selection.filter.admits(subject) && selection.groups.allSatisfy { $0.contains(entry, subject) }
         }
-        return selection.sort.ordered(admitted)
+        return selection.sort.ordered(admitted).compactMap(\.addressable)
     }
 
     func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection {

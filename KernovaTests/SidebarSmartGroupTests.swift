@@ -431,7 +431,7 @@ struct SidebarSmartGroupTests {
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
-        #expect(viewModel.networks.networks.isEmpty)
+        #expect(viewModel.networks.state == .listed([]))
         #expect(
             viewModel.library.smartGroups.map(\.filter) == [
                 VMLibraryFilter(networks: [onLab]), VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted]),
@@ -467,7 +467,7 @@ struct SidebarSmartGroupTests {
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
-        #expect(VMNetworkDirectory(fileURL: networksURL).networks.isEmpty)
+        #expect(VMNetworkDirectory(fileURL: networksURL).state == .listed([]))
         #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
     }
 

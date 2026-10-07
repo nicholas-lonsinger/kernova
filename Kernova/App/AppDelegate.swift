@@ -155,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onRevealInFinder = { instance in
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
         }
+        viewModel.onShowConfigCheck = { [weak self] in
+            self?.windows.showConfigCheck()
+        }
         viewModel.displayBootGeometryProvider = self
     }
 
@@ -435,6 +438,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 Self.logger, .error,
                 "openVMsFolder: failed to resolve VMs directory: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    @objc func checkConfigFiles(_ sender: Any?) {
+        windows.showConfigCheck()
     }
 
     @objc func showLibrary(_ sender: Any?) {

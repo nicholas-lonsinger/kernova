@@ -27,13 +27,14 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
     public struct Keys: Sendable {
         /// The VM's display name.
         public var name: String
-        /// When the VM was created.
-        public var createdAt: Date
+        /// When the VM was created; `nil` for a VM whose configuration
+        /// can't be read, which sorts after every dated one.
+        public var createdAt: Date?
         /// When the VM last ran.
         public var lastRun: LastRun
 
         /// Keys reading as given.
-        public init(name: String, createdAt: Date, lastRun: LastRun) {
+        public init(name: String, createdAt: Date?, lastRun: LastRun) {
             self.name = name
             self.createdAt = createdAt
             self.lastRun = lastRun
@@ -73,7 +74,12 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
             case .orderedSame: return nil
             }
         case .dateCreated:
-            return lhs.createdAt == rhs.createdAt ? nil : lhs.createdAt > rhs.createdAt
+            switch (lhs.createdAt, rhs.createdAt) {
+            case (let left?, let right?): return left == right ? nil : left > right
+            case (.some, nil): return true
+            case (nil, .some): return false
+            case (nil, nil): return nil
+            }
         case .lastRun:
             return Self.precedes(lhs.lastRun, rhs.lastRun) ?? Self.name.precedes(lhs, rhs)
         }

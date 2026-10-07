@@ -18,16 +18,16 @@ struct VMNetworkDirectoryTests {
         let office = try directory.create(name: " Office ", kind: .shared, verb: .createNetwork)
         let lab = try directory.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
         #expect(office.name == "Office")
-        #expect(directory.networks.map(\.name) == ["Lab", "Office"])
+        #expect(directory.state.networks?.map(\.name) == ["Lab", "Office"])
 
         try directory.rename(lab.id, to: "Zoo", verb: .renameNetwork)
         let reread = VMNetworkDirectory(fileURL: fileURL)
-        #expect(reread.networks.map(\.name) == ["Office", "Zoo"])
+        #expect(reread.state.networks?.map(\.name) == ["Office", "Zoo"])
         #expect(reread.network(named: "zoo")?.id == lab.id)
         #expect(reread.network(named: lab.id.uuidString)?.kind == .hostOnly)
 
         try reread.remove(office.id, verb: .deleteNetwork)
-        #expect(VMNetworkDirectory(fileURL: fileURL).networks.map(\.id) == [lab.id])
+        #expect(VMNetworkDirectory(fileURL: fileURL).state.networks?.map(\.id) == [lab.id])
     }
 
     @Test("A name has to be new, non-empty, and not spell a membership value")
@@ -41,7 +41,7 @@ struct VMNetworkDirectoryTests {
         }
         // Its own name, recased, is a rename.
         try directory.rename(lab.id, to: "LAB", verb: .renameNetwork)
-        #expect(directory.networks.map(\.name) == ["LAB"])
+        #expect(directory.state.networks?.map(\.name) == ["LAB"])
     }
 
     @Test("A file that cannot be read is never overwritten")
@@ -50,7 +50,7 @@ struct VMNetworkDirectoryTests {
         try Data("not json".utf8).write(to: fileURL)
         let directory = VMNetworkDirectory(fileURL: fileURL)
 
-        #expect(directory.readFailure != nil)
+        #expect(directory.state.networks == nil)
         #expect(throws: CommandError.self) {
             try directory.create(name: "Lab", kind: .shared, verb: .createNetwork)
         }
@@ -77,12 +77,12 @@ struct VMNetworkDirectoryTests {
         let second = VMNetworkDirectory(fileURL: fileURL)
         try first.create(name: "Lab", kind: .shared, verb: .createNetwork)
         try second.create(name: "Bench", kind: .hostOnly, verb: .createNetwork)
-        #expect(second.networks.map(\.name) == ["Bench", "Lab"])
+        #expect(second.state.networks?.map(\.name) == ["Bench", "Lab"])
         // A name the other copy took is refused, though this one never saw it.
         #expect(throws: CommandError.self) {
             try first.create(name: "bench", kind: .shared, verb: .createNetwork)
         }
         first.reload()
-        #expect(first.networks.map(\.name) == ["Bench", "Lab"])
+        #expect(first.state.networks?.map(\.name) == ["Bench", "Lab"])
     }
 }

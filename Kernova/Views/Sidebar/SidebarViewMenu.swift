@@ -115,20 +115,23 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     convenience init(viewModel: VMLibraryViewModel, perform: @escaping (Command) -> Void) {
         self.init(
             networkTitle: { [weak viewModel] network in
-                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.networks ?? [])
+                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.state.networks ?? [])
             },
             tags: { [weak viewModel] in viewModel?.library.tags ?? [] },
             perform: perform)
     }
 
-    /// `viewModel`'s library as the menus count it.
+    /// `viewModel`'s library as the menus count it: a bundle Kernova can't
+    /// read holds none of the values they count.
     static func values(of viewModel: VMLibraryViewModel) -> [Value] {
         let context = viewModel.sidebarContext
-        return viewModel.entries.map { entry in
-            let subject = context.subject(of: entry)
+        return viewModel.entries.compactMap { entry in
+            guard let subject = context.subject(of: entry), let configuration = entry.configuration else {
+                return nil
+            }
             return Value(
                 subject: subject,
-                networkTitle: SidebarLayout.networkTitle(subject.network, of: entry.configuration, context: context))
+                networkTitle: SidebarLayout.networkTitle(subject.network, of: configuration, context: context))
         }
     }
 

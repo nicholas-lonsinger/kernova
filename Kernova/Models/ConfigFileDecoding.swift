@@ -312,12 +312,14 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
         case virtualMachine(String)
         case snapshot(vm: String, snapshot: String)
         case networkList
+        case organization
 
         var title: String {
             switch self {
             case .virtualMachine(let name): name
             case .snapshot(let vm, let snapshot): "\(vm) \u{2014} snapshot \u{201C}\(snapshot)\u{201D}"
             case .networkList: "Network list"
+            case .organization: "Smart groups, folders and tags"
             }
         }
     }
@@ -328,11 +330,13 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
         case bundle(URL, VMBundleStateFileID)
         /// The library's `Networks.json`.
         case networkList(URL)
+        /// The library's `Organization.json`.
+        case organization(URL)
 
         var url: URL {
             switch self {
             case .bundle(let bundleURL, let file): bundleURL.appendingPathComponent(file.relativePath)
-            case .networkList(let url): url
+            case .networkList(let url), .organization(let url): url
             }
         }
     }

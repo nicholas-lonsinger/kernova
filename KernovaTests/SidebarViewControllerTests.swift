@@ -990,6 +990,34 @@ struct SidebarViewControllerTests {
         await arrival.settle()
     }
 
+    @Test("An unreadable bundle's row names it, warns in its tooltip, and offers only the check, Finder and the Trash")
+    func unreadableRowOffersOnlyItsWayOut() throws {
+        let viewModel = makeViewModel()
+        let url = URL(fileURLWithPath: "/tmp/Library/VMs/Bad.kernova", isDirectory: true)
+        let file = UnreadableConfigFile(
+            location: .bundle(url, .configuration), owner: .virtualMachine("Bad VM"),
+            problems: [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("networkMode")]),
+                    issue: .unrecognized(found: "plan9-mode", default: "hostOnly"))
+            ])
+        let bundle = UnreadableVM(UnreadableBundle(url: url, file: file))
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let cell = SidebarUnreadableRowCellView()
+        cell.configure(bundle: bundle)
+        #expect(cell.textField?.stringValue == "Bad VM")
+        #expect(
+            cell.toolTip
+                == "Kernova can\u{2019}t read this virtual machine\u{2019}s settings: "
+                + "$.networkMode: \u{201C}plan9-mode\u{201D} is not a recognized value. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+
+        let menu = controller.buildContextMenu(for: bundle)
+        #expect(titles(of: menu) == ["Check Config Files\u{2026}", "Show in Finder", "", "Move to Trash\u{2026}"])
+        #expect(menu.items[2].isSeparatorItem)
+    }
+
     // MARK: - Content-fit width
 
     @Test("contentWidth grows with name length")

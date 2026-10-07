@@ -80,9 +80,18 @@ struct SidebarLayout {
         /// filter menu.
         let networkTitle: (VMConfiguration) -> String
 
-        /// What a filter reads of `entry`.
-        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject {
+        /// What a filter reads of `entry`, `nil` for a bundle Kernova can't
+        /// read.
+        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
             entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+        }
+
+        func subject(of instance: VMInstance) -> VMLibraryFilter.Subject {
+            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+        }
+
+        func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
         }
     }
 
@@ -139,8 +148,11 @@ struct SidebarLayout {
         // observation of the projection tracks every value the counts read.
         var subjects: [UUID: VMLibraryFilter.Subject] = [:]
         for entry in entries { subjects[entry.id] = context.subject(of: entry) }
+        // A bundle Kernova can't read holds nothing a filter reads, and stays
+        // listed so its way out stays in sight; the search reads its name as
+        // its row shows it.
         let found = entries.filter { search.admits($0.name) }
-        let matching = Set(found.filter { subjects[$0.id].map(options.filter.admits) ?? false }.map(\.id))
+        let matching = Set(found.filter { subjects[$0.id].map(options.filter.admits) ?? true }.map(\.id))
         let shown = options.sort.ordered(entries.filter { $0.id == retaining || matching.contains($0.id) })
         let content: Content =
             switch options.grouping {
@@ -210,16 +222,18 @@ struct SidebarLayout {
     ) -> [Group] {
         var pending: [Pending] = []
         for entry in entries {
-            guard let subject = subjects[entry.id] else { continue }
-            for key in groupKeys(of: subject, by: grouping, context: context) {
+            let subject = subjects[entry.id]
+            let keys = subject.map { groupKeys(of: $0, by: grouping, context: context) } ?? [unreadableGroupKey]
+            for key in keys {
                 if let index = pending.firstIndex(where: { $0.key == key }) {
                     pending[index].entries.append(entry)
                     continue
                 }
                 let title: String =
-                    switch grouping {
-                    case .none, .guestOS, .state, .tag: key.title
-                    case .network: networkTitle(subject.network, of: entry.configuration, context: context)
+                    switch (grouping, subject, entry.configuration) {
+                    case (.network, let subject?, let configuration?):
+                        networkTitle(subject.network, of: configuration, context: context)
+                    default: key.title
                     }
                 pending.append(Pending(key: key, title: title, entries: [entry]))
             }
@@ -234,6 +248,11 @@ struct SidebarLayout {
                 rows: Rows(group.entries))
         }
     }
+
+    /// The group of the bundles Kernova can't read, which hold none of the
+    /// values a grouping reads, after every other group.
+    private static let unreadableGroupKey = GroupKey(
+        value: "unreadable", rank: .max, title: UnreadableVM.statusText)
 
     /// A group's identity — the value its members share — and where it sorts.
     private struct GroupKey: Equatable {
