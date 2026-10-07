@@ -19,8 +19,8 @@ struct SidebarLayout {
         /// What the section lists in place of rows when it has none; `nil` to
         /// list nothing.
         var emptyText: String? = nil
-        /// How many VMs the section's filter matches, `nil` while no filter
-        /// constrains the section.
+        /// How many VMs the section lists of the library's, `nil` while no
+        /// filter constrains the section.
         var filterCounts: FilterCounts? = nil
     }
 
@@ -84,11 +84,10 @@ struct SidebarLayout {
         }
     }
 
-    /// How many VMs a filtering section's filter matches, of how many the
-    /// library holds. A retained VM the filter no longer matches is listed but
-    /// not counted.
+    /// How many VMs a filtering section lists — a retained VM the filter no
+    /// longer matches included — of how many the library holds.
     struct FilterCounts: Equatable {
-        let matching: Int
+        let shown: Int
         let total: Int
     }
 
@@ -135,7 +134,7 @@ struct SidebarLayout {
                 id: .library, title: "Virtual Machines", content: content,
                 emptyText: options.filter.isActive && !entries.isEmpty ? noMatchesText : nil,
                 filterCounts: options.filter.isActive
-                    ? FilterCounts(matching: matching.count, total: entries.count) : nil)
+                    ? FilterCounts(shown: shown.count, total: entries.count) : nil)
         ])
     }
 

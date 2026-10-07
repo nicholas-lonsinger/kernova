@@ -23,12 +23,6 @@ extension VMLifecyclePhase {
 }
 
 extension VMInstance {
-    /// Whether the bundle holds a snapshot other than the Ephemeral Mode
-    /// baseline — what the Has Snapshots filter and query read.
-    var hasSnapshotsBesideBaseline: Bool {
-        snapshotManifest.snapshots.contains { !isEphemeralBaseline($0) }
-    }
-
     /// The coarse state this VM is in, as this copy sees it.
     var stateBucket: VMStateBucket {
         heldByAnotherCopy ? .heldByAnotherCopy : phase.stateBucket
@@ -57,7 +51,7 @@ extension LibraryEntry {
             return VMLibraryFilter.Subject(
                 guestOS: configuration.guestOS, state: instance.stateBucket, network: network,
                 guestAgent: guestAgent, isEphemeral: instance.hostState.ephemeralModeEnabled,
-                hasSnapshots: instance.hasSnapshotsBesideBaseline)
+                hasSnapshots: !instance.snapshotManifest.isEmpty)
         case .arriving:
             return VMLibraryFilter.Subject(
                 guestOS: configuration.guestOS, state: .preparing, network: network,

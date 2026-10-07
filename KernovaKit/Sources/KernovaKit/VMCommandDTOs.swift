@@ -72,8 +72,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let isEphemeral: Bool
     /// How many named restore points the bundle holds.
     public let snapshotCount: Int
-    /// Whether the bundle holds a snapshot other than the Ephemeral Mode
-    /// baseline.
+    /// Whether the bundle holds any snapshot — ``snapshotCount`` is not zero.
     public let hasSnapshots: Bool
     /// How a macOS guest's agent stands against the one the app bundles, `nil`
     /// for a guest no Kernova agent runs in.

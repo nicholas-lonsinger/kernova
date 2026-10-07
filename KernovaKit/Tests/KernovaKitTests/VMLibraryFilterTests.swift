@@ -124,8 +124,24 @@ struct VMLibraryFilterTests {
 
         let data = try JSONEncoder().encode(filter)
         #expect(try JSONDecoder().decode(VMLibraryFilter.self, from: data) == filter)
-        // Equal filters encode to equal bytes, whatever their sets' order.
-        #expect(try JSONEncoder().encode(filter) == data)
+    }
+
+    @Test("Equal filters encode to equal bytes under sorted keys, whatever their sets' order")
+    func encodingIsStable() throws {
+        let encoder = JSONEncoder()
+        // Key order is the encoder's to choose; only the values are the
+        // filter's, so byte stability is claimed under sorted keys.
+        encoder.outputFormatting = .sortedKeys
+        let forward = VMLibraryFilter(
+            guestOSes: [.macOS, .linux], states: [.running, .suspended, .stopped],
+            guestAgents: [.upToDate, .olderVersion, .neverConnected])
+        var backward = VMLibraryFilter()
+        for os in VMGuestOS.allCases.reversed() { backward.guestOSes.insert(os) }
+        for state in [VMStateBucket.stopped, .suspended, .running] { backward.states.insert(state) }
+        for agent in VMGuestAgentBucket.allCases.reversed() { backward.guestAgents.insert(agent) }
+        #expect(forward == backward)
+
+        #expect(try encoder.encode(forward) == encoder.encode(backward))
     }
 
     @Test("A missing key decodes as that attribute unconstrained")

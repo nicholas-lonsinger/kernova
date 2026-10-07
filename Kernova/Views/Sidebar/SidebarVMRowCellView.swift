@@ -122,7 +122,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         nameLine.orientation = .horizontal
         nameLine.alignment = .centerY
         nameLine.spacing = 0
-        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detailLabel.font = SidebarVMRowCellView.detailFont
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -131,7 +131,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         // stay centered on the row.
         let nameColumn = NSStackView(views: [nameLine, detailLabel])
         nameColumn.orientation = .vertical
-        nameColumn.alignment = .width
+        nameColumn.alignment = .leading
         nameColumn.spacing = 0
         nameColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
         nameColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -159,6 +159,10 @@ final class SidebarVMRowCellView: NSTableCellView {
             row.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
 
             iconView.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
+            // The name line fills the column, so the name keeps the full width
+            // the slow-second-click rename measures, and the detail line sits
+            // at the column's leading edge under it.
+            nameLine.widthAnchor.constraint(equalTo: nameColumn.widthAnchor),
             spinner.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
         ])
     }
@@ -358,10 +362,14 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// The cell content width — excluding the outline view's per-row indentation,
     /// which the caller adds — at which `name` stops truncating while its row is
     /// selected, which is the widest the name is ever drawn.
+    ///
+    /// `detail` is the row's Show Details line, which the name column widens
+    /// to when it is the longer of the two.
     static func contentWidth(
-        forName name: String, showsAgentAccessory: Bool, showsEphemeralAccessory: Bool
+        forName name: String, detail: String? = nil, showsAgentAccessory: Bool,
+        showsEphemeralAccessory: Bool
     ) -> CGFloat {
-        let nameWidth = ceil(measuredNameWidth(for: name))
+        let nameWidth = max(ceil(measuredNameWidth(for: name)), detail.map { ceil(measuredDetailWidth(for: $0)) } ?? 0)
         var width =
             Self.rowLeadingInset + Self.iconSlotWidth + Spacing.small + nameWidth
             + Self.rowTrailingInset
@@ -420,6 +428,18 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// changes, so it keeps tracking ``emphasizedNameFont``.
     private static var nameWidthCache: [String: CGFloat] = [:]
     private static var nameWidthCacheFont: NSFont?
+
+    /// The font a row's Show Details line is set in — the arrival row's too.
+    static let detailFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+
+    /// `detail`'s width at ``detailFont``'s emphasized weight — never
+    /// narrower than the regular one, so the fit holds however a selected row
+    /// draws it.
+    private static func measuredDetailWidth(for detail: String) -> CGFloat {
+        measuringNameField.font = NSFontManager.shared.convert(detailFont, toHaveTrait: .boldFontMask)
+        measuringNameField.stringValue = detail
+        return measuringNameField.fittingSize.width
+    }
 
     private static func measuredNameWidth(for name: String) -> CGFloat {
         let font = emphasizedNameFont

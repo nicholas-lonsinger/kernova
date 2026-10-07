@@ -82,7 +82,7 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Snapshot Count")
     var snapshotCount: Int
 
-    /// Whether the VM holds a snapshot other than its Ephemeral Mode baseline.
+    /// Whether the VM holds any snapshot, its Ephemeral Mode baseline included.
     @Property(title: "Has Snapshots")
     var hasSnapshots: Bool
 

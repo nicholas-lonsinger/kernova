@@ -82,6 +82,7 @@ func makeWiredLibrary(
     entitlements: EntitlementService = .entitled,
     networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
     guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore(),
+    bridgedInterfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
     activationCenter: NotificationCenter = NotificationCenter()
 ) -> VMLibrary {
     let library = VMLibrary(
@@ -94,6 +95,7 @@ func makeWiredLibrary(
         entitlements: entitlements,
         networks: networks,
         guestAccountPasswords: guestAccountPasswords,
+        bridgedInterfaces: bridgedInterfaces,
         activationCenter: activationCenter)
     return library
 }

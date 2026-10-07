@@ -105,8 +105,9 @@ struct SidebarFilterSortGroupTests {
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion]))) == ["Old Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.neverConnected]))) == ["Bare Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(ephemeralOnly: true))) == ["Ephemeral"])
-        // The Ephemeral baseline is not a snapshot the user took.
-        #expect(shownNames(entries, options(VMLibraryFilter(withSnapshotsOnly: true))) == ["Snapshotted"])
+        // The Ephemeral baseline counts, as every surface counts it.
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(withSnapshotsOnly: true))) == ["Ephemeral", "Snapshotted"])
         // ANDed: Linux and not Host Only.
         #expect(
             shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [net(.shared)])))
@@ -570,10 +571,10 @@ struct SidebarFilterSortGroupTests {
         #expect(outline.numberOfRows == 3)
         #expect(viewModel.selectedID == started.id)
         #expect((outline.item(atRow: outline.selectedRow) as? SidebarRow)?.entry.vm === started)
-        // The header counts only the VMs the filter matches.
+        // The header counts the rows it lists, the retained one included.
         let header = try #require(
             outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
-        #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("1 of 2"))
+        #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("2 of 2"))
 
         viewModel.selectRevealing(other.id)
 
@@ -593,7 +594,7 @@ struct SidebarFilterSortGroupTests {
         started.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(
             viewModel.sidebarLayout.sections.first?.filterCounts
-                == SidebarLayout.FilterCounts(matching: 1, total: 2))
+                == SidebarLayout.FilterCounts(shown: 2, total: 2))
 
         // The rows stay the same, so only the retained VM's own state can wake
         // the pass that recounts: an observation of the layout must track it.
@@ -608,7 +609,7 @@ struct SidebarFilterSortGroupTests {
         #expect(woke.withLock { $0 })
         #expect(
             viewModel.sidebarLayout.sections.first?.filterCounts
-                == SidebarLayout.FilterCounts(matching: 2, total: 2))
+                == SidebarLayout.FilterCounts(shown: 2, total: 2))
     }
 
     @Test("A filter edit while the selected VM no longer matches hides it and clears the selection")
@@ -680,6 +681,108 @@ struct SidebarFilterSortGroupTests {
 
         gate.release()
         _ = await arrival.settle()
+    }
+
+    @Test("Revealing a VM the sidebar already lists — a retained one — relaxes nothing")
+    func revealOfRetainedVMKeepsFilter() {
+        let viewModel = makeViewModel()
+        let started = viewModel.library.admitFixture(name: "Started", phase: .running(sessionID: UUID()))
+        viewModel.library.admitFixture(name: "Other", phase: .running(sessionID: UUID()))
+        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.running])
+        viewModel.selectRevealing(started.id)
+        started.activity.placeForTesting(.stopped)
+        #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+
+        viewModel.selectRevealing(started.id)
+
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(states: [.running]))
+        #expect(viewModel.selectedID == started.id)
+    }
+
+    @Test("A host interface's title follows the host's interfaces from one pass to the next")
+    func bridgedTitleFollowsInterfaces() {
+        let interfaces = MockBridgedInterfaceProvider()
+        let library = makeWiredLibrary(bridgedInterfaces: interfaces)
+        library.admitFixture(name: "Bridged") {
+            $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "en7"
+        }
+        library.sidebarOptions.grouping = .network
+        let title = { () -> String? in
+            guard case .groups(let groups) = library.sidebarLayout.sections.first?.content else { return nil }
+            return groups.groups.first?.title
+        }
+        #expect(title() == "en7 (unavailable)")
+
+        interfaces.available = [BridgedInterface(identifier: "en7", localizedDisplayName: "Thunderbolt Ethernet")]
+
+        #expect(title() == "Thunderbolt Ethernet (en7)")
+    }
+
+    @Test("VMInfo reports the state bucket by liveness, and the Shortcuts entity reads it")
+    func infoCarriesStateBucket() throws {
+        let viewModel = makeViewModel()
+        let capturing = viewModel.library.admitFixture(name: "Capturing", phase: .stopped)
+        capturing.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
+
+        let info = try viewModel.commands.info(.id(capturing.id))
+
+        #expect(info.status == VMStatus.snapshotting.rawValue)
+        #expect(info.stateBucket == .stopped)
+        #expect(VMEntity(info).stateGroup == "stopped")
+    }
+
+    @Test("The detail line starts where the name does")
+    func detailLineIsLeadingAligned() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "A VM With a Long Name")
+        viewModel.sidebarOptions.showsDetails = true
+        let controller = SidebarViewController(viewModel: viewModel)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled],
+            backing: .buffered, defer: false)
+        window.contentViewController = controller
+        controller.view.layoutSubtreeIfNeeded()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        _ = outline.rowView(atRow: 1, makeIfNecessary: true)
+        controller.view.layoutSubtreeIfNeeded()
+        let cell = try #require(
+            outline.view(atColumn: 0, row: 1, makeIfNecessary: false) as? SidebarVMRowCellView)
+        let name = try #require(cell.textField)
+        let detail = try #require(
+            allSubviews(NSTextField.self, in: cell).first { !$0.isHidden && $0.stringValue == "Stopped" })
+
+        let nameFrame = name.convert(name.bounds, to: cell)
+        let detailFrame = detail.convert(detail.bounds, to: cell)
+        #expect(abs(nameFrame.minX - detailFrame.minX) < 1)
+    }
+
+    @Test("The fit width shows a grouped row's whole name")
+    func fitWidthCoversGroupedRows() throws {
+        let viewModel = makeViewModel()
+        let name = "Ubuntu Desktop 26.04 LTS Workstation"
+        viewModel.library.admitFixture(name: name)
+        viewModel.sidebarOptions.grouping = .state
+        viewModel.sidebarOptions.showsDetails = true
+        let controller = SidebarViewController(viewModel: viewModel)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.titled],
+            backing: .buffered, defer: false)
+        window.contentViewController = controller
+        controller.view.layoutSubtreeIfNeeded()
+        let fit = try #require(controller.widthToFitLongestRow())
+
+        window.setContentSize(NSSize(width: fit, height: 200))
+        controller.view.layoutSubtreeIfNeeded()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        _ = outline.rowView(atRow: 2, makeIfNecessary: true)
+        controller.view.layoutSubtreeIfNeeded()
+        let cell = try #require(
+            outline.view(atColumn: 0, row: 2, makeIfNecessary: false) as? SidebarVMRowCellView)
+        let label = try #require(cell.textField)
+
+        #expect(outline.bounds.width >= fit - 1)
+        #expect(label.frame.width >= label.fittingSize.width)
     }
 
     // MARK: - State buckets

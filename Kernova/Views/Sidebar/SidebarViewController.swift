@@ -391,10 +391,15 @@ final class SidebarViewController: NSViewController {
     ///
     /// Drives the split-view divider's Finder-style snap-to-fit.
     func widthToFitLongestRow() -> CGFloat? {
+        let outlineWidth = outlineView.bounds.width
         let widest = (0..<outlineView.numberOfRows).compactMap { row -> CGFloat? in
             guard let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
-            let indentation = outlineView.frameOfCell(atColumn: 0, row: row).minX
-            return indentation + contentWidth(of: node.entry)
+            // Everything the row's level costs besides its cell: the
+            // indentation before it and the inset the outline view keeps after
+            // it, which a row under a group header has too.
+            let cell = outlineView.frameOfCell(atColumn: 0, row: row)
+            let chrome = cell.minX + max(outlineWidth - cell.maxX, 0)
+            return chrome + contentWidth(of: node.entry)
         }.max()
         // The width the *outline view* must have — the split-view divider sits a
         // few points outboard of this, which the snap controller converts.
@@ -402,12 +407,14 @@ final class SidebarViewController: NSViewController {
     }
 
     private func contentWidth(of entry: LibraryEntry) -> CGFloat {
+        let detail = rowDetail { entry }()
         guard case .vm(let instance) = entry else {
             return SidebarVMRowCellView.contentWidth(
-                forName: entry.name, showsAgentAccessory: false, showsEphemeralAccessory: false)
+                forName: entry.name, detail: detail, showsAgentAccessory: false,
+                showsEphemeralAccessory: false)
         }
         return SidebarVMRowCellView.contentWidth(
-            forName: instance.name,
+            forName: instance.name, detail: detail,
             showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                 for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
             showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled
@@ -770,7 +777,7 @@ extension SidebarViewController {
             return SidebarGroupHeaderCellView.Filtering(countText: nil, isActive: false, activeDescription: nil)
         }
         return SidebarGroupHeaderCellView.Filtering(
-            countText: "\(counts.matching) of \(counts.total)", isActive: true,
+            countText: "\(counts.shown) of \(counts.total)", isActive: true,
             activeDescription: viewMenu.activeFilterDescription(
                 options: viewModel.sidebarOptions, values: viewMenuValues()))
     }

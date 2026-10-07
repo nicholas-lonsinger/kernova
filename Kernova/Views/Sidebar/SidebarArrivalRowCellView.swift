@@ -40,7 +40,7 @@ final class SidebarArrivalRowCellView: NSTableCellView {
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // Set like ``SidebarVMRowCellView``'s detail line.
-        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detailLabel.font = SidebarVMRowCellView.detailFont
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

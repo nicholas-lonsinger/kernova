@@ -212,26 +212,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``
     /// read besides the entries.
+    ///
+    /// Each context enumerates the host's interfaces at most once, and only
+    /// when a VM's network names one: a pass titles every bridged VM from one
+    /// enumeration, and the next pass sees the host as it is then.
     var sidebarContext: SidebarLayout.Context {
         let named = networks.networks
+        let entitlements = entitlements
+        let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
-            networkTitle: { [weak self] config in self?.networkTitle(of: config, networks: named) ?? "" })
-    }
-
-    /// Where the titles of networks naming a host interface are kept: only
-    /// they cost an enumeration, so each is enumerated once, as
-    /// ``VMOverviewResolver`` does for the VM it shows.
-    @ObservationIgnored private var hostInterfaceTitles: [NetworkModeChoice: String] = [:]
-
-    private func networkTitle(of config: VMConfiguration, networks: [VMNamedNetwork]) -> String {
-        let choice = NetworkModeChoice(config)
-        if choice.namesAHostInterface, let title = hostInterfaceTitles[choice] { return title }
-        let title = NetworkModeChoice.title(
-            of: config, entitlements: entitlements, interfaces: bridgedInterfaces.interfaces,
-            networks: networks)
-        if choice.namesAHostInterface { hostInterfaceTitles[choice] = title }
-        return title
+            networkTitle: { config in
+                NetworkModeChoice.title(
+                    of: config, entitlements: entitlements, interfaces: interfaces.interfaces,
+                    networks: named)
+            })
     }
 
     /// Moves ``selection`` onto what `layout` — by default the current
@@ -245,9 +240,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// Selects the entry `id`, first dropping each sidebar filter attribute
     /// that hides it — what every reveal, and every selection made other than
     /// by clicking a row, lands on.
+    ///
+    /// A VM the sidebar already lists — a retained one included — relaxes
+    /// nothing.
     func selectRevealing(_ id: UUID) {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
-        sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
+        if !sidebarShows(id) {
+            sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
+        }
         selectedID = id
     }
 
@@ -1026,5 +1026,24 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// Hands an error message to ``onFailure``.
     func surfaceError(_ message: String, title: String = "Error") {
         onFailure?(title, message)
+    }
+}
+
+/// The host's bridgeable interfaces, enumerated on first ask and kept for
+/// the one projection pass that asked.
+@MainActor
+private final class HostInterfaceEnumeration {
+    private let provider: any BridgedInterfaceProviding
+    private var enumerated: [BridgedInterface]?
+
+    init(provider: any BridgedInterfaceProviding) {
+        self.provider = provider
+    }
+
+    func interfaces() -> [BridgedInterface] {
+        if let enumerated { return enumerated }
+        let interfaces = provider.interfaces()
+        enumerated = interfaces
+        return interfaces
     }
 }

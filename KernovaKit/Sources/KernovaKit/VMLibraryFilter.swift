@@ -145,8 +145,8 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         public var guestAgent: VMGuestAgentBucket?
         /// Whether Ephemeral Mode is on.
         public var isEphemeral: Bool
-        /// Whether the VM holds a snapshot other than its Ephemeral Mode
-        /// baseline.
+        /// Whether the VM holds any snapshot, its Ephemeral Mode baseline
+        /// included — the snapshots every surface counts.
         public var hasSnapshots: Bool
 
         /// A subject reading as given.
@@ -174,8 +174,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     public var guestAgents: Set<VMGuestAgentBucket>
     /// Admits only VMs with Ephemeral Mode on.
     public var ephemeralOnly: Bool
-    /// Admits only VMs holding a snapshot other than their Ephemeral Mode
-    /// baseline.
+    /// Admits only VMs holding any snapshot.
     public var withSnapshotsOnly: Bool
 
     /// A filter constraining each attribute given; the defaults constrain
@@ -252,7 +251,8 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
             withSnapshotsOnly: try c.decodeIfPresent(Bool.self, forKey: .withSnapshotsOnly) ?? false)
     }
 
-    /// Sets are written sorted, so equal filters encode to equal bytes.
+    /// Sets are written sorted, so under `.sortedKeys` equal filters encode to
+    /// equal bytes.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(guestOSes.map(\.rawValue).sorted(), forKey: .guestOSes)
