@@ -56,19 +56,19 @@ struct SidebarLastRunTests {
 
     // MARK: - Order
 
-    @Test("Live VMs sort first — another copy's included — then most recent, then never run, ties A→Z")
+    @Test("Live VMs sort first — another copy's included — then most recent, then none recorded, ties A→Z")
     func projectionOrder() {
         let held = instance("Held", lastRun: 7200)
         held.activity.recordOtherCopyHold(heldElsewhere: true)
         let entries: [LibraryEntry] = [
-            .vm(instance("Never")),
+            .vm(instance("No record")),
             .vm(instance("Hour ago", lastRun: 3600)),
             // A live VM's record is its session's start, older than any ended run.
             .vm(instance("Running", phase: .running(sessionID: UUID()), lastRun: 86_400)),
             .vm(instance("Day ago", lastRun: 86_400)),
             .vm(held),
             .vm(instance("Minute ago", lastRun: 60)),
-            .vm(instance("Also never")),
+            .vm(instance("Also no record")),
             .vm(instance("Paused", phase: .livePaused(sessionID: UUID()), lastRun: 86_400)),
         ]
 
@@ -78,7 +78,7 @@ struct SidebarLastRunTests {
 
         #expect(
             shown == [
-                "Held", "Paused", "Running", "Minute ago", "Hour ago", "Day ago", "Also never", "Never",
+                "Held", "Paused", "Running", "Minute ago", "Hour ago", "Day ago", "Also no record", "No record",
             ])
     }
 
@@ -103,7 +103,7 @@ struct SidebarLastRunTests {
         #expect(detail(held) == VMStatus.heldByAnotherCopyDisplayName)
     }
 
-    @Test("A VM at rest states when it last ran — minutes and hours within a day, then calendar days")
+    @Test("A VM at rest states its last run in minutes, hours, then calendar days, or that none is recorded")
     func atRestDetail() {
         #expect(detail(instance("A", lastRun: 30)) == "Last run just now")
         #expect(detail(instance("B", lastRun: 3 * 3600 + 59 * 60)) == "Last run 3 hours ago")
@@ -115,7 +115,7 @@ struct SidebarLastRunTests {
         var dateStyle = Date.FormatStyle(date: .abbreviated, time: .omitted)
         dateStyle.timeZone = Self.calendar.timeZone
         #expect(detail(instance("F", lastRun: 7 * 86_400)) == "Last run \(weekAgo.formatted(dateStyle))")
-        #expect(detail(instance("G")) == "Never run")
+        #expect(detail(instance("G")) == "No run recorded")
     }
 
     @Test("Under a day reads in hours even across midnight; a 25-hour day's own date never reads as yesterday")

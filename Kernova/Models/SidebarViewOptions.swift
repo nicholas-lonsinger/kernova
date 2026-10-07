@@ -21,12 +21,12 @@ extension LibraryEntry {
 
     /// When this entry last ran: live while it is in a session, or held by
     /// another copy, which may be running it — ``VMHostState/lastRunAt`` then
-    /// holds a session's start. An arrival has never run.
+    /// holds a session's start. An arrival has no run recorded.
     var lastRun: VMLibrarySort.LastRun {
-        guard case .vm(let instance) = self else { return .never }
+        guard case .vm(let instance) = self else { return .unrecorded }
         switch instance.stateBucket {
         case .running, .heldByAnotherCopy: return .live
-        case .stopped, .suspended, .preparing: return instance.hostState.lastRunAt.map { .ended($0) } ?? .never
+        case .stopped, .suspended, .preparing: return instance.hostState.lastRunAt.map { .ended($0) } ?? .unrecorded
         }
     }
 
@@ -76,8 +76,8 @@ extension VMLibrarySort {
                 }
             case .ended(let date):
                 "Last run \(Self.ago(date, now: now(), calendar: calendar))"
-            case .never:
-                "Never run"
+            case .unrecorded:
+                "No run recorded"
             }
         }
     }

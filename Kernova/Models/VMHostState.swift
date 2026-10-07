@@ -61,7 +61,7 @@ struct VMHostState: Codable, Sendable, Equatable {
     // MARK: - History
 
     /// The last moment this VM was running — written as a session first runs
-    /// and again as it ends — `nil` for a VM that has never run.
+    /// and again as it ends; nil means no run is recorded.
     var lastRunAt: Date?
 
     init(
