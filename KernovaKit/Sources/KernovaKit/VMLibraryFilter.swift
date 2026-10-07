@@ -211,7 +211,9 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     public var ephemeralOnly: Bool
     /// Admits only VMs holding any snapshot.
     public var withSnapshotsOnly: Bool
-    /// Admits only VMs carrying any tag in the set, by identifier.
+    /// Admits only VMs carrying any tag in the set, by identifier. The set can
+    /// still hold a tag the library no longer defines, which no VM reads as
+    /// carrying — so that tag admits none.
     public var tags: Set<UUID>
 
     /// A filter constraining each attribute given; the defaults constrain
