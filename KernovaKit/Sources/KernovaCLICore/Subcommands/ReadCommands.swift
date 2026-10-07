@@ -13,7 +13,8 @@ extension KernovaCommand {
             discussion: "With no filter, lists every virtual machine. Repeating a filter flag "
                 + "widens it: a virtual machine passes when it matches any value given. A virtual "
                 + "machine is listed only when it passes every flag given and is in the smart "
-                + "group named, as the sidebar lists it under the same filter.")
+                + "group or folder named, as the sidebar lists it. Under the manual sort, a folder's "
+                + "virtual machines are listed in the folder's own order.")
 
         @OptionGroup var filter: ListFilterOptions
 
@@ -46,9 +47,10 @@ extension KernovaCommand {
         /// What `kernova groups --help` says.
         static let configuration = CommandConfiguration(
             commandName: "groups",
-            abstract: "List the library's smart groups.",
+            abstract: "List the library's smart groups and folders.",
             discussion: "Each row names the virtual machines in the group, which `kernova list "
-                + "--smart-group` lists. Smart groups are listed in the order the sidebar shows them.")
+                + "--smart-group` or `--folder` lists: the smart groups, then the folders, in the "
+                + "order the sidebar shows them.")
 
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions

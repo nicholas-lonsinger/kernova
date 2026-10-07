@@ -55,18 +55,24 @@ struct GroupTargetOptions: ParsableArguments {
         completion: CompletionSource.smartGroup)
     var smartGroups: [String] = []
 
-    /// Refuses a second group of one kind: repeating a filter flag widens it,
-    /// while every group named narrows, so a repeated one would read either
-    /// way.
+    @Option(
+        name: .customLong("folder"),
+        help: ArgumentHelp("Only the VMs in this folder, by name or identifier.", valueName: "name"),
+        completion: CompletionSource.folder)
+    var folders: [String] = []
+
+    /// Refuses a second group: repeating a filter flag widens it, while every
+    /// group named narrows, so a second one would read either way.
     func validate() throws {
-        guard smartGroups.count <= 1 else {
-            throw ValidationError("Name at most one smart group.")
+        guard groups.count <= 1 else {
+            throw ValidationError("Name at most one smart group or folder.")
         }
     }
 
-    /// The groups these flags name, every one of which a VM is in.
+    /// The group these flags name, which a VM is in.
     var groups: [VMGroupReference] {
         smartGroups.map { VMGroupReference(.smartGroup, named: $0) }
+            + folders.map { VMGroupReference(.folder, named: $0) }
     }
 }
 

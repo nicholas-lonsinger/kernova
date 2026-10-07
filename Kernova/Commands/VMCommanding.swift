@@ -46,8 +46,9 @@ protocol VMCommanding: AnyObject {
     ///   mode and a named network.
     func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection
 
-    /// The library's smart groups, in the order the sidebar lists them, each
-    /// with its members in library order.
+    /// The library's smart groups, then its folders, each in the order the
+    /// sidebar lists them, with their members — in library order, a folder's
+    /// in its own.
     func groups() throws -> [GroupSummary]
 
     func info(_ selector: VMSelector) throws -> VMInfo

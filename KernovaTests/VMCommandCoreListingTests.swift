@@ -263,4 +263,79 @@ struct VMCommandCoreListingTests {
         #expect(groups.map(\.kind) == [.smartGroup, .smartGroup])
         #expect(groups.map { $0.members.map(\.name) } == [["Zed", "Alpha"], []])
     }
+
+    // MARK: - Folders
+
+    /// The mixed library's entries by name.
+    private func ids(_ harness: Harness) -> [String: UUID] {
+        Dictionary(uniqueKeysWithValues: harness.library.entries.map { ($0.name, $0.id) })
+    }
+
+    private func folder(_ name: String) -> VMListQuery {
+        VMListQuery(groups: [VMGroupReference(.folder, named: name)])
+    }
+
+    @Test("A folder lists its members the library holds, in the folder's own order, as its sidebar section does")
+    func folderListsItsMembersInItsOwnOrder() throws {
+        let harness = makeHarness()
+        makeMixedLibrary(in: harness)
+        let byName = ids(harness)
+        let names = ["Old", "Alpha", "Zed"]
+        let client = try harness.library.organization.createFolder(
+            named: "Client Project", members: names.compactMap { byName[$0] } + [UUID()])
+        let section = harness.library.sidebarLayout.sections.first { $0.id == .folder(client.id) }
+
+        #expect(try listed(harness, folder("client project")) == names)
+        #expect(try listed(harness, folder("client project")) == self.names(in: section))
+        #expect(try listed(harness, folder(client.id.uuidString)) == names)
+        // A stale member is inert, and every other sort orders the members.
+        let byNameSort = VMListQuery(groups: folder("Client Project").groups, sort: .name)
+        #expect(try listed(harness, byNameSort) == ["Alpha", "Old", "Zed"])
+    }
+
+    @Test("A folder ANDs with the filter flags, keeping its order")
+    func folderAndsWithTheFilter() throws {
+        let harness = makeHarness()
+        makeMixedLibrary(in: harness)
+        let byName = ids(harness)
+        try harness.library.organization.createFolder(
+            named: "Mixed", members: ["Old", "Alpha", "Mac", "Zed"].compactMap { byName[$0] })
+
+        var query = folder("Mixed")
+        query.filter = VMLibraryFilter(guestOSes: [.macOS])
+        #expect(try listed(harness, query) == ["Old", "Mac", "Zed"])
+        query.filter = VMLibraryFilter(states: [.running])
+        #expect(try listed(harness, query) == ["Alpha", "Zed"])
+    }
+
+    @Test("A folder the library does not list is refused as not found, a smart group's name included")
+    func unknownFolderIsRefused() throws {
+        let harness = makeHarness()
+        makeMixedLibrary(in: harness)
+        try harness.library.organization.createSmartGroup(named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+
+        guard case .itemNotFoundOnHost(let item)? = refusal(harness, folder("Macs")) else {
+            Issue.record("expected a not-found refusal")
+            return
+        }
+        #expect(item == "folder named \u{201C}Macs\u{201D}")
+    }
+
+    @Test("groups lists the smart groups, then the folders, each folder's members in its own order")
+    func groupsListsFoldersAfterSmartGroups() throws {
+        let harness = makeHarness()
+        makeMixedLibrary(in: harness)
+        let byName = ids(harness)
+        let macs = try harness.library.organization.createSmartGroup(
+            named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let client = try harness.library.organization.createFolder(
+            named: "Client", members: ["Build", "Zed"].compactMap { byName[$0] } + [UUID()])
+        let empty = try harness.library.organization.createFolder(named: "Empty")
+
+        let groups = try harness.core.groups()
+
+        #expect(groups.map(\.id) == [macs.id, client.id, empty.id])
+        #expect(groups.map(\.kind) == [.smartGroup, .folder, .folder])
+        #expect(groups.map { $0.members.map(\.name) } == [["Zed", "Mac", "Old"], ["Build", "Zed"], []])
+    }
 }

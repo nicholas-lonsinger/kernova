@@ -157,6 +157,15 @@ struct CLIArgumentParsingTests {
         }
     }
 
+    @Test("--folder names one folder; a second group of either kind is a usage error")
+    func folderParses() throws {
+        let query = try listQuery(["--folder", "Client Project", "--state", "running"])
+        #expect(query.groups == [VMGroupReference(.folder, named: "Client Project")])
+        #expect(query.filter == VMLibraryFilter(states: [.running]))
+        #expect(throws: (any Error).self) { try parse(["list", "--folder", "A", "--folder", "B"]) }
+        #expect(throws: (any Error).self) { try parse(["list", "--smart-group", "A", "--folder", "B"]) }
+    }
+
     @Test("clone follows the app's preference unless an outcome flag says otherwise")
     func cloneParsesItsOutcomeFlags() throws {
         let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)

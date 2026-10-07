@@ -154,7 +154,7 @@ enum TableRenderer {
     /// The library's groups, in the order the app listed them.
     ///
     /// Laid out as the named networks are. `quiet` prints names alone, which
-    /// `list --smart-group` accepts back.
+    /// `list --smart-group` and `list --folder` accept back.
     static func render(_ rows: [GroupSummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.name).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }

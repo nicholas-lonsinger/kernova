@@ -1,4 +1,5 @@
 import AppKit
+import KernovaKit
 
 /// The sheets naming a smart group or a folder: a new one, and a rename.
 @MainActor
@@ -61,7 +62,7 @@ enum SidebarNameSheet {
     /// Asks for a new name for the `kind` named `currentName`; Rename hands
     /// `rename` the name typed.
     static func rename(
-        _ kind: VMOrganizationDirectory.Kind, currentName: String, rename: @escaping (String) -> Void
+        _ kind: VMGroupKind, currentName: String, rename: @escaping (String) -> Void
     ) -> AlertConfiguration {
         let field = nameField(currentName)
         let row = nameRow(field)

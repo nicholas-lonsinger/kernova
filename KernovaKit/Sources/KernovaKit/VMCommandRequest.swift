@@ -26,8 +26,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     public enum Verb: Codable, Sendable, Hashable {
         /// The VMs `query` admits, in its order.
         case list(VMListQuery = VMListQuery())
-        /// The library's groups — its smart groups, in the order the sidebar
-        /// lists them — each with its members. Addresses no VM.
+        /// The library's groups — its smart groups, then its folders, in the
+        /// order the sidebar lists them — each with its members. Addresses no
+        /// VM.
         case groups
         case info(VMSelector)
         case ipAddress(VMSelector)

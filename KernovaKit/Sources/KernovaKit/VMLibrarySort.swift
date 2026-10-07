@@ -6,7 +6,8 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
     case name
     /// Newest first.
     case dateCreated
-    /// The library's own order, which dragging a sidebar row changes.
+    /// The library's own order, or a folder's own for its members — the
+    /// order dragging a sidebar row there changes.
     case manual
 
     /// What a person reads for this order.
@@ -32,8 +33,8 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// `elements`, given in the library's order, in this order; elements the
-    /// key ties keep the library's order.
+    /// `elements`, given in their manual order, in this order; elements the
+    /// key ties keep the manual order.
     public func ordered<Element>(_ elements: [Element], by keys: (Element) -> Keys) -> [Element] {
         guard self != .manual else { return elements }
         let keyed = elements.enumerated().map { (offset: $0.offset, keys: keys($0.element), element: $0.element) }

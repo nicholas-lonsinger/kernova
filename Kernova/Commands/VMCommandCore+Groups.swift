@@ -9,12 +9,25 @@ struct VMLibrarySelection {
     /// The attributes an admitted entry has.
     let filter: VMLibraryFilter
     /// Groups an admitted entry is in, every one of them.
-    let groups: [(_ entry: LibraryEntry, _ subject: VMLibraryFilter.Subject) -> Bool]
+    let groups: [VMGroupMembership]
     /// The order admitted entries are listed in.
     let sort: VMLibrarySort
 
     /// Every entry, in library order.
     static let all = VMLibrarySelection(filter: VMLibraryFilter(), groups: [], sort: .manual)
+
+    /// The manual order: the first folder's own, else the library's.
+    var manualOrder: [UUID]? { groups.lazy.compactMap(\.order).first }
+}
+
+/// Which entries one group holds, and the order it holds them in when it has
+/// one of its own.
+@MainActor
+struct VMGroupMembership {
+    /// Whether an entry, reading as `subject`, is in the group.
+    let contains: (_ entry: LibraryEntry, _ subject: VMLibraryFilter.Subject) -> Bool
+    /// The group's own order of its members, `nil` for a group with none.
+    let order: [UUID]?
 }
 
 /// The listing and the library's groups: which VMs a filter, a network or a
@@ -30,24 +43,37 @@ extension VMCommandCore {
 
     func groups() throws -> [GroupSummary] {
         library.refreshFromOtherCopies()
-        return try readSmartGroups(verb: .groups).map { group in
+        try readOrganization(verb: .groups)
+        let organization = library.organization
+        let named: [(id: UUID, name: String, kind: VMGroupKind)] =
+            organization.smartGroups.map { ($0.id, $0.name, .smartGroup) }
+            + organization.folders.map { ($0.id, $0.name, .folder) }
+        return try named.map { group in
             let selection = try self.selection(
-                for: VMListQuery(groups: [VMGroupReference(.smartGroup, named: group.id.uuidString)]),
+                for: VMListQuery(groups: [VMGroupReference(group.kind, named: group.id.uuidString)]),
                 verb: .groups)
             return GroupSummary(
-                id: group.id, name: group.name, kind: .smartGroup, members: entries(in: selection).map(summary))
+                id: group.id, name: group.name, kind: group.kind, members: entries(in: selection).map(summary))
         }
     }
 
     // MARK: - Resolution
 
     /// The entries `selection` admits, in its order: each one its filter
-    /// admits and in every group it names.
+    /// admits and in every group it names, under the manual sort in the
+    /// order of the folder it names, else the library's.
     func entries(in selection: VMLibrarySelection) -> [LibraryEntry] {
         let context = library.sidebarContext
-        let admitted = library.entries.filter { entry in
+        let candidates: [LibraryEntry]
+        if let order = selection.manualOrder {
+            let byID = Dictionary(library.entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            candidates = order.compactMap { byID[$0] }
+        } else {
+            candidates = library.entries
+        }
+        let admitted = candidates.filter { entry in
             let subject = context.subject(of: entry)
-            return selection.filter.admits(subject) && selection.groups.allSatisfy { $0(entry, subject) }
+            return selection.filter.admits(subject) && selection.groups.allSatisfy { $0.contains(entry, subject) }
         }
         return selection.sort.ordered(admitted)
     }
@@ -83,29 +109,30 @@ extension VMCommandCore {
         }
     }
 
-    /// Whether an entry, reading as `subject`, is in the group `reference`
-    /// names.
-    private func membership(
-        of reference: VMGroupReference, verb: VMVerb
-    ) throws -> (_ entry: LibraryEntry, _ subject: VMLibraryFilter.Subject) -> Bool {
+    /// The entries the group `reference` names holds.
+    private func membership(of reference: VMGroupReference, verb: VMVerb) throws -> VMGroupMembership {
+        try readOrganization(verb: verb)
+        let organization = library.organization
+        let notFound = CommandError.itemNotFoundOnHost(
+            item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
         switch reference.kind {
         case .smartGroup:
-            _ = try readSmartGroups(verb: verb)
-            guard let group = library.organization.smartGroup(named: reference.name) else {
-                throw CommandError.itemNotFoundOnHost(item: "smart group named \u{201C}\(reference.name)\u{201D}")
-            }
-            return { _, subject in group.filter.admits(subject) }
+            guard let group = organization.smartGroup(named: reference.name) else { throw notFound }
+            return VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil)
+        case .folder:
+            guard let folder = organization.folder(named: reference.name) else { throw notFound }
+            let members = Set(folder.members)
+            return VMGroupMembership(contains: { entry, _ in members.contains(entry.id) }, order: folder.members)
         }
     }
 
-    /// The library's smart groups as its file holds them now, refusing when
-    /// the file cannot be read rather than answering none.
-    private func readSmartGroups(verb: VMVerb) throws -> [VMSmartGroup] {
+    /// Reads the library's smart groups and folders as their file holds them
+    /// now, refusing when the file cannot be read rather than answering none.
+    private func readOrganization(verb: VMVerb) throws {
         library.organization.reload()
         if let reason = library.organization.readFailure {
             throw CommandError.operationFailed(
-                verb: verb, message: "Kernova couldn\u{2019}t read its list of smart groups: \(reason)")
+                verb: verb, message: "Kernova couldn\u{2019}t read its smart groups and folders: \(reason)")
         }
-        return library.organization.smartGroups
     }
 }

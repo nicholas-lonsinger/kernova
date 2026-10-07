@@ -416,23 +416,26 @@ struct CLICompletionTests {
         #expect(listener.requests().map(\.verb) == [.networks])
     }
 
-    @Test("A --smart-group value offers the library's smart groups by name, described by their size")
-    func smartGroupNamesComeFromTheGroups() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([
-            [
-                VMCommandResponse(
-                    result: .groups([
-                        GroupSummary(id: UUID(), name: "Linux: Lab", kind: .smartGroup, members: [alpha, beta])
-                    ]))
-            ]
-        ])
+    @Test("--smart-group and --folder each offer their own kind's groups by name, described by their size")
+    func groupNamesComeFromTheGroups() throws {
+        let answer = VMCommandResponse(
+            result: .groups([
+                GroupSummary(id: UUID(), name: "Linux: Lab", kind: .smartGroup, members: [alpha, beta]),
+                GroupSummary(id: UUID(), name: "Client", kind: .folder, members: [beta]),
+            ]))
+        let smart = try TestCommandSocket()
+        defer { smart.close() }
+        smart.serve([[answer]])
+        let folders = try TestCommandSocket()
+        defer { folders.close() }
+        folders.serve([[answer]])
 
         #expect(
-            CompletionSource.groupNames(of: .smartGroup, in: context(to: listener, asking: .zsh))
+            CompletionSource.groupNames(of: .smartGroup, in: context(to: smart, asking: .zsh))
                 == ["Linux\\: Lab:2 VMs"])
-        #expect(listener.requests().map(\.verb) == [.groups])
+        #expect(CompletionSource.groupNames(of: .folder, in: context(to: folders, asking: .zsh)) == ["Client:1 VMs"])
+        #expect(smart.requests().map(\.verb) == [.groups])
+        #expect(folders.requests().map(\.verb) == [.groups])
     }
 
     @Test("A --network value offers every mode with no app to ask, then the named networks")

@@ -197,7 +197,7 @@ extension SidebarViewController {
     /// Asks for a new name for the `kind` `id` identifies, starting from
     /// `name` — its current one when `nil`. A name the library refuses brings
     /// the sheet back with that name in it.
-    private func presentRename(_ kind: VMOrganizationDirectory.Kind, _ id: UUID, name: String? = nil) {
+    private func presentRename(_ kind: VMGroupKind, _ id: UUID, name: String? = nil) {
         let library = viewModel.library
         let current: String? =
             switch kind {

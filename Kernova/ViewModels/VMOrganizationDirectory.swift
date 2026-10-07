@@ -35,24 +35,11 @@ final class VMOrganizationDirectory {
         }
     }
 
-    /// What a name names, which its refusals say.
-    enum Kind: Sendable, Equatable {
-        case smartGroup
-        case folder
-
-        var noun: String {
-            switch self {
-            case .smartGroup: "smart group"
-            case .folder: "folder"
-            }
-        }
-    }
-
     /// Why a change to the organization was refused.
     enum ChangeError: LocalizedError, Equatable {
-        case nameRequired(Kind)
-        case nameTaken(String, Kind)
-        case nameIsIdentifier(String, Kind)
+        case nameRequired(VMGroupKind)
+        case nameTaken(String, VMGroupKind)
+        case nameIsIdentifier(String, VMGroupKind)
         case unreadable(String)
         case unsaved(String)
 
@@ -152,7 +139,7 @@ final class VMOrganizationDirectory {
 
     /// `base`, or the first of "`base` 2", "`base` 3", … no `kind` is named —
     /// what a new one's name field starts from.
-    func unusedName(from base: String, for kind: Kind) -> String {
+    func unusedName(from base: String, for kind: VMGroupKind) -> String {
         let names =
             switch kind {
             case .smartGroup: smartGroups.map(\.name)
@@ -295,7 +282,7 @@ final class VMOrganizationDirectory {
     /// one an element of `named` other than `id` holds, ignoring case — what
     /// lets a name select one.
     private static func validatedName(
-        _ name: String, of kind: Kind, for id: UUID?, among named: [(id: UUID, name: String)]
+        _ name: String, of kind: VMGroupKind, for id: UUID?, among named: [(id: UUID, name: String)]
     ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ChangeError.nameRequired(kind) }
@@ -356,5 +343,15 @@ final class VMOrganizationDirectory {
             }
         }
         readFailure = nil
+    }
+}
+
+extension VMGroupKind {
+    /// What a sentence calls a group of this kind.
+    var noun: String {
+        switch self {
+        case .smartGroup: "smart group"
+        case .folder: "folder"
+        }
     }
 }

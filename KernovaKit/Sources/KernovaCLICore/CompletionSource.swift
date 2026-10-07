@@ -95,6 +95,9 @@ enum CompletionSource {
     /// The smart groups a `--smart-group` value offers.
     static let smartGroup = CompletionKind.custom { _, _, _ in groupNames(of: .smartGroup) }
 
+    /// The folders a `--folder` value offers.
+    static let folder = CompletionKind.custom { _, _, _ in groupNames(of: .folder) }
+
     /// The settings a `get` key argument offers.
     static let configurationKey = CompletionKind.custom { _, _, _ in configurationKeys() }
 
@@ -210,8 +213,8 @@ enum CompletionSource {
             + networkNames(in: context)
     }
 
-    /// Every group of `kind` in the library, by the name `--smart-group` takes
-    /// back, described by how many VMs it holds.
+    /// Every group of `kind` in the library, by the name `--smart-group` or
+    /// `--folder` takes back, described by how many VMs it holds.
     static func groupNames(of kind: VMGroupKind, in context: CompletionContext = .live) -> [String] {
         guard case .groups(let groups)? = answer(to: .groups, in: context) else { return [] }
         return groups.filter { $0.kind == kind }.map {

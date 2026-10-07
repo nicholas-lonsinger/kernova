@@ -202,7 +202,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     /// Which kind of reorderable section `id` is, `nil` for the library.
-    private static func kind(of id: SidebarSectionID) -> VMOrganizationDirectory.Kind? {
+    private static func kind(of id: SidebarSectionID) -> VMGroupKind? {
         if id.smartGroupID != nil { return .smartGroup }
         if id.folderID != nil { return .folder }
         return nil
