@@ -753,4 +753,29 @@ struct CLIRenderingTests {
             #expect(object as? [String: String] == fields)
         }
     }
+
+    @Test("A network name's JSON names its state beside the name or identifier it carries, and reads back")
+    func networkNameJSONNamesItsState() throws {
+        let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
+        let expected: [(VMNetworkName, [String: String])] = [
+            (.named("Lab"), ["state": "named", "name": "Lab"]),
+            (.unlisted(id), ["state": "unlisted", "id": id.uuidString]),
+            (.unreadable, ["state": "unreadable"]),
+        ]
+        for (networkName, fields) in expected {
+            let rendered = try JSONRenderer.render(networkName)
+            let object = try JSONSerialization.jsonObject(with: Data(rendered.utf8))
+            #expect(object as? [String: String] == fields)
+            #expect(try JSONDecoder().decode(VMNetworkName.self, from: Data(rendered.utf8)) == networkName)
+        }
+    }
+
+    @Test("info's JSON carries the network name as its state object")
+    func infoJSONCarriesTheNetworkNameObject() throws {
+        let id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        let rendered = try JSONRenderer.render(info(networkMembership: id, networkName: .named("Lab")))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
+        #expect(object["networkName"] as? [String: String] == ["state": "named", "name": "Lab"])
+    }
 }

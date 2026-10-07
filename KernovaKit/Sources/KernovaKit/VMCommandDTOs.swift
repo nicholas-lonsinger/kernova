@@ -53,6 +53,40 @@ public enum VMNetworkName: Codable, Sendable, Hashable {
         case .unreadable: NetworkModeChoice.unreadableNetworkListTitle
         }
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, name, id
+    }
+
+    private enum State: String, Codable {
+        case named, unlisted, unreadable
+    }
+
+    /// Reads the shape ``encode(to:)`` writes.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(State.self, forKey: .state) {
+        case .named: self = .named(try container.decode(String.self, forKey: .name))
+        case .unlisted: self = .unlisted(try container.decode(UUID.self, forKey: .id))
+        case .unreadable: self = .unreadable
+        }
+    }
+
+    /// Writes the case as `state`, beside the `name` a named network carries
+    /// or the `id` an unlisted one does — the object `--format json` prints.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .named(let name):
+            try container.encode(State.named, forKey: .state)
+            try container.encode(name, forKey: .name)
+        case .unlisted(let id):
+            try container.encode(State.unlisted, forKey: .state)
+            try container.encode(id, forKey: .id)
+        case .unreadable:
+            try container.encode(State.unreadable, forKey: .state)
+        }
+    }
 }
 
 /// Everything an `info` read answers about one VM.

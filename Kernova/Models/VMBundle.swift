@@ -46,9 +46,6 @@ final class VMBundle {
     private(set) var hostState: VMHostState
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
-    /// The files the last read left in place because it could not read them
-    /// (``VMBundleRead/unreadableFiles``).
-    @ObservationIgnored private(set) var unreadableFiles: [UnreadableConfigFile]
 
     fileprivate init(
         _ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking,
@@ -61,7 +58,6 @@ final class VMBundle {
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
         usbPairings = read.usbPairings
-        unreadableFiles = read.unreadableFiles
     }
 
     /// What builds every ``VMBundle``, holding the machine-file work they share
@@ -145,27 +141,29 @@ final class VMBundle {
     /// hold — for a bundle another copy of Kernova may have written while
     /// this copy held no run lock.
     ///
-    /// Throws, publishing nothing but the refusal as ``unreadableFiles``,
+    /// Answers the files the read left in place
+    /// (``VMBundleRead/unreadableFiles``), and throws, publishing nothing,
     /// when ``VMBundleFiles/read()`` does.
-    func refresh() throws {
-        let read: VMBundleRead
-        do {
-            read = try files.read()
-        } catch {
-            unreadableFiles = [error]
-            throw error
-        }
+    @discardableResult
+    func refresh() throws(UnreadableConfigFile) -> [UnreadableConfigFile] {
+        let read = try files.read()
         for unreadable in read.unreadableFiles {
             #log(
                 Self.logger, .warning,
                 "Re-read '\(read.configuration.name, privacy: .public)' leaving \(unreadable.fileName, privacy: .public) in place: \(unreadable.summary, privacy: .public)"
             )
         }
-        unreadableFiles = read.unreadableFiles
         publish(read.configuration, to: \.configuration)
         publish(read.hostState, to: \.hostState)
         publish(read.snapshotManifest, to: \.snapshotManifest)
         publish(read.usbPairings, to: \.usbPairings)
+        return read.unreadableFiles
+    }
+
+    /// Every file of the bundle a read refuses, read fresh and publishing
+    /// nothing (``VMBundleFiles/unreadableFiles()``).
+    func unreadableFiles() -> [UnreadableConfigFile] {
+        files.unreadableFiles()
     }
 
     /// Sets a committed value only when it moved, so a no-op write wakes no

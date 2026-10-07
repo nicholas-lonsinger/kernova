@@ -402,6 +402,36 @@ struct ConfigFileDecodingTests {
             name(.bundle(bundle, .configuration), .virtualMachine("A/B")) == "A:B \u{2014} config.json")
     }
 
+    @Test("A trashed original's name fits NAME_MAX, its long names shortened on a character boundary")
+    func trashedOriginalNamesFitNameMax() throws {
+        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
+        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
+        let vm = String(repeating: "\u{E9}", count: 60)  // 120 bytes
+        let snapshot = String(repeating: "\u{65E5}", count: 43) + "a"  // 130 bytes
+        #expect(vm.utf8.count == 120)
+        #expect(snapshot.utf8.count == 130)
+
+        let snapshotName = UnreadableConfigFile(
+            location: .bundle(bundle, .snapshotConfiguration(UUID())),
+            owner: .snapshot(vm: vm, snapshot: snapshot), problems: problem
+        ).trashedOriginalName
+        #expect(snapshotName.utf8.count <= 255)
+        #expect(snapshotName.hasSuffix("\u{2026}\u{201D} \u{2014} config.json"))
+        // Every kept character is whole: the result is valid UTF-8 built only
+        // from the names' own characters, the ellipsis, and the fixed words.
+        let vmPart = try #require(snapshotName.components(separatedBy: " \u{2014} snapshot \u{201C}").first)
+        #expect(vmPart.hasSuffix("\u{2026}") || vmPart == vm)
+        #expect(vm.hasPrefix(vmPart.replacingOccurrences(of: "\u{2026}", with: "")))
+        #expect(snapshotName.contains("\u{65E5}"))
+
+        let vmName = UnreadableConfigFile(
+            location: .bundle(bundle, .configuration),
+            owner: .virtualMachine(String(repeating: "\u{E9}", count: 200)), problems: problem
+        ).trashedOriginalName
+        #expect(vmName.utf8.count <= 255)
+        #expect(vmName.hasSuffix("\u{E9}\u{2026} \u{2014} config.json"))
+    }
+
     @Test("The network list's kind takes the New Network sheet's default kind")
     func aNamedNetworksKindHasADefault() throws {
         let json = """

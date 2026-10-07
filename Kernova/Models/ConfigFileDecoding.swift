@@ -564,10 +564,46 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
 
     /// What the copy of the file a repair moves to the Trash is named:
     /// whose file it is, then the file's own name, so the Trash tells one
-    /// `config.json` from another.
+    /// `config.json` from another. The VM and snapshot names are shortened
+    /// with an ellipsis so the whole name fits a path component's `NAME_MAX`
+    /// (255) UTF-8 bytes.
     var trashedOriginalName: String {
+        let separator = " \u{2014} "
+        let budget = Self.maximumNameByteCount - separator.utf8.count - fileName.utf8.count
+        let ownerPart: String
+        switch owner {
+        case .virtualMachine(let name):
+            ownerPart = Self.shortened(name, toUTF8Bytes: budget)
+        case .snapshot(let vm, let snapshot):
+            let fixed = UnreadableConfigFile.Owner.snapshot(vm: "", snapshot: "").title.utf8.count
+            let names = budget - fixed
+            let vmPart = Self.shortened(vm, toUTF8Bytes: max(names / 2, names - snapshot.utf8.count))
+            let snapshotPart = Self.shortened(snapshot, toUTF8Bytes: names - vmPart.utf8.count)
+            ownerPart = UnreadableConfigFile.Owner.snapshot(vm: vmPart, snapshot: snapshotPart).title
+        case .networkList, .organization:
+            ownerPart = owner.title
+        }
         // A slash cannot sit in a file name; the Finder shows a colon as one.
-        "\(owner.title) \u{2014} \(fileName)".replacingOccurrences(of: "/", with: ":")
+        // Both are one byte, so the swap keeps the bound.
+        return "\(ownerPart)\(separator)\(fileName)".replacingOccurrences(of: "/", with: ":")
+    }
+
+    private static let maximumNameByteCount = 255
+
+    /// `name` when it fits in `limit` UTF-8 bytes, else its longest leading
+    /// run of whole characters that fits with an ellipsis after it.
+    private static func shortened(_ name: String, toUTF8Bytes limit: Int) -> String {
+        guard name.utf8.count > limit else { return name }
+        let ellipsis = "\u{2026}"
+        var kept = ""
+        var byteCount = ellipsis.utf8.count
+        for character in name {
+            let characterBytes = String(character).utf8.count
+            guard byteCount + characterBytes <= limit else { break }
+            kept.append(character)
+            byteCount += characterBytes
+        }
+        return kept + ellipsis
     }
 
     /// Whether Use Defaults rewrites it: every problem has a repair.

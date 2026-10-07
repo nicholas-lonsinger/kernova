@@ -371,6 +371,29 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.checkRequests.count == 1)
     }
 
+    @Test("A running VM's config that turns unreadable asks for the check once across lists and reconciles")
+    func aRunningVMsUnreadableConfigIsReportedOnce() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage)
+        await harness.library.loadVMs()
+        let instance = try #require(harness.library.instances.first)
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        try await waitForChange { instance.status == .running }
+        #expect(harness.checkRequests.count == 0)
+
+        harness.storage.files.setData(
+            Data("not json".utf8), atRelativePath: VMBundleLayout.configRelativePath, in: url)
+        harness.library.reconcileWithDisk()
+        #expect(harness.checkRequests.count == 1)
+
+        for _ in 0..<2 {
+            _ = harness.core.list(.all)
+            harness.library.reconcileWithDisk()
+        }
+        #expect(harness.checkRequests.count == 1)
+        #expect(instance.status == .running)
+    }
+
     @Test("Return closes the check window; Use Defaults takes a click")
     func returnCloses() throws {
         let controller = ConfigCheckViewController(viewModel: makeSettingsViewModel(preferences: preferences))

@@ -38,9 +38,11 @@ extension VMLibrary {
         if let file = organization.file {
             recordUnreadable([organization.state.unreadable].compactMap { $0 }, under: file.url)
         }
+        // The one report of a VM's bundle: what this read found, the bundle
+        // read for its unreadable files alone where the VM re-reads nothing.
         for instance in instances where ids?.contains(instance.id) ?? true {
-            instance.activity.refreshFromBundle()
-            recordUnreadable(instance.bundle.unreadableFiles, under: instance.bundleURL)
+            let unreadable = instance.activity.refreshFromBundle() ?? instance.bundle.unreadableFiles()
+            recordUnreadable(unreadable, under: instance.bundleURL)
         }
         reportNewlyUnreadable()
     }
@@ -244,10 +246,16 @@ extension VMLibrary {
             var unreadable: [UnreadableBundle] = []
             func noteUnreadable(_ bundleURL: URL, _ file: UnreadableConfigFile) {
                 Self.logUnreadable(bundleURL, file)
-                recordUnreadable([file], under: bundleURL)
                 // A VM already built from the bundle keeps its row, for the
-                // reason the eviction below is keyed on the listing.
-                guard !instances.contains(where: { isSameBundle($0.bundleURL, bundleURL) }) else { return }
+                // reason the eviction below is keyed on the listing, and its
+                // bundle is reported as ``refreshFromOtherCopies(only:)``
+                // reports it — every file read, where this pass read
+                // `config.json` alone.
+                if let instance = instances.first(where: { isSameBundle($0.bundleURL, bundleURL) }) {
+                    recordUnreadable(instance.bundle.unreadableFiles(), under: bundleURL)
+                    return
+                }
+                recordUnreadable([file], under: bundleURL)
                 unreadable.append(UnreadableBundle(url: bundleURL, file: file))
             }
             // The VMs this pass found in a listed bundle it could read.
