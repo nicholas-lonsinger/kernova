@@ -425,6 +425,41 @@ struct SidebarNameSearchTests {
             ])
     }
 
+    @Test("At the sidebar's minimum width, New VM, Search and the sidebar toggle all show, none in the overflow menu")
+    func sidebarItemsFitAtMinimumWidth() throws {
+        let subject = try makeWindow(makeViewModel())
+        subject.window.makeKeyAndOrderFront(nil)
+        let split = try #require(subject.window.contentViewController as? NSSplitViewController)
+
+        split.splitView.setPosition(subject.sidebar.minimumThickness, ofDividerAt: 0)
+        subject.window.layoutIfNeeded()
+        try #require(!subject.sidebar.isCollapsed)
+
+        try #require(split.splitView.arrangedSubviews[0].frame.width == subject.sidebar.minimumThickness)
+        let visible = Set(try #require(subject.window.toolbar?.visibleItems).map(\.itemIdentifier))
+        #expect(Set([NSToolbarItem.Identifier("newVM"), Window.search, .toggleSidebar]).subtracting(visible).isEmpty)
+    }
+
+    @Test("Clicking the on-screen Search button toggles the field and the button's selected state")
+    func onScreenSearchButtonToggles() throws {
+        let subject = try makeWindow(makeViewModel())
+        subject.window.makeKeyAndOrderFront(nil)
+        subject.window.layoutIfNeeded()
+        func controls(in view: NSView) -> [NSControl] {
+            ((view as? NSControl).map { [$0] } ?? []) + view.subviews.flatMap(controls(in:))
+        }
+        let frame = try #require(subject.window.contentView?.superview)
+        let button = try #require(
+            controls(in: frame).first { $0.action == #selector(MainWindowController.toggleSearch(_:)) })
+
+        button.performClick(nil)
+        #expect(subject.fieldShown)
+        #expect(subject.fieldHasFocus)
+
+        button.performClick(nil)
+        #expect(!subject.fieldShown)
+    }
+
     @Test("Show in Finder's toolbar item shows the Finder's symbol, not Search's magnifying glass")
     func showInFinderSymbol() throws {
         let subject = try makeWindow(makeViewModel())
@@ -457,7 +492,7 @@ struct SidebarNameSearchTests {
 
         try subject.clickSearchButton()
         #expect(!subject.fieldShown)
-        #expect(!subject.fieldHasFocus)
+        #expect(subject.window.firstResponder === subject.controller.sidebarViewController.outlineView)
         #expect(subject.field.stringValue == "")
         #expect(!viewModel.library.sidebarSearch.isActive)
     }
@@ -476,7 +511,7 @@ struct SidebarNameSearchTests {
         #expect(subject.fieldHasFocus)
     }
 
-    @Test("Escape hides an empty search field and leaves one holding text shown")
+    @Test("Escape clears a search field holding text and keeps it shown, then hides the empty field")
     func escapeHidesAnEmptyField() throws {
         let subject = try makeWindow(makeViewModel())
         let editor = try editField(of: subject)
@@ -484,8 +519,9 @@ struct SidebarNameSearchTests {
 
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         #expect(subject.fieldShown)
+        #expect(subject.field.stringValue == "")
+        #expect(editor.string == "")
 
-        editor.string = ""
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         #expect(!subject.fieldShown)
         #expect(!subject.fieldHasFocus)

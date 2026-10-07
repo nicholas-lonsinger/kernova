@@ -337,8 +337,7 @@ final class SidebarViewController: NSViewController {
     /// Hides the search field, ending its search.
     func hideSearchField() {
         guard isSearchShown else { return }
-        // Before the text is cleared: an open field editor writes its own text
-        // back into the field when it ends.
+        // A hidden field can't keep the keyboard; the outline takes it.
         if searchField.currentEditor() != nil { view.window?.makeFirstResponder(outlineView) }
         searchField.stringValue = ""
         agreedSearchText = ""
