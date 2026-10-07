@@ -69,7 +69,7 @@ final class MockVmnetNetworkProvider: VmnetNetworkProviding, VmnetSessionNetwork
     /// The subnet each network hands its guests, which `ipv4Subnet(for:)`
     /// serves only while it is materialized, as the service does.
     var scriptedSubnets: [VmnetNetworkID: IPv4Subnet] = [
-        .common(.shared): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
+        .common(.nat): .scripted("192.168.64.0"), .common(.hostOnly): .scripted("192.168.128.0"),
     ]
 
     var attachmentError: (any Error)?

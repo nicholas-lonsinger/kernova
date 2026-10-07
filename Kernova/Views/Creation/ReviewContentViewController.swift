@@ -129,7 +129,7 @@ final class ReviewContentViewController: NSViewController {
             rows: [
                 valueRow(
                     "Mode",
-                    (creationVM.networkEnabled ? NetworkModeChoice.shared : .none).title(
+                    (creationVM.networkEnabled ? NetworkModeChoice.nat : .none).title(
                         attachable: true, interfaces: [], networks: .listed([])))
             ], to: summary)
 

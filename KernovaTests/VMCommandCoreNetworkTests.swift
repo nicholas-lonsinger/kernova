@@ -69,7 +69,7 @@ struct VMCommandCoreNetworkTests {
     @Test("Deleting a network moves every VM naming it to a network of its own")
     func deleteMovesMembersToNetworksOfTheirOwn() throws {
         let harness = makeHarness()
-        let lab = try harness.core.createNetwork(name: "Lab", kind: .shared)
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
         let member = makeInstance(in: harness, name: "Member") {
             $0.networkMembership = .network(lab.id)
         }
@@ -113,7 +113,7 @@ struct VMCommandCoreNetworkTests {
     func anUnentitledBuildCreatesNone() {
         let harness = makeHarness(entitlements: .unentitled)
         #expect(throws: CommandError.unsupportedByBuild(capability: "named networks")) {
-            try harness.core.createNetwork(name: "Lab", kind: .shared)
+            try harness.core.createNetwork(name: "Lab", kind: .nat)
         }
     }
 

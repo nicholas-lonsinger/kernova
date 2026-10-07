@@ -1285,10 +1285,10 @@ struct VMConfigurationTests {
 
     // MARK: - Network Mode Tests
 
-    @Test("networkMode defaults to shared with no bridged interface")
+    @Test("networkMode defaults to nat with no bridged interface")
     func networkModeDefaults() {
         let config = VMConfiguration(name: "Test VM", guestOS: .linux, bootMode: .efi)
-        #expect(config.networkMode == .shared)
+        #expect(config.networkMode == .nat)
         #expect(config.bridgedInterfaceIdentifier == nil)
     }
 
@@ -1313,7 +1313,7 @@ struct VMConfigurationTests {
         let decoded = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(decoded.networkEnabled == true)
-        #expect(decoded.networkMode == .shared)
+        #expect(decoded.networkMode == .nat)
         #expect(decoded.bridgedInterfaceIdentifier == nil)
     }
 
@@ -1390,7 +1390,7 @@ struct VMConfigurationTests {
             VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
 
         #expect(decoded.networkMembership == .isolated)
-        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .vm(config.id))))
+        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .nat, scope: .vm(config.id))))
         // Bridged has no app-managed network to be isolated on.
         var bridged = decoded
         bridged.networkMode = .bridged
@@ -1410,7 +1410,7 @@ struct VMConfigurationTests {
 
         let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
         #expect(decoded.networkMembership == .network(lab))
-        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .named(lab))))
+        #expect(decoded.joinedNetwork == .vmnet(VmnetNetworkID(kind: .nat, scope: .named(lab))))
         #expect(VMNetworkMembership(rawValue: "common") == .common)
         #expect(VMNetworkMembership(rawValue: "isolated") == .isolated)
         #expect(VMNetworkMembership(rawValue: "Lab") == nil)

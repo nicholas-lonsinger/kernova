@@ -112,7 +112,7 @@ struct SidebarFilterSortGroupTests {
             shownNames(entries, options(VMLibraryFilter(withSnapshotsOnly: true))) == ["Ephemeral", "Snapshotted"])
         // ANDed: Linux and not Host Only.
         #expect(
-            shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [net(.shared)])))
+            shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [net(.nat)])))
                 == ["Ephemeral"])
     }
 
@@ -209,13 +209,13 @@ struct SidebarFilterSortGroupTests {
 
     @Test("Group by Network keeps one header per network, every unlisted one together")
     func groupByNetwork() {
-        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
+        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .nat)
         // A named network titled like a built-in choice is still its own.
         let lookalike = VMNamedNetwork(id: UUID(), name: "Host Only", kind: .hostOnly)
         let entries = [
             vm("Off") { $0.networkEnabled = false },
             vm("Gone A") { $0.networkMembership = .network(UUID()) },
-            vm("Common") { $0.networkMode = .shared },
+            vm("Common") { $0.networkMode = .nat },
             vm("Lab VM") { $0.networkMembership = .network(lab.id) },
             vm("Built-in Host Only") { $0.networkMode = .hostOnly },
             vm("Lookalike") {
@@ -385,7 +385,7 @@ struct SidebarFilterSortGroupTests {
 
     private func value(
         _ guestOS: VMGuestOS = .linux, state: VMStateBucket = .stopped,
-        network: VMLibraryFilter.Network = net(.shared), title: String = "NAT \u{2013} Common",
+        network: VMLibraryFilter.Network = net(.nat), title: String = "NAT \u{2013} Common",
         isEphemeral: Bool = false
     ) -> SidebarViewMenu.Value {
         SidebarViewMenu.Value(
@@ -457,7 +457,7 @@ struct SidebarFilterSortGroupTests {
         let values = [
             value(network: net(.none), title: "None"),
             value(network: .unlisted, title: "Network Not in This Library"),
-            value(network: net(.shared), title: "NAT \u{2013} Common"),
+            value(network: net(.nat), title: "NAT \u{2013} Common"),
             value(network: lookalike, title: "None"),
             value(network: .unlisted, title: "Network Not in This Library"),
         ]

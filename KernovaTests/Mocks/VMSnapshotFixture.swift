@@ -17,7 +17,7 @@ extension VMSnapshot {
             VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: kind),
             network: network
                 ?? VMCapturedNetwork(
-                    networkEnabled: true, networkMode: .shared, networkMembership: .common,
+                    networkEnabled: true, networkMode: .nat, networkMembership: .common,
                     bridgedInterfaceIdentifier: nil, macAddress: macAddress))
     }
 }

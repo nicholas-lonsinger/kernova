@@ -358,7 +358,7 @@ final class VMScriptingGateway {
     /// The kind a `make`'s `kind` property names, as its enumerator's code: a
     /// NAT network when it names none.
     private static func networkKind(_ code: NSNumber?) throws -> NetworkKind {
-        guard let code else { return .shared }
+        guard let code else { return .nat }
         guard let term = VMScriptNetworkKind(code: code.uint32Value) else {
             throw CommandError.invalidArgument("That is not a kind of network Kernova makes.")
         }

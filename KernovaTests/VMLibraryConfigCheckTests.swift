@@ -243,7 +243,7 @@ struct VMLibraryConfigCheckTests {
         }
         // A mode needs no list, and an unfiltered listing none either.
         #expect(
-            try harness.core.selection(for: VMListQuery(networks: ["shared"]), verb: .list).filter.networks.count == 1)
+            try harness.core.selection(for: VMListQuery(networks: ["nat"]), verb: .list).filter.networks.count == 1)
         #expect(harness.core.list(.all).map(\.name) == ["Readable"])
     }
 

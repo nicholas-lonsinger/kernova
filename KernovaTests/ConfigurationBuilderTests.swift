@@ -1093,7 +1093,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("NAT without the entitlement attaches one virtio device over NAT")
-    func sharedModeAttachesNAT() throws {
+    func natModeAttachesNAT() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
@@ -1109,7 +1109,7 @@ struct ConfigurationBuilderTests {
     }
 
     @Test("NAT with the entitlement attaches the app-managed NAT network")
-    func entitledSharedModeAttachesTheManagedNetwork() throws {
+    func entitledNATModeAttachesTheManagedNetwork() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
@@ -1120,11 +1120,11 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment === networks.scriptedAttachment)
-        #expect(networks.requestedNetworks == [.common(.shared)])
+        #expect(networks.requestedNetworks == [.common(.nat)])
     }
 
     @Test("A NAT network that cannot be materialized builds the device detached")
-    func entitledSharedModeWithoutANetworkBuildsDetached() throws {
+    func entitledNATModeWithoutANetworkBuildsDetached() throws {
         let bundleURL = try makeBundle(withDisk: true)
 
         let networks = MockVmnetNetworkProvider()
@@ -1229,25 +1229,25 @@ struct ConfigurationBuilderTests {
         let networks = MockVmnetNetworkProvider()
         let builder = makeBuilder(vmnetNetworks: networks, entitlements: .entitled)
 
-        var shared = makeLinuxConfig()
-        shared.networkMembership = .isolated
+        var nat = makeLinuxConfig()
+        nat.networkMembership = .isolated
         var hostOnly = makeHostOnlyConfig()
         hostOnly.networkMembership = .isolated
-        for config in [shared, hostOnly] {
+        for config in [nat, hostOnly] {
             let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
                 .configuration.networkDevices
             #expect(devices[0].attachment === networks.scriptedAttachment)
         }
 
-        #expect(networks.requestedNetworks == [.own(.shared), .own(.hostOnly)])
-        #expect(networks.openedOwners == [shared.id, hostOnly.id])
+        #expect(networks.requestedNetworks == [.own(.nat), .own(.hostOnly)])
+        #expect(networks.openedOwners == [nat.id, hostOnly.id])
     }
 
     @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
     @MainActor
     func everyPathFollowsJoinedNetwork() async throws {
         let bundleURL = try makeBundle(withDisk: true)
-        for (mode, kind) in [(VMNetworkMode.shared, VmnetNetworkKind.shared), (.hostOnly, .hostOnly)] {
+        for (mode, kind) in [(VMNetworkMode.nat, VmnetNetworkKind.nat), (.hostOnly, .hostOnly)] {
             let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
                 $0.networkEnabled = true
                 $0.networkMode = mode
@@ -1304,11 +1304,11 @@ struct ConfigurationBuilderTests {
         let devices = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
             .configuration.networkDevices
         #expect(devices[0].attachment == nil)
-        #expect(networks.requestedNetworks == [.own(.shared)])
+        #expect(networks.requestedNetworks == [.own(.nat)])
     }
 
-    @Test("An isolated Shared VM in a build without the entitlement is refused, not put on system NAT")
-    func isolatedSharedWithoutTheEntitlementThrows() throws {
+    @Test("An isolated NAT VM in a build without the entitlement is refused, not put on system NAT")
+    func isolatedNATWithoutTheEntitlementThrows() throws {
         let bundleURL = try makeBundle(withDisk: true)
         let builder = makeBuilder(entitlements: .unentitled)
         var config = makeLinuxConfig()

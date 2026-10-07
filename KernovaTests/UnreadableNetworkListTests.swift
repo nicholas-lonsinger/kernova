@@ -92,7 +92,7 @@ struct UnreadableNetworkListTests {
             name: "Member", phase: .stopped, guestOS: .linux, library: harness.library,
             preferences: preferences,
             mutate: {
-                $0.applyNetworkMode(.shared)
+                $0.applyNetworkMode(.nat)
                 $0.networkMembership = .network(id)
             })
     }
@@ -112,7 +112,7 @@ struct UnreadableNetworkListTests {
         let harness = try makeHarness()
         let member = RegisteredVMInstanceFixture.register(
             name: "Member", phase: .stopped, guestOS: .linux, library: harness.library,
-            preferences: preferences, mutate: { $0.applyNetworkMode(.shared) })
+            preferences: preferences, mutate: { $0.applyNetworkMode(.nat) })
 
         for value in ["Lab", "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"] {
             #expect {

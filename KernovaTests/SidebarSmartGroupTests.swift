@@ -192,7 +192,7 @@ struct SidebarSmartGroupTests {
     @Test("The naming sheet suggests a name from the filter and lists its conditions")
     func namingSheet() throws {
         let menu = SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { _ in })
-        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let shared = VMLibraryFilter.Network(.nat) { _, _ in true }
         let values = [
             SidebarViewMenu.Value(
                 subject: VMLibraryFilter.Subject(
@@ -417,11 +417,11 @@ struct SidebarSmartGroupTests {
     @Test("Deleting a named network leaves each filter naming it, which then admits no VM and says so")
     func deletingANetworkKeepsItsCondition() throws {
         let viewModel = makeViewModel()
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
         viewModel.library.admitFixture(name: "A") { $0.networkMembership = .network(lab.id) }
         viewModel.library.admitFixture(name: "B", guestOS: .macOS)
-        let onLab = VMLibraryFilter.Network(.vmnet(.shared, .network(lab.id))) { _, _ in true }
-        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let onLab = VMLibraryFilter.Network(.vmnet(.nat, .network(lab.id))) { _, _ in true }
+        let shared = VMLibraryFilter.Network(.nat) { _, _ in true }
         viewModel.sidebarOptions.filter = VMLibraryFilter(networks: [onLab])
         let labGroup = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Lab")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted])
@@ -465,7 +465,7 @@ struct SidebarSmartGroupTests {
         let viewModel = makeViewModel(
             networks: VMNetworkDirectory(fileURL: networksURL),
             organization: VMOrganizationDirectory(fileURL: organizationURL))
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 

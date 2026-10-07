@@ -369,7 +369,7 @@ struct SidebarLayout {
         guard let choice = network.choice else { return 6 }
         switch choice {
         case .vmnet(let kind, let membership):
-            let base = kind == .shared ? 0 : 3
+            let base = kind == .nat ? 0 : 3
             switch membership {
             case .common: return base
             case .isolated: return base + 1

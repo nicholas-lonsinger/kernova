@@ -53,21 +53,21 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     ///
     /// "UI copy states only what is known": the NAT reach clause points at
     /// the IP address row only while that row shows a NAT guest's address
-    /// (`sharedAddressShown`), and the Wi-Fi limitation is stated at the
+    /// (`natAddressShown`), and the Wi-Fi limitation is stated at the
     /// standard's strength, on the surface the user picks a mode from.
     static func modeInfoParagraphs(
         offered: Set<VMNetworkMode>, isolationOffered: Bool, namedNetworksOffered: Bool,
-        sharedAddressShown: Bool, guestOS: VMGuestOS
+        natAddressShown: Bool, guestOS: VMGuestOS
     ) -> [InfoPopoverParagraph] {
-        let sharedReachClause =
-            sharedAddressShown
+        let natReachClause =
+            natAddressShown
             ? "this Mac reaches it at the address in the IP address row"
             : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = []
-        if offered.contains(.shared) {
+        if offered.contains(.nat) {
             paragraphs.append(
                 .body(
-                    "\(VMNetworkMode.shared.title): outbound access through this Mac. The guest gets a DHCP address on a private subnet that other machines on your network can't reach; \(sharedReachClause)."
+                    "\(VMNetworkMode.nat.title): outbound access through this Mac. The guest gets a DHCP address on a private subnet that other machines on your network can't reach; \(natReachClause)."
                 ))
         }
         if offered.contains(.hostOnly) {
@@ -79,7 +79,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         if isolationOffered {
             paragraphs.append(
                 .body(
-                    "\(NetworkModeChoice.isolatedTitle): a network of the guest's own instead of its mode's \(NetworkModeChoice.commonTitle) network. It keeps its mode's reach to this Mac — and, for \(VMNetworkMode.shared.title), to the internet — while no other virtual machine can reach it."
+                    "\(NetworkModeChoice.isolatedTitle): a network of the guest's own instead of its mode's \(NetworkModeChoice.commonTitle) network. It keeps its mode's reach to this Mac — and, for \(VMNetworkMode.nat.title), to the internet — while no other virtual machine can reach it."
                 ))
         }
         if namedNetworksOffered {
@@ -168,7 +168,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
                 offers(.vmnet($0, .isolated))
             },
             namedNetworksOffered: SettingsPane.networks.isOffered(by: entitlements),
-            sharedAddressShown: instance.configuration.networkMode == .shared
+            natAddressShown: instance.configuration.networkMode == .nat
                 && resolved.ipAddress.address != nil,
             guestOS: instance.configuration.guestOS)
     }
@@ -448,7 +448,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// The modes the picker offers: NAT always, and each other mode
     /// whose network this build can attach.
     private var offeredModes: Set<VMNetworkMode> {
-        Set(VMNetworkMode.allCases.filter { $0 == .shared || offers($0) })
+        Set(VMNetworkMode.allCases.filter { $0 == .nat || offers($0) })
     }
 
     /// Whether the picker offers `mode`: the network choosing it puts the VM
@@ -705,5 +705,5 @@ struct NetworkModeEntry {
 
 extension VmnetNetworkKind {
     /// The order the Mode picker lists each kind's networks in.
-    fileprivate static let menuOrder: [VmnetNetworkKind] = [.shared, .hostOnly]
+    fileprivate static let menuOrder: [VmnetNetworkKind] = [.nat, .hostOnly]
 }

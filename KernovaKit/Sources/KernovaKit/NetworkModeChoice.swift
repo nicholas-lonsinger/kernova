@@ -8,10 +8,10 @@ public enum VmnetNetworkKind: String, Codable, CaseIterable, Sendable {
     /// NAT: guests reach the internet through the host's connection
     /// (NAT44/NAT66, DHCP, DNS proxy), and the host reaches them at the
     /// addresses they hold on its subnet.
-    case shared
+    case nat
 }
 
-/// Which network of its mode a Shared or Host Only VM joins — membership,
+/// Which network of its mode a NAT or Host Only VM joins — membership,
 /// which is what expresses guest↔guest reach (docs/NETWORKING.md).
 ///
 /// Persisted as one string, ``rawValue``: `common`, `isolated`, or a named
@@ -80,20 +80,20 @@ public enum VMNetworkMembership: Hashable, Sendable, Codable {
 /// what every surface naming the VM's network names, and what a library filter
 /// matches.
 ///
-/// `vmnet` is Shared Network or Host Only, on the network of that mode its
+/// `vmnet` is NAT or Host Only, on the network of that mode its
 /// membership names. `bridged`'s payload is the host interface identifier,
 /// `nil` for Automatic.
 ///
 /// Coded as one string, ``rawValue``: `none`, `bridged`, `bridged:<interface>`,
-/// or `<kind>:<membership>` (`shared:common`, `hostOnly:isolated`,
-/// `shared:<network identifier>`).
+/// or `<kind>:<membership>` (`nat:common`, `hostOnly:isolated`,
+/// `nat:<network identifier>`).
 public enum NetworkModeChoice: Hashable, Sendable, Codable {
     case vmnet(VmnetNetworkKind, VMNetworkMembership)
     case none
     case bridged(String?)
 
-    /// Shared Network's common network.
-    public static let shared = NetworkModeChoice.vmnet(.shared, .common)
+    /// NAT's common network.
+    public static let nat = NetworkModeChoice.vmnet(.nat, .common)
     /// Host Only's common network.
     public static let hostOnly = NetworkModeChoice.vmnet(.hostOnly, .common)
 

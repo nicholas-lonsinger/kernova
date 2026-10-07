@@ -90,7 +90,7 @@ enum VMScriptNetworkKind: CaseIterable {
     /// a term before it compiles.
     init(_ kind: NetworkKind) {
         switch kind {
-        case .shared: self = .nat
+        case .nat: self = .nat
         case .hostOnly: self = .hostOnly
         }
     }
@@ -121,7 +121,7 @@ enum VMScriptNetworkKind: CaseIterable {
     /// The kind this term names.
     var kind: NetworkKind {
         switch self {
-        case .nat: .shared
+        case .nat: .nat
         case .hostOnly: .hostOnly
         }
     }

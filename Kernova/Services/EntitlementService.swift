@@ -102,7 +102,7 @@ struct EntitlementService: Sendable {
             return hasVMNetworking ? .bridged : nil
         case .vmnet(let id):
             guard hasVMNetworking else {
-                return id == .common(.shared) ? .systemNAT : nil
+                return id == .common(.nat) ? .systemNAT : nil
             }
             return .vmnet(VmnetNetworkSelection(id))
         }

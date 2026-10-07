@@ -6,7 +6,7 @@ extension NetworkModeChoice {
     init(_ configuration: VMConfiguration) {
         switch configuration.effectiveNetworkMode {
         case nil: self = .none
-        case .shared: self = .vmnet(.shared, configuration.networkMembership)
+        case .nat: self = .vmnet(.nat, configuration.networkMembership)
         case .hostOnly: self = .vmnet(.hostOnly, configuration.networkMembership)
         case .bridged: self = .bridged(configuration.bridgedInterfaceIdentifier)
         }

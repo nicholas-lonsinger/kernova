@@ -168,7 +168,7 @@ struct VMOverviewSummaryTests {
     func networkFoldsModeAndAddress() {
         let instance = makeInstance()
         let resolved = VMOverviewResolved(
-            networkModeLabel: NetworkChoiceLabel(mode: .shared, entry: "Common"), ipAddress: .observed("192.168.66.4"))
+            networkModeLabel: NetworkChoiceLabel(mode: .nat, entry: "Common"), ipAddress: .observed("192.168.66.4"))
         let network = rows(.network, instance, resolved: resolved)
         #expect(network.count == 1)
         #expect(network.first?.label == "NAT \u{2013} Common")
@@ -196,7 +196,7 @@ struct VMOverviewSummaryTests {
             let row = rows(
                 .network, instance,
                 resolved: VMOverviewResolved(
-                    networkModeLabel: NetworkChoiceLabel(mode: .shared, entry: "Common"), ipAddress: address)
+                    networkModeLabel: NetworkChoiceLabel(mode: .nat, entry: "Common"), ipAddress: address)
             ).first
             #expect(row?.value == text)
             #expect(row?.copy == nil)

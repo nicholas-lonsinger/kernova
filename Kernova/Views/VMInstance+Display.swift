@@ -124,7 +124,7 @@ extension VMInstance {
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
         if status == .running, networkAttachmentPending {
-            // Shared and Host Only wait on the app's own network, not a host
+            // NAT and Host Only wait on the app's own network, not a host
             // interface — pointing the user at Wi-Fi/Ethernet would misdirect
             // them.
             if let network = configuration.joinedNetwork, !network.isCommon {
@@ -133,7 +133,7 @@ extension VMInstance {
                     : "This VM's network is unavailable. Kernova reconnects automatically."
             }
             return switch configuration.networkMode {
-            case .hostOnly, .shared:
+            case .hostOnly, .nat:
                 "The \(configuration.networkMode.title) network is unavailable. Kernova reconnects automatically."
             case .bridged:
                 "The network interface is unavailable. Kernova reconnects automatically when one is available."

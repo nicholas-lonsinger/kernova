@@ -159,7 +159,7 @@ struct SettingsTabViewControllerTests {
     @Test("Settings opened on a network for the first time shows the Networks pane with its row selected")
     func firstOpenLandsOnTheNetwork() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        _ = try viewModel.networks.create(name: "Other", kind: .shared, verb: .createNetwork)
+        _ = try viewModel.networks.create(name: "Other", kind: .nat, verb: .createNetwork)
         let lab = try viewModel.networks.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
         let registry = makeRegistry(viewModel)
 
@@ -173,7 +173,7 @@ struct SettingsTabViewControllerTests {
     @Test("Settings already open on another pane switches to the Networks pane and the network")
     func openWindowSwitchesToTheNetwork() throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
         let registry = makeRegistry(viewModel)
         registry.showSettings(at: .pane(.clipboard))
         let tabs = try tabs(of: registry)

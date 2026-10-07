@@ -28,7 +28,7 @@ struct ConfigurationBuilder: Sendable {
         /// VM's own networks.
         let vmnetNetworks: any VmnetSessionNetworking
         /// The answer `configuration`'s network attachment was chosen by — the
-        /// one the session's attachment recovery must realize Shared by.
+        /// one the session's attachment recovery must realize NAT by.
         let entitlements: EntitlementService
     }
 
@@ -41,7 +41,7 @@ struct ConfigurationBuilder: Sendable {
     /// Host state behind a bridged attachment's interface choice.
     var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
 
-    /// The app-managed vmnet networks behind a Host Only or Shared attachment.
+    /// The app-managed vmnet networks behind a Host Only or NAT attachment.
     let vmnetNetworks: any VmnetNetworkProviding
 
     let entitlements: EntitlementService
@@ -598,7 +598,7 @@ struct ConfigurationBuilder: Sendable {
     /// default-route interface. When neither resolves the device is built detached
     /// (`nil`): the boot or restore succeeds, attachment recovery reattaches once
     /// an interface is available, and the mode is never substituted — the VM
-    /// neither bridges over an arbitrary interface nor quietly becomes Shared
+    /// neither bridges over an arbitrary interface nor quietly becomes NAT
     /// Network (docs/NETWORKING.md).
     private func bridgedAttachment(config: VMConfiguration) -> VZBridgedNetworkDeviceAttachment? {
         let available = bridgedInterfaces.interfaces()
@@ -1044,7 +1044,7 @@ enum ConfigurationBuilderError: LocalizedError {
         case .networkNotEntitled(let network):
             "This build of Kernova does not support \(network.entitledCapability). "
                 + (network.isCommon
-                    ? "Switch the VM's network mode to \(VMNetworkMode.shared.title)."
+                    ? "Switch the VM's network mode to \(VMNetworkMode.nat.title)."
                     : "Move the VM to its mode\u{2019}s common network in its Network settings.")
         case .sharedDirectoryNotFound(_, let path, let label):
             "Shared folder '\(label)' not found at \(path)."

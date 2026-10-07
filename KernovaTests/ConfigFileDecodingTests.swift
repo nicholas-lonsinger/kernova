@@ -216,7 +216,7 @@ struct ConfigFileDecodingTests {
 
         init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .shared), in: decoder)
+            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .nat), in: decoder)
         }
     }
 
@@ -233,10 +233,10 @@ struct ConfigFileDecodingTests {
         #expect(
             problem.reportLine(fileName: "x.json")
                 == "$.inner.mode: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
-                + "Default for $.inner: {\"mode\":\"shared\"}.")
+                + "Default for $.inner: {\"mode\":\"nat\"}.")
         #expect(
             try JSONDecoder().decode(Holder.self, from: try #require(diagnosis.repaired))
-                == Holder(inner: Holder.Inner(mode: .shared)))
+                == Holder(inner: Holder.Inner(mode: .nat)))
     }
 
     // MARK: - Facts
@@ -341,7 +341,7 @@ struct ConfigFileDecodingTests {
         }
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
-        #expect(network.networkMode == .shared)
+        #expect(network.networkMode == .nat)
     }
 
     @Test("A snapshot's captured network missing networkEnabled had no network device")
@@ -357,7 +357,7 @@ struct ConfigFileDecodingTests {
         #expect(
             network
                 == VMCapturedNetwork(
-                    networkEnabled: false, networkMode: .shared, networkMembership: .common,
+                    networkEnabled: false, networkMode: .nat, networkMembership: .common,
                     bridgedInterfaceIdentifier: nil, macAddress: nil))
     }
 
@@ -379,7 +379,7 @@ struct ConfigFileDecodingTests {
         // The lenient read still answers: each value as its absence reads.
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.networkEnabled == false)
-        #expect(network.networkMode == .shared)
+        #expect(network.networkMode == .nat)
     }
 
     // MARK: - Trashed originals

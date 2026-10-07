@@ -25,11 +25,11 @@ struct NetworksSettingsViewControllerTests {
         return pane
     }
 
-    /// A Shared VM on `membership`.
+    /// A NAT VM on `membership`.
     @discardableResult
     private func addVM(
         _ name: String, to viewModel: VMLibraryViewModel,
-        membership: VMNetworkMembership, mode: VMNetworkMode = .shared
+        membership: VMNetworkMembership, mode: VMNetworkMode = .nat
     ) -> VMInstance {
         viewModel.library.registerFixture(name: name) {
             $0.networkEnabled = true
@@ -43,7 +43,7 @@ struct NetworksSettingsViewControllerTests {
         _ name: String, members: [String] = []
     ) -> NetworkSummary {
         NetworkSummary(
-            id: UUID(), name: name, kind: .shared,
+            id: UUID(), name: name, kind: .nat,
             members: members.map {
                 VMSummary(
                     id: UUID(), name: $0, status: "stopped", ipAddress: .unavailable,
@@ -55,7 +55,7 @@ struct NetworksSettingsViewControllerTests {
 
     @Test("A build that can attach named networks creates both kinds, and one that cannot creates none")
     func creatableKindsFollowTheEntitlement() {
-        #expect(NetworksSettingsViewController.creatableKinds(.entitled) == [.shared, .hostOnly])
+        #expect(NetworksSettingsViewController.creatableKinds(.entitled) == [.nat, .hostOnly])
         #expect(NetworksSettingsViewController.creatableKinds(.unentitled).isEmpty)
     }
 
@@ -107,7 +107,7 @@ struct NetworksSettingsViewControllerTests {
         #expect(checks == 1)
 
         do {
-            try pane.create(name: "Lab", kind: .shared)
+            try pane.create(name: "Lab", kind: .nat)
             Issue.record("A create over an unreadable list went through")
         } catch let error as CommandError {
             #expect(
@@ -123,7 +123,7 @@ struct NetworksSettingsViewControllerTests {
     @Test("The list shows each network's name, mode and the VMs on it")
     func listShowsEachNetwork() throws {
         let viewModel = makeViewModel()
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
         _ = try viewModel.networks.create(name: "Build Farm", kind: .hostOnly, verb: .createNetwork)
         addVM("Alpha", to: viewModel, membership: .network(lab.id))
         addVM("Beta", to: viewModel, membership: .network(lab.id))
@@ -151,7 +151,7 @@ struct NetworksSettingsViewControllerTests {
     func revealBeforeAppearanceSelectsTheRow() throws {
         let viewModel = makeViewModel()
         _ = try viewModel.networks.create(name: "Build Farm", kind: .hostOnly, verb: .createNetwork)
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
         let pane = NetworksSettingsViewController(viewModel: viewModel)
 
         pane.reveal(lab.id)
@@ -173,7 +173,7 @@ struct NetworksSettingsViewControllerTests {
         defer { pane.viewDidDisappear() }
         #expect(pane.networks.isEmpty)
 
-        try viewModel.commands.createNetwork(name: "Lab", kind: .shared)
+        try viewModel.commands.createNetwork(name: "Lab", kind: .nat)
 
         // The list repaints from its observation loop, a main-actor task the
         // create enqueued.
@@ -199,7 +199,7 @@ struct NetworksSettingsViewControllerTests {
     func duplicateNameIsRefused() throws {
         let viewModel = makeViewModel()
         let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .shared)
+        try pane.create(name: "Lab", kind: .nat)
 
         #expect(throws: CommandError.self) { try pane.create(name: "lab", kind: .hostOnly) }
         #expect(pane.networks.count == 1)
@@ -209,7 +209,7 @@ struct NetworksSettingsViewControllerTests {
     func renameRenamesTheNetwork() throws {
         let viewModel = makeViewModel()
         let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .shared)
+        try pane.create(name: "Lab", kind: .nat)
         let id = try #require(pane.networks.first?.id)
 
         try pane.rename(id, to: "Staging")
@@ -223,7 +223,7 @@ struct NetworksSettingsViewControllerTests {
     func deleteMovesMembersToTheirOwnNetworks() throws {
         let viewModel = makeViewModel()
         let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .shared)
+        try pane.create(name: "Lab", kind: .nat)
         let id = try #require(pane.networks.first?.id)
         let member = addVM("Alpha", to: viewModel, membership: .network(id))
         let bystander = addVM("Beta", to: viewModel, membership: .common)
