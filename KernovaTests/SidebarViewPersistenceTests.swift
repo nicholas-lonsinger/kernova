@@ -119,8 +119,9 @@ struct SidebarViewPersistenceTests {
         controller.viewDidAppear()
 
         #expect(relaunched.selection == row)
-        let section = try #require(outline.item(atRow: 0) as? SidebarSection)
-        #expect(section.id == .smartGroup(group.id))
+        let section = try #require(
+            (0..<outline.numberOfRows).lazy.compactMap { outline.item(atRow: $0) as? SidebarSection }
+                .first { $0.id == .smartGroup(group.id) })
         #expect(!outline.isItemExpanded(section))
         #expect(outline.selectedRow == -1)
         #expect(preferences.collapsedSidebarSections == [SidebarSectionID.smartGroup(group.id).rawValue])
