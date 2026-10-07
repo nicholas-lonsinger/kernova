@@ -4,7 +4,7 @@ import KernovaKit
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:options:search:retaining:smartGroups:folders:context:)`` is the one function from the library
+/// ``project(entries:options:search:retaining:sections:context:)`` is the one function from the library
 /// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
 /// Each list a layout holds — its sections, a section's groups, a list's
 /// entries — keeps the first of any repeated identifier: a repeat would be a
@@ -122,11 +122,10 @@ struct SidebarLayout {
         return elements.filter { seen.insert(id($0)).inserted }
     }
 
-    /// The layout the sidebar shows for `entries`: a section per smart group,
-    /// in `smartGroups`' order, then one per folder, in `folders`' order, then
-    /// the library section, listing the entries `options` admits, in its
-    /// order, under its groups. `search` narrows every section to the VMs it
-    /// admits.
+    /// The layout the sidebar shows for `entries`: a section for each of
+    /// `sections`, in its order — the library's listing the entries `options`
+    /// admits, in its order, under its groups. `search` narrows every section
+    /// to the VMs it admits.
     ///
     /// The entry `retaining` names is listed in the library section whether
     /// or not the filter and the search admit it: the selected VM a change to
@@ -134,7 +133,7 @@ struct SidebarLayout {
     /// off it.
     static func project(
         entries: [LibraryEntry], options: SidebarViewOptions, search: SidebarNameSearch = SidebarNameSearch(),
-        retaining: UUID? = nil, smartGroups: [VMSmartGroup] = [], folders: [VMFolder] = [], context: Context
+        retaining: UUID? = nil, sections: [VMOrganizationDirectory.Section] = [.library], context: Context
     ) -> SidebarLayout {
         // Every entry's subject is read, the retained one's included, so an
         // observation of the projection tracks every value the counts read.
@@ -155,11 +154,14 @@ struct SidebarLayout {
             emptyText: narrowed && !entries.isEmpty ? noMatchesText : nil,
             count: narrowed ? .narrowed(shown: shown.count, of: entries.count) : nil)
         return SidebarLayout(
-            sections: smartGroups.map {
-                section(for: $0, entries: entries, subjects: subjects, search: search, sort: options.sort)
-            }
-                + folders.map { section(for: $0, entries: entries, search: search, sort: options.sort) }
-                + [library])
+            sections: sections.map { listed in
+                switch listed {
+                case .smartGroup(let group):
+                    section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
+                case .folder(let folder): section(for: folder, entries: entries, search: search, sort: options.sort)
+                case .library: library
+                }
+            })
     }
 
     /// `folder`'s section: its members the library lists that `search`
