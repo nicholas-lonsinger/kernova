@@ -142,10 +142,14 @@ extension SidebarViewController {
                         from: viewMenu.suggestedName(for: filter, values: values), for: .smartGroup),
                 conditions: viewMenu.conditions(of: filter, values: values)
             ) { [weak self] typed in
-                self?.attempt(
+                guard let self else { return }
+                attempt(
                     "Couldn\u{2019}t Create the Smart Group",
                     retry: { [weak self] in self?.presentSaveAsSmartGroup(name: typed) }
-                ) { try self?.viewModel.library.saveSidebarFilterAsSmartGroup(named: typed) }
+                ) {
+                    let group = try viewModel.library.saveSidebarFilterAsSmartGroup(named: typed)
+                    scrollSectionIntoView(.smartGroup(group.id))
+                }
             },
             in: window)
     }
@@ -161,10 +165,14 @@ extension SidebarViewController {
                 suggestedName: name
                     ?? viewModel.library.organization.unusedName(from: "Untitled Folder", for: .folder)
             ) { [weak self] typed in
-                self?.attempt(
+                guard let self else { return }
+                attempt(
                     "Couldn\u{2019}t Create the Folder",
                     retry: { [weak self] in self?.presentNewFolder(adding: entry, name: typed) }
-                ) { try self?.viewModel.library.createFolder(named: typed, members: entry.map { [$0] } ?? []) }
+                ) {
+                    let folder = try viewModel.library.createFolder(named: typed, members: entry.map { [$0] } ?? [])
+                    scrollSectionIntoView(.folder(folder.id))
+                }
             },
             in: window)
     }

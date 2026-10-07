@@ -33,12 +33,6 @@ extension VMLibrary {
         reconcileSelection()
     }
 
-    /// Moves the folder `id` identifies to just before the one `successor`
-    /// identifies, or after every other when `successor` is `nil`.
-    func moveFolder(_ id: UUID, before successor: UUID?) throws {
-        try organization.moveFolder(id, before: successor)
-    }
-
     /// Adds each of `entries` the library lists to the folder `id`
     /// identifies, after its members.
     func add(_ entries: [UUID], toFolder id: UUID) throws {

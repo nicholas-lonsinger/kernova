@@ -1,7 +1,7 @@
 import Foundation
 
 /// A hand-picked collection of the library's VMs, which the sidebar lists as
-/// a section of its own between the smart groups and the library.
+/// a section of its own, among the smart groups and the library.
 ///
 /// Album-like: a VM can be in several folders, its bundle stays where it is,
 /// and deleting a folder deletes none of its VMs. Lives at library level, in
