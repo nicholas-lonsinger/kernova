@@ -17,11 +17,11 @@ struct VMLibraryFilterTests {
     private func subject(
         guestOS: VMGuestOS = .macOS, state: VMStateBucket = .stopped,
         network: NetworkModeChoice = .shared, guestAgent: VMGuestAgentBucket? = .upToDate,
-        isEphemeral: Bool = false, hasSnapshots: Bool = false
+        isEphemeral: Bool = false, hasSnapshots: Bool = false, tags: Set<UUID> = []
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             guestOS: guestOS, state: state, network: Self.network(network), guestAgent: guestAgent,
-            isEphemeral: isEphemeral, hasSnapshots: hasSnapshots)
+            isEphemeral: isEphemeral, hasSnapshots: hasSnapshots, tags: tags)
     }
 
     // MARK: - Evaluation
@@ -78,34 +78,50 @@ struct VMLibraryFilterTests {
         #expect(!VMLibraryFilter(withSnapshotsOnly: true).admits(subject(hasSnapshots: false)))
     }
 
+    @Test("Tags admit a VM carrying any tag in the set")
+    func tags() {
+        let work = UUID()
+        let lab = UUID()
+        let filter = VMLibraryFilter(tags: [work, lab])
+        #expect(filter.isActive)
+        #expect(filter.admits(subject(tags: [work])))
+        #expect(filter.admits(subject(tags: [lab, UUID()])))
+        #expect(!filter.admits(subject(tags: [UUID()])))
+        #expect(!filter.admits(subject()))
+    }
+
     @Test("Attributes are ANDed")
     func attributesAnd() {
+        let work = UUID()
         let filter = VMLibraryFilter(
             guestOSes: [.macOS], states: [.running], networks: [Self.network(.shared)], guestAgents: [.upToDate],
-            ephemeralOnly: true, withSnapshotsOnly: true)
+            ephemeralOnly: true, withSnapshotsOnly: true, tags: [work])
         let passing = subject(
-            state: .running, network: .shared, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true)
+            state: .running, network: .shared, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true,
+            tags: [work])
         #expect(filter.admits(passing))
-        var failsOne = [passing, passing, passing, passing, passing, passing]
+        var failsOne = [passing, passing, passing, passing, passing, passing, passing]
         failsOne[0].guestOS = .linux
         failsOne[1].state = .stopped
         failsOne[2].network = Self.network(.none)
         failsOne[3].guestAgent = .olderVersion
         failsOne[4].isEphemeral = false
         failsOne[5].hasSnapshots = false
+        failsOne[6].tags = []
         for failing in failsOne { #expect(!filter.admits(failing)) }
     }
 
     @Test("Admitting a subject drops only the attributes it fails")
     func admittingRelaxesFailedAttributes() {
-        let filter = VMLibraryFilter(guestOSes: [.macOS], states: [.stopped], ephemeralOnly: true)
+        let work = UUID()
+        let filter = VMLibraryFilter(guestOSes: [.macOS], states: [.stopped], ephemeralOnly: true, tags: [work])
         let running = subject(state: .running, isEphemeral: true)
 
         let relaxed = filter.admitting(running)
 
         #expect(relaxed == VMLibraryFilter(guestOSes: [.macOS], ephemeralOnly: true))
         #expect(relaxed.admits(running))
-        #expect(filter.admitting(subject(isEphemeral: true)) == filter)
+        #expect(filter.admitting(subject(isEphemeral: true, tags: [work])) == filter)
     }
 
     // MARK: - Coding
@@ -120,7 +136,7 @@ struct VMLibraryFilterTests {
                     .bridged(nil), .bridged("en0"), .none,
                 ].map(Self.network)
             ).union([.unlisted]),
-            guestAgents: [.neverConnected], ephemeralOnly: true, withSnapshotsOnly: true)
+            guestAgents: [.neverConnected], ephemeralOnly: true, withSnapshotsOnly: true, tags: [UUID(), UUID()])
 
         let data = try JSONEncoder().encode(filter)
         #expect(try JSONDecoder().decode(VMLibraryFilter.self, from: data) == filter)
@@ -132,10 +148,12 @@ struct VMLibraryFilterTests {
         // Key order is the encoder's to choose; only the values are the
         // filter's, so byte stability is claimed under sorted keys.
         encoder.outputFormatting = .sortedKeys
+        let tags = (0..<4).map { _ in UUID() }
         let forward = VMLibraryFilter(
             guestOSes: [.macOS, .linux], states: [.running, .suspended, .stopped],
-            guestAgents: [.upToDate, .olderVersion, .neverConnected])
+            guestAgents: [.upToDate, .olderVersion, .neverConnected], tags: Set(tags))
         var backward = VMLibraryFilter()
+        for tag in tags.reversed() { backward.tags.insert(tag) }
         for os in VMGuestOS.allCases.reversed() { backward.guestOSes.insert(os) }
         for state in [VMStateBucket.stopped, .suspended, .running] { backward.states.insert(state) }
         for agent in VMGuestAgentBucket.allCases.reversed() { backward.guestAgents.insert(agent) }

@@ -551,7 +551,8 @@ struct VMEditClasses: OptionSet, Sendable, Hashable {
     static let hotPlugMedia = VMEditClasses(rawValue: 1 << 2)
     /// The live network attachment swap.
     static let networkAttachment = VMEditClasses(rawValue: 1 << 3)
-    /// Where and how the host presents the VM.
+    /// Where and how the host presents the VM — its display, and the tags its
+    /// rows show — which neither a session nor a saved state reads.
     static let hostPresentation = VMEditClasses(rawValue: 1 << 4)
     static let snapshotMetadata = VMEditClasses(rawValue: 1 << 5)
     static let pairingRules = VMEditClasses(rawValue: 1 << 6)

@@ -11,10 +11,10 @@ extension SidebarLayout.Context {
     /// A context naming networks by the app's own titling, over `networks`
     /// and no host interfaces.
     static func testing(
-        bundledAgentVersion: String? = "2.0", networks: [VMNamedNetwork] = []
+        bundledAgentVersion: String? = "2.0", networks: [VMNamedNetwork] = [], tags: [VMTag] = []
     ) -> SidebarLayout.Context {
         SidebarLayout.Context(
-            bundledAgentVersion: bundledAgentVersion, networks: networks,
+            bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags,
             networkTitle: {
                 NetworkModeChoice.title(of: $0, entitlements: .entitled, interfaces: { [] }, networks: networks)
             })
@@ -373,7 +373,7 @@ struct SidebarFilterSortGroupTests {
         picked: @escaping (SidebarViewOptions) -> Void = { _ in }
     ) -> NSMenu {
         SidebarViewMenu(
-            networkTitle: { $0.rawValue },
+            networkTitle: { $0.rawValue }, tags: { [] },
             perform: { command in
                 if case .setOptions(let options) = command { picked(options) }
             }

@@ -343,7 +343,7 @@ extension VMCommandCore {
         /// the copy brought across.
         let machineIdentifier: Data?
         /// What the clone's own state files start from — the defaults for a
-        /// New Machine, the source's for an Exact Copy.
+        /// New Machine, the source's for an Exact Copy, its tags either way.
         let hostState: VMHostState
         let snapshotManifest: VMSnapshotManifest
 
@@ -358,7 +358,7 @@ extension VMCommandCore {
             self.machineIdentifier = machineIdentifier
             switch outcome {
             case .newMachine:
-                hostState = VMHostState()
+                hostState = .newMachine(cloning: source.hostState)
                 snapshotManifest = VMSnapshotManifest()
             case .exactCopy:
                 var carried = source.hostState

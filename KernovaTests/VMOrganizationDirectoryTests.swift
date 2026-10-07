@@ -60,10 +60,18 @@ struct VMOrganizationDirectoryTests {
                 "guestOSes" : [ "macOS" ],
                 "networks" : [ "shared:common", "unlisted" ],
                 "states" : [ "running" ],
+                "tags" : [ "6F1D7E2C-0000-4000-8000-000000000003" ],
                 "withSnapshotsOnly" : false
               },
               "id" : "6F1D7E2C-0000-4000-8000-000000000001",
               "name" : "\(name)"
+            }
+          ],
+          "tags" : [
+            {
+              "color" : "blue",
+              "id" : "6F1D7E2C-0000-4000-8000-000000000003",
+              "name" : "Work"
             }
           ]
         }
@@ -86,14 +94,16 @@ struct VMOrganizationDirectoryTests {
                 .smartGroup(id),
             ])
         let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let work = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000003"))
         #expect(
             directory.smartGroups == [
                 VMSmartGroup(
                     id: id, name: "Old",
                     filter: VMLibraryFilter(
                         guestOSes: [.macOS], states: [.running], networks: [shared, .unlisted],
-                        guestAgents: [.upToDate], ephemeralOnly: true))
+                        guestAgents: [.upToDate], ephemeralOnly: true, tags: [work]))
             ])
+        #expect(directory.tags == [VMTag(id: work, name: "Work", color: .blue)])
         #expect(
             directory.folders == [
                 VMFolder(

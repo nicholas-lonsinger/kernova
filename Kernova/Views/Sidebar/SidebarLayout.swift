@@ -72,6 +72,8 @@ struct SidebarLayout {
         /// The library's named networks: a VM naming any other is on
         /// ``VMLibraryFilter/Network/unlisted``.
         let networks: [VMNamedNetwork]
+        /// The library's tags, in their order: a VM carries only these.
+        let tags: [VMTag]
         /// What a VM's network reads as —
         /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
@@ -80,7 +82,7 @@ struct SidebarLayout {
 
         /// What a filter reads of `entry`.
         func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject {
-            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
         }
     }
 
@@ -171,7 +173,9 @@ struct SidebarLayout {
     }
 
     /// One group per distinct value of `grouping` among `entries`, in that
-    /// value's order, each listing its entries in `entries`' order.
+    /// value's order, each listing its entries in `entries`' order. An entry
+    /// with several values — a VM carrying several tags — is listed under
+    /// each.
     private static func groups(
         of entries: [LibraryEntry], by grouping: SidebarGrouping,
         subjects: [UUID: VMLibraryFilter.Subject], context: Context
@@ -179,17 +183,18 @@ struct SidebarLayout {
         var pending: [Pending] = []
         for entry in entries {
             guard let subject = subjects[entry.id] else { continue }
-            let key = groupKey(of: subject, by: grouping)
-            if let index = pending.firstIndex(where: { $0.key == key }) {
-                pending[index].entries.append(entry)
-                continue
-            }
-            let title: String =
-                switch grouping {
-                case .none, .guestOS, .state: key.title
-                case .network: networkTitle(subject.network, of: entry.configuration, context: context)
+            for key in groupKeys(of: subject, by: grouping, context: context) {
+                if let index = pending.firstIndex(where: { $0.key == key }) {
+                    pending[index].entries.append(entry)
+                    continue
                 }
-            pending.append(Pending(key: key, title: title, entries: [entry]))
+                let title: String =
+                    switch grouping {
+                    case .none, .guestOS, .state, .tag: key.title
+                    case .network: networkTitle(subject.network, of: entry.configuration, context: context)
+                    }
+                pending.append(Pending(key: key, title: title, entries: [entry]))
+            }
         }
         pending.sort { lhs, rhs in
             if lhs.key.rank != rhs.key.rank { return lhs.key.rank < rhs.key.rank }
@@ -217,20 +222,40 @@ struct SidebarLayout {
         var entries: [LibraryEntry]
     }
 
-    private static func groupKey(of subject: VMLibraryFilter.Subject, by grouping: SidebarGrouping) -> GroupKey {
+    /// The title of the group listing the VMs that carry no tag.
+    static let untaggedGroupTitle = "No Tags"
+
+    /// The groups `subject` is listed under: one per value, but one per tag it
+    /// carries — in the library's order of its tags — or the untagged group.
+    private static func groupKeys(
+        of subject: VMLibraryFilter.Subject, by grouping: SidebarGrouping, context: Context
+    ) -> [GroupKey] {
         switch grouping {
         case .none:
             preconditionFailure("An ungrouped section has no groups")
         case .guestOS:
-            GroupKey(
-                value: subject.guestOS.rawValue, rank: VMGuestOS.allCases.firstIndex(of: subject.guestOS) ?? 0,
-                title: subject.guestOS.displayName)
+            [
+                GroupKey(
+                    value: subject.guestOS.rawValue,
+                    rank: VMGuestOS.allCases.firstIndex(of: subject.guestOS) ?? 0,
+                    title: subject.guestOS.displayName)
+            ]
         case .state:
-            GroupKey(
-                value: subject.state.rawValue, rank: VMStateBucket.allCases.firstIndex(of: subject.state) ?? 0,
-                title: subject.state.displayName)
+            [
+                GroupKey(
+                    value: subject.state.rawValue,
+                    rank: VMStateBucket.allCases.firstIndex(of: subject.state) ?? 0,
+                    title: subject.state.displayName)
+            ]
         case .network:
-            GroupKey(value: subject.network.rawValue, rank: networkRank(subject.network), title: "")
+            [GroupKey(value: subject.network.rawValue, rank: networkRank(subject.network), title: "")]
+        case .tag:
+            subject.tags.isEmpty
+                ? [GroupKey(value: "none", rank: context.tags.count, title: untaggedGroupTitle)]
+                : context.tags.enumerated().compactMap { rank, tag in
+                    subject.tags.contains(tag.id)
+                        ? GroupKey(value: tag.id.uuidString, rank: rank, title: tag.name) : nil
+                }
         }
     }
 

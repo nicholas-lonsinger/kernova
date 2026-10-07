@@ -51,6 +51,13 @@ struct VMHostState: Codable, Sendable, Equatable {
     /// `.unresponsive`, and `.expectedMissing` still surface.
     var agentInstallNudgeDismissed: Bool
 
+    // MARK: - Organization
+
+    /// The library tags this VM carries, by ``VMTag/id``; the library's
+    /// definitions decide which of them it shows (``Swift/Sequence/assigned(_:)``),
+    /// so an identifier no definition names is inert.
+    var tags: Set<UUID>
+
     // MARK: - History
 
     /// The last moment this VM was running — written as a session first runs
@@ -64,6 +71,7 @@ struct VMHostState: Codable, Sendable, Equatable {
         displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
         agentInstallNudgeDismissed: Bool = false,
+        tags: Set<UUID> = [],
         lastRunAt: Date? = nil
     ) {
         self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
@@ -72,6 +80,7 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
+        self.tags = tags
         self.lastRunAt = lastRunAt
     }
 
@@ -97,6 +106,7 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.agentInstallNudgeDismissed =
             try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed)
             ?? defaults.agentInstallNudgeDismissed
+        self.tags = try c.decodeIfPresent(Set<UUID>.self, forKey: .tags) ?? defaults.tags
         self.lastRunAt = try c.decodeIfPresent(Date.self, forKey: .lastRunAt)
     }
 
@@ -114,6 +124,12 @@ struct VMHostState: Codable, Sendable, Equatable {
     mutating func arriveAsCopy() {
         startsAutomaticallyOnLaunch = false
         lastRunAt = nil
+    }
+
+    /// The host state a New Machine clone of a VM holding `source` starts
+    /// from: a new VM's, carrying the source's tags.
+    static func newMachine(cloning source: VMHostState) -> VMHostState {
+        VMHostState(tags: source.tags)
     }
 
     // MARK: - Ephemeral mode

@@ -176,6 +176,7 @@ extension VMHostState {
         .field("agentInstallNudgeDismissed", \.agentInstallNudgeDismissed) { _, dismissed in
             dismissed ? .liveKeys : [.liveKeys, .observations]
         },
+        .field("tags", \.tags, .hostPresentation),
         .field("lastRunAt", \.lastRunAt, .observations),
     ])
 }

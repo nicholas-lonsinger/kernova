@@ -51,6 +51,7 @@ enum SidebarGrouping: String, Codable, CaseIterable, Sendable {
     case guestOS
     case state
     case network
+    case tag
 
     var title: String {
         switch self {
@@ -58,6 +59,7 @@ enum SidebarGrouping: String, Codable, CaseIterable, Sendable {
         case .guestOS: "Guest OS"
         case .state: "State"
         case .network: "Network"
+        case .tag: "Tag"
         }
     }
 }

@@ -180,11 +180,13 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// Whether the VM holds any snapshot, its Ephemeral Mode baseline
         /// included — the snapshots every surface counts.
         public var hasSnapshots: Bool
+        /// The library tags the VM carries, by identifier.
+        public var tags: Set<UUID>
 
         /// A subject reading as given.
         public init(
             guestOS: VMGuestOS, state: VMStateBucket, network: Network,
-            guestAgent: VMGuestAgentBucket?, isEphemeral: Bool, hasSnapshots: Bool
+            guestAgent: VMGuestAgentBucket?, isEphemeral: Bool, hasSnapshots: Bool, tags: Set<UUID> = []
         ) {
             self.guestOS = guestOS
             self.state = state
@@ -192,6 +194,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
             self.guestAgent = guestAgent
             self.isEphemeral = isEphemeral
             self.hasSnapshots = hasSnapshots
+            self.tags = tags
         }
     }
 
@@ -208,13 +211,17 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     public var ephemeralOnly: Bool
     /// Admits only VMs holding any snapshot.
     public var withSnapshotsOnly: Bool
+    /// Admits only VMs carrying any tag in the set, by identifier. The set can
+    /// still hold a tag the library no longer defines, which no VM reads as
+    /// carrying — so that tag admits none.
+    public var tags: Set<UUID>
 
     /// A filter constraining each attribute given; the defaults constrain
     /// nothing.
     public init(
         guestOSes: Set<VMGuestOS> = [], states: Set<VMStateBucket> = [],
         networks: Set<Network> = [], guestAgents: Set<VMGuestAgentBucket> = [],
-        ephemeralOnly: Bool = false, withSnapshotsOnly: Bool = false
+        ephemeralOnly: Bool = false, withSnapshotsOnly: Bool = false, tags: Set<UUID> = []
     ) {
         self.guestOSes = guestOSes
         self.states = states
@@ -222,6 +229,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         self.guestAgents = guestAgents
         self.ephemeralOnly = ephemeralOnly
         self.withSnapshotsOnly = withSnapshotsOnly
+        self.tags = tags
     }
 
     /// Whether any attribute constrains the library.
@@ -244,13 +252,14 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
             case .guestAgent: relaxed.guestAgents = []
             case .ephemeral: relaxed.ephemeralOnly = false
             case .snapshots: relaxed.withSnapshotsOnly = false
+            case .tags: relaxed.tags = []
             }
         }
         return relaxed
     }
 
     private enum Attribute {
-        case guestOS, state, network, guestAgent, ephemeral, snapshots
+        case guestOS, state, network, guestAgent, ephemeral, snapshots, tags
     }
 
     private func failedAttributes(of subject: Subject) -> [Attribute] {
@@ -263,11 +272,12 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         }
         if ephemeralOnly, !subject.isEphemeral { failed.append(.ephemeral) }
         if withSnapshotsOnly, !subject.hasSnapshots { failed.append(.snapshots) }
+        if !tags.isEmpty, tags.isDisjoint(with: subject.tags) { failed.append(.tags) }
         return failed
     }
 
     private enum CodingKeys: String, CodingKey {
-        case guestOSes, states, networks, guestAgents, ephemeralOnly, withSnapshotsOnly
+        case guestOSes, states, networks, guestAgents, ephemeralOnly, withSnapshotsOnly, tags
     }
 
     /// A missing key reads as that attribute unconstrained.
@@ -280,7 +290,8 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
             guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
                 ?? [],
             ephemeralOnly: try c.decodeIfPresent(Bool.self, forKey: .ephemeralOnly) ?? false,
-            withSnapshotsOnly: try c.decodeIfPresent(Bool.self, forKey: .withSnapshotsOnly) ?? false)
+            withSnapshotsOnly: try c.decodeIfPresent(Bool.self, forKey: .withSnapshotsOnly) ?? false,
+            tags: try c.decodeIfPresent(Set<UUID>.self, forKey: .tags) ?? [])
     }
 
     /// Sets are written sorted, so under `.sortedKeys` equal filters encode to
@@ -293,5 +304,6 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         try c.encode(guestAgents.map(\.rawValue).sorted(), forKey: .guestAgents)
         try c.encode(ephemeralOnly, forKey: .ephemeralOnly)
         try c.encode(withSnapshotsOnly, forKey: .withSnapshotsOnly)
+        try c.encode(tags.map(\.uuidString).sorted(), forKey: .tags)
     }
 }

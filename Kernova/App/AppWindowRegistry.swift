@@ -79,12 +79,17 @@ final class AppWindowRegistry {
 
     var settingsWindow: NSWindow? { settingsWindowController?.window }
 
-    func showSettings(_ sender: Any?) {
+    /// Shows the Settings window, on `pane` when one is given and on the pane
+    /// it last showed otherwise.
+    func showSettings(_ sender: Any?, pane: SettingsTabViewController.Pane? = nil) {
         residency?.prepareToPresentWindow()
         let controller =
             settingsWindowController
             ?? SettingsWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
         settingsWindowController = controller
+        if let pane, let tabs = controller.contentViewController as? SettingsTabViewController {
+            tabs.select(pane)
+        }
         NSApp.activate()
         controller.showWindow(sender)
         controller.window?.makeKeyAndOrderFront(sender)

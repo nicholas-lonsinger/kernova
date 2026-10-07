@@ -105,13 +105,18 @@ enum SettingsPaneMetrics {
 /// Holds a **General** tab (app-lifecycle toggles), a **Reminders** tab (turning
 /// suppressed reminders back on), a **Clipboard** tab (the maximum paste size),
 /// a **Networks** tab (the library's named networks) in a build that can attach
-/// one, and an **Advanced** tab.
+/// one, a **Tags** tab (the library's tags), and an **Advanced** tab.
 ///
-/// The Reminders, Clipboard and Networks panes need the app's
+/// The Reminders, Clipboard, Networks and Tags panes need the app's
 /// `VMLibraryViewModel`, so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
+
+    /// A pane another window opens the Settings window on.
+    enum Pane: String {
+        case tags
+    }
 
     private let viewModel: VMLibraryViewModel
 
@@ -155,11 +160,25 @@ final class SettingsTabViewController: NSTabViewController {
             addTabViewItem(networks)
         }
 
+        let tags = NSTabViewItem(viewController: TagsSettingsViewController(viewModel: viewModel))
+        tags.identifier = Pane.tags.rawValue
+        tags.label = "Tags"
+        tags.image = Self.symbol("tag")
+        addTabViewItem(tags)
+
         let advanced = NSTabViewItem(
             viewController: AdvancedSettingsViewController(preferences: viewModel.preferences))
         advanced.label = "Advanced"
         advanced.image = Self.symbol("gearshape.2")
         addTabViewItem(advanced)
+    }
+
+    /// Selects `pane`'s tab.
+    func select(_ pane: Pane) {
+        loadViewIfNeeded()
+        let index = tabView.indexOfTabViewItem(withIdentifier: pane.rawValue)
+        guard index != NSNotFound else { return }
+        selectedTabViewItemIndex = index
     }
 
     /// Resizes the window to fit the newly selected pane, System Settings-style.
