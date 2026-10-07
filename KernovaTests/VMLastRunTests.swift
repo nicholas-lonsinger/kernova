@@ -5,9 +5,9 @@ import Testing
 
 @testable import Kernova
 
-/// When a VM last ran (``VMHostState/lastRunAt``) and how long its session has
-/// been running (``VMInstance/sessionRunningDuration(at:)``): written as a session first settles
-/// running and again as it ends, however it ends.
+/// When a VM last ran (``VMHostState/lastRunAt``) and when its session started
+/// running (``VMSessionContext/runningSince``): written as a session first
+/// settles running and again as it ends, however it ends.
 @Suite("VM Last Run Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLastRunTests {
@@ -46,10 +46,10 @@ struct VMLastRunTests {
         let instance = library.registerFixture()
 
         #expect(instance.hostState.lastRunAt == nil)
-        #expect(instance.sessionRunningDuration() == nil)
+        #expect(instance.sessionContext?.runningSince == nil)
     }
 
-    @Test("A session records the last run as it first settles running, and its running duration counts from then")
+    @Test("A session records when it started running, as the last run too, as it first settles running")
     func startRecordsTheLastRun() async throws {
         let library = makeWiredLibrary()
         let instance = library.registerFixture()
@@ -61,7 +61,6 @@ struct VMLastRunTests {
         #expect(since >= before)
         let recorded = try #require(instance.hostState.lastRunAt)
         #expect(recorded >= before && recorded <= since)
-        #expect(instance.sessionRunningDuration(at: since.addingTimeInterval(90)) == 90)
     }
 
     @Test("A pause and resume keep the session's start and write no run")
@@ -92,7 +91,7 @@ struct VMLastRunTests {
             instance.activity.deliverSessionEvent(event, from: session)
 
             #expect(instance.sessionContext == nil)
-            #expect(instance.sessionRunningDuration() == nil)
+            #expect(instance.sessionContext?.runningSince == nil)
             let recorded = try #require(instance.hostState.lastRunAt, "\(event)")
             #expect(recorded >= before, "\(event)")
         }
