@@ -42,44 +42,15 @@ enum VMTagColor: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// A filled circle `diameter` points across in this color as `appearance`
-    /// resolves it — for a menu item's image, so a menu built as it opens
-    /// shows the appearance it opens in.
-    ///
-    /// Held as bitmaps at 1x and 2x: a menu draws an item image only from
-    /// pixels, and a drawing-handler image (`NSCustomImageRep`) has none, so
-    /// it showed as nothing in the sidebar's menus while an in-process view
-    /// drew it.
+    /// A filled circle `diameter` points across, drawn in this color as the
+    /// appearance it is drawn in resolves it — for a menu item's image.
     @MainActor
-    func dotImage(diameter: CGFloat = 8, appearance: NSAppearance = NSApp.effectiveAppearance) -> NSImage {
-        let size = NSSize(width: diameter, height: diameter)
-        let image = NSImage(size: size)
-        appearance.performAsCurrentDrawingAppearance {
-            for scale in [1, 2] {
-                let pixels = Int(diameter) * scale
-                guard
-                    let bitmap = NSBitmapImageRep(
-                        bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8,
-                        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                        bytesPerRow: 0, bitsPerPixel: 0)
-                else {
-                    assertionFailure("A \(pixels)-pixel RGBA bitmap could not be made")
-                    continue
-                }
-                // Sized before the context is made, which scales points to
-                // pixels by it.
-                bitmap.size = size
-                guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-                    assertionFailure("A context over an RGBA bitmap could not be made")
-                    continue
-                }
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = context
-                nsColor.setFill()
-                NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
-                NSGraphicsContext.restoreGraphicsState()
-                image.addRepresentation(bitmap)
-            }
+    func dotImage(diameter: CGFloat = 8) -> NSImage {
+        let color = nsColor
+        let image = NSImage(size: NSSize(width: diameter, height: diameter), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            return true
         }
         image.accessibilityDescription = title
         return image
