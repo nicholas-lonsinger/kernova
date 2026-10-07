@@ -171,8 +171,8 @@ struct NetworksSettingsViewControllerTests {
 
         try pane.create(name: "Lab", kind: .hostOnly)
 
-        #expect(viewModel.networks.state.networks?.map(\.name) == ["Lab"])
-        #expect(viewModel.networks.state.networks?.first?.kind == .hostOnly)
+        #expect(viewModel.networks.state.listed?.map(\.name) == ["Lab"])
+        #expect(viewModel.networks.state.listed?.first?.kind == .hostOnly)
         #expect(pane.networks.map(\.name) == ["Lab"])
     }
 
@@ -197,7 +197,7 @@ struct NetworksSettingsViewControllerTests {
         #expect(pane.networks.map(\.name) == ["Staging"])
 
         #expect(throws: CommandError.self) { try pane.rename(id, to: "  ") }
-        #expect(viewModel.networks.state.networks?.map(\.name) == ["Staging"])
+        #expect(viewModel.networks.state.listed?.map(\.name) == ["Staging"])
     }
 
     @Test("Delete stops listing the network and moves each VM on it to a network of its own")

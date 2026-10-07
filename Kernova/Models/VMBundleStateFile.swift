@@ -78,17 +78,31 @@ struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
         owner: UnreadableConfigFile.Owner? = nil
     ) throws(UnreadableConfigFile) -> Value {
         do {
-            return try decode(data, files)
+            return try decoded(data, in: files)
         } catch {
-            guard let data else { throw unreadable(in: bundleURL, owner: owner, .fileMissing) }
-            throw UnreadableConfigFile(
-                location: .bundle(bundleURL, id), owner: owner,
-                fallbackName: bundleURL.lastPathComponent, diagnosis: diagnose(data),
-                strictFailure: error)
+            throw unreadable(refusing: data, with: error, in: bundleURL, owner: owner)
         }
     }
 
-    private func unreadable(
+    /// The value `data` decodes to, throwing what the strict decode threw.
+    fileprivate func decoded(_ data: Data?, in files: any VMBundleFileReading) throws -> Value {
+        try decode(data, files)
+    }
+
+    /// `data` as the strict decode that threw `error` refused it, as this
+    /// file of the bundle at `bundleURL`; the bytes are decoded again to say
+    /// why.
+    fileprivate func unreadable(
+        refusing data: Data?, with error: any Error, in bundleURL: URL, owner: UnreadableConfigFile.Owner?
+    ) -> UnreadableConfigFile {
+        guard let data else { return unreadable(in: bundleURL, owner: owner, .fileMissing) }
+        return UnreadableConfigFile(
+            location: .bundle(bundleURL, id), owner: owner,
+            fallbackName: bundleURL.lastPathComponent, diagnosis: diagnose(data),
+            strictFailure: error)
+    }
+
+    fileprivate func unreadable(
         in bundleURL: URL, owner: UnreadableConfigFile.Owner?, _ issue: ConfigProblem.Issue
     ) -> UnreadableConfigFile {
         UnreadableConfigFile(
@@ -136,7 +150,78 @@ extension VMBundleStateFile where Value == VMConfiguration {
 
     /// The configuration snapshot `id` was taken under.
     static func snapshotConfiguration(id: UUID) -> Self {
-        coded(.snapshotConfiguration(id), empty: nil)
+        coded(
+            .snapshotConfiguration(id), as: VMSnapshotConfigurationRecord.self, empty: nil,
+            assemble: { record, _ in record.configuration },
+            encode: { VMSnapshotConfigurationRecord(configuration: $0) })
+    }
+}
+
+/// A snapshot's `config.json`: the configuration it was taken under, whose
+/// network device is read as the facts ``VMCapturedNetwork`` holds as well —
+/// so the check lists an unrecognized one as a problem no default repairs.
+private struct VMSnapshotConfigurationRecord: Codable {
+    let configuration: VMConfiguration
+
+    init(configuration: VMConfiguration) {
+        self.configuration = configuration
+    }
+
+    init(from decoder: any Decoder) throws {
+        configuration = try VMConfiguration(from: decoder)
+        _ = try VMCapturedNetwork(from: decoder)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        try configuration.encode(to: encoder)
+    }
+}
+
+/// A snapshot's `config.json`, its bytes read once, and the two things a
+/// bundle read takes from them: the network device the snapshot reserves an
+/// address for, and whether a strict read refuses the file.
+private struct VMSnapshotConfigurationRead {
+    private let file: VMBundleStateFile<VMConfiguration>
+    /// The bytes, `nil` when there is no file; the read's error when there is
+    /// one that could not be read.
+    private let bytes: Result<Data?, any Error>
+    /// What the strict decode of the bytes threw, `nil` when they decoded.
+    private let refusal: (any Error)?
+
+    /// The snapshot's network device: its configuration's when that reads,
+    /// else what ``JSONDecoder/decodeRepairing(_:from:)`` reads of the bytes,
+    /// and `nil` when there are no bytes to read.
+    let network: VMCapturedNetwork?
+
+    init(of id: UUID, in files: any VMBundleFileReading) {
+        let file = VMBundleStateFile.snapshotConfiguration(id: id)
+        self.file = file
+        bytes = Result { try files.data(atRelativePath: file.relativePath) }
+        guard case .success(let data) = bytes else {
+            refusal = nil
+            network = nil
+            return
+        }
+        do {
+            network = VMCapturedNetwork(try file.decoded(data, in: files))
+            refusal = nil
+        } catch {
+            refusal = error
+            network = data.flatMap {
+                try? VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: $0)
+            }
+        }
+    }
+
+    /// The file as a strict read refuses it, in the bundle at `bundleURL`;
+    /// `nil` when it reads.
+    func unreadable(in bundleURL: URL, owner: UnreadableConfigFile.Owner) -> UnreadableConfigFile? {
+        switch bytes {
+        case .failure(let error):
+            file.unreadable(in: bundleURL, owner: owner, .fileUnreadable(reason: error.localizedDescription))
+        case .success(let data):
+            refusal.map { file.unreadable(refusing: data, with: $0, in: bundleURL, owner: owner) }
+        }
     }
 }
 
@@ -148,36 +233,35 @@ extension VMBundleStateFile where Value == USBAccessoryPairingSet {
     static var usbPairings: Self { coded(.usbPairings) { USBAccessoryPairingSet() } }
 }
 
+extension VMBundleStateFile where Value == VMSnapshotManifestRecord {
+    /// The manifest as the file records it, without the network device each
+    /// snapshot's own `config.json` holds.
+    static var snapshotManifestRecord: Self {
+        coded(.snapshotManifest) { VMSnapshotManifestRecord(snapshots: [], currentID: nil) }
+    }
+}
+
 extension VMBundleStateFile where Value == VMSnapshotManifest {
-    /// The manifest, each snapshot carrying the MAC address its own
+    /// The manifest, each snapshot carrying the network device its own
     /// `config.json` records — read through the same access, since the
     /// manifest does not repeat it.
     static var snapshotManifest: Self {
         coded(
             .snapshotManifest, as: VMSnapshotManifestRecord.self, empty: { VMSnapshotManifest() },
             assemble: { record, files in
-                VMSnapshotManifest(
-                    snapshots: record.snapshots.map {
-                        VMSnapshot($0, network: capturedNetwork(of: $0.id, in: files))
-                    },
-                    currentID: record.currentID)
+                assembled(record, reads: record.snapshots.map { VMSnapshotConfigurationRead(of: $0.id, in: files) })
             },
             encode: { $0.record })
     }
 
-    /// The network device of the configuration snapshot `id` holds, or `nil`
-    /// when it holds none.
-    ///
-    /// Decodes those keys rather than the whole configuration, so a snapshot
-    /// whose configuration no longer decodes still reserves its address.
-    private static func capturedNetwork(
-        of id: UUID, in files: any VMBundleFileReading
-    ) -> VMCapturedNetwork? {
-        guard
-            let data = try? files.data(
-                atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: id))
-        else { return nil }
-        return try? VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
+    /// `record` with each snapshot carrying the network device `reads` — one
+    /// per snapshot, in order — found in its `config.json`.
+    fileprivate static func assembled(
+        _ record: VMSnapshotManifestRecord, reads: [VMSnapshotConfigurationRead]
+    ) -> VMSnapshotManifest {
+        VMSnapshotManifest(
+            snapshots: zip(record.snapshots, reads).map { VMSnapshot($0, network: $1.network) },
+            currentID: record.currentID)
     }
 }
 
@@ -276,12 +360,21 @@ struct VMBundleFiles: Sendable {
                 (try? configuration.get().name) ?? found.first?.owner.title ?? bundleURL.lastPathComponent
             let owner = UnreadableConfigFile.Owner.virtualMachine(vmName)
             let hostState = attempt(.hostState, owner: owner)
-            let snapshotManifest = attempt(.snapshotManifest, owner: owner)
+            let manifestRecord = attempt(.snapshotManifestRecord, owner: owner)
             usbPairings = try? attempt(.usbPairings, owner: owner).get()
-            for snapshot in (try? snapshotManifest.get().snapshots) ?? [] {
-                _ = attempt(
-                    .snapshotConfiguration(id: snapshot.id),
-                    owner: .snapshot(vm: vmName, snapshot: snapshot.name))
+            // Each snapshot's `config.json` is read once, for both the network
+            // device the manifest carries and whether the file reads.
+            let snapshotManifest = manifestRecord.map { record in
+                let reads = record.snapshots.map { snapshot in
+                    let read = VMSnapshotConfigurationRead(of: snapshot.id, in: files)
+                    if let unreadable = read.unreadable(
+                        in: bundleURL, owner: .snapshot(vm: vmName, snapshot: snapshot.name))
+                    {
+                        found.append(unreadable)
+                    }
+                    return read
+                }
+                return VMBundleStateFile<VMSnapshotManifest>.assembled(record, reads: reads)
             }
             core = configuration.flatMap { configuration in
                 hostState.flatMap { hostState in

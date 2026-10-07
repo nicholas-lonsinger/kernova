@@ -60,10 +60,10 @@ struct VMCommandCoreNetworkTests {
             ], consent: .none)
 
         #expect(try harness.core.networks().map(\.members) == [[harness.core.summary(alpha)]])
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == "Lab")
+        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Lab"))
         #expect(lab.kind == .hostOnly)
         try harness.core.renameNetwork("lab", to: "Bench")
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == "Bench")
+        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Bench"))
     }
 
     @Test("Deleting a network moves every VM naming it to a network of its own")

@@ -4,8 +4,9 @@ import KernovaKit
 /// The library's smart groups, changed through ``organization`` — each change
 /// followed by the selection moving onto what the sidebar then lists.
 extension VMLibrary {
-    /// Every smart group, in the order the sidebar lists them.
-    var smartGroups: [VMSmartGroup] { organization.smartGroups }
+    /// Every smart group, in the order the sidebar lists them; `nil` while
+    /// the file holding them can't be read.
+    var smartGroups: [VMSmartGroup]? { organization.smartGroups }
 
     /// Saves the library section's filter as a smart group named `name`, then
     /// clears that filter: the group lists what the filter did, and the

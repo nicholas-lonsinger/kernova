@@ -58,8 +58,7 @@ extension VMCommandCore {
 
     func groups() throws -> [GroupSummary] {
         library.refreshFromOtherCopies()
-        try readOrganization(verb: .groups)
-        let organization = library.organization
+        let organization = try readOrganization(verb: .groups)
         let named: [(id: UUID, name: String, kind: VMGroupKind)] =
             organization.smartGroups.map { ($0.id, $0.name, .smartGroup) }
             + organization.folders.map { ($0.id, $0.name, .folder) }
@@ -100,9 +99,9 @@ extension VMCommandCore {
         for text in query.networks {
             filter.networks.insert(try network(spelledBy: text))
         }
-        if !query.tags.isEmpty { try readOrganization(verb: verb) }
+        let organization = query.tags.isEmpty ? nil : try readOrganization(verb: verb)
         for text in query.tags {
-            guard let tag = library.organization.tag(named: text) else {
+            guard let tag = organization?.tag(named: text) else {
                 throw CommandError.itemNotFoundOnHost(item: "tag named \u{201C}\(text)\u{201D}")
             }
             filter.tags.insert(tag.id)
@@ -134,8 +133,7 @@ extension VMCommandCore {
 
     /// The group `reference` names, as the library holds it now.
     func group(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
-        try readOrganization(verb: verb)
-        let organization = library.organization
+        let organization = try readOrganization(verb: verb)
         let notFound = CommandError.itemNotFoundOnHost(
             item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
         switch reference.kind {
@@ -159,14 +157,15 @@ extension VMCommandCore {
         try group(reference, verb: verb).membership
     }
 
-    /// Reads the library's smart groups, folders and tags as their file holds
-    /// them now, refusing when the file cannot be read rather than answering
-    /// none.
-    private func readOrganization(verb: VMVerb) throws {
+    /// The library's smart groups, folders and tags as their file holds them
+    /// now, refusing when the file cannot be read rather than answering none.
+    private func readOrganization(verb: VMVerb) throws -> VMOrganizationDirectory.File {
         library.organization.reload()
-        if let reason = library.organization.readFailure {
-            throw CommandError.operationFailed(
-                verb: verb, message: "Kernova couldn\u{2019}t read its smart groups, folders and tags: \(reason)")
+        switch library.organization.state {
+        case .listed(let organization):
+            return organization
+        case .unreadable:
+            throw CommandError.operationFailed(verb: verb, message: VMOrganizationDirectory.unreadableMessage)
         }
     }
 }

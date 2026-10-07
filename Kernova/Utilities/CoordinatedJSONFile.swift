@@ -8,6 +8,38 @@ import Foundation
 /// overwritten, and a file that cannot be read is never written. A file that
 /// cannot be read throws ``UnreadableConfigFile``, so the config check lists
 /// it and ``repair(trashingOriginalWith:)`` puts its defaults in place.
+/// What a ``CoordinatedJSONFile`` held the last time it was read, as the
+/// `Listed` value its owner lists.
+///
+/// A file that cannot be read is its own state, never an empty list: a change
+/// reads the file again first and refuses while it stays this way, so an
+/// unread file is never overwritten.
+enum ConfigFileState<Listed: Equatable & Sendable>: Equatable, Sendable {
+    /// What the file holds — its empty payload when there is no file yet.
+    case listed(Listed)
+    /// The file is there and cannot be read.
+    case unreadable(UnreadableConfigFile)
+
+    /// What is listed, `nil` while the file cannot be read.
+    var listed: Listed? {
+        guard case .listed(let listed) = self else { return nil }
+        return listed
+    }
+
+    /// The file as the read refused it, `nil` while it is listed.
+    var unreadable: UnreadableConfigFile? {
+        guard case .unreadable(let file) = self else { return nil }
+        return file
+    }
+    /// The same state, listing what `transform` makes of what is listed.
+    func map<Other>(_ transform: (Listed) -> Other) -> ConfigFileState<Other> {
+        switch self {
+        case .listed(let listed): .listed(transform(listed))
+        case .unreadable(let file): .unreadable(file)
+        }
+    }
+}
+
 struct CoordinatedJSONFile<Payload: Codable & Equatable & Sendable>: Sendable {
     /// Why a change did not complete.
     enum Failure: Error {
@@ -48,6 +80,15 @@ struct CoordinatedJSONFile<Payload: Codable & Equatable & Sendable>: Sendable {
         }
         if let coordinationError { throw unreadable(.fileUnreadable(reason: coordinationError.localizedDescription)) }
         return try outcome.get()
+    }
+
+    /// What the file holds now, as `listing` lists it.
+    func state<Listed>(listing: (Payload) -> Listed) -> ConfigFileState<Listed> {
+        do throws(UnreadableConfigFile) {
+            return .listed(listing(try read()))
+        } catch {
+            return .unreadable(error)
+        }
     }
 
     /// Writes `change` applied to what the file holds now, under one

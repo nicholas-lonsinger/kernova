@@ -340,7 +340,7 @@ final class MockVMCommanding: VMCommanding {
             diskSizeInGB: 64,
             networkMode: nil,
             networkMembership: nil,
-            networkName: nil, networkNameUnreadable: false,
+            networkName: nil,
             macAddress: nil,
             ipAddress: guestAddress,
             agentStatus: "notInstalled",

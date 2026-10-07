@@ -177,10 +177,19 @@ final class ConfigProblemCollector: Sendable {
 
     fileprivate var mark: Int { recorded.withLock { $0.count } }
 
+    /// Drops what was recorded since `mark` and records `entry` — or, where
+    /// another form already recorded the value at `entry`'s path, keeps that
+    /// one problem, repairable only while both forms can repair it.
     fileprivate func replaceRecorded(since mark: Int, with entry: Recorded) {
         recorded.withLock {
             $0.removeSubrange(mark...)
-            $0.append(entry)
+            guard let earlier = $0.firstIndex(where: { $0.path == entry.path }) else {
+                $0.append(entry)
+                return
+            }
+            if entry.repair == nil {
+                $0[earlier] = Recorded(path: entry.path, failure: $0[earlier].failure, repair: nil)
+            }
         }
     }
 

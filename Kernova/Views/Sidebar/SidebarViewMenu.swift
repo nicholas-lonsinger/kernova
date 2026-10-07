@@ -297,9 +297,15 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
 
     /// A VM row's Add to Folder item for the entry `entry`: a submenu listing
     /// each of `folders`, checked where it holds the entry and each pick
-    /// toggling that, then New Folder….
-    func addToFolderItem(entry: UUID, folders: [VMFolder]) -> NSMenuItem {
+    /// toggling that, then New Folder…; disabled, pointing to the config
+    /// check, while the folders can't be read (`nil`).
+    func addToFolderItem(entry: UUID, folders: [VMFolder]?) -> NSMenuItem {
         let item = NSMenuItem(title: "Add to Folder", action: nil, keyEquivalent: "")
+        guard let folders else {
+            item.isEnabled = false
+            item.toolTip = VMOrganizationDirectory.unreadableMessage
+            return item
+        }
         let submenu = NSMenu(title: "Add to Folder")
         submenu.autoenablesItems = false
         for folder in folders {

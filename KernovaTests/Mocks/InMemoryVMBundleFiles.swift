@@ -3,7 +3,7 @@ import Foundation
 @testable import Kernova
 
 /// `VMBundleFileAccessing` over an in-memory file map per bundle URL, with
-/// replace counts and injected failures per bundle-relative path.
+/// read and replace counts and injected failures per bundle-relative path.
 ///
 /// A bundle it holds nothing for is read and written on disk through
 /// ``CoordinatedBundleFileAccess``, so a bundle a test really copies — an
@@ -24,6 +24,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var bundles: [URL: [String: Data]] = [:]
     private var replaceCounts: [String: Int] = [:]
+    private var readCounts: [String: Int] = [:]
     private var replaceErrors: [String: any Error] = [:]
     private var unreadable: Set<BundlePath> = []
     private var target: InMemoryVMBundleFiles?
@@ -45,6 +46,12 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func replaceCount(of relativePath: String) -> Int {
         if let target { return target.replaceCount(of: relativePath) }
         return lock.withLock { replaceCounts[relativePath, default: 0] }
+    }
+
+    /// How many reads of `relativePath` an access made, across every bundle.
+    func readCount(of relativePath: String) -> Int {
+        if let target { return target.readCount(of: relativePath) }
+        return lock.withLock { readCounts[relativePath, default: 0] }
     }
 
     /// Thrown by every later replace of `relativePath`, in every bundle; `nil`
@@ -327,6 +334,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         let bundle: URL
 
         func data(atRelativePath relativePath: String) throws -> Data? {
+            store.readCounts[relativePath, default: 0] += 1
             if store.unreadable.contains(BundlePath(bundle: bundle, relativePath: relativePath)) {
                 throw CocoaError(.fileReadCorruptFile)
             }

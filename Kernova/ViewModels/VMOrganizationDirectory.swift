@@ -16,6 +16,11 @@ final class VMOrganizationDirectory {
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("Organization.json", isDirectory: false)
 
+    /// What every surface that cannot list the smart groups, folders or tags
+    /// tells the user.
+    nonisolated static let unreadableMessage =
+        "Kernova can\u{2019}t read its smart groups, folders and tags. Choose File > Check Config Files\u{2026} to review them."
+
     /// The file's payload: every sidebar section — each smart group, each
     /// folder, and the library exactly once — in the order the sidebar lists
     /// them, and the tags the library defines.
@@ -69,6 +74,34 @@ final class VMOrganizationDirectory {
             try container.encode(folders, forKey: .folders)
             try container.encode(sections.map(\.id), forKey: .sectionOrder)
             try container.encode(tags, forKey: .tags)
+        }
+
+        /// The smart group `text` names — by identifier, or by name ignoring
+        /// case — `nil` when the file lists none.
+        func smartGroup(named text: String) -> VMSmartGroup? {
+            Self.element(named: text, in: smartGroups, name: \.name)
+        }
+
+        /// The folder `text` names — by identifier, or by name ignoring case —
+        /// `nil` when the file lists none.
+        func folder(named text: String) -> VMFolder? {
+            Self.element(named: text, in: folders, name: \.name)
+        }
+
+        /// The tag `text` names — by identifier, or by name ignoring case —
+        /// `nil` when the file defines none.
+        func tag(named text: String) -> VMTag? {
+            Self.element(named: text, in: tags, name: \.name)
+        }
+
+        private static func element<Element: Identifiable<UUID>>(
+            named text: String, in elements: [Element], name: (Element) -> String
+        ) -> Element? {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let id = UUID(uuidString: trimmed), let element = elements.first(where: { $0.id == id }) {
+                return element
+            }
+            return elements.first { name($0).caseInsensitiveCompare(trimmed) == .orderedSame }
         }
 
         /// Lists `group` after every other section.
@@ -186,33 +219,34 @@ final class VMOrganizationDirectory {
             case .nameIsIdentifier(let name, let kind):
                 "\u{201C}\(name)\u{201D} can\u{2019}t name a \(kind.noun): an identifier already names one."
             case .unreadable:
-                "Kernova can\u{2019}t read its smart groups, folders and tags. Choose File > Check Config Files\u{2026} to review them."
+                VMOrganizationDirectory.unreadableMessage
             case .unsaved(let reason):
                 "Kernova couldn\u{2019}t save its smart groups, folders and tags: \(reason)"
             }
         }
     }
 
-    /// What the file holds, as last read or written.
-    private var current = File()
+    /// What the file held the last time it was read or written: every section,
+    /// the library's included, in the order the sidebar lists them.
+    typealias State = ConfigFileState<File>
+
+    private(set) var state: State = .listed(File())
 
     /// Every section, the library's included, in the order the sidebar lists
-    /// them.
-    var sections: [Section] { current.sections }
+    /// them; `nil` while the file can't be read.
+    var sections: [Section]? { state.listed?.sections }
 
-    /// Every smart group, in the order the sidebar lists them.
-    var smartGroups: [VMSmartGroup] { current.smartGroups }
+    /// Every smart group, in the order the sidebar lists them; `nil` while the
+    /// file can't be read.
+    var smartGroups: [VMSmartGroup]? { state.listed?.smartGroups }
 
-    /// Every folder, in the order the sidebar lists them.
-    var folders: [VMFolder] { current.folders }
+    /// Every folder, in the order the sidebar lists them; `nil` while the file
+    /// can't be read.
+    var folders: [VMFolder]? { state.listed?.folders }
 
-    /// Every tag, in the order every list of them shows them.
-    var tags: [VMTag] { current.tags }
-
-    /// The file as the last read refused it, `nil` when it was read, or holds
-    /// nothing yet. A change reads the file again first and refuses when that
-    /// read fails, so an unread file is never overwritten.
-    private(set) var readFailure: UnreadableConfigFile?
+    /// Every tag, in the order every list of them shows them; `nil` while the
+    /// file can't be read.
+    var tags: [VMTag]? { state.listed?.tags }
 
     /// The file the organization persists in, `nil` to keep it in memory only.
     @ObservationIgnored nonisolated let file: CoordinatedJSONFile<File>?
@@ -233,77 +267,43 @@ final class VMOrganizationDirectory {
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        do throws(UnreadableConfigFile) {
-            show(try file.read())
-            readFailure = nil
-        } catch {
-            readFailure = error
+        let read = file.state(listing: { $0 })
+        if read != state { state = read }
+        if let unreadable = read.unreadable {
             #log(
                 Self.logger, .error,
-                "Couldn't read the library organization at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: error.problems), privacy: .public)"
+                "Couldn't read the library organization at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
             )
         }
-    }
-
-    /// Lists what `read` holds, assigning only when it changed so an
-    /// observer is told of changes alone.
-    private func show(_ read: File) {
-        if read != current { current = read }
     }
 
     // MARK: - Reads
 
     /// The smart group `id` identifies, `nil` when the library lists none.
     func smartGroup(withID id: UUID) -> VMSmartGroup? {
-        smartGroups.first { $0.id == id }
+        smartGroups?.first { $0.id == id }
     }
 
     /// The folder `id` identifies, `nil` when the library lists none.
     func folder(withID id: UUID) -> VMFolder? {
-        folders.first { $0.id == id }
+        folders?.first { $0.id == id }
     }
 
     /// The tag `id` identifies, `nil` when the library defines none.
     func tag(withID id: UUID) -> VMTag? {
-        tags.first { $0.id == id }
-    }
-
-    /// The smart group `text` names — by identifier, or by name ignoring case
-    /// — `nil` when the library lists none.
-    func smartGroup(named text: String) -> VMSmartGroup? {
-        Self.element(named: text, in: smartGroups, name: \.name)
-    }
-
-    /// The folder `text` names — by identifier, or by name ignoring case —
-    /// `nil` when the library lists none.
-    func folder(named text: String) -> VMFolder? {
-        Self.element(named: text, in: folders, name: \.name)
-    }
-
-    /// The tag `text` names — by identifier, or by name ignoring case — `nil`
-    /// when the library defines none.
-    func tag(named text: String) -> VMTag? {
-        Self.element(named: text, in: tags, name: \.name)
-    }
-
-    private static func element<Named: Identifiable<UUID>>(
-        named text: String, in elements: [Named], name: (Named) -> String
-    ) -> Named? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let id = UUID(uuidString: trimmed), let element = elements.first(where: { $0.id == id }) {
-            return element
-        }
-        return elements.first { name($0).caseInsensitiveCompare(trimmed) == .orderedSame }
+        tags?.first { $0.id == id }
     }
 
     /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
-    /// named — what a new one's name field starts from.
+    /// named — what a new one's name field starts from. `base` itself while
+    /// the file cannot be read, where creating one is refused anyway.
     func unusedName(from base: String, for element: Element) -> String {
+        guard let listed = state.listed else { return base }
         let names =
             switch element {
-            case .smartGroup: smartGroups.map(\.name)
-            case .folder: folders.map(\.name)
-            case .tag: tags.map(\.name)
+            case .smartGroup: listed.smartGroups.map(\.name)
+            case .folder: listed.folders.map(\.name)
+            case .tag: listed.tags.map(\.name)
             }
         let taken = Set(names.map { $0.lowercased() })
         guard taken.contains(base.lowercased()) else { return base }
@@ -509,20 +509,21 @@ final class VMOrganizationDirectory {
             return next
         }
         guard let file else {
-            show(try changed(current))
+            guard let listed = state.listed else { throw ChangeError.unreadable }
+            state = .listed(try changed(listed))
             return
         }
         do {
-            show(try file.update(changed))
+            let written = State.listed(try file.update(changed))
+            if written != state { state = written }
         } catch let failure as CoordinatedJSONFile<File>.Failure {
             switch failure {
             case .unreadable(let unreadable):
-                readFailure = unreadable
+                state = .unreadable(unreadable)
                 throw ChangeError.unreadable
             case .unsaved: throw ChangeError.unsaved(failure.reason)
             }
         }
-        readFailure = nil
     }
 }
 

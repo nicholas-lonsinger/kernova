@@ -104,8 +104,7 @@ struct UnreadableNetworkListTests {
 
         let info = try harness.core.info(.id(member.instanceID))
 
-        #expect(info.networkName == nil)
-        #expect(info.networkNameUnreadable)
+        #expect(info.networkName == .unreadable)
     }
 
     @Test("A membership write naming a network is refused with the unreadable list's message")

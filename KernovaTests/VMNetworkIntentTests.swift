@@ -54,11 +54,17 @@ struct VMNetworkIntentTests {
         let id = UUID()
         let entity = VMEntity(
             VMIntentFixtures.info(
-                networkMode: "shared", networkMembership: id.uuidString, networkName: "Lab"))
+                networkMode: "shared", networkMembership: id.uuidString, networkName: .named("Lab")))
 
         #expect(entity.networkMembership == id.uuidString)
         #expect(entity.networkName == "Lab")
         #expect(VMEntity(VMIntentFixtures.info()).networkName == nil)
+        #expect(
+            VMEntity(VMIntentFixtures.info(networkMembership: id.uuidString, networkName: .unlisted(id)))
+                .networkName == nil)
+        #expect(
+            VMEntity(VMIntentFixtures.info(networkMembership: id.uuidString, networkName: .unreadable))
+                .networkName == "Network List Can\u{2019}t Be Read")
     }
 
     // MARK: - Lookup

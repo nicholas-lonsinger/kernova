@@ -80,7 +80,7 @@ extension VMLibraryFilter.Subject {
             network: VMLibraryFilter.Network(NetworkModeChoice(configuration)) { kind, id in
                 // While the list can't be read, no named network is known to
                 // be one the library does not list.
-                networks.networks?.contains { $0.id == id && $0.kind == kind } ?? true
+                networks.listed?.contains { $0.id == id && $0.kind == kind } ?? true
             },
             guestAgent: configuration.guestOS == .macOS
                 ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)

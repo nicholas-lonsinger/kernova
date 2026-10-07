@@ -54,8 +54,9 @@ struct VMEntity: IndexedEntity {
     @Property(title: "Network Membership")
     var networkMembership: String?
 
-    /// The name of the named network the VM joins, `nil` where it joins none
-    /// or one the library does not list.
+    /// The name of the named network the VM joins — "Network List Can’t Be
+    /// Read" while the library's list can't be read — `nil` where it joins
+    /// none or one the library does not list.
     @Property(title: "Network")
     var networkName: String?
 
@@ -105,7 +106,7 @@ struct VMEntity: IndexedEntity {
         self.diskSizeInGB = info.diskSizeInGB
         self.networkMode = info.networkMode
         self.networkMembership = info.networkMembership
-        self.networkName = info.networkName
+        self.networkName = info.networkName?.title
         self.macAddress = info.macAddress
         self.ipAddress = info.ipAddress.address
         self.agentStatus = info.agentStatus

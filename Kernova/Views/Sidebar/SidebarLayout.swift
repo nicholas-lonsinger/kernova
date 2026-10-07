@@ -22,6 +22,9 @@ struct SidebarLayout {
         /// The count its header shows: always for a smart group or a folder,
         /// and for the library while a filter or the search narrows it.
         var count: Count? = nil
+        /// Why the section lists nothing and can't, shown on hover; the
+        /// sidebar shows a section with a notice disabled, and it never opens.
+        var notice: String? = nil
     }
 
     @MainActor
@@ -117,6 +120,13 @@ struct SidebarLayout {
     static let noMatchesText = "No matching VMs"
     static let emptyFolderText = "Drag VMs here to add them"
 
+    /// The section listed where the smart groups and folders go while the
+    /// file holding them can't be read.
+    static let unreadableOrganizationSection =
+        Section(
+            id: .unreadableOrganization, title: "Smart Groups and Folders Can\u{2019}t Be Read",
+            content: .rows(Rows([])), notice: VMOrganizationDirectory.unreadableMessage)
+
     /// The sections in display order, each identifier at most once.
     let sections: [Section]
 
@@ -132,9 +142,11 @@ struct SidebarLayout {
     }
 
     /// The layout the sidebar shows for `entries`: a section for each of
-    /// `sections`, in its order — the library's listing the entries `options`
-    /// admits, in its order, under its groups. `search` narrows every section
-    /// to the VMs it admits.
+    /// `organization`'s sections, in its order — the library's listing the
+    /// entries `options` admits, in its order, under its groups. `search`
+    /// narrows every section to the VMs it admits. While the file holding the
+    /// smart groups and folders can't be read, one section saying so stands in
+    /// their place, before the library's.
     ///
     /// The entry `retaining` names is listed in the library section whether
     /// or not the filter and the search admit it: the selected VM a change to
@@ -142,7 +154,8 @@ struct SidebarLayout {
     /// off it.
     static func project(
         entries: [LibraryEntry], options: SidebarViewOptions, search: SidebarNameSearch = SidebarNameSearch(),
-        retaining: UUID? = nil, sections: [VMOrganizationDirectory.Section] = [.library], context: Context
+        retaining: UUID? = nil, organization: ConfigFileState<[VMOrganizationDirectory.Section]> = .listed([.library]),
+        context: Context
     ) -> SidebarLayout {
         // Every entry's subject is read, the retained one's included, so an
         // observation of the projection tracks every value the counts read.
@@ -165,15 +178,21 @@ struct SidebarLayout {
             id: .library, title: "Virtual Machines", content: content,
             emptyText: narrowed && !entries.isEmpty ? noMatchesText : nil,
             count: narrowed ? .narrowed(shown: shown.count, of: entries.count) : nil)
-        return SidebarLayout(
-            sections: sections.map { listed in
-                switch listed {
-                case .smartGroup(let group):
-                    section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
-                case .folder(let folder): section(for: folder, entries: entries, search: search, sort: options.sort)
-                case .library: library
-                }
-            })
+        switch organization {
+        case .listed(let sections):
+            return SidebarLayout(
+                sections: sections.map { listed in
+                    switch listed {
+                    case .smartGroup(let group):
+                        section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
+                    case .folder(let folder):
+                        section(for: folder, entries: entries, search: search, sort: options.sort)
+                    case .library: library
+                    }
+                })
+        case .unreadable:
+            return SidebarLayout(sections: [unreadableOrganizationSection, library])
+        }
     }
 
     /// `folder`'s section: its members the library lists that `search`
@@ -321,7 +340,7 @@ struct SidebarLayout {
     /// filter still holds it, and it admits no VM.
     static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.networks,
+        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
             !listed.contains(where: { $0.id == id && $0.kind == kind })
         {
             return heldUnlistedNetworkTitle

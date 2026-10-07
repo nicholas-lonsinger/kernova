@@ -283,7 +283,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarLayout: SidebarLayout {
         .project(
             entries: entries, options: sidebarOptions, search: sidebarSearch, retaining: retainedEntryID,
-            sections: organization.sections, context: sidebarContext)
+            organization: organization.state.map(\.sections), context: sidebarContext)
     }
 
     /// Moves the section `id` identifies — a smart group, a folder or the
@@ -305,7 +305,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
-            tags: organization.tags,
+            tags: organization.tags ?? [],
             networkTitle: { config in
                 NetworkModeChoice.title(
                     of: config, entitlements: entitlements, interfaces: interfaces.interfaces,

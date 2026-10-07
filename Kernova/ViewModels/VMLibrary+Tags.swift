@@ -24,12 +24,15 @@ extension VMLibrary {
         }
     }
 
-    /// Every tag, in the order every list of them shows them.
-    var tags: [VMTag] { organization.tags }
+    /// Every tag, in the order every list of them shows them; `nil` while the
+    /// file defining them can't be read.
+    var tags: [VMTag]? { organization.tags }
 
-    /// The tags `instance` carries, in the library's order of its tags.
+    /// The tags `instance` carries, in the library's order of its tags: none
+    /// while the file defining them can't be read, since an assignment shows
+    /// only the tags the library defines.
     func tags(of instance: VMInstance) -> [VMTag] {
-        organization.tags.assigned(instance.hostState.tags)
+        (organization.tags ?? []).assigned(instance.hostState.tags)
     }
 
     /// Defines a new tag named `name` in `color`.

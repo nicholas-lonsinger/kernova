@@ -89,7 +89,7 @@
 			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, isolated, a network of its own, or the identifier of a named network; missing value when it joins no Shared Network or Host Only network.">
 				<cocoa key="networkMembership"/>
 			</property>
-			<property name="network name" code="KvNa" type="text" access="r" description="The name of the named network it joins, or missing value when it joins none or one this library does not list.">
+			<property name="network name" code="KvNa" type="text" access="r" description="The name of the named network it joins, &#8220;Network List Can&#8217;t Be Read&#8221; while this library&#8217;s list of networks can&#8217;t be read, or missing value when it joins none or one this library does not list.">
 				<cocoa key="networkName"/>
 			</property>
 			<property name="MAC address" code="KvMA" type="text" access="r" description="The address the guest presents on that network.">

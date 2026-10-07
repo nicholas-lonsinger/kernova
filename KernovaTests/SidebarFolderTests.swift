@@ -132,7 +132,7 @@ struct SidebarFolderTests {
 
         let layout = SidebarLayout.project(
             entries: entries, options: SidebarViewOptions(),
-            sections: [.folder(clients), .smartGroup(macs), .folder(demo), .folder(empty), .library],
+            organization: .listed([.folder(clients), .smartGroup(macs), .folder(demo), .folder(empty), .library]),
             context: .testing())
 
         #expect(
@@ -154,7 +154,7 @@ struct SidebarFolderTests {
         #expect(!layout.rowKeys.contains { $0.entryID == bravo && $0.section.folderID != nil })
 
         let byName = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .name), sections: [.folder(clients), .library],
+            entries: entries, options: SidebarViewOptions(sort: .name), organization: .listed([.folder(clients), .library]),
             context: .testing())
         #expect(names(in: byName.sections[0]) == ["Alpha", "Charlie"])
 
@@ -297,8 +297,8 @@ struct SidebarFolderTests {
         field.stringValue = "Clients"
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
 
-        try await waitUntil { viewModel.library.folders.map(\.name) == ["Clients"] }
-        #expect(viewModel.library.folders.first?.members == [])
+        try await waitUntil { viewModel.library.folders?.map(\.name) == ["Clients"] }
+        #expect(viewModel.library.folders?.first?.members == [])
         try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.id == .library }
         #expect(
             (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.title } == [
@@ -326,10 +326,10 @@ struct SidebarFolderTests {
         submenu.performActionForItem(at: try #require(submenu.items.firstIndex { $0.title == "New Folder\u{2026}" }))
         window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
 
-        try await waitUntil { viewModel.library.folders.count == 2 }
-        let made = try #require(viewModel.library.folders.last)
+        try await waitUntil { viewModel.library.folders?.count == 2 }
+        let made = try #require(viewModel.library.folders?.last)
         #expect(
-            viewModel.library.organization.sections.map(\.id) == [.folder(clients.id), .library, .folder(made.id)])
+            viewModel.library.organization.sections?.map(\.id) == [.folder(clients.id), .library, .folder(made.id)])
         // The sync the organization change queued, and any later one, keeps
         // the view where the new section put it.
         controller.viewDidAppear()
@@ -393,9 +393,9 @@ struct SidebarFolderTests {
         #expect(field.stringValue == "Untitled Folder 2")
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
 
-        try await waitUntil { viewModel.library.folders.count == 2 }
-        #expect(viewModel.library.folders.last?.name == "Untitled Folder 2")
-        #expect(viewModel.library.folders.last?.members == [a.id])
+        try await waitUntil { viewModel.library.folders?.count == 2 }
+        #expect(viewModel.library.folders?.last?.name == "Untitled Folder 2")
+        #expect(viewModel.library.folders?.last?.members == [a.id])
     }
 
     @Test("Rename retitles the folder; Delete asks first, then removes it, keeps its VMs, and moves its selection")
@@ -425,10 +425,10 @@ struct SidebarFolderTests {
         #expect(texts.contains("\u{201C}New\u{201D} holds 1 VM. Deleting the folder keeps it in the library."))
         window.endSheet(declined, returnCode: .alertSecondButtonReturn)
         try await waitUntil { window.attachedSheet == nil }
-        #expect(viewModel.library.folders.map(\.id) == [folder.id])
+        #expect(viewModel.library.folders?.map(\.id) == [folder.id])
 
         window.endSheet(try pickDelete(), returnCode: .alertFirstButtonReturn)
-        try await waitUntil { viewModel.library.folders.isEmpty }
+        try await waitUntil { viewModel.library.folders == [] }
         #expect(viewModel.instances.map(\.id) == [a.id])
         #expect(viewModel.selection == .library(a.id))
         try await waitUntil { outline.numberOfRows == 2 }
@@ -456,7 +456,7 @@ struct SidebarFolderTests {
         // its own kind's.
         try library.renameFolder(clients.id, to: "CLIENTS")
         try library.organization.createSmartGroup(named: "Demo", filter: VMLibraryFilter())
-        #expect(library.folders.map(\.name) == ["CLIENTS", "Demo"])
+        #expect(library.folders?.map(\.name) == ["CLIENTS", "Demo"])
     }
 
     // MARK: - Drag and drop
@@ -668,7 +668,7 @@ struct SidebarFolderTests {
         try move(.library, to: belowEveryRow)
         #expect(shown() == ["Y", "Everything", "X", "Virtual Machines"])
         #expect(
-            viewModel.library.organization.sections.map(\.id) == [
+            viewModel.library.organization.sections?.map(\.id) == [
                 .folder(y.id), .smartGroup(group.id), .folder(x.id), .library,
             ])
 
@@ -770,7 +770,7 @@ struct SidebarFolderTests {
         #expect(viewModel.instances.isEmpty)
         #expect(members(of: clients, in: viewModel) == [])
         #expect(members(of: demo, in: viewModel) == [])
-        #expect(viewModel.library.folders.count == 2)
+        #expect(viewModel.library.folders?.count == 2)
     }
 
     @Test("An import that becomes no VM leaves the folder it was dropped into")

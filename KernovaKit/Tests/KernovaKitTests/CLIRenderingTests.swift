@@ -17,12 +17,12 @@ struct CLIRenderingTests {
 
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
-        networkMembership: String = "common", networkNameUnreadable: Bool = false
+        networkMembership: String = "common", networkName: VMNetworkName? = nil
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: networkMembership,
-            networkName: nil, networkNameUnreadable: networkNameUnreadable, macAddress: "aa:bb:cc:dd:ee:ff",
+            networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
             stateBucket: .stopped,
@@ -91,7 +91,6 @@ struct CLIRenderingTests {
             id: base.id, name: base.name, status: "stopped", guestOS: base.guestOS,
             cpuCount: base.cpuCount, memoryBytes: base.memoryBytes, diskSizeInGB: base.diskSizeInGB,
             networkMode: base.networkMode, networkMembership: base.networkMembership, networkName: nil,
-            networkNameUnreadable: false,
             macAddress: base.macAddress, ipAddress: .notObserved,
             agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, hasSnapshots: base.hasSnapshots, guestAgent: base.guestAgent,
@@ -142,11 +141,21 @@ struct CLIRenderingTests {
     func anUnreadableNetworkNameReadsAsSuch() throws {
         let id = "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"
         let rendered = TableRenderer.render(
-            info(networkMembership: id, networkNameUnreadable: true), quiet: false)
+            info(networkMembership: id, networkName: .unreadable), quiet: false)
         let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
 
         #expect(network.hasSuffix("shared, Network List Can\u{2019}t Be Read"))
         #expect(!rendered.contains(id))
+    }
+
+    @Test("A named network the library does not list reads as its identifier")
+    func anUnlistedNetworkReadsAsItsIdentifier() throws {
+        let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
+        let rendered = TableRenderer.render(
+            info(networkMembership: id.uuidString, networkName: .unlisted(id)), quiet: false)
+        let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
+
+        #expect(network.hasSuffix("shared, \(id.uuidString)"))
     }
 
     @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")

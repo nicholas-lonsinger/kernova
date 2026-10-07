@@ -25,7 +25,8 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is SidebarSection
+        guard let section = item as? SidebarSection else { return false }
+        return section.notice == nil
     }
 
     // MARK: Drag source
@@ -33,8 +34,10 @@ extension SidebarViewController: NSOutlineViewDataSource {
     func outlineView(
         _ outlineView: NSOutlineView, pasteboardWriterForItem item: Any
     ) -> NSPasteboardWriting? {
-        // Any section's header drags to reorder the sections.
+        // Any section's header drags to reorder the sections — but the one
+        // standing in for sections that can't be read, which have no order.
         if let section = item as? SidebarSection {
+            guard section.notice == nil else { return nil }
             let pbItem = NSPasteboardItem()
             pbItem.setString(section.id.rawValue, forType: Self.sectionPasteboardType)
             return pbItem

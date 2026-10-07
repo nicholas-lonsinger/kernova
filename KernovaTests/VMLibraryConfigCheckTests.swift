@@ -162,9 +162,16 @@ struct VMLibraryConfigCheckTests {
             Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
         let snapshotConfig = try Self.json(
             of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
-        ) { $0["networkMode"] = Self.unrecognized }
+        ) { $0["displayHiDPI"] = Self.unrecognized }
         let snapshotPath = VMBundleLayout.snapshotConfigRelativePath(id: snapshotID)
         harness.storage.files.setData(snapshotConfig, atRelativePath: snapshotPath, in: url)
+        // One bundle read reads each snapshot's config once, for both its
+        // network and whether it reads.
+        let readsBefore = harness.storage.files.readCount(of: snapshotPath)
+        let read = try VMBundleFiles(url: url, access: harness.storage.files).read()
+        #expect(harness.storage.files.readCount(of: snapshotPath) - readsBefore == 1)
+        #expect(read.unreadableFiles.map(\.location) == [.bundle(url, .snapshotConfiguration(snapshotID))])
+        #expect(read.snapshotManifest.snapshot(id: snapshotID)?.network != nil)
         await harness.library.loadVMs()
         #expect(harness.library.instances.map(\.name) == ["Dev"])
 
@@ -185,6 +192,35 @@ struct VMLibraryConfigCheckTests {
             fileSystem.trashedURLs.map(\.lastPathComponent) == [
                 "Dev \u{2014} snapshot \u{201C}Before update\u{201D} \u{2014} config.json"
             ])
+    }
+
+    @Test("A snapshot config's unrecognized network value is listed with no repair: it is what the snapshot had")
+    func aSnapshotsNetworkIsNotRepaired() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage)
+        let snapshotID = UUID()
+        let manifest = """
+            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Before update",
+              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
+            """
+        harness.storage.files.setData(
+            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
+        let snapshotConfig = try Self.json(
+            of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+        ) {
+            $0["networkMode"] = Self.unrecognized
+            $0["displayHiDPI"] = Self.unrecognized
+        }
+        harness.storage.files.setData(
+            snapshotConfig, atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        await harness.library.loadVMs()
+
+        let file = try #require(try await harness.library.checkConfigFiles().first)
+
+        #expect(file.problems.map(\.path?.description) == ["$.displayHiDPI", "$.networkMode"])
+        #expect(file.problems.first { $0.path?.description == "$.networkMode" }?.repair == nil)
+        #expect(file.problems.first { $0.path?.description == "$.displayHiDPI" }?.repair != nil)
+        #expect(!file.isRepairable)
     }
 
     // MARK: - Use Defaults

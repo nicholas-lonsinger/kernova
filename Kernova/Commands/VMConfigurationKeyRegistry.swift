@@ -526,7 +526,7 @@ enum VMConfigurationKeyRegistry {
     ) throws -> VMNetworkMembership {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if let membership = VMNetworkMembership(rawValue: trimmed) { return membership }
-        guard let networks = context.networks.networks else {
+        guard let networks = context.networks.listed else {
             throw CommandError.invalidArgument(VMNetworkDirectory.unreadableMessage)
         }
         if let network = networks.first(where: {
@@ -552,7 +552,7 @@ enum VMConfigurationKeyRegistry {
         guard let joined = config.joinedNetwork, case .vmnet(let id) = joined,
             case .named(let networkID) = id.scope
         else { return nil }
-        guard let networks = context.networks.networks else { return VMNetworkDirectory.unreadableMessage }
+        guard let networks = context.networks.listed else { return VMNetworkDirectory.unreadableMessage }
         guard let network = networks.first(where: { $0.id == networkID }) else {
             return unlistedNetworkRefusal
         }
@@ -571,7 +571,7 @@ enum VMConfigurationKeyRegistry {
         _ config: VMConfiguration, context: VMConfigurationWriteContext
     ) -> String? {
         if let networkID = config.networkMembership.namedNetwork {
-            guard let networks = context.networks.networks else { return VMNetworkDirectory.unreadableMessage }
+            guard let networks = context.networks.listed else { return VMNetworkDirectory.unreadableMessage }
             if !networks.contains(where: { $0.id == networkID }) { return unlistedNetworkRefusal }
         }
         return namedNetworkRefusal(config, context: context)

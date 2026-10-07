@@ -31,28 +31,9 @@ final class VMNetworkDirectory {
         var networks: [VMNamedNetwork]
     }
 
-    /// What the file held the last time it was read.
-    enum State: Equatable, Sendable {
-        /// Every named network, ordered by name — none when there is no file
-        /// yet.
-        case listed([VMNamedNetwork])
-        /// The file is there and cannot be read. A change reads the file again
-        /// first and refuses while it stays this way, so an unread file is
-        /// never overwritten.
-        case unreadable(UnreadableConfigFile)
-
-        /// The networks listed, `nil` while the file cannot be read.
-        var networks: [VMNamedNetwork]? {
-            guard case .listed(let networks) = self else { return nil }
-            return networks
-        }
-
-        /// The file as the read refused it, `nil` while it is listed.
-        var unreadable: UnreadableConfigFile? {
-            guard case .unreadable(let file) = self else { return nil }
-            return file
-        }
-    }
+    /// What the file held the last time it was read: every named network,
+    /// ordered by name.
+    typealias State = ConfigFileState<[VMNamedNetwork]>
 
     private(set) var state: State = .listed([])
 
@@ -69,13 +50,11 @@ final class VMNetworkDirectory {
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        do throws(UnreadableConfigFile) {
-            state = .listed(Self.ordered(try file.read().networks))
-        } catch {
-            state = .unreadable(error)
+        state = file.state { Self.ordered($0.networks) }
+        if let unreadable = state.unreadable {
             #log(
                 Self.logger, .error,
-                "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: error.problems), privacy: .public)"
+                "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
             )
         }
     }
@@ -84,7 +63,7 @@ final class VMNetworkDirectory {
 
     /// The networks listed, refusing as `verb` while the file cannot be read.
     func listedNetworks(verb: VMVerb) throws -> [VMNamedNetwork] {
-        guard let networks = state.networks else {
+        guard let networks = state.listed else {
             throw CommandError.operationFailed(verb: verb, message: Self.unreadableMessage)
         }
         return networks
@@ -92,7 +71,7 @@ final class VMNetworkDirectory {
 
     /// The network `id` identifies, `nil` when the library lists none.
     func network(withID id: UUID) -> VMNamedNetwork? {
-        state.networks?.first { $0.id == id }
+        state.listed?.first { $0.id == id }
     }
 
     /// The listed network a VM under `configuration` joins, `nil` where it
@@ -106,11 +85,12 @@ final class VMNetworkDirectory {
         return network
     }
 
-    /// Whether a VM under `configuration` joins a named network this
-    /// directory can't name, because the file can't be read.
-    func cannotNameNetwork(of configuration: VMConfiguration) -> Bool {
-        guard case .unreadable = state else { return false }
-        return configuration.effectiveNetworkMembership?.namedNetwork != nil
+    /// The named network a VM under `configuration` names, as this
+    /// directory lists it — `nil` where its membership names none.
+    func networkName(of configuration: VMConfiguration) -> VMNetworkName? {
+        guard let id = configuration.effectiveNetworkMembership?.namedNetwork else { return nil }
+        guard case .listed = state else { return .unreadable }
+        return network(joinedBy: configuration).map { .named($0.name) } ?? .unlisted(id)
     }
 
     /// The network `text` names — by identifier, or by name ignoring case —
@@ -118,7 +98,7 @@ final class VMNetworkDirectory {
     func network(named text: String) -> VMNamedNetwork? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let id = UUID(uuidString: trimmed), let network = network(withID: id) { return network }
-        return state.networks?.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        return state.listed?.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
     /// The network `text` names, refusing as `verb` a name the library lists

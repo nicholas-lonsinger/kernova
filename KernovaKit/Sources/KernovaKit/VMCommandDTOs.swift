@@ -33,6 +33,28 @@ public struct VMSummary: Codable, Sendable, Hashable {
     }
 }
 
+/// The named network a VM's membership names, as the library lists it.
+public enum VMNetworkName: Codable, Sendable, Hashable {
+    /// The library lists it under this name.
+    case named(String)
+    /// The library lists no network with this identifier — one imported from
+    /// another Mac, or put back by a snapshot taken before it was deleted.
+    case unlisted(UUID)
+    /// The library's list of networks can't be read, so nothing names it.
+    case unreadable
+
+    /// What a surface showing the network's name shows: the name,
+    /// ``NetworkModeChoice/unreadableNetworkListTitle`` while the list can't
+    /// be read, and `nil` for a network the library does not list.
+    public var title: String? {
+        switch self {
+        case .named(let name): name
+        case .unlisted: nil
+        case .unreadable: NetworkModeChoice.unreadableNetworkListTitle
+        }
+    }
+}
+
 /// Everything an `info` read answers about one VM.
 public struct VMInfo: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
@@ -57,12 +79,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// named network's identifier, as `network.membership` reads it — `nil`
     /// where it joins no app-managed network (networking off, or bridged).
     public let networkMembership: String?
-    /// The name of the named network the VM joins, `nil` where it joins none
-    /// or one the library does not list.
-    public let networkName: String?
-    /// Whether the VM's membership names a network whose name is unknown
-    /// because the library's list of networks can't be read.
-    public let networkNameUnreadable: Bool
+    /// The named network the VM's membership names, `nil` where it names
+    /// none.
+    public let networkName: VMNetworkName?
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -100,8 +119,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         diskSizeInGB: Int,
         networkMode: String?,
         networkMembership: String?,
-        networkName: String?,
-        networkNameUnreadable: Bool,
+        networkName: VMNetworkName?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,
@@ -124,7 +142,6 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.networkMode = networkMode
         self.networkMembership = networkMembership
         self.networkName = networkName
-        self.networkNameUnreadable = networkNameUnreadable
         self.macAddress = macAddress
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus

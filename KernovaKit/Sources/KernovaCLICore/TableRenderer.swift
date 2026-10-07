@@ -44,11 +44,9 @@ enum TableRenderer {
             ("Disk", "\(info.diskSizeInGB) GB"),
             (
                 "Network",
-                info.networkMode.map {
-                    let joined =
-                        info.networkNameUnreadable
-                        ? NetworkModeChoice.unreadableNetworkListTitle : info.networkName ?? info.networkMembership
-                    return [$0, joined].compactMap(\.self).joined(separator: ", ")
+                info.networkMode.map { mode in
+                    let joined: String? = info.networkName?.title ?? info.networkMembership
+                    return [mode, joined].compactMap(\.self).joined(separator: ", ")
                 }
                     ?? "Off"
             ),

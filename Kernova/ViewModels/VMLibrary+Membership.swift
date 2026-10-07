@@ -36,7 +36,7 @@ extension VMLibrary {
             recordUnreadable([networks.state.unreadable].compactMap { $0 }, under: file.url)
         }
         if let file = organization.file {
-            recordUnreadable([organization.readFailure].compactMap { $0 }, under: file.url)
+            recordUnreadable([organization.state.unreadable].compactMap { $0 }, under: file.url)
         }
         for instance in instances where ids?.contains(instance.id) ?? true {
             instance.activity.refreshFromBundle()

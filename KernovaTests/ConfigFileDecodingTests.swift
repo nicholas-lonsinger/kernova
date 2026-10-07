@@ -340,10 +340,46 @@ struct ConfigFileDecodingTests {
             $0["macAddress"] = "aa:bb:cc:dd:ee:ff"
         }
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
-        let new = VMCapturedNetwork.ofNewVM
         #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
-        #expect(network.networkMode == new.networkMode)
-        #expect(network.networkEnabled == new.networkEnabled)
+        #expect(network.networkMode == .shared)
+    }
+
+    @Test("A snapshot's captured network missing networkEnabled had no network device")
+    func aMissingCapturedNetworkEnabledReadsOff() throws {
+        let data = try configJSON {
+            $0["networkEnabled"] = nil
+            $0["networkMode"] = nil
+            $0["networkMembership"] = nil
+            $0["bridgedInterfaceIdentifier"] = nil
+            $0["macAddress"] = nil
+        }
+        let network = try VMConfiguration.makeJSONDecoder().decode(VMCapturedNetwork.self, from: data)
+        #expect(
+            network
+                == VMCapturedNetwork(
+                    networkEnabled: false, networkMode: .shared, networkMembership: .common,
+                    bridgedInterfaceIdentifier: nil, macAddress: nil))
+    }
+
+    @Test("A snapshot's captured network lists an unrecognized value as a problem no default repairs")
+    func anUnrecognizedCapturedNetworkValueIsUnrepairable() throws {
+        let data = try configJSON {
+            $0["networkEnabled"] = Self.unrecognized
+            $0["networkMode"] = Self.unrecognized
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMCapturedNetwork.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+        #expect(
+            diagnosis.problems.map(\.path) == [
+                ConfigValuePath([.key("networkEnabled")]), ConfigValuePath([.key("networkMode")]),
+            ])
+        #expect(diagnosis.problems.allSatisfy { $0.repair == nil })
+        #expect(diagnosis.repaired == nil)
+        // The lenient read still answers: each value as its absence reads.
+        let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
+        #expect(network.networkEnabled == false)
+        #expect(network.networkMode == .shared)
     }
 
     // MARK: - Trashed originals

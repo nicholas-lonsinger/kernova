@@ -164,26 +164,27 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
         case networkEnabled, networkMode, networkMembership, bridgedInterfaceIdentifier, macAddress
     }
 
-    /// What a new VM's network is, whatever its guest.
-    static var ofNewVM: VMCapturedNetwork {
-        VMCapturedNetwork(VMConfiguration(name: "", guestOS: .linux, bootMode: .efi))
-    }
-
-    /// Each field read on its own as a config field, falling back to a new
-    /// VM's — read through ``JSONDecoder/decodeRepairing(_:from:)``, so a
-    /// configuration that no longer decodes whole still reserves its address.
+    /// Each field a fact about what the snapshot had: an absent value reads
+    /// as no network device on the common Shared network, with no bridged
+    /// interface or address, and an unrecognized one is a problem no default
+    /// repairs.
+    ///
+    /// Read through ``JSONDecoder/decodeRepairing(_:from:)`` where the
+    /// configuration no longer decodes whole, so it still reserves its
+    /// address: there an unrecognized value reads as its absence does. That
+    /// is safe because a revert refuses a snapshot whose configuration it
+    /// can't read, so the value never reaches a running VM — it only decides
+    /// which address stays reserved, and what identity checks expect a revert
+    /// to land.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let new = Self.ofNewVM
-        networkEnabled = try c.decode(
-            Bool.self, forKey: .networkEnabled, repairingTo: new.networkEnabled, in: decoder)
-        networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, default: new.networkMode, in: decoder)
+        networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled, absentMeans: false, in: decoder)
+        networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, absentMeans: .shared, in: decoder)
         networkMembership = try c.decode(
-            VMNetworkMembership.self, forKey: .networkMembership, default: new.networkMembership, in: decoder)
+            VMNetworkMembership.self, forKey: .networkMembership, absentMeans: .common, in: decoder)
         bridgedInterfaceIdentifier = try c.decode(
-            String?.self, forKey: .bridgedInterfaceIdentifier, default: new.bridgedInterfaceIdentifier,
-            in: decoder)
-        macAddress = try c.decode(String?.self, forKey: .macAddress, default: new.macAddress, in: decoder)
+            String?.self, forKey: .bridgedInterfaceIdentifier, absentMeans: nil, in: decoder)
+        macAddress = try c.decode(String?.self, forKey: .macAddress, absentMeans: nil, in: decoder)
     }
 
     /// `configuration` with this network device in place of its own — the
