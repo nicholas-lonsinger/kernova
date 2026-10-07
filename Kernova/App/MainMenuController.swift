@@ -51,8 +51,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// from the selected VM's manifest when it opens.
     private var revertSnapshotMenu: NSMenu?
     /// What that submenu currently lists, so an open that would produce
-    /// identical items skips the rebuild — `menuNeedsUpdate(_:)` also fires
-    /// while AppKit matches key equivalents.
+    /// identical items skips the rebuild.
     private var revertSnapshotMenuModel: RevertSnapshotMenuModel?
 
     /// The "USB Device" submenu, retained so it can be rebuilt from the live
@@ -187,6 +186,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Menu Updates
 
+    /// Apple documents this as also called while AppKit matches key
+    /// equivalents (`NSMenuDelegate.menuHasKeyEquivalent(_:for:target:action:)`);
+    /// every rebuild here holds whether or not it runs then.
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === windowsMenu {
             clipboardMenuItem?.isEnabled =
@@ -232,10 +234,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     }
 
     /// Rebuilds the USB submenu from the accessories macOS has assigned to
-    /// Kernova and the ones the selected VM already holds.
-    ///
-    /// The unchanged-model guard is load-bearing for the reason
-    /// ``rebuildRevertSnapshotMenu(_:)`` states.
+    /// Kernova and the ones the selected VM already holds, unless they are
+    /// what it already lists.
     private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
         guard let host else { return }
         let instance = host.menuCommandTarget(of: nil)
@@ -261,13 +261,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             detachAction: #selector(AppDelegate.detachUSBAccessory(_:)))
     }
 
-    /// Rebuilds the revert submenu from the selected VM's snapshots.
+    /// Rebuilds the revert submenu from the selected VM's snapshots, unless
+    /// they are what it already lists.
     ///
-    /// The unchanged-model guard is load-bearing, not an optimization: this also
-    /// runs while AppKit matches key equivalents, and tearing items down
-    /// mid-match is what must not happen. The model alone answers for the
-    /// submenu because every item in it is one this rebuild wrote — AppKit
-    /// injects nothing into a submenu it does not own.
+    /// The model alone answers for the submenu because every item in it is one
+    /// this rebuild wrote — AppKit injects nothing into a submenu it does not
+    /// own.
     private func rebuildRevertSnapshotMenu(_ menu: NSMenu) {
         // No host means the app is tearing down, and the submenu goes with it.
         guard let host else { return }
@@ -296,14 +295,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// A full teardown happens solely when that pass ends with model entries
     /// unplaced — a preference flip, or a section too scrambled to salvage.
     ///
-    /// Both halves of that are load-bearing. AppKit re-attaches its own "Quit
-    /// and Keep Windows" alternate beside the `terminate:` item as a steady
-    /// state, so the section is *routinely* longer than the model and a
-    /// rebuild-on-any-difference would fire forever; and `menuNeedsUpdate(_:)`
-    /// runs while AppKit matches key equivalents, so it fires on every
-    /// ⌘-keystroke — tearing our items down mid-match is exactly the mutation
-    /// that must not happen. Removing the unclaimed alternate is what takes
-    /// ⌥⌘Q back for the true quit, and it costs the modeled items nothing.
+    /// AppKit re-attaches its own "Quit and Keep Windows" alternate beside the
+    /// `terminate:` item as a steady state, so the section is *routinely*
+    /// longer than the model and a rebuild-on-any-difference would fire on
+    /// every open. Removing the unclaimed alternate is what takes ⌥⌘Q back for
+    /// the true quit, and it costs the modeled items nothing.
     private func rebuildAppMenuQuitItems() {
         guard let appMenu, let sectionStart = appMenuQuitSectionStart else { return }
         // The preference is read live here, not captured, so a Settings flip is
