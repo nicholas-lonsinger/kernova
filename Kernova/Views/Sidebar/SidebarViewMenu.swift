@@ -63,6 +63,8 @@ final class SidebarViewMenu: NSObject {
     nonisolated static let accessibilityLabel = "Filter and Sort"
     nonisolated static let smartGroupAccessibilityLabel = "Smart Group Options"
     nonisolated static let folderAccessibilityLabel = "Folder Options"
+    /// What a filter's condition on a tag the library no longer defines reads.
+    nonisolated static let deletedTagTitle = "Deleted Tag"
 
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
@@ -104,7 +106,9 @@ final class SidebarViewMenu: NSObject {
         menu.addItem(.separator())
         menu.addItem(
             choiceMenu(
-                "Group By", current: options.grouping, cases: [.guestOS, .state, .network, .tag], trailing: .none,
+                "Group By", current: options.grouping,
+                // Tag only while the library has tags, as the Tags filter row.
+                cases: [.guestOS, .state, .network] + (tags().isEmpty ? [] : [.tag]), trailing: .none,
                 title: \.title
             ) { grouping in
                 var picked = options
@@ -408,16 +412,26 @@ final class SidebarViewMenu: NSObject {
                     picked: with { $0.networks = toggled($0.networks, choice.network) })
             })
         // Any picked tag admits a VM, so picks widen the set.
+        let defined = tags()
+        // A tag the filter names but the library no longer defines stays
+        // listed, checked, so its condition — which no VM passes — shows and
+        // can be turned off.
+        let deleted = filter.tags.subtracting(defined.map(\.id)).sorted { $0.uuidString < $1.uuidString }
         let tagged = Attribute(
             title: "Tags", allTitle: "All Tags", isActive: !filter.tags.isEmpty, conditionTitle: "Tag",
             cleared: with { $0.tags = [] },
-            choices: tags().map { tag in
+            choices: defined.map { tag in
                 Attribute.Choice(
                     title: tag.name, count: values.count { $0.subject.tags.contains(tag.id) },
                     isOn: filter.tags.contains(tag.id),
                     picked: with { $0.tags = toggled($0.tags, tag.id) },
                     image: tag.color.dotImage())
-            })
+            }
+                + deleted.map { id in
+                    Attribute.Choice(
+                        title: Self.deletedTagTitle, count: 0, isOn: true,
+                        picked: with { $0.tags.remove(id) })
+                })
         let guestAgent = Attribute(
             title: "Guest Agent", allTitle: "All", isActive: !filter.guestAgents.isEmpty,
             cleared: with { $0.guestAgents = [] },

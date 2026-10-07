@@ -51,24 +51,20 @@ struct VMHostStateTests {
                 == VMHostState(displayPreference: .fullscreen))
     }
 
-    @Test("A copy arrives keeping only the tags the library defines, never set to start at launch")
-    func copyArrivesWithKnownTags() {
-        let work = UUID()
-        let elsewhere = UUID()
-        var copy = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut, tags: [work, elsewhere])
+    @Test("A copy arrives with its tags, never set to start at launch")
+    func copyArrivesWithItsTags() {
+        let tags: Set<UUID> = [UUID(), UUID()]
+        var copy = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut, tags: tags)
 
-        copy.arriveAsCopy(knownTags: [work, UUID()])
+        copy.arriveAsCopy()
 
-        #expect(copy == VMHostState(displayPreference: .popOut, tags: [work]))
+        #expect(copy == VMHostState(displayPreference: .popOut, tags: tags))
     }
 
-    @Test("A New Machine clone starts from a new VM's host state, carrying the source's known tags")
-    func newMachineCarriesKnownTags() {
-        let work = UUID()
+    @Test("A New Machine clone starts from a new VM's host state, carrying the source's tags")
+    func newMachineCarriesTags() {
         let source = everyFieldSet()
-        var tagged = source
-        tagged.tags = [work, UUID()]
 
-        #expect(VMHostState.newMachine(cloning: tagged, knownTags: [work]) == VMHostState(tags: [work]))
+        #expect(VMHostState.newMachine(cloning: source) == VMHostState(tags: source.tags))
     }
 }

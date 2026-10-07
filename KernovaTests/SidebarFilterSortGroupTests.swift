@@ -415,7 +415,7 @@ struct SidebarFilterSortGroupTests {
         #expect(built.items[6].badge?.stringValue == "None")
         #expect(built.items[7].badge?.stringValue == "Manual")
         #expect(built.items.last?.isEnabled == false)
-        #expect(built.items[6].submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "Tag", "", "None"])
+        #expect(built.items[6].submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "", "None"])
         #expect(built.items[7].submenu?.items.map(\.title) == ["Name", "Date Created", "", "Manual"])
     }
 

@@ -274,13 +274,12 @@ extension VMCommandCore {
         // Run directly rather than on the bounded `copyQueue`: the source is
         // held for as long as the copy takes, and an APFS clone takes
         // milliseconds where a queued import copy can take minutes.
-        let knownTags = library.organization.tagIDs
         let copied: VMOutcome
         do {
             copied = try instance.activity.launchCopyOut(mode) { context in
                 let copy = CloneCopy(
                     of: context.operation.instance.bundle, outcome: resolved, mode: context.mode,
-                    machineIdentifier: machineIdentifier, knownTags: knownTags)
+                    machineIdentifier: machineIdentifier)
                 let source = context.operation.bundle.url
                 guard context.mode == .live else {
                     try await Task.detached {
@@ -348,12 +347,10 @@ extension VMCommandCore {
         let hostState: VMHostState
         let snapshotManifest: VMSnapshotManifest
 
-        /// The copy of `source`, into a library defining the tags `knownTags`
-        /// identifies.
         @MainActor
         init(
             of source: VMBundle, outcome: CloneOutcome, mode: VMCaptureMode,
-            machineIdentifier: Data?, knownTags: Set<UUID>
+            machineIdentifier: Data?
         ) {
             self.outcome = outcome
             self.mode = mode
@@ -361,11 +358,11 @@ extension VMCommandCore {
             self.machineIdentifier = machineIdentifier
             switch outcome {
             case .newMachine:
-                hostState = .newMachine(cloning: source.hostState, knownTags: knownTags)
+                hostState = .newMachine(cloning: source.hostState)
                 snapshotManifest = VMSnapshotManifest()
             case .exactCopy:
                 var carried = source.hostState
-                carried.arriveAsCopy(knownTags: knownTags)
+                carried.arriveAsCopy()
                 hostState = carried
                 snapshotManifest = source.snapshotManifest
             }
@@ -524,7 +521,6 @@ extension VMCommandCore {
                 break
             }
 
-            let knownTags = library.organization.tagIDs
             return .started(
                 library.beginArrival(
                     kind: .importing, configuration: config,
@@ -534,7 +530,7 @@ extension VMCommandCore {
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)
-                            try staged.update(.hostState) { $0.arriveAsCopy(knownTags: knownTags) }
+                            try staged.update(.hostState) { $0.arriveAsCopy() }
                         }
                     }))
         } catch {

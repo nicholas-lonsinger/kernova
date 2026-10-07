@@ -6,7 +6,8 @@ import KernovaLogging
 ///
 /// What a VM carries is its assignments the library defines
 /// (``Swift/Sequence/assigned(_:)``), so an assignment naming a deleted tag —
-/// one a VM held by another copy kept — shows nowhere.
+/// one a VM held by another copy kept, or an imported VM brought — shows
+/// nowhere, and a filter condition on one admits no VM.
 extension VMLibrary {
     /// Why a VM's tags did not change.
     enum TagChangeRefusal: LocalizedError, Equatable {
@@ -47,15 +48,15 @@ extension VMLibrary {
         try organization.setColor(color, ofTag: id)
     }
 
-    /// Deletes the tag `id` identifies: its definition and every smart
-    /// group's filter naming it in one write, then the library section's
-    /// filter, then each VM's assignment.
+    /// Deletes the tag `id` identifies — its definition, then each VM's
+    /// assignment.
     ///
-    /// A VM whose state takes no edit now keeps the assignment, which names a
-    /// tag the library no longer defines and so shows nowhere.
+    /// A filter naming it — a smart group's, the library section's — keeps
+    /// the condition, which no VM passes from then on, until the user clears
+    /// it. A VM whose state takes no edit now keeps the assignment, which is
+    /// inert.
     func deleteTag(_ id: UUID) throws {
         try organization.removeTag(id)
-        sidebarOptions.filter.tags.remove(id)
         for instance in instances where instance.hostState.tags.contains(id) {
             do {
                 try changeTags(of: instance) { $0.remove(id) }

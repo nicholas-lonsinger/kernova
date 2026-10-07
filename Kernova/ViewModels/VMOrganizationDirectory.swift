@@ -149,10 +149,6 @@ final class VMOrganizationDirectory {
         tags.first { $0.id == id }
     }
 
-    /// Every tag's identifier — what a VM arriving in the library keeps of
-    /// its own (``VMHostState/arriveAsCopy(knownTags:)``).
-    var tagIDs: Set<UUID> { Set(tags.map(\.id)) }
-
     /// The smart group `text` names — by identifier, or by name ignoring case
     /// — `nil` when the library lists none.
     func smartGroup(named text: String) -> VMSmartGroup? {
@@ -343,15 +339,12 @@ final class VMOrganizationDirectory {
         try commit { file in Self.edit(id, in: &file.tags) { $0.color = color } }
     }
 
-    /// Stops defining the tag `id` identifies, and drops it from every smart
-    /// group's filter in the same write.
+    /// Stops defining the tag `id` identifies.
+    ///
+    /// A smart group filtering on it keeps the condition, which no VM passes
+    /// any more: dropping it would widen the group to VMs it never listed.
     func removeTag(_ id: UUID) throws {
-        try commit { file in
-            file.tags.removeAll { $0.id == id }
-            for index in file.smartGroups.indices {
-                file.smartGroups[index].filter.tags.remove(id)
-            }
-        }
+        try commit { file in file.tags.removeAll { $0.id == id } }
     }
 
     // MARK: - Commit

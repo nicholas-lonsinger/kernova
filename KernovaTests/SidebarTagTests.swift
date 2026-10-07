@@ -104,19 +104,27 @@ struct SidebarTagTests {
         #expect(VMOrganizationDirectory(fileURL: fileURL).tags == [work])
     }
 
-    @Test("Removing a tag drops it from every smart group's filter in the same write")
-    func removingATagPrunesSmartGroups() throws {
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-        let work = try directory.createTag(named: "Work", color: .blue)
-        let lab = try directory.createTag(named: "Lab", color: .green)
-        let group = try directory.createSmartGroup(
-            named: "Tagged", filter: VMLibraryFilter(guestOSes: [.linux], tags: [work.id, lab.id]))
+    @Test("Deleting a tag keeps a smart group's condition on it, which then lists no VM through it")
+    func deletingATagNeverWidensASmartGroup() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        library.admitFixture(name: "Tagged", hostState: VMHostState(tags: [work.id]))
+        library.admitFixture(name: "Plain")
+        let group = try library.organization.createSmartGroup(named: "Work", filter: VMLibraryFilter(tags: [work.id]))
+        func listed() -> [String] {
+            guard
+                case .rows(let rows)? = library.sidebarLayout.sections.first(where: { $0.id == .smartGroup(group.id) })?
+                    .content
+            else { return [] }
+            return rows.entries.map(\.name)
+        }
+        #expect(listed() == ["Tagged"])
 
-        try directory.removeTag(work.id)
+        try library.deleteTag(work.id)
 
-        let reread = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(reread.tags.map(\.id) == [lab.id])
-        #expect(reread.smartGroup(withID: group.id)?.filter == VMLibraryFilter(guestOSes: [.linux], tags: [lab.id]))
+        #expect(library.organization.smartGroup(withID: group.id)?.filter == VMLibraryFilter(tags: [work.id]))
+        #expect(listed() == [])
     }
 
     // MARK: - Assignments
@@ -152,8 +160,8 @@ struct SidebarTagTests {
         }
     }
 
-    @Test("An import keeps the tags this library defines and drops the rest on arrival")
-    func importDropsUnknownTags() async throws {
+    @Test("An import keeps every assignment, one this library does not define inert")
+    func importKeepsAssignments() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storage: storage)
         let work = try viewModel.library.createTag(named: "Work", color: .blue)
@@ -166,7 +174,8 @@ struct SidebarTagTests {
         await viewModel.awaitArrivalsForTesting()
 
         let imported = try #require(viewModel.instances.first { $0.id == source.config.id })
-        #expect(imported.hostState.tags == [work.id])
+        #expect(imported.hostState.tags == [work.id, foreign])
+        #expect(viewModel.library.tags(of: imported) == [work])
     }
 
     // MARK: - Grouping
@@ -198,7 +207,20 @@ struct SidebarTagTests {
 
     // MARK: - Rows
 
-    @Test("A row shows its tags' dots, names them as its accessibility value, and the snap fits them")
+    /// The labels of every accessibility element VoiceOver reaches under
+    /// `element`, depth first.
+    private func accessibilityLabels(under element: NSAccessibilityProtocol, depth: Int = 4) -> [(
+        String, NSAccessibility.Role?
+    )] {
+        let children = NSAccessibility.unignoredChildren(from: element.accessibilityChildren() ?? [])
+            .compactMap { $0 as? NSAccessibilityProtocol }
+        return children.flatMap { child in
+            (child.accessibilityLabel().map { [($0, child.accessibilityRole())] } ?? [])
+                + (depth > 0 ? accessibilityLabels(under: child, depth: depth - 1) : [])
+        }
+    }
+
+    @Test("A row shows its tags' dots, names them to VoiceOver from inside its cell, and the snap fits them")
     func rowShowsTags() async throws {
         let viewModel = makeViewModel()
         let library = viewModel.library
@@ -212,20 +234,49 @@ struct SidebarTagTests {
                 outline.view(atColumn: 0, row: row(.library(vm.id), in: outline), makeIfNecessary: true)
                     as? SidebarVMRowCellView)
         }
-        #expect(try cell().accessibilityValue() == nil)
+        func rowLabels() throws -> [(String, NSAccessibility.Role?)] {
+            let rowView = try #require(outline.rowView(atRow: row(.library(vm.id), in: outline), makeIfNecessary: true))
+            return accessibilityLabels(under: rowView)
+        }
+        #expect(try !rowLabels().contains { $0.0.hasPrefix("Tags:") })
         let untagged = try #require(controller.widthToFitLongestRow())
 
         try library.setTag(lab.id, assigned: true, on: vm)
         try library.setTag(work.id, assigned: true, on: vm)
         // The row repaints from its observation loop's apply, already queued.
         await drainMainQueue()
-        #expect(try cell().accessibilityValue() as? String == "Work, Lab")
+        // Row → cell → the dots, an image VoiceOver reads by its label.
+        let tagLabels = try rowLabels().filter { $0.0.hasPrefix("Tags:") }
+        #expect(tagLabels.map(\.0) == ["Tags: Work, Lab"])
+        #expect(tagLabels.map(\.1) == [.image])
 
         let tagged = try #require(controller.widthToFitLongestRow())
         #expect(tagged - untagged == Spacing.small + SidebarTagDotsView.width(forCount: 2))
         let dots = try #require(firstSubview(SidebarTagDotsView.self, in: try cell()))
-        #expect(dots.colors == [.blue, .green])
+        #expect(dots.tags == [work, lab])
         #expect(!dots.isHidden)
+    }
+
+    @Test("A selected row's dots are drawn inside a contrasting ring")
+    func selectedRowRingsTheDots() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        let vm = library.admitFixture(name: "Tagged", hostState: VMHostState(tags: [work.id]))
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let cell = try #require(
+            outline.view(atColumn: 0, row: row(.library(vm.id), in: outline), makeIfNecessary: true)
+                as? SidebarVMRowCellView)
+        let dots = try #require(firstSubview(SidebarTagDotsView.self, in: cell))
+        #expect(dots.ringColor == nil)
+
+        cell.backgroundStyle = .emphasized
+
+        #expect(dots.backgroundStyle == .emphasized)
+        #expect(dots.ringColor == .alternateSelectedControlTextColor)
+        cell.backgroundStyle = .normal
+        #expect(dots.ringColor == nil)
     }
 
     // MARK: - Menus
@@ -300,6 +351,54 @@ struct SidebarTagTests {
         #expect(groupBy.submenu?.items.map(\.title).contains("Tag") == true)
     }
 
+    @Test("With no tags, neither the Tags filter row nor Group By ▸ Tag is offered")
+    func noTagsOffersNoTagRows() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Plain")
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+
+        let menu = try #require(controller.viewMenu(for: .library))
+        #expect(!menu.items.contains { $0.title == "Tags" })
+        let groupBy = try #require(menu.items.first { $0.title == "Group By" })
+        #expect(groupBy.submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "", "None"])
+    }
+
+    @Test("A condition on a deleted tag stays listed, checked, as Deleted Tag, in the library's and a group's menu")
+    func deletedTagConditionShows() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        let lab = try library.createTag(named: "Lab", color: .green)
+        library.admitFixture(name: "Tagged", hostState: VMHostState(tags: [work.id]))
+        let group = try library.organization.createSmartGroup(named: "Work", filter: VMLibraryFilter(tags: [work.id]))
+        library.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+
+        try library.deleteTag(work.id)
+        try library.deleteTag(lab.id)
+
+        for section in [SidebarSectionID.library, .smartGroup(group.id)] {
+            let menu = try #require(controller.viewMenu(for: section))
+            let row = try #require(menu.items.first { $0.title == "Tags" }, "\(section)")
+            #expect(row.badge?.stringValue == SidebarViewMenu.deletedTagTitle, "\(section)")
+            let submenu = try #require(row.submenu)
+            #expect(submenu.items.map(\.title) == ["All Tags", "", SidebarViewMenu.deletedTagTitle], "\(section)")
+            #expect(submenu.items.last?.state == .on, "\(section)")
+        }
+        #expect(
+            controller.viewMenu.activeFilterDescription(filter: VMLibraryFilter(tags: [work.id]), values: [])
+                == "Tags: \(SidebarViewMenu.deletedTagTitle)")
+        // Picking it clears the condition.
+        let libraryRow = try #require(controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" })
+        libraryRow.submenu?.performActionForItem(at: 2)
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
+        let groupRow = try #require(controller.viewMenu(for: .smartGroup(group.id))?.items.first { $0.title == "Tags" })
+        groupRow.submenu?.performActionForItem(at: 2)
+        #expect(library.organization.smartGroup(withID: group.id)?.filter == VMLibraryFilter())
+    }
+
     // MARK: - Settings pane
 
     @Test("The Tags pane creates, renames and recolors tags, and lists the VMs carrying each")
@@ -326,7 +425,7 @@ struct SidebarTagTests {
         }
     }
 
-    @Test("Deleting a tag takes it off every VM, out of every smart group's filter and the library's")
+    @Test("Deleting a tag takes it off every VM and keeps every filter's condition on it, as its question says")
     func settingsPaneDeletes() throws {
         let viewModel = makeViewModel()
         let library = viewModel.library
@@ -339,17 +438,24 @@ struct SidebarTagTests {
         library.sidebarOptions.filter = VMLibraryFilter(tags: [work.id, lab.id])
         let pane = TagsSettingsViewController(viewModel: viewModel)
         pane.loadViewIfNeeded()
+        #expect(pane.smartGroups(filteringOn: work).map(\.id) == [group.id])
         let confirmation = TagsSettingsViewController.deleteConfirmation(
-            for: work, members: pane.members(of: work), delete: {})
-        #expect(confirmation.message == "Deleting it takes it off \u{201C}A\u{201D} and \u{201C}B\u{201D}.")
+            for: work, members: pane.members(of: work), smartGroups: pane.smartGroups(filteringOn: work),
+            delete: {})
+        #expect(
+            confirmation.message
+                == "Deleting it takes it off \u{201C}A\u{201D} and \u{201C}B\u{201D}. The smart group "
+                + "\u{201C}Work\u{201D} filters on it; that condition will match no virtual machine.")
+        let unused = TagsSettingsViewController.deleteConfirmation(for: lab, members: [], smartGroups: [], delete: {})
+        #expect(unused.message == "No virtual machine carries this tag.")
 
         try pane.delete(work.id)
 
         #expect(library.tags == [lab])
         #expect(a.hostState.tags == [lab.id])
         #expect(b.hostState.tags.isEmpty)
-        #expect(library.organization.smartGroup(withID: group.id)?.filter == VMLibraryFilter())
-        #expect(library.sidebarOptions.filter == VMLibraryFilter(tags: [lab.id]))
+        #expect(library.organization.smartGroup(withID: group.id)?.filter == VMLibraryFilter(tags: [work.id]))
+        #expect(library.sidebarOptions.filter == VMLibraryFilter(tags: [work.id, lab.id]))
         #expect(pane.tags == [lab])
     }
 

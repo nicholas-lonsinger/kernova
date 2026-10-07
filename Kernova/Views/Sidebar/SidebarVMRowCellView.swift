@@ -267,12 +267,9 @@ final class SidebarVMRowCellView: NSTableCellView {
             iconView.toolTip = instance.statusToolTip
         }
 
-        // The dots show the colors only, so the names are the row's
-        // accessibility value.
         let carried = tags?() ?? []
-        tagDots.colors = carried.map(\.color)
+        tagDots.tags = carried
         tagDots.isHidden = carried.isEmpty
-        setAccessibilityValue(carried.isEmpty ? nil : carried.map(\.name).joined(separator: ", "))
 
         let showsEphemeral = instance.hostState.ephemeralModeEnabled
         if !showsEphemeral { ephemeralBadge.reset() }
@@ -324,6 +321,13 @@ final class SidebarVMRowCellView: NSTableCellView {
         applyIconStateColor()
     }
 
+    /// Passes a selected row's emphasized background on to the tag dots,
+    /// which ring themselves against it; `NSTableCellView` passes it only to
+    /// its own text field and image view.
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { tagDots.backgroundStyle = backgroundStyle }
+    }
+
     // MARK: - Inline rename
 
     /// `true` when `point` (in this cell's coordinate space) is over the editable
@@ -361,9 +365,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         detail = nil
         detailLabel.isHidden = true
         tags = nil
-        tagDots.colors = []
+        tagDots.tags = []
         tagDots.isHidden = true
-        setAccessibilityValue(nil)
         installPromptDisabled = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —

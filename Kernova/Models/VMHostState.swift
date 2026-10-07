@@ -54,7 +54,8 @@ struct VMHostState: Codable, Sendable, Equatable {
     // MARK: - Organization
 
     /// The library tags this VM carries, by ``VMTag/id``; the library's
-    /// definitions decide which of them it shows (``Swift/Sequence/assigned(_:)``).
+    /// definitions decide which of them it shows (``Swift/Sequence/assigned(_:)``),
+    /// so an identifier no definition names is inert.
     var tags: Set<UUID>
 
     init(
@@ -103,24 +104,20 @@ struct VMHostState: Codable, Sendable, Equatable {
     // MARK: - Arrival
 
     /// Readies host state a copy brings in from another bundle — an import or
-    /// an Exact Copy clone — into a library defining the tags `knownTags`
-    /// identifies.
+    /// an Exact Copy clone.
     ///
     /// Start at launch is the one setting that runs a guest with no user
     /// action, so it is local intent rather than something a copy carries in:
     /// a VM arriving pre-marked would boot on the next launch without ever
-    /// being asked for, and an Exact Copy would start beside its source. A tag
-    /// this library does not define stays behind.
-    mutating func arriveAsCopy(knownTags: Set<UUID>) {
+    /// being asked for, and an Exact Copy would start beside its source.
+    mutating func arriveAsCopy() {
         startsAutomaticallyOnLaunch = false
-        tags.formIntersection(knownTags)
     }
 
     /// The host state a New Machine clone of a VM holding `source` starts
-    /// from, in a library defining the tags `knownTags` identifies: a new
-    /// VM's, carrying the source's tags.
-    static func newMachine(cloning source: VMHostState, knownTags: Set<UUID>) -> VMHostState {
-        VMHostState(tags: source.tags.intersection(knownTags))
+    /// from: a new VM's, carrying the source's tags.
+    static func newMachine(cloning source: VMHostState) -> VMHostState {
+        VMHostState(tags: source.tags)
     }
 
     // MARK: - Ephemeral mode
