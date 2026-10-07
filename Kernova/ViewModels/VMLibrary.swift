@@ -153,6 +153,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             if selectedLibraryEntryID != retainedEntryID {
                 retainedEntryID = selectedLibraryEntryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
             }
+            if pendingReveal != selection { pendingReveal = nil }
             guard entryID != oldValue?.entryID else { return }
             preferences.lastSelectedVMID = entryID
         }
@@ -175,11 +176,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         selection?.section == .library ? selection?.entryID : nil
     }
 
-    /// How many selections were made to be revealed — by
-    /// ``selectRevealing(_:)`` or an arrival's registration — which the
-    /// sidebar answers by opening the collapsed sections hiding the selected
-    /// row. A restored or clicked selection is not one, so it opens nothing.
-    private(set) var revealCount = 0
+    /// The selected row, while the sidebar still owes it a reveal: opening
+    /// the collapsed sections that hide it.
+    ///
+    /// Set by ``selectRevealing(_:)`` and an arrival's registration, and held
+    /// until the sidebar takes it (``takePendingReveal()``) — however long
+    /// before the sidebar exists that is. Any other selection drops it, so a
+    /// reveal never outlives the selection it was made for, and a restored or
+    /// clicked selection opens nothing.
+    private(set) var pendingReveal: SidebarRowKey?
+
+    /// The row owed a reveal, which is then no longer owed.
+    func takePendingReveal() -> SidebarRowKey? {
+        defer { pendingReveal = nil }
+        return pendingReveal
+    }
 
     private func sidebarFilterAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
@@ -266,7 +277,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
         }
         selectedID = id
-        revealCount += 1
+        pendingReveal = selection
     }
 
     /// Selects what a library read lands on when nothing listed is selected:
@@ -558,7 +569,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         persistOrder()
         if selectedEntry?.arrival == nil, sidebarShows(arrival.id) {
             selectedID = arrival.id
-            revealCount += 1
+            pendingReveal = selection
         }
     }
 

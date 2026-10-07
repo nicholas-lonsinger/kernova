@@ -25,10 +25,6 @@ final class SidebarViewController: NSViewController {
 
     private var modelObservation: ObservationLoop?
 
-    /// The library's ``VMLibrary/revealCount`` the last sync applied; a sync
-    /// finding it moved opens what hides the selected row.
-    private var appliedRevealCount = 0
-
     /// The row currently hosting an inline-rename field editor, so the rename
     /// loop doesn't restart an in-flight edit.
     private var editingRow: SidebarRow?
@@ -130,7 +126,6 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        appliedRevealCount = viewModel.revealCount
         let changes = tree.update(to: viewModel.sidebarLayout)
         outlineView.reloadData()
         expandCreated(changes.created)
@@ -156,7 +151,7 @@ final class SidebarViewController: NSViewController {
                     // grouping read of every VM.
                     _ = self.viewModel.sidebarLayout
                     _ = self.viewModel.selection
-                    _ = self.viewModel.revealCount
+                    _ = self.viewModel.pendingReveal
                     _ = self.viewModel.activeRename
                 },
                 apply: { [weak self] in self?.sync() }
@@ -186,10 +181,7 @@ final class SidebarViewController: NSViewController {
     /// middle of another changes nothing the outer pass then undoes.
     private func sync() {
         applyProjection()
-        let reveals = viewModel.revealCount
-        let revealing = reveals != appliedRevealCount
-        appliedRevealCount = reveals
-        applySelectionFromModel(revealing: revealing)
+        applySelectionFromModel()
         applyRenameState()
     }
 
@@ -242,16 +234,18 @@ final class SidebarViewController: NSViewController {
     /// Selects the row the model's selection lands on, and moves the model's
     /// selection onto that row when it landed by fallback.
     ///
-    /// Only a reveal (`revealing`) opens the collapsed sections hiding the
-    /// row. Any other selection — a restored one included — leaves the
-    /// user's collapsed sections as they are, and the outline shows no
-    /// selected row while the model keeps the selection.
-    private func applySelectionFromModel(revealing: Bool) {
+    /// Only a reveal the library still owes the row
+    /// (``VMLibrary/pendingReveal``) opens the collapsed sections hiding it,
+    /// and taking it settles it. Any other selection — a restored one
+    /// included — leaves the user's collapsed sections as they are, and the
+    /// outline shows no selected row while the model keeps the selection.
+    private func applySelectionFromModel() {
         guard let selection = viewModel.selection, let node = tree.row(resolving: selection) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
         if node.key != selection { viewModel.selection = node.key }
+        let revealing = viewModel.pendingReveal == node.key && viewModel.takePendingReveal() != nil
         guard let row = revealing ? revealedRow(of: node) : shownRow(of: node) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return

@@ -89,7 +89,9 @@ final class VMLibraryViewModel {
 
     func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
-    var revealCount: Int { library.revealCount }
+    var pendingReveal: SidebarRowKey? { library.pendingReveal }
+
+    func takePendingReveal() -> SidebarRowKey? { library.takePendingReveal() }
 
     var smartGroups: [VMSmartGroup] { library.smartGroups }
 

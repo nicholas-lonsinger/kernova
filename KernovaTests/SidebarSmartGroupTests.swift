@@ -550,6 +550,43 @@ struct SidebarSmartGroupTests {
         #expect(outline.selectedRow == row(.library(mac.id), in: outline))
     }
 
+    @Test("A reveal made before the sidebar exists opens the collapsed section once the sidebar shows")
+    func revealBeforeTheSidebarIsKept() throws {
+        preferences.collapsedSidebarSections = [SidebarSectionID.library.rawValue]
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "A")
+        let b = viewModel.library.admitFixture(name: "B")
+
+        // As a status-item pick or a URL does on a headless launch.
+        viewModel.selectRevealing(b.id)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        let library = try #require(outline.item(atRow: 0) as? SidebarSection)
+        #expect(outline.isItemExpanded(library))
+        #expect(outline.selectedRow == row(.library(b.id), in: outline))
+        #expect(viewModel.pendingReveal == nil)
+    }
+
+    @Test("A reveal whose selection moves before the sidebar exists opens nothing")
+    func revealDiesWithItsSelection() throws {
+        preferences.collapsedSidebarSections = [SidebarSectionID.library.rawValue]
+        let viewModel = makeViewModel()
+        let a = viewModel.library.admitFixture(name: "A")
+        let b = viewModel.library.admitFixture(name: "B")
+
+        viewModel.selectRevealing(b.id)
+        viewModel.selection = .library(a.id)
+        #expect(viewModel.pendingReveal == nil)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        let library = try #require(outline.item(atRow: 0) as? SidebarSection)
+        #expect(!outline.isItemExpanded(library))
+        #expect(outline.selectedRow == -1)
+        #expect(viewModel.selection == .library(a.id))
+    }
+
     @Test("Dragging a smart group's header reorders the smart groups; the library header does not drag")
     func dragReordersSmartGroups() throws {
         let viewModel = makeViewModel()
