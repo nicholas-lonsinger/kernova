@@ -147,6 +147,25 @@ struct NetworksSettingsViewControllerTests {
         #expect(farm == ["Build Farm", "Host Only", "None"])
     }
 
+    @Test("Revealing a network before the pane appears selects its row, and the appearance keeps it")
+    func revealBeforeAppearanceSelectsTheRow() throws {
+        let viewModel = makeViewModel()
+        _ = try viewModel.networks.create(name: "Build Farm", kind: .hostOnly, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let pane = NetworksSettingsViewController(viewModel: viewModel)
+
+        pane.reveal(lab.id)
+        #expect(pane.selectedNetworkIDForTesting == lab.id)
+
+        pane.viewWillAppear()
+        defer { pane.viewDidDisappear() }
+        #expect(pane.selectedNetworkIDForTesting == lab.id)
+
+        // A network the library does not list selects nothing new.
+        pane.reveal(UUID())
+        #expect(pane.selectedNetworkIDForTesting == lab.id)
+    }
+
     @Test("A network created anywhere else appears in the open list")
     func listFollowsTheLibrary() async throws {
         let viewModel = makeViewModel()

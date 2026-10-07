@@ -67,13 +67,14 @@ func makeSettingsPane(
         AVCaptureDevice.authorizationStatus(for: .audio)
     },
     systemSettings: SystemSettingsLink = SystemSettingsLink(),
+    showAppSettings: @escaping @MainActor (SettingsDestination) -> Void = { _ in },
     activationCenter: NotificationCenter = NotificationCenter()
 ) -> VMSettingsViewController {
     VMSettingsViewController(
         instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
         bridgedInterfaces: bridgedInterfaces,
         micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
-        activationCenter: activationCenter)
+        showAppSettings: showAppSettings, activationCenter: activationCenter)
 }
 
 /// Builds the settings pane and runs its appearance lifecycle so `apply()` has

@@ -50,26 +50,36 @@ struct VMOverviewResolverTests {
                 == "Wi-Fi (en0)")
     }
 
-    @Test("A network of a mode names itself: isolated by its mode, named by its name")
+    @Test("A network of a mode names itself: isolated by its mode, named by its name and mode")
     func networkTitlesNameTheNetwork() {
         let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
+        #expect(
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(attachable: true, interfaces: [], networks: .listed([]))
+                == NetworkChoiceLabel("Host Only", qualifier: "Isolated"))
         #expect(
             NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
                 attachable: true, interfaces: [], networks: .listed([])) == "Host Only, Isolated")
         #expect(
-            NetworkModeChoice.vmnet(.shared, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: .listed([lab])) == "Lab")
+            NetworkModeChoice.vmnet(.shared, .network(lab.id)).label(attachable: true, interfaces: [], networks: .listed([lab]))
+                == NetworkChoiceLabel("Lab", qualifier: "Shared Network"))
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(lab.id)).title(
-                attachable: false, interfaces: [], networks: .listed([lab])) == "Lab (unavailable)")
+                attachable: true, interfaces: [], networks: .listed([lab])) == "Lab, Shared Network")
+        #expect(
+            NetworkModeChoice.vmnet(.shared, .network(lab.id)).title(
+                attachable: false, interfaces: [], networks: .listed([lab])) == "Lab, Shared Network (unavailable)")
+        #expect(
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
+                attachable: false, interfaces: [], networks: .listed([])) == "Host Only, Isolated (unavailable)")
         // Unlisted, or listed only in the other mode: no surface here can
         // choose it, so it never reads as merely unavailable.
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(UUID())).title(
-                attachable: true, interfaces: [], networks: .listed([lab])) == "Network Not in This Library")
+                attachable: false, interfaces: [], networks: .listed([lab]))
+                == "Network Not in This Library, Shared Network")
         #expect(
             NetworkModeChoice.vmnet(.hostOnly, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: .listed([lab])) == "Network Not in This Library")
+                attachable: true, interfaces: [], networks: .listed([lab])) == "Network Not in This Library, Host Only")
     }
 
     @Test("While the network list can't be read, a named network reads as that, and no other title moves")
@@ -80,7 +90,7 @@ struct VMOverviewResolverTests {
                 problems: [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]))
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(UUID())).title(
-                attachable: true, interfaces: [], networks: unreadable) == "Network List Can\u{2019}t Be Read")
+                attachable: true, interfaces: [], networks: unreadable) == "Network List Can\u{2019}t Be Read, Shared Network")
         #expect(
             NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
                 attachable: true, interfaces: [], networks: unreadable) == "Host Only, Isolated")

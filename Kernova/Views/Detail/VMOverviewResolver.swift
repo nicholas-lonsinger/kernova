@@ -13,46 +13,53 @@ extension NetworkModeChoice {
     }
 
     /// The Mode picker's title for this choice, which is what the Network card
-    /// states beside the address. `networks` is the library's named networks.
+    /// states beside the address: ``label(attachable:interfaces:networks:)`` as
+    /// one line of plain text.
+    func title(
+        attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
+    ) -> String {
+        label(attachable: attachable, interfaces: interfaces, networks: networks).text
+    }
+
+    /// How this choice names itself. `networks` is the library's named networks.
     ///
     /// A network this build cannot attach (`attachable` false) still names
     /// itself, marked unavailable: the picker offers no entry for it, so this
     /// is what shows a VM already on it what it is set to.
-    func title(
+    func label(
         attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
-    ) -> String {
-        let unavailable = " (unavailable)"
+    ) -> NetworkChoiceLabel {
         switch self {
         case .vmnet(let kind, let membership):
-            let base: String
+            let label: NetworkChoiceLabel
             switch membership {
             case .common:
-                base = Self.kindTitle(kind)
+                label = NetworkChoiceLabel(Self.kindTitle(kind))
             case .isolated:
-                base = "\(Self.kindTitle(kind)), Isolated"
+                label = NetworkChoiceLabel(Self.kindTitle(kind), qualifier: "Isolated")
             case .network(let id):
+                // A network the library does not list in this mode is one no
+                // surface can choose, so it never reads as merely unavailable.
                 switch networks {
                 case .unreadable:
-                    return Self.unreadableNetworkListTitle
+                    return NetworkChoiceLabel(Self.unreadableNetworkListTitle, qualifier: Self.kindTitle(kind))
                 case .listed(let networks):
-                    // A network the library does not list in this mode is one
-                    // no surface can choose, so it never reads as merely
-                    // unavailable.
-                    guard let network = networks.first(where: { $0.id == id && $0.kind == kind })
-                    else { return Self.unlistedNetworkTitle }
-                    base = network.name
+                    guard let network = networks.first(where: { $0.id == id && $0.kind == kind }) else {
+                        return NetworkChoiceLabel(Self.unlistedNetworkTitle, qualifier: Self.kindTitle(kind))
+                    }
+                    label = NetworkChoiceLabel(network.name, qualifier: Self.kindTitle(kind))
                 }
             }
-            return attachable ? base : base + unavailable
+            return attachable ? label : label.markedUnavailable
         case .none:
-            return "None"
+            return NetworkChoiceLabel("None")
         case .bridged(let identifier):
-            guard attachable else { return "Bridged" + unavailable }
-            guard let identifier else { return "Automatic" }
+            guard attachable else { return NetworkChoiceLabel("Bridged").markedUnavailable }
+            guard let identifier else { return NetworkChoiceLabel("Automatic") }
             guard let interface = interfaces.first(where: { $0.identifier == identifier }) else {
-                return identifier + unavailable
+                return NetworkChoiceLabel(identifier).markedUnavailable
             }
-            return Self.interfaceTitle(interface)
+            return NetworkChoiceLabel(Self.interfaceTitle(interface))
         }
     }
 
@@ -88,6 +95,34 @@ extension NetworkModeChoice {
             return interface.identifier
         }
         return "\(interface.localizedDisplayName) (\(interface.identifier))"
+    }
+}
+
+/// How a network choice names itself: its name, and the qualifier that tells
+/// it from a same-named choice or says which mode it runs in.
+///
+/// Plain text joins the two (``text``); the Mode menu draws the qualifier as a
+/// suffix on the name's line.
+struct NetworkChoiceLabel: Equatable {
+    let name: String
+    let qualifier: String?
+
+    init(_ name: String, qualifier: String? = nil) {
+        self.name = name
+        self.qualifier = qualifier
+    }
+
+    /// The label as one line of plain text: `Shared Network, Isolated`.
+    var text: String {
+        qualifier.map { "\(name), \($0)" } ?? name
+    }
+
+    /// The label marked as naming a network this build cannot attach, the mark
+    /// on its last part so the plain text ends with it.
+    var markedUnavailable: NetworkChoiceLabel {
+        let mark = " (unavailable)"
+        guard let qualifier else { return NetworkChoiceLabel(name + mark) }
+        return NetworkChoiceLabel(name, qualifier: qualifier + mark)
     }
 }
 

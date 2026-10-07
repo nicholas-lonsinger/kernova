@@ -49,7 +49,7 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// The kinds of network this build can attach a named network of, in the
     /// order the New Network sheet lists them — empty in a build that can
-    /// attach none, which offers no Networks pane.
+    /// attach none, which offers no Networks pane (``SettingsPane/isOffered(by:)``).
     static func creatableKinds(_ entitlements: EntitlementService) -> [VmnetNetworkKind] {
         VMNamedNetwork.kindsInCreationOrder.filter {
             entitlements.canAttach(.vmnet(VmnetNetworkID(kind: $0, scope: .named(UUID()))))
@@ -128,6 +128,18 @@ final class NetworksSettingsViewController: NSViewController {
         super.viewDidDisappear()
         editor.stopObserving()
     }
+
+    /// Selects the row of the network `id` identifies, when the library lists
+    /// it — before the pane first appears as well, which keeps the selection.
+    func reveal(_ id: UUID) {
+        loadViewIfNeeded()
+        editor.reload()
+        editor.select(id)
+    }
+
+    #if DEBUG
+    var selectedNetworkIDForTesting: UUID? { editor.selectedID }
+    #endif
 
     /// Asks for the new network's name and kind.
     private func presentNewNetworkSheet() {

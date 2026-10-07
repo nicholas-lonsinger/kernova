@@ -458,13 +458,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         #endif
     }
 
+    /// Shows Settings on the ``SettingsDestination`` a sender passes as itself,
+    /// and otherwise on the pane it was last left on.
     @objc func showSettings(_ sender: Any?) {
-        windows.showSettings(sender)
+        windows.showSettings(at: sender as? SettingsDestination)
     }
 
     /// Shows the Settings window on its Tags pane.
     @objc func showTagsSettings(_ sender: Any?) {
-        windows.showSettings(sender, pane: .tags)
+        windows.showSettings(at: .pane(.tags))
     }
 
     // MARK: - VM Actions
