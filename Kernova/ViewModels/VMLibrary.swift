@@ -51,7 +51,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// The host interfaces a network naming one is titled from.
     @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
-    /// The library's smart groups.
+    /// The library's smart groups and folders.
     let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
@@ -235,7 +235,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarLayout: SidebarLayout {
         .project(
             entries: entries, options: sidebarOptions, retaining: retainedEntryID,
-            smartGroups: organization.smartGroups, context: sidebarContext)
+            smartGroups: organization.smartGroups, folders: organization.folders, context: sidebarContext)
     }
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``
@@ -564,6 +564,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// user is already watching, and only when the sidebar shows the arrival,
     /// so a filter hiding it leaves the selection where the user can see it.
     func register(_ arrival: VMArrival) {
+        // An import carries its bundle's identifier, which folders may still
+        // list from a VM that left while nothing watched — a bundle trashed
+        // with Kernova closed.
+        leaveEveryFolder(arrival.id)
         entries.append(.arriving(arrival))
         sortEntries()
         persistOrder()
@@ -578,19 +582,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// stays.
     ///
     /// Only an arrival that became no VM leaves here, so the account answer
-    /// held for it goes with it.
+    /// held for it, and any folder it was dropped into, go with it.
     func removeArrival(_ arrival: VMArrival) {
         guard let index = entries.firstIndex(where: { $0.arrival === arrival }) else { return }
         entries.remove(at: index)
         persistOrder()
+        leaveEveryFolder(arrival.id)
         reconcileSelection()
         guestAccountPasswords.remove(for: arrival.id)
     }
 
-    /// Drops `instance` from the library, moving the selection off it onto
-    /// the first row the sidebar shows.
+    /// Drops `instance` from the library and its folders, moving the
+    /// selection off it onto the first row the sidebar shows.
     func evict(_ instance: VMInstance) {
         entries.removeAll { $0.vm === instance }
+        leaveEveryFolder(instance.id)
         reconcileSelection()
         // Nothing left can ask for the account, so nothing may still hold the
         // answer — whichever way the VM left, and whether or not its bundle

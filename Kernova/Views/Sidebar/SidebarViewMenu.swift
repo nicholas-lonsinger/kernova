@@ -2,8 +2,9 @@ import AppKit
 import KernovaKit
 
 /// The menus a sidebar section's header opens — from its button or a
-/// right-click: the library section's filter, group and sort menu, and a
-/// smart group's own filter menu.
+/// right-click: the library section's filter, group and sort menu, a smart
+/// group's own filter menu, and a folder's menu — and the folder items of a
+/// VM row's menu.
 ///
 /// Each item carries the ``Command`` picking it runs, so a menu is a pure
 /// function of what it is built over, and a pick only hands its command to
@@ -31,6 +32,15 @@ final class SidebarViewMenu: NSObject {
         case renameSmartGroup(UUID)
         /// Deletes the smart group the identifier names.
         case deleteSmartGroup(UUID)
+        /// Asks for a name for a new folder, which then holds the entry
+        /// `adding` names, if any.
+        case newFolder(adding: UUID?)
+        /// Asks for a new name for the folder the identifier names.
+        case renameFolder(UUID)
+        /// Deletes the folder the identifier names, keeping its VMs.
+        case deleteFolder(UUID)
+        /// Puts the entry `entry` in the folder `folder`, or takes it out.
+        case setMembership(entry: UUID, folder: UUID, isMember: Bool)
     }
 
     /// An item's command, as its represented object.
@@ -44,6 +54,7 @@ final class SidebarViewMenu: NSObject {
 
     nonisolated static let accessibilityLabel = "Filter and Sort"
     nonisolated static let smartGroupAccessibilityLabel = "Smart Group Options"
+    nonisolated static let folderAccessibilityLabel = "Folder Options"
 
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
@@ -108,6 +119,7 @@ final class SidebarViewMenu: NSObject {
         let save = pickItem("Save as Smart Group\u{2026}", state: .off, command: .saveAsSmartGroup)
         save.isEnabled = filter.isActive
         menu.addItem(save)
+        menu.addItem(pickItem("New Folder\u{2026}", state: .off, command: .newFolder(adding: nil)))
         var cleared = options
         cleared.filter = VMLibraryFilter()
         let clear = pickItem("Clear Filters", state: .off, command: .setOptions(cleared))
@@ -130,6 +142,48 @@ final class SidebarViewMenu: NSObject {
         menu.addItem(pickItem("Delete Smart Group", state: .off, command: .deleteSmartGroup(group.id)))
         return menu
     }
+
+    /// `folder`'s menu: what its section takes, then Rename and Delete.
+    func menu(folder: VMFolder) -> NSMenu {
+        let menu = NSMenu(title: Self.folderAccessibilityLabel)
+        menu.autoenablesItems = false
+        menu.addItem(.sectionHeader(title: "\u{201C}\(folder.name)\u{201D} \u{2014} drag VMs here to add them"))
+        menu.addItem(.separator())
+        menu.addItem(pickItem("Rename Folder\u{2026}", state: .off, command: .renameFolder(folder.id)))
+        menu.addItem(pickItem("Delete Folder", state: .off, command: .deleteFolder(folder.id)))
+        return menu
+    }
+
+    // MARK: - VM row items
+
+    /// A VM row's Add to Folder item for the entry `entry`: a submenu listing
+    /// each of `folders`, checked where it holds the entry and each pick
+    /// toggling that, then New Folder….
+    func addToFolderItem(entry: UUID, folders: [VMFolder]) -> NSMenuItem {
+        let item = NSMenuItem(title: "Add to Folder", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Add to Folder")
+        submenu.autoenablesItems = false
+        for folder in folders {
+            let isMember = folder.members.contains(entry)
+            submenu.addItem(
+                pickItem(
+                    folder.name, state: isMember ? .on : .off,
+                    command: .setMembership(entry: entry, folder: folder.id, isMember: !isMember)))
+        }
+        if !folders.isEmpty { submenu.addItem(.separator()) }
+        submenu.addItem(pickItem("New Folder\u{2026}", state: .off, command: .newFolder(adding: entry)))
+        item.submenu = submenu
+        return item
+    }
+
+    /// A row's Remove from Folder item, taking the entry `entry` out of the
+    /// folder `folder` its section lists.
+    func removeFromFolderItem(entry: UUID, folder: UUID) -> NSMenuItem {
+        pickItem(
+            "Remove from Folder", state: .off, command: .setMembership(entry: entry, folder: folder, isMember: false))
+    }
+
+    // MARK: - Descriptions
 
     /// `filter`'s active attributes, as a header button's accessibility value
     /// names them — `nil` when none is.

@@ -93,27 +93,6 @@ final class VMLibraryViewModel {
 
     func takePendingReveal() -> SidebarRowKey? { library.takePendingReveal() }
 
-    var smartGroups: [VMSmartGroup] { library.smartGroups }
-
-    /// `base`, or the first numbered variant of it no smart group is named.
-    func unusedSmartGroupName(from base: String) -> String { library.organization.unusedName(from: base) }
-
-    func saveSidebarFilterAsSmartGroup(named name: String) throws {
-        try library.saveSidebarFilterAsSmartGroup(named: name)
-    }
-
-    func setFilter(_ filter: VMLibraryFilter, ofSmartGroup id: UUID) throws {
-        try library.setFilter(filter, ofSmartGroup: id)
-    }
-
-    func renameSmartGroup(_ id: UUID, to name: String) throws { try library.renameSmartGroup(id, to: name) }
-
-    func deleteSmartGroup(_ id: UUID) throws { try library.deleteSmartGroup(id) }
-
-    func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {
-        try library.moveSmartGroup(id, before: successor)
-    }
-
     var selectedInstance: VMInstance? { library.selectedInstance }
 
     var selectedEntry: LibraryEntry? { library.selectedEntry }
@@ -1199,22 +1178,29 @@ final class VMLibraryViewModel {
 
     // MARK: - Import
 
-    /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited.
+    /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
+    /// then puts each in the folder `folder` identifies, if any.
     ///
     /// Every import reserves its destination and registers its arrival before
     /// this returns (``VMCommanding/beginImport(from:)``), so two overlapping
     /// triggers never collide on a destination name and never wait behind each
-    /// other's copies.
+    /// other's copies. The folder takes each arrival as it registers, so its
+    /// row shows the import there; one that becomes no VM leaves it. A bundle
+    /// the library already holds puts that VM in the folder.
     ///
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
     @discardableResult
-    func importVMs(fromDroppedURLs urls: [URL]) -> Bool {
+    func importVMs(fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
+        var imported: [UUID] = []
         for url in bundles {
-            runSync(on: nil) { _ = try commands.beginImport(from: url) }
+            runSync(on: nil) { imported.append(try commands.beginImport(from: url).id) }
+        }
+        if let folder, !imported.isEmpty {
+            runSync(on: nil) { try library.add(imported, toFolder: folder) }
         }
         return true
     }

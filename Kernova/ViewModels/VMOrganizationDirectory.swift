@@ -2,8 +2,8 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// How the library is organized beyond its VMs — its smart groups — and the
-/// one writer of the file that holds it.
+/// How the library is organized beyond its VMs — its smart groups and
+/// folders — and the one writer of the file that holds it.
 @MainActor
 @Observable
 final class VMOrganizationDirectory {
@@ -20,31 +20,60 @@ final class VMOrganizationDirectory {
     struct File: Codable, Equatable, Sendable {
         /// In the order the sidebar lists them.
         var smartGroups: [VMSmartGroup]
+        /// In the order the sidebar lists them.
+        var folders: [VMFolder]
+
+        init(smartGroups: [VMSmartGroup] = [], folders: [VMFolder] = []) {
+            self.smartGroups = smartGroups
+            self.folders = folders
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            smartGroups = try container.decode([VMSmartGroup].self, forKey: .smartGroups)
+            folders = try container.decodeIfPresent([VMFolder].self, forKey: .folders) ?? []
+        }
+    }
+
+    /// What a name names, which its refusals say.
+    enum Kind: Sendable, Equatable {
+        case smartGroup
+        case folder
+
+        var noun: String {
+            switch self {
+            case .smartGroup: "smart group"
+            case .folder: "folder"
+            }
+        }
     }
 
     /// Why a change to the organization was refused.
     enum ChangeError: LocalizedError, Equatable {
-        case nameRequired
-        case nameTaken(String)
+        case nameRequired(Kind)
+        case nameTaken(String, Kind)
         case unreadable(String)
         case unsaved(String)
 
         var errorDescription: String? {
             switch self {
-            case .nameRequired:
-                "A smart group needs a name."
-            case .nameTaken(let name):
-                "A smart group named \u{201C}\(name)\u{201D} already exists. Give this one another name."
+            case .nameRequired(let kind):
+                "A \(kind.noun) needs a name."
+            case .nameTaken(let name, let kind):
+                "A \(kind.noun) named \u{201C}\(name)\u{201D} already exists. Give this one another name."
             case .unreadable(let reason):
-                "Kernova couldn\u{2019}t read its list of smart groups, so it changes none: \(reason)"
+                "Kernova couldn\u{2019}t read its smart groups and folders, so it changes none: \(reason)"
             case .unsaved(let reason):
-                "Kernova couldn\u{2019}t save its list of smart groups: \(reason)"
+                "Kernova couldn\u{2019}t save its smart groups and folders: \(reason)"
             }
         }
     }
 
     /// Every smart group, in the order the sidebar lists them.
     private(set) var smartGroups: [VMSmartGroup] = []
+
+    /// Every folder, in the order the sidebar lists them.
+    private(set) var folders: [VMFolder] = []
 
     /// Why the file could not be read the last time, `nil` when it was, or
     /// holds nothing yet. A change reads the file again first and refuses
@@ -56,7 +85,7 @@ final class VMOrganizationDirectory {
 
     /// The organization `fileURL` holds — none when there is no file yet.
     init(fileURL: URL?) {
-        self.file = fileURL.map { CoordinatedJSONFile(url: $0, empty: File(smartGroups: [])) }
+        self.file = fileURL.map { CoordinatedJSONFile(url: $0, empty: File()) }
         reload()
     }
 
@@ -65,8 +94,7 @@ final class VMOrganizationDirectory {
     func reload() {
         guard let file else { return }
         do {
-            let read = try file.read()
-            if read.smartGroups != smartGroups { smartGroups = read.smartGroups }
+            show(try file.read())
             readFailure = nil
         } catch {
             let reason = error.reason
@@ -78,6 +106,13 @@ final class VMOrganizationDirectory {
         }
     }
 
+    /// Lists what `read` holds, assigning only the lists that changed so an
+    /// observer of one is not told about the other.
+    private func show(_ read: File) {
+        if read.smartGroups != smartGroups { smartGroups = read.smartGroups }
+        if read.folders != folders { folders = read.folders }
+    }
+
     // MARK: - Reads
 
     /// The smart group `id` identifies, `nil` when the library lists none.
@@ -85,28 +120,41 @@ final class VMOrganizationDirectory {
         smartGroups.first { $0.id == id }
     }
 
-    /// `base`, or the first of "`base` 2", "`base` 3", … no smart group is
-    /// named — what a new group's name field starts from.
-    func unusedName(from base: String) -> String {
-        let taken = Set(smartGroups.map { $0.name.lowercased() })
+    /// The folder `id` identifies, `nil` when the library lists none.
+    func folder(withID id: UUID) -> VMFolder? {
+        folders.first { $0.id == id }
+    }
+
+    /// `base`, or the first of "`base` 2", "`base` 3", … no `kind` is named —
+    /// what a new one's name field starts from.
+    func unusedName(from base: String, for kind: Kind) -> String {
+        let names =
+            switch kind {
+            case .smartGroup: smartGroups.map(\.name)
+            case .folder: folders.map(\.name)
+            }
+        let taken = Set(names.map { $0.lowercased() })
         guard taken.contains(base.lowercased()) else { return base }
         var suffix = 2
         while taken.contains("\(base) \(suffix)".lowercased()) { suffix += 1 }
         return "\(base) \(suffix)"
     }
 
-    // MARK: - Changes
+    // MARK: - Smart groups
 
     /// Lists a new smart group named `name` showing what `filter` admits,
     /// after every other.
     @discardableResult
     func createSmartGroup(named name: String, filter: VMLibraryFilter) throws -> VMSmartGroup {
         var created: VMSmartGroup?
-        try commit { groups in
+        try commit { file in
             let group = VMSmartGroup(
-                id: UUID(), name: try Self.validatedName(name, for: nil, among: groups), filter: filter)
+                id: UUID(),
+                name: try Self.validatedName(
+                    name, of: .smartGroup, for: nil, among: file.smartGroups.map { ($0.id, $0.name) }),
+                filter: filter)
             created = group
-            return groups + [group]
+            file.smartGroups.append(group)
         }
         guard let created else { preconditionFailure("A committed create made no smart group") }
         return created
@@ -114,84 +162,166 @@ final class VMOrganizationDirectory {
 
     /// Renames the smart group `id` identifies.
     func renameSmartGroup(_ id: UUID, to name: String) throws {
-        try commit { groups in
-            let name = try Self.validatedName(name, for: id, among: groups)
-            return groups.map { group in
-                guard group.id == id else { return group }
-                var renamed = group
-                renamed.name = name
-                return renamed
-            }
+        try commit { file in
+            let name = try Self.validatedName(
+                name, of: .smartGroup, for: id, among: file.smartGroups.map { ($0.id, $0.name) })
+            Self.edit(id, in: &file.smartGroups) { $0.name = name }
         }
     }
 
     /// Makes the smart group `id` identifies show what `filter` admits.
     func setFilter(_ filter: VMLibraryFilter, ofSmartGroup id: UUID) throws {
-        try commit { groups in
-            groups.map { group in
-                guard group.id == id else { return group }
-                var edited = group
-                edited.filter = filter
-                return edited
-            }
-        }
+        try commit { file in Self.edit(id, in: &file.smartGroups) { $0.filter = filter } }
     }
 
     /// Drops the named network `id` from every smart group's filter.
     func removeNetwork(_ id: UUID) throws {
-        try commit { groups in
-            groups.map { group in
-                var pruned = group
-                pruned.filter = group.filter.removingNetwork(id)
-                return pruned
+        try commit { file in
+            for index in file.smartGroups.indices {
+                file.smartGroups[index].filter = file.smartGroups[index].filter.removingNetwork(id)
             }
         }
     }
 
     /// Stops listing the smart group `id` identifies.
     func removeSmartGroup(_ id: UUID) throws {
-        try commit { groups in groups.filter { $0.id != id } }
+        try commit { file in file.smartGroups.removeAll { $0.id == id } }
     }
 
     /// Moves the smart group `id` identifies to just before the one `successor`
     /// identifies, or after every other when `successor` is `nil` or no longer
     /// listed.
     func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {
-        guard id != successor else { return }
-        try commit { groups in
-            guard let moved = groups.first(where: { $0.id == id }) else { return groups }
-            var reordered = groups.filter { $0.id != id }
-            let index = successor.flatMap { next in reordered.firstIndex { $0.id == next } } ?? reordered.endIndex
-            reordered.insert(moved, at: index)
-            return reordered
+        try commit { file in Self.move(id, before: successor, in: &file.smartGroups, by: \.id) }
+    }
+
+    // MARK: - Folders
+
+    /// Lists a new folder named `name` holding `members`, after every other.
+    @discardableResult
+    func createFolder(named name: String, members: [UUID] = []) throws -> VMFolder {
+        var created: VMFolder?
+        try commit { file in
+            let folder = VMFolder(
+                id: UUID(),
+                name: try Self.validatedName(name, of: .folder, for: nil, among: file.folders.map { ($0.id, $0.name) }),
+                members: Self.unique(members))
+            created = folder
+            file.folders.append(folder)
+        }
+        guard let created else { preconditionFailure("A committed create made no folder") }
+        return created
+    }
+
+    /// Renames the folder `id` identifies.
+    func renameFolder(_ id: UUID, to name: String) throws {
+        try commit { file in
+            let name = try Self.validatedName(name, of: .folder, for: id, among: file.folders.map { ($0.id, $0.name) })
+            Self.edit(id, in: &file.folders) { $0.name = name }
         }
     }
 
-    /// `name` trimmed, refusing an empty one and one another smart group than
-    /// `id`'s own is named, ignoring case — what lets a name select a group.
+    /// Stops listing the folder `id` identifies; its VMs stay in the library.
+    func removeFolder(_ id: UUID) throws {
+        try commit { file in file.folders.removeAll { $0.id == id } }
+    }
+
+    /// Moves the folder `id` identifies to just before the one `successor`
+    /// identifies, or after every other when `successor` is `nil` or no longer
+    /// listed.
+    func moveFolder(_ id: UUID, before successor: UUID?) throws {
+        try commit { file in Self.move(id, before: successor, in: &file.folders, by: \.id) }
+    }
+
+    /// Puts each of `entries` the folder `id` identifies does not hold yet
+    /// after its members, in `entries`' order.
+    func add(_ entries: [UUID], toFolder id: UUID) throws {
+        try commit { file in
+            Self.edit(id, in: &file.folders) { $0.members = Self.unique($0.members + entries) }
+        }
+    }
+
+    /// Takes the entry `entry` out of the folder `id` identifies.
+    func remove(_ entry: UUID, fromFolder id: UUID) throws {
+        try commit { file in Self.edit(id, in: &file.folders) { $0.members.removeAll { $0 == entry } } }
+    }
+
+    /// Moves the member `entry` of the folder `id` identifies to just before
+    /// the member `successor`, or after every other when `successor` is `nil`
+    /// or no longer a member.
+    func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
+        try commit { file in
+            Self.edit(id, in: &file.folders) { Self.move(entry, before: successor, in: &$0.members, by: \.self) }
+        }
+    }
+
+    /// Takes each of `entries` out of every folder.
+    func removeFromEveryFolder(_ entries: Set<UUID>) throws {
+        try commit { file in
+            for index in file.folders.indices {
+                file.folders[index].members.removeAll(where: entries.contains)
+            }
+        }
+    }
+
+    // MARK: - Commit
+
+    /// `name` trimmed, refusing an empty one and one an element of `named`
+    /// other than `id` holds, ignoring case — what lets a name select one.
     private static func validatedName(
-        _ name: String, for id: UUID?, among groups: [VMSmartGroup]
+        _ name: String, of kind: Kind, for id: UUID?, among named: [(id: UUID, name: String)]
     ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ChangeError.nameRequired }
-        if let other = groups.first(where: {
+        guard !trimmed.isEmpty else { throw ChangeError.nameRequired(kind) }
+        if let other = named.first(where: {
             $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
         }) {
-            throw ChangeError.nameTaken(other.name)
+            throw ChangeError.nameTaken(other.name, kind)
         }
         return trimmed
     }
 
-    /// Applies `change` to the smart groups the file holds now and writes the
-    /// result (``CoordinatedJSONFile/update(_:)``), then lists the result.
-    private func commit(_ change: ([VMSmartGroup]) throws -> [VMSmartGroup]) throws {
+    /// Applies `change` to the element of `list` that `id` identifies, if any.
+    private static func edit<Element: Identifiable>(
+        _ id: Element.ID, in list: inout [Element], _ change: (inout Element) -> Void
+    ) {
+        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+        change(&list[index])
+    }
+
+    /// Moves the element `key` names to just before the one `successor`
+    /// names, or to the end when `successor` is `nil` or not in `list`.
+    private static func move<Element, Key: Equatable>(
+        _ key: Key, before successor: Key?, in list: inout [Element], by keyPath: KeyPath<Element, Key>
+    ) {
+        guard key != successor, let from = list.firstIndex(where: { $0[keyPath: keyPath] == key }) else {
+            return
+        }
+        let moved = list.remove(at: from)
+        let to = successor.flatMap { next in list.firstIndex { $0[keyPath: keyPath] == next } } ?? list.endIndex
+        list.insert(moved, at: to)
+    }
+
+    /// `ids` with every repeat after the first dropped.
+    private static func unique(_ ids: [UUID]) -> [UUID] {
+        var seen = Set<UUID>()
+        return ids.filter { seen.insert($0).inserted }
+    }
+
+    /// Applies `change` to what the file holds now and writes the result
+    /// (``CoordinatedJSONFile/update(_:)``), then lists the result.
+    private func commit(_ change: (inout File) throws -> Void) throws {
+        func changed(_ current: File) throws -> File {
+            var next = current
+            try change(&next)
+            return next
+        }
         guard let file else {
-            smartGroups = try change(smartGroups)
+            show(try changed(File(smartGroups: smartGroups, folders: folders)))
             return
         }
         do {
-            let written = try file.update { File(smartGroups: try change($0.smartGroups)) }
-            if written.smartGroups != smartGroups { smartGroups = written.smartGroups }
+            show(try file.update(changed))
         } catch let failure as CoordinatedJSONFile<File>.Failure {
             switch failure {
             case .unreadable: throw ChangeError.unreadable(failure.reason)

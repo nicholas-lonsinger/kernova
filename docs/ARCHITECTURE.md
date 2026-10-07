@@ -45,7 +45,7 @@ the facade and present its refusals in their own idiom:
 `VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
 `VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
 (`usb-accessories.json`) are what persists in a bundle; the library's named
-networks (`Networks.json`) and smart groups (`Organization.json`) persist apart
+networks (`Networks.json`) and its smart groups and folders (`Organization.json`) persist apart
 from every bundle, each file written only by its directory — `VMNetworkDirectory`
 and `VMOrganizationDirectory` (`Kernova/ViewModels/`), which `VMLibrary` owns,
 both through `CoordinatedJSONFile`. `VMBundle` holds their committed
