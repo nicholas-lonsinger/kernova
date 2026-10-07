@@ -262,6 +262,23 @@ struct SidebarNameSearchTests {
 
         /// Whether the keyboard is in the search field.
         var fieldHasFocus: Bool { (window.firstResponder as? NSText)?.delegate === field }
+
+        /// Whether the field is on screen, checked against the Search button's
+        /// selection, which shows it.
+        var fieldShown: Bool {
+            let shown = controller.sidebarViewController.isSearchShown
+            #expect(field.isHidden == !shown)
+            #expect((window.toolbar?.selectedItemIdentifier == Self.search) == shown)
+            return shown
+        }
+
+        static let search = NSToolbarItem.Identifier("search")
+
+        /// Clicks the toolbar's Search button.
+        func clickSearchButton() throws {
+            let item = try #require(window.toolbar?.items.first { $0.itemIdentifier == Self.search })
+            #expect(NSApp.sendAction(try #require(item.action), to: item.target, from: item))
+        }
     }
 
     private func makeWindow(_ viewModel: VMLibraryViewModel) throws -> Window {
@@ -283,6 +300,7 @@ struct SidebarNameSearchTests {
         let field = subject.field
         #expect(field.window === subject.window)
 
+        subject.controller.focusSearch()
         field.stringValue = "ubu"
         _ = field.sendAction(field.action, to: field.target)
         #expect(viewModel.library.sidebarSearch == search("ubu"))
@@ -333,17 +351,19 @@ struct SidebarNameSearchTests {
         #expect(editor.string == "う")
     }
 
-    @Test("A search written from outside the field while it is idle shows in it on the next sync pass")
+    @Test("A search written from outside the idle field shows the field and the search on the next sync pass")
     func outsideWriteShowsWhenIdle() throws {
         let viewModel = makeViewModel()
         let subject = try makeWindow(viewModel)
         subject.window.makeKeyAndOrderFront(nil)
         let sidebar = subject.controller.sidebarViewController
         sidebar.viewDidAppear()
+        try #require(!subject.fieldShown)
 
         viewModel.library.showSearchResults(for: "sonoma")
         sidebar.viewDidAppear()
         #expect(subject.field.stringValue == "sonoma")
+        #expect(subject.fieldShown)
 
         // The same text the field already shows is no outside write.
         subject.field.stringValue = "sonoma"
@@ -381,10 +401,97 @@ struct SidebarNameSearchTests {
         subject.controller.focusSearch()
 
         try await waitUntil { !subject.sidebar.isCollapsed }
+        #expect(subject.fieldShown)
         #expect(subject.fieldHasFocus)
     }
 
-    @Test("Find VM is ⌥⌘F, enabled with no library window, and opens the window with its field focused")
+    @Test("A library window opens with the search field hidden")
+    func fieldHiddenByDefault() throws {
+        let subject = try makeWindow(makeViewModel())
+        subject.window.makeKeyAndOrderFront(nil)
+
+        #expect(!subject.fieldShown)
+    }
+
+    @Test("The default toolbar puts Search beside New VM, ahead of the sidebar toggle")
+    func searchButtonInDefaultToolbar() throws {
+        let subject = try makeWindow(makeViewModel())
+        let layout = try #require(subject.window.toolbar).items.map(\.itemIdentifier)
+        let index = try #require(layout.firstIndex(of: Window.search))
+
+        #expect(
+            Array(layout[index...].prefix(3)) == [
+                Window.search, NSToolbarItem.Identifier("newVM"), .toggleSidebar,
+            ])
+    }
+
+    @Test("Show in Finder's toolbar item shows the Finder's symbol, not Search's magnifying glass")
+    func showInFinderSymbol() throws {
+        let subject = try makeWindow(makeViewModel())
+        let toolbar = try #require(subject.window.toolbar)
+        func symbol(_ name: String) -> Data? {
+            NSImage(systemSymbolName: name, accessibilityDescription: nil)?.tiffRepresentation
+        }
+
+        let item = try #require(
+            subject.controller.toolbar(
+                toolbar, itemForItemIdentifier: NSToolbarItem.Identifier("showInFinder"),
+                willBeInsertedIntoToolbar: false))
+
+        #expect(item.image?.tiffRepresentation == symbol("finder"))
+        #expect(item.image?.tiffRepresentation != symbol("magnifyingglass"))
+    }
+
+    @Test("The Search button shows the field with the keyboard in it, and hides it again, ending its search")
+    func searchButtonTogglesTheField() throws {
+        let viewModel = makeViewModel()
+        let subject = try makeWindow(viewModel)
+        subject.window.makeKeyAndOrderFront(nil)
+
+        try subject.clickSearchButton()
+        #expect(subject.fieldShown)
+        #expect(subject.fieldHasFocus)
+        subject.field.stringValue = "ubu"
+        _ = subject.field.sendAction(subject.field.action, to: subject.field.target)
+        try #require(viewModel.library.sidebarSearch == search("ubu"))
+
+        try subject.clickSearchButton()
+        #expect(!subject.fieldShown)
+        #expect(!subject.fieldHasFocus)
+        #expect(subject.field.stringValue == "")
+        #expect(!viewModel.library.sidebarSearch.isActive)
+    }
+
+    @Test("The Search button expands a collapsed sidebar with the field shown instead of hiding it")
+    func searchButtonWithSidebarCollapsed() async throws {
+        let subject = try makeWindow(makeViewModel())
+        subject.window.makeKeyAndOrderFront(nil)
+        subject.controller.focusSearch()
+        subject.sidebar.isCollapsed = true
+
+        try subject.clickSearchButton()
+
+        try await waitUntil { !subject.sidebar.isCollapsed }
+        #expect(subject.fieldShown)
+        #expect(subject.fieldHasFocus)
+    }
+
+    @Test("Escape hides an empty search field and leaves one holding text shown")
+    func escapeHidesAnEmptyField() throws {
+        let subject = try makeWindow(makeViewModel())
+        let editor = try editField(of: subject)
+        editor.insertText("ubu", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(subject.fieldShown)
+
+        editor.string = ""
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(!subject.fieldShown)
+        #expect(!subject.fieldHasFocus)
+    }
+
+    @Test("Find VM is ⌘F, enabled with no library window, and opens the window with its field shown and focused")
     func findVMOpensTheLibrary() throws {
         let viewModel = makeViewModel()
         let menuController = MainMenuController(viewModel: viewModel)
@@ -393,7 +500,7 @@ struct SidebarNameSearchTests {
         let edit = try #require(menuController.makeMainMenu().items.first { $0.submenu?.title == "Edit" }?.submenu)
         let find = try #require(edit.items.first { $0.title == "Find VM\u{2026}" })
         #expect(find.keyEquivalent == "f")
-        #expect(find.keyEquivalentModifierMask == [.command, .option])
+        #expect(find.keyEquivalentModifierMask == [.command])
         #expect(find.action == #selector(AppDelegate.findVM(_:)))
         #expect(menuController.validate(find))
 
@@ -410,6 +517,7 @@ struct SidebarNameSearchTests {
         let window = try #require(registry.libraryWindow)
         adoptAppWindow(window)
         let sidebar = try #require(registry.librarySidebar)
+        #expect(sidebar.isSearchShown)
         #expect((window.firstResponder as? NSText)?.delegate === sidebar.searchField)
     }
 }
