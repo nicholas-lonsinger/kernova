@@ -1,11 +1,12 @@
 import AppKit
+import KernovaKit
 import UniformTypeIdentifiers
 
 /// Pure-AppKit sidebar: a source-list `NSOutlineView` listing virtual machines
 /// under a collapsible "Virtual Machines" group.
 ///
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
-/// ``SidebarLayout/project(entries:)``, updated by inserts and removes;
+/// ``SidebarLayout/project(entries:options:retaining:context:)``, updated by inserts and removes;
 /// per-row live updates are owned by each ``SidebarVMRowCellView``. Selection is
 /// a two-way binding to `viewModel.selection`, idempotent in both directions;
 /// reorder and Finder-bundle import ride the outline view's drag-and-drop,
@@ -24,8 +25,18 @@ final class SidebarViewController: NSViewController {
     /// loop doesn't restart an in-flight edit.
     private var editingRow: SidebarRow?
 
+    /// Builds the library section's filter menu; a pick sets the options.
+    private lazy var viewMenu = SidebarViewMenu(
+        networkTitle: { [weak self] network in
+            network.choice?.title(
+                attachable: true, interfaces: [], networks: self?.viewModel.networks.networks ?? [])
+                ?? NetworkModeChoice.unlistedNetworkTitle
+        },
+        apply: { [weak self] options in self?.viewModel.sidebarOptions = options })
+
     private static let rowPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row")
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
+    private static let placeholderCellID = NSUserInterfaceItemIdentifier("SidebarPlaceholderCell")
     private static let mainColumnID = NSUserInterfaceItemIdentifier("main")
     private static let leafRowHeight: CGFloat = 42
     private static let groupRowHeight: CGFloat = 24
@@ -109,9 +120,17 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        _ = tree.update(to: .project(entries: viewModel.entries))
+        let changes = tree.update(to: viewModel.sidebarLayout)
         outlineView.reloadData()
-        for section in tree.sections { applySavedExpansion(to: section) }
+        expandCreated(changes.created)
+    }
+
+    /// Opens each created section as last saved; a group header lists its rows
+    /// beside it and opens nothing.
+    private func expandCreated(_ nodes: [SidebarNode]) {
+        for case let section as SidebarSection in nodes {
+            applySavedExpansion(to: section)
+        }
     }
 
     override func viewDidAppear() {
@@ -120,8 +139,11 @@ final class SidebarViewController: NSViewController {
             modelObservation = observeRecurring(
                 track: { [weak self] in
                     guard let self else { return }
-                    // Everything `sync()` reads from the model.
-                    _ = self.viewModel.entries
+                    // Everything `sync()` reads from the model. Computing the
+                    // layout reads exactly what it depends on: the entries,
+                    // the options, and each value the active filter, sort and
+                    // grouping read of every VM.
+                    _ = self.viewModel.sidebarLayout
                     _ = self.viewModel.selection
                     _ = self.viewModel.activeRename
                 },
@@ -159,8 +181,17 @@ final class SidebarViewController: NSViewController {
     /// Brings the tree to the library's current projection and applies the
     /// change as inserts, removes and per-row reloads, so a row the change
     /// leaves alone keeps its view — and any rename open in it.
+    ///
+    /// The model's selection then moves onto the new rows
+    /// (``VMLibrary/reconcileSelection(with:)``): a selected VM the change hid
+    /// is no longer selected.
     private func applyProjection() {
-        let changes = tree.update(to: .project(entries: viewModel.entries))
+        let layout = viewModel.sidebarLayout
+        let changes = tree.update(to: layout)
+        defer {
+            viewModel.reconcileSelection(with: layout)
+            refreshSectionHeaders()
+        }
         guard !changes.isEmpty else { return }
         // Commit a rename whose row the change takes down before the update,
         // through the label's own commit path (resigning first responder).
@@ -186,13 +217,7 @@ final class SidebarViewController: NSViewController {
         }
         outlineView.endUpdates()
         for node in changes.reloaded { outlineView.reloadItem(node) }
-        for node in changes.created {
-            if let section = node as? SidebarSection {
-                applySavedExpansion(to: section)
-            } else {
-                outlineView.expandItem(node)
-            }
-        }
+        expandCreated(changes.created)
     }
 
     /// Selects the row the model's selection lands on, and moves the model's
@@ -362,10 +387,15 @@ final class SidebarViewController: NSViewController {
     ///
     /// Drives the split-view divider's Finder-style snap-to-fit.
     func widthToFitLongestRow() -> CGFloat? {
+        let outlineWidth = outlineView.bounds.width
         let widest = (0..<outlineView.numberOfRows).compactMap { row -> CGFloat? in
             guard let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
-            let indentation = outlineView.frameOfCell(atColumn: 0, row: row).minX
-            return indentation + contentWidth(of: node.entry)
+            // Everything the row's level costs besides its cell: the
+            // indentation before it and the inset the outline view keeps after
+            // it, which a row under a group header has too.
+            let cell = outlineView.frameOfCell(atColumn: 0, row: row)
+            let chrome = cell.minX + max(outlineWidth - cell.maxX, 0)
+            return chrome + contentWidth(of: node.entry)
         }.max()
         // The width the *outline view* must have — the split-view divider sits a
         // few points outboard of this, which the snap controller converts.
@@ -373,12 +403,14 @@ final class SidebarViewController: NSViewController {
     }
 
     private func contentWidth(of entry: LibraryEntry) -> CGFloat {
+        let detail = rowDetail { entry }()
         guard case .vm(let instance) = entry else {
             return SidebarVMRowCellView.contentWidth(
-                forName: entry.name, showsAgentAccessory: false, showsEphemeralAccessory: false)
+                forName: entry.name, detail: detail, showsAgentAccessory: false,
+                showsEphemeralAccessory: false)
         }
         return SidebarVMRowCellView.contentWidth(
-            forName: instance.name,
+            forName: instance.name, detail: detail,
             showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                 for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
             showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled
@@ -421,7 +453,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is SidebarSection || item is SidebarGroupHeader
+        item is SidebarSection
     }
 
     // MARK: Drag source
@@ -430,7 +462,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
         _ outlineView: NSOutlineView, pasteboardWriterForItem item: Any
     ) -> NSPasteboardWriting? {
         // Arrivals are not draggable: their place is settled once they are VMs.
-        guard let row = item as? SidebarRow, row.entry.vm != nil,
+        // Rows drag only under the manual sort — the one order a drop changes.
+        guard viewModel.sidebarOptions.sort == .manual,
+            let row = item as? SidebarRow, row.entry.vm != nil,
             let data = try? JSONEncoder().encode(row.key)
         else { return nil }
         let pbItem = NSPasteboardItem()
@@ -447,18 +481,24 @@ extension SidebarViewController: NSOutlineViewDataSource {
         proposedChildIndex index: Int
     ) -> NSDragOperation {
         if info.draggingSource as? NSOutlineView === outlineView {
-            // Internal reorder — constrained to between the dragged row's
-            // siblings.
-            guard let source = draggedRow(info), let parent = source.parent else { return [] }
-            let count = parent.children.count
+            // Internal reorder — constrained to the gaps of the dragged row's
+            // own list: its group's rows, which follow its header.
+            guard let source = draggedRow(info), let parent = source.parent,
+                let list = Self.list(of: source)
+            else { return [] }
             let target: Int
             switch item {
             case let row as SidebarRow:
-                guard row.parent === parent else { return [] }
-                target = parent.children.firstIndex { $0 === row } ?? count
+                guard row.parent === parent, row.key.group == source.key.group else { return [] }
+                target = parent.children.firstIndex { $0 === row } ?? list.upperBound
             case let node as SidebarNode:
                 guard node === parent else { return [] }
-                target = index == NSOutlineViewDropOnItemIndex ? count : index
+                if index == NSOutlineViewDropOnItemIndex {
+                    target = list.upperBound
+                } else {
+                    guard (list.lowerBound...list.upperBound).contains(index) else { return [] }
+                    target = index
+                }
             default:
                 // Outside every section. AppKit proposes the root with
                 // `NSOutlineViewDropOnItemIndex` for the empty space below the
@@ -466,9 +506,10 @@ extension SidebarViewController: NSOutlineViewDataSource {
                 // above its section is that list's top.
                 let section = tree.sections.firstIndex { $0.id == source.key.section } ?? 0
                 target =
-                    index == NSOutlineViewDropOnItemIndex || index > section ? count : 0
+                    index == NSOutlineViewDropOnItemIndex || index > section
+                    ? list.upperBound : list.lowerBound
             }
-            outlineView.setDropItem(parent, dropChildIndex: max(0, min(target, count)))
+            outlineView.setDropItem(parent, dropChildIndex: target)
             return .move
         }
         if info.draggingPasteboard.canReadObject(
@@ -496,18 +537,38 @@ extension SidebarViewController: NSOutlineViewDataSource {
     /// sibling it was dropped above — or after the last sibling — whatever
     /// entries the section leaves out.
     private func acceptReorder(info: NSDraggingInfo, parent: SidebarNode?, childIndex: Int) -> Bool {
-        guard let source = draggedRow(info), let parent, source.parent === parent else {
+        guard let source = draggedRow(info), let parent, source.parent === parent,
+            let list = Self.list(of: source)
+        else {
             return false
         }
-        let visible = parent.children.compactMap { ($0 as? SidebarRow)?.key.entryID }
+        let visible = parent.children[list].compactMap { ($0 as? SidebarRow)?.key.entryID }
         let order = viewModel.entries.map(\.id)
-        let index = childIndex == NSOutlineViewDropOnItemIndex ? visible.count : childIndex
+        let gap = childIndex == NSOutlineViewDropOnItemIndex ? list.upperBound : childIndex
+        let index = min(max(gap, list.lowerBound), list.upperBound) - list.lowerBound
         guard let sourceIndex = order.firstIndex(of: source.key.entryID),
             let offset = SidebarLayout.manualOrderOffset(
                 moving: source.key.entryID, toVisibleIndex: index, amongVisible: visible, in: order)
         else { return false }
         viewModel.moveEntries(fromOffsets: IndexSet(integer: sourceIndex), toOffset: offset)
         return true
+    }
+
+    /// The offsets in `row`'s parent of the list `row` reorders within: the
+    /// run of rows of its group, which a group header — listed beside its
+    /// rows — bounds.
+    static func list(of row: SidebarRow) -> Range<Int>? {
+        guard let siblings = row.parent?.children,
+            let at = siblings.firstIndex(where: { $0 === row })
+        else { return nil }
+        func inList(_ node: SidebarNode) -> Bool {
+            (node as? SidebarRow)?.key.group == row.key.group
+        }
+        var lower = at
+        while lower > 0, inList(siblings[lower - 1]) { lower -= 1 }
+        var upper = at + 1
+        while upper < siblings.count, inList(siblings[upper]) { upper += 1 }
+        return lower..<upper
     }
 
     /// Filters the drop to `.kernova` bundles and imports the batch.
@@ -541,8 +602,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
         _ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any
     ) -> NSView? {
         switch item {
-        case let section as SidebarSection: headerCell(title: section.title)
-        case let header as SidebarGroupHeader: headerCell(title: header.title)
+        case let section as SidebarSection:
+            headerCell(title: section.title, filtering: filtering(for: section))
+        case let header as SidebarGroupHeader: headerCell(title: header.title, filtering: nil)
+        case let placeholder as SidebarPlaceholder: placeholderCell(placeholder.text)
         case let row as SidebarRow:
             switch row.entry {
             case .arriving(let arrival): arrivalCell(arrival)
@@ -552,7 +615,9 @@ extension SidebarViewController: NSOutlineViewDelegate {
         }
     }
 
-    private func headerCell(title: String) -> NSView {
+    private func headerCell(
+        title: String, filtering: SidebarGroupHeaderCellView.Filtering?
+    ) -> NSView {
         let cell =
             outlineView.makeView(withIdentifier: Self.groupCellID, owner: nil)
             as? SidebarGroupHeaderCellView
@@ -561,7 +626,32 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 made.identifier = Self.groupCellID
                 return made
             }()
-        cell.configure(title: title)
+        cell.configure(
+            title: title, filtering: filtering,
+            onFilterButton: filtering == nil ? nil : { [weak self] button in self?.popUpViewMenu(from: button) })
+        return cell
+    }
+
+    private func placeholderCell(_ text: String) -> NSView {
+        let cell =
+            outlineView.makeView(withIdentifier: Self.placeholderCellID, owner: nil) as? NSTableCellView
+            ?? {
+                let made = NSTableCellView()
+                made.identifier = Self.placeholderCellID
+                let label = NSTextField(labelWithString: "")
+                label.translatesAutoresizingMaskIntoConstraints = false
+                label.textColor = .secondaryLabelColor
+                label.lineBreakMode = .byTruncatingTail
+                made.addSubview(label)
+                made.textField = label
+                NSLayoutConstraint.activate([
+                    label.leadingAnchor.constraint(equalTo: made.leadingAnchor, constant: 4),
+                    label.trailingAnchor.constraint(lessThanOrEqualTo: made.trailingAnchor),
+                    label.centerYAnchor.constraint(equalTo: made.centerYAnchor),
+                ])
+                return made
+            }()
+        cell.textField?.stringValue = text
         return cell
     }
 
@@ -570,8 +660,20 @@ extension SidebarViewController: NSOutlineViewDelegate {
             outlineView.makeView(
                 withIdentifier: SidebarArrivalRowCellView.reuseIdentifier, owner: nil)
             as? SidebarArrivalRowCellView ?? SidebarArrivalRowCellView()
-        cell.configure(arrival: arrival)
+        cell.configure(
+            arrival: arrival, detail: rowDetail { [weak arrival] in arrival.map(LibraryEntry.arriving) })
         return cell
+    }
+
+    /// A row's detail line, read live by its cell: the sort key's value while
+    /// Show Details is on, `nil` otherwise. `entry` captures its object
+    /// weakly, since the cell keeps the closure.
+    private func rowDetail(_ entry: @escaping () -> LibraryEntry?) -> () -> String? {
+        { [weak self] in
+            guard let self, let entry = entry() else { return nil }
+            let options = self.viewModel.sidebarOptions
+            return options.showsDetails ? options.sort.detail(for: entry) : nil
+        }
     }
 
     private func vmCell(_ instance: VMInstance, isRenaming: Bool) -> NSView {
@@ -590,6 +692,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             isBusy: { [weak instance] in
                 instance?.phase.operation != nil
             },
+            detail: rowDetail { [weak instance] in instance.map(LibraryEntry.vm) },
             onCommitRename: { [weak self, weak instance] newName, endedByReturn in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
@@ -660,13 +763,76 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 }
 
+// MARK: - Filter, sort and group
+
+extension SidebarViewController {
+    /// The library as the filter menu counts it.
+    private func viewMenuValues() -> [SidebarViewMenu.Value] {
+        let context = viewModel.sidebarContext
+        return viewModel.entries.map { entry in
+            let subject = context.subject(of: entry)
+            return SidebarViewMenu.Value(
+                subject: subject,
+                networkTitle: SidebarLayout.networkTitle(
+                    subject.network, of: entry.configuration, context: context))
+        }
+    }
+
+    /// The library section's filter menu, as its header's button and a
+    /// right-click on the header open it.
+    func libraryViewMenu() -> NSMenu {
+        viewMenu.menu(options: viewModel.sidebarOptions, values: viewMenuValues())
+    }
+
+    private func popUpViewMenu(from button: NSButton) {
+        libraryViewMenu().popUp(
+            positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+    }
+
+    /// What `section`'s header shows beside its title; `nil` for a section
+    /// with no filter.
+    private func filtering(for section: SidebarSection) -> SidebarGroupHeaderCellView.Filtering? {
+        guard section.id == .library else { return nil }
+        // The counts the projection the tree lists computed, so they change
+        // exactly when the rows do.
+        guard let counts = tree.layout.sections.first(where: { $0.id == section.id })?.filterCounts
+        else {
+            return SidebarGroupHeaderCellView.Filtering(countText: nil, isActive: false, activeDescription: nil)
+        }
+        return SidebarGroupHeaderCellView.Filtering(
+            countText: "\(counts.shown) of \(counts.total)", isActive: true,
+            activeDescription: viewMenu.activeFilterDescription(
+                options: viewModel.sidebarOptions, values: viewMenuValues()))
+    }
+
+    /// Re-renders each section header the outline view has a view for.
+    private func refreshSectionHeaders() {
+        for section in tree.sections {
+            let row = outlineView.row(forItem: section)
+            guard row >= 0,
+                let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                    as? SidebarGroupHeaderCellView
+            else { continue }
+            let filtering = filtering(for: section)
+            cell.configure(
+                title: section.title, filtering: filtering,
+                onFilterButton: filtering == nil ? nil : { [weak self] button in self?.popUpViewMenu(from: button) })
+        }
+    }
+}
+
 // MARK: - Context menu
 
 extension SidebarViewController {
     /// Builds the right-click menu for the clicked row, selecting it first
-    /// (matching standard source-list behavior).
+    /// (matching standard source-list behavior); the library section's header
+    /// opens its filter menu.
     func contextMenu(forRow row: Int) -> NSMenu? {
-        guard row >= 0, let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
+        guard row >= 0 else { return nil }
+        if let section = outlineView.item(atRow: row) as? SidebarSection {
+            return section.id == .library ? libraryViewMenu() : nil
+        }
+        guard let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
 
         if outlineView.selectedRow != row {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
@@ -991,6 +1157,26 @@ final class SidebarOutlineView: NSOutlineView {
     /// old index. Weak so a removed VM simply drops the pending rename.
     private weak var pendingRenameItem: AnyObject?
 
+    /// Every group row's Show/Hide control the outline view has made,
+    /// captured where AppKit asks for one by
+    /// `NSOutlineView.showHideButtonIdentifier`.
+    private let showHideButtons = NSHashTable<NSView>.weakObjects()
+
+    override func makeView(
+        withIdentifier identifier: NSUserInterfaceItemIdentifier, owner: Any?
+    ) -> NSView? {
+        let view = super.makeView(withIdentifier: identifier, owner: owner)
+        if identifier == NSOutlineView.showHideButtonIdentifier, let view {
+            showHideButtons.add(view)
+        }
+        return view
+    }
+
+    /// The Show/Hide control `rowView` holds, `nil` when it holds none.
+    func showHideButton(in rowView: NSView) -> NSView? {
+        showHideButtons.allObjects.first { $0.isDescendant(of: rowView) }
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         return contextMenuForRow?(row(at: point))
@@ -1124,5 +1310,15 @@ final class SidebarTableRowView: NSTableRowView {
     override func prepareForReuse() {
         super.prepareForReuse()
         rendersUnemphasized = false
+    }
+
+    /// Tells a header cell how far the Show/Hide control in this row reaches
+    /// into it, once both have their frames.
+    override func layout() {
+        super.layout()
+        guard let header = view(atColumn: 0) as? SidebarGroupHeaderCellView else { return }
+        let showHide = (enclosingTableView as? SidebarOutlineView)?.showHideButton(in: self)
+        header.trailingReserve =
+            showHide.map { max(header.bounds.maxX - header.convert($0.bounds, from: $0).minX, 0) } ?? 0
     }
 }

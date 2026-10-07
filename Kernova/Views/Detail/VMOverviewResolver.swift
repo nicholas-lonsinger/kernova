@@ -2,22 +2,7 @@ import AVFoundation
 import Foundation
 import KernovaKit
 
-/// What a Mode menu item selects, and how every surface naming the VM's
-/// network names it.
-///
-/// `vmnet` is Shared Network or Host Only, on the network of that mode its
-/// membership names. `bridged`'s payload is the host interface identifier,
-/// `nil` for Automatic.
-enum NetworkModeChoice: Equatable {
-    case vmnet(VmnetNetworkKind, VMNetworkMembership)
-    case none
-    case bridged(String?)
-
-    /// Shared Network's common network.
-    static let shared = NetworkModeChoice.vmnet(.shared, .common)
-    /// Host Only's common network.
-    static let hostOnly = NetworkModeChoice.vmnet(.hostOnly, .common)
-
+extension NetworkModeChoice {
     init(_ configuration: VMConfiguration) {
         switch configuration.effectiveNetworkMode {
         case nil: self = .none
@@ -25,13 +10,6 @@ enum NetworkModeChoice: Equatable {
         case .hostOnly: self = .vmnet(.hostOnly, configuration.networkMembership)
         case .bridged: self = .bridged(configuration.bridgedInterfaceIdentifier)
         }
-    }
-
-    /// Whether naming this choice takes the host's bridgeable interfaces, which
-    /// only an enumeration answers.
-    var namesAHostInterface: Bool {
-        if case .bridged(.some) = self { return true }
-        return false
     }
 
     /// The Mode picker's title for this choice, which is what the Network card
@@ -70,6 +48,20 @@ enum NetworkModeChoice: Equatable {
             }
             return Self.interfaceTitle(interface)
         }
+    }
+
+    /// What `config`'s network reads as on every surface naming it: the
+    /// Network card, and the sidebar's network filter and groups.
+    /// `interfaces` is asked only when the choice names a host interface.
+    static func title(
+        of config: VMConfiguration, entitlements: EntitlementService,
+        interfaces: () -> [BridgedInterface], networks: [VMNamedNetwork]
+    ) -> String {
+        let choice = NetworkModeChoice(config)
+        return choice.title(
+            attachable: config.joinedNetwork.map(entitlements.canAttach) ?? true,
+            interfaces: choice.namesAHostInterface ? interfaces() : [],
+            networks: networks)
     }
 
     /// How a VM naming a network the library does not list names it.
@@ -285,10 +277,9 @@ final class VMOverviewResolver {
         // named again each pass, so a renamed network re-titles.
         if choice != titledNetworkChoice || !choice.namesAHostInterface {
             titledNetworkChoice = choice
-            resolved.networkModeTitle = choice.title(
-                attachable: config.joinedNetwork.map(viewModel.entitlements.canAttach) ?? true,
-                interfaces: choice.namesAHostInterface ? bridgedInterfaces.interfaces() : [],
-                networks: viewModel.networks.networks)
+            resolved.networkModeTitle = NetworkModeChoice.title(
+                of: config, entitlements: viewModel.entitlements,
+                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.networks)
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)
     }

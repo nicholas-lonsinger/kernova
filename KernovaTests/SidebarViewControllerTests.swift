@@ -222,6 +222,7 @@ struct SidebarViewControllerTests {
             isRenaming: false,
             installPromptDisabled: { false },
             isBusy: { isBusy },
+            detail: { nil },
             onCommitRename: { _, _ in },
             onCancelRename: {},
             onAgentDiskControl: {},
@@ -283,6 +284,7 @@ struct SidebarViewControllerTests {
             isRenaming: false,
             installPromptDisabled: { viewModel.agentInstallPromptDisabled },
             isBusy: { false },
+            detail: { nil },
             onCommitRename: { _, _ in },
             onCancelRename: {},
             onAgentDiskControl: {},
@@ -334,6 +336,7 @@ struct SidebarViewControllerTests {
             isRenaming: true,
             installPromptDisabled: { false },
             isBusy: { false },
+            detail: { nil },
             onCommitRename: onCommitRename,
             onCancelRename: {},
             onAgentDiskControl: {},
@@ -508,7 +511,7 @@ struct SidebarViewControllerTests {
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         #expect(rowNames(in: outline) == ["A", "B", "C", "D"])
-        viewModel.selectedID = c.id
+        viewModel.selectRevealing(c.id)
         // The outline view offers no observable to await its selection by.
         try await waitUntil { outline.selectedRow == 3 }
 
@@ -943,7 +946,7 @@ struct SidebarViewControllerTests {
         let controller = SidebarViewController(viewModel: viewModel)
 
         let cell = SidebarArrivalRowCellView()
-        cell.configure(arrival: arrival)
+        cell.configure(arrival: arrival, detail: { nil })
         #expect(cell.textField?.stringValue == "Copying")
         #expect(cell.toolTip == "Cloning\u{2026}")
 
@@ -1242,6 +1245,7 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
             isRenaming: false,
             installPromptDisabled: { true },
             isBusy: { false },
+            detail: { nil },
             onCommitRename: { _, _ in },
             onCancelRename: {},
             onAgentDiskControl: {},

@@ -421,7 +421,7 @@ final class VMDisplayPlacementController {
             case .none:
                 break
             case .restoreLibrary:
-                self.viewModel.selectedID = vmID
+                self.viewModel.selectRevealing(vmID)
                 switch Self.libraryRestore(
                     wasKeyWindow: context.wasKeyWindow, appWasActive: context.appWasActive)
                 {

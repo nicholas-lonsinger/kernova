@@ -1,7 +1,7 @@
 import Foundation
 
 /// An item of the sidebar's outline view: a ``SidebarSection``, a
-/// ``SidebarGroupHeader`` or a ``SidebarRow``.
+/// ``SidebarGroupHeader``, a ``SidebarPlaceholder`` or a ``SidebarRow``.
 ///
 /// `NSOutlineView` keys items on object identity, so ``SidebarTree`` keeps one
 /// node per key for as long as its layouts list that key.
@@ -27,7 +27,7 @@ final class SidebarSection: SidebarNode {
     }
 }
 
-/// A group header within a section.
+/// A group header within a section, listed just before its group's rows.
 final class SidebarGroupHeader: SidebarNode {
     let id: SidebarGroupID
     fileprivate(set) var title: String
@@ -35,6 +35,15 @@ final class SidebarGroupHeader: SidebarNode {
     fileprivate init(id: SidebarGroupID, title: String) {
         self.id = id
         self.title = title
+    }
+}
+
+/// The line a section lists in place of rows when it has none.
+final class SidebarPlaceholder: SidebarNode {
+    fileprivate(set) var text: String
+
+    fileprivate init(text: String) {
+        self.text = text
     }
 }
 
@@ -108,10 +117,12 @@ final class SidebarTree {
     /// The root's children.
     private(set) var sections: [SidebarSection] = []
 
-    private var layout = SidebarLayout(sections: [])
+    /// The layout the tree lists.
+    private(set) var layout = SidebarLayout(sections: [])
     private var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
     private var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
     private var rowsByKey: [SidebarRowKey: SidebarRow] = [:]
+    private var placeholdersBySection: [SidebarSectionID: SidebarPlaceholder] = [:]
 
     /// The row listed under `key`.
     func row(for key: SidebarRowKey) -> SidebarRow? {
@@ -130,11 +141,12 @@ final class SidebarTree {
         var sectionsByID: [SidebarSectionID: SidebarSection] = [:]
         var headersByKey: [HeaderKey: SidebarGroupHeader] = [:]
         var rowsByKey: [SidebarRowKey: SidebarRow] = [:]
+        var placeholdersBySection: [SidebarSectionID: SidebarPlaceholder] = [:]
 
         func retitle(_ node: SidebarNode, from old: String, to new: String, apply: () -> Void) {
             guard old != new else { return }
             apply()
-            // Not detached: reloading a header leaves its children's views up.
+            // Not detached: reloading a title leaves the rows' views up.
             changes.reloaded.append(node)
         }
 
@@ -170,7 +182,12 @@ final class SidebarTree {
             }
         }
 
-        func header(_ group: SidebarLayout.Group, in section: SidebarSectionID) -> SidebarNode {
+        // A group header and its rows are siblings, each header listed just
+        // before its rows: an outline view that has once shown a level below
+        // the section keeps indenting that section's rows as if one were
+        // there, through every reload (observed macOS 27.2, 2026-10-07), so the sidebar
+        // never nests one.
+        func header(_ group: SidebarLayout.Group, in section: SidebarSectionID) -> [SidebarNode] {
             let key = HeaderKey(section: section, group: group.id)
             let existing = self.headersByKey[key]
             let header = existing ?? SidebarGroupHeader(id: group.id, title: group.title)
@@ -180,10 +197,7 @@ final class SidebarTree {
                 changes.created.append(header)
             }
             headersByKey[key] = header
-            setChildren(
-                of: header, to: rows(group.rows, section: section, group: group.id),
-                isNew: existing == nil)
-            return header
+            return [header] + rows(group.rows, section: section, group: group.id)
         }
 
         var newSections: [SidebarSection] = []
@@ -196,11 +210,22 @@ final class SidebarTree {
                 changes.created.append(section)
             }
             sectionsByID[spec.id] = section
-            let children: [SidebarNode] =
-                switch spec.content {
-                case .rows(let entries): rows(entries, section: spec.id, group: nil)
-                case .groups(let groups): groups.groups.map { header($0, in: spec.id) }
+            let children: [SidebarNode]
+            if spec.content.isEmpty, let text = spec.emptyText {
+                let existing = self.placeholdersBySection[spec.id]
+                let placeholder = existing ?? SidebarPlaceholder(text: text)
+                if let existing {
+                    retitle(existing, from: existing.text, to: text) { existing.text = text }
                 }
+                placeholdersBySection[spec.id] = placeholder
+                children = [placeholder]
+            } else {
+                children =
+                    switch spec.content {
+                    case .rows(let entries): rows(entries, section: spec.id, group: nil)
+                    case .groups(let groups): groups.groups.flatMap { header($0, in: spec.id) }
+                    }
+            }
             setChildren(of: section, to: children, isNew: existing == nil)
             newSections.append(section)
         }
@@ -213,10 +238,11 @@ final class SidebarTree {
         let kept = Set(
             sectionsByID.values.map { ObjectIdentifier($0) }
                 + headersByKey.values.map { ObjectIdentifier($0) }
-                + rowsByKey.values.map { ObjectIdentifier($0) })
+                + rowsByKey.values.map { ObjectIdentifier($0) }
+                + placeholdersBySection.values.map { ObjectIdentifier($0) })
         let previous: [SidebarNode] =
             Array(self.sectionsByID.values) + Array(self.headersByKey.values)
-            + Array(self.rowsByKey.values)
+            + Array(self.rowsByKey.values) + Array(self.placeholdersBySection.values)
         for node in previous where !kept.contains(ObjectIdentifier(node)) {
             changes.detached.insert(ObjectIdentifier(node))
         }
@@ -226,6 +252,7 @@ final class SidebarTree {
         self.sectionsByID = sectionsByID
         self.headersByKey = headersByKey
         self.rowsByKey = rowsByKey
+        self.placeholdersBySection = placeholdersBySection
         return changes
     }
 

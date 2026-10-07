@@ -92,11 +92,11 @@ enum AgentStatus: Equatable, Sendable {
     /// Whether a freshly-observed agent `version` is at least the `bundled`
     /// version — i.e. resolves to `.current` rather than `.outdated`.
     ///
-    /// A `nil` `bundled` (the host's version sidecar is missing) counts as
-    /// current, so the host doesn't prompt "outdated" off a comparison it
-    /// cannot make.
+    /// The same comparison the guest-agent filter buckets by
+    /// (``VMGuestAgentBucket/init(lastSeenVersion:bundledVersion:)``), which
+    /// counts a `nil` `bundled` — the host's version sidecar missing — as
+    /// current.
     static func isObservedVersionCurrent(_ version: String, bundled: String?) -> Bool {
-        guard let bundled else { return true }
-        return KernovaVersionComparison.isAtLeast(version, bundled)
+        VMGuestAgentBucket(lastSeenVersion: version, bundledVersion: bundled) == .upToDate
     }
 }

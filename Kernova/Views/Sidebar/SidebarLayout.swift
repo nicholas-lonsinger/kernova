@@ -1,13 +1,14 @@
 import Foundation
+import KernovaKit
 
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:)`` is the one function from the library to a layout;
-/// ``SidebarTree`` turns a layout into the outline view's items. Each list a
-/// layout holds — its sections, a section's groups, a list's entries — keeps
-/// the first of any repeated identifier: a repeat would be a second outline
-/// item under one key.
+/// ``project(entries:options:retaining:context:)`` is the one function from the library
+/// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
+/// Each list a layout holds — its sections, a section's groups, a list's
+/// entries — keeps the first of any repeated identifier: a repeat would be a
+/// second outline item under one key.
 @MainActor
 struct SidebarLayout {
     @MainActor
@@ -15,12 +16,25 @@ struct SidebarLayout {
         let id: SidebarSectionID
         let title: String
         let content: Content
+        /// What the section lists in place of rows when it has none; `nil` to
+        /// list nothing.
+        var emptyText: String? = nil
+        /// How many VMs the section lists of the library's, `nil` while no
+        /// filter constrains the section.
+        var filterCounts: FilterCounts? = nil
     }
 
     @MainActor
     enum Content {
         case rows(Rows)
         case groups(Groups)
+
+        var isEmpty: Bool {
+            switch self {
+            case .rows(let rows): rows.entries.isEmpty
+            case .groups(let groups): groups.groups.allSatisfy { $0.rows.entries.isEmpty }
+            }
+        }
     }
 
     @MainActor
@@ -50,6 +64,35 @@ struct SidebarLayout {
         }
     }
 
+    /// What the projection reads besides the entries and the options.
+    @MainActor
+    struct Context {
+        /// The guest-agent version this build bundles, `nil` when unknown.
+        let bundledAgentVersion: String?
+        /// The library's named networks: a VM naming any other is on
+        /// ``VMLibraryFilter/Network/unlisted``.
+        let networks: [VMNamedNetwork]
+        /// What a VM's network reads as —
+        /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
+        /// in the app. Asked for each VM while grouping by network, and by the
+        /// filter menu.
+        let networkTitle: (VMConfiguration) -> String
+
+        /// What a filter reads of `entry`.
+        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject {
+            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+        }
+    }
+
+    /// How many VMs a filtering section lists — a retained VM the filter no
+    /// longer matches included — of how many the library holds.
+    struct FilterCounts: Equatable {
+        let shown: Int
+        let total: Int
+    }
+
+    static let noMatchesText = "No matching VMs"
+
     /// The sections in display order, each identifier at most once.
     let sections: [Section]
 
@@ -65,11 +108,125 @@ struct SidebarLayout {
     }
 
     /// The layout the sidebar shows for `entries`: the library section, listing
-    /// every entry in manual order.
-    static func project(entries: [LibraryEntry]) -> SidebarLayout {
-        SidebarLayout(sections: [
-            Section(id: .library, title: "Virtual Machines", content: .rows(Rows(entries)))
+    /// the entries `options` admits, in its order, under its groups.
+    ///
+    /// The entry `retaining` names is listed whether or not the filter admits
+    /// it: the selected VM a change to its own values took out of the filter,
+    /// which stays until the selection moves off it.
+    static func project(
+        entries: [LibraryEntry], options: SidebarViewOptions, retaining: UUID? = nil,
+        context: Context
+    ) -> SidebarLayout {
+        // Every entry's subject is read, the retained one's included, so an
+        // observation of the projection tracks every value the counts read.
+        var subjects: [UUID: VMLibraryFilter.Subject] = [:]
+        for entry in entries { subjects[entry.id] = context.subject(of: entry) }
+        let matching = Set(entries.filter { subjects[$0.id].map(options.filter.admits) ?? false }.map(\.id))
+        let shown = options.sort.ordered(entries.filter { $0.id == retaining || matching.contains($0.id) })
+        let content: Content =
+            switch options.grouping {
+            case .none: .rows(Rows(shown))
+            case let grouping:
+                .groups(Groups(groups(of: shown, by: grouping, subjects: subjects, context: context)))
+            }
+        return SidebarLayout(sections: [
+            Section(
+                id: .library, title: "Virtual Machines", content: content,
+                emptyText: options.filter.isActive && !entries.isEmpty ? noMatchesText : nil,
+                filterCounts: options.filter.isActive
+                    ? FilterCounts(shown: shown.count, total: entries.count) : nil)
         ])
+    }
+
+    /// One group per distinct value of `grouping` among `entries`, in that
+    /// value's order, each listing its entries in `entries`' order.
+    private static func groups(
+        of entries: [LibraryEntry], by grouping: SidebarGrouping,
+        subjects: [UUID: VMLibraryFilter.Subject], context: Context
+    ) -> [Group] {
+        var pending: [Pending] = []
+        for entry in entries {
+            guard let subject = subjects[entry.id] else { continue }
+            let key = groupKey(of: subject, by: grouping)
+            if let index = pending.firstIndex(where: { $0.key == key }) {
+                pending[index].entries.append(entry)
+                continue
+            }
+            let title: String =
+                switch grouping {
+                case .none, .guestOS, .state: key.title
+                case .network: networkTitle(subject.network, of: entry.configuration, context: context)
+                }
+            pending.append(Pending(key: key, title: title, entries: [entry]))
+        }
+        pending.sort { lhs, rhs in
+            if lhs.key.rank != rhs.key.rank { return lhs.key.rank < rhs.key.rank }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+        return pending.map { group in
+            Group(
+                id: SidebarGroupID(rawValue: "\(grouping.rawValue):\(group.key.value)"), title: group.title,
+                rows: Rows(group.entries))
+        }
+    }
+
+    /// A group's identity — the value its members share — and where it sorts.
+    private struct GroupKey: Equatable {
+        let value: String
+        let rank: Int
+        /// The title, for every grouping but Network, whose title comes from a
+        /// member's configuration.
+        let title: String
+    }
+
+    private struct Pending {
+        let key: GroupKey
+        let title: String
+        var entries: [LibraryEntry]
+    }
+
+    private static func groupKey(of subject: VMLibraryFilter.Subject, by grouping: SidebarGrouping) -> GroupKey {
+        switch grouping {
+        case .none:
+            preconditionFailure("An ungrouped section has no groups")
+        case .guestOS:
+            GroupKey(
+                value: subject.guestOS.rawValue, rank: VMGuestOS.allCases.firstIndex(of: subject.guestOS) ?? 0,
+                title: subject.guestOS.displayName)
+        case .state:
+            GroupKey(
+                value: subject.state.rawValue, rank: VMStateBucket.allCases.firstIndex(of: subject.state) ?? 0,
+                title: subject.state.displayName)
+        case .network:
+            GroupKey(value: subject.network.rawValue, rank: networkRank(subject.network), title: "")
+        }
+    }
+
+    /// What `network` reads as, given a VM on it whose configuration is
+    /// `configuration`.
+    static func networkTitle(
+        _ network: VMLibraryFilter.Network, of configuration: VMConfiguration, context: Context
+    ) -> String {
+        network == .unlisted ? NetworkModeChoice.unlistedNetworkTitle : context.networkTitle(configuration)
+    }
+
+    /// Where a network sorts among others: the order the Mode picker lists
+    /// its choices in, with every network the library does not list after
+    /// the vmnet networks it does.
+    static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
+        guard let choice = network.choice else { return 6 }
+        switch choice {
+        case .vmnet(let kind, let membership):
+            let base = kind == .shared ? 0 : 3
+            switch membership {
+            case .common: return base
+            case .isolated: return base + 1
+            case .network: return base + 2
+            }
+        case .bridged(nil): return 7
+        case .bridged: return 8
+        case .none: return 9
+        }
     }
 
     /// Every row's key, in display order.
@@ -97,6 +254,18 @@ struct SidebarLayout {
         let sameEntry = keys.filter { $0.entryID == selection.entryID }
         return sameEntry.first { $0.section == selection.section }
             ?? sameEntry.first { $0.section == .library }
+    }
+
+    /// Where `selection` stands once this layout is shown: on the row it
+    /// resolves to; on nothing when its entry is still in the library
+    /// (`libraryHolds`) but no row lists it; on the first row when its entry
+    /// has left the library.
+    func reconciled(
+        _ selection: SidebarRowKey?, libraryHolds: (UUID) -> Bool
+    ) -> SidebarRowKey? {
+        guard let selection else { return nil }
+        if let row = resolve(selection) { return row }
+        return libraryHolds(selection.entryID) ? nil : rowKeys.first
     }
 
     /// The `toOffset` that `Array.move(fromOffsets:toOffset:)` takes to move

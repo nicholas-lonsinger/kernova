@@ -23,7 +23,8 @@ struct SidebarProjectionTests {
     private func layout(
         library: [LibraryEntry], grouped: [(SidebarGroupID, [LibraryEntry])] = []
     ) -> SidebarLayout {
-        var sections = SidebarLayout.project(entries: library).sections
+        var sections = SidebarLayout.project(entries: library, options: SidebarViewOptions(), context: .testing())
+            .sections
         if !grouped.isEmpty {
             sections.append(
                 SidebarLayout.Section(
@@ -47,7 +48,7 @@ struct SidebarProjectionTests {
     @Test("The library projection is one section listing every entry in manual order")
     func libraryProjection() {
         let entries = [vm("A"), vm("B"), vm("C")]
-        let layout = SidebarLayout.project(entries: entries)
+        let layout = SidebarLayout.project(entries: entries, options: SidebarViewOptions(), context: .testing())
 
         #expect(layout.sections.map(\.id) == [.library])
         #expect(layout.rowKeys == entries.map { SidebarRowKey.library($0.id) })
@@ -86,7 +87,8 @@ struct SidebarProjectionTests {
         let tree = SidebarTree()
         _ = tree.update(to: layout)
         #expect(tree.sections.count == 2)
-        #expect(tree.sections.last?.children.count == 1)
+        // One header, then its one row.
+        #expect(tree.sections.last?.children.count == 2)
     }
 
     // MARK: - Identity
@@ -134,9 +136,13 @@ struct SidebarProjectionTests {
         #expect(libraryRow !== workRow)
         #expect(workRow !== labRow)
         #expect(libraryRow.entry.vm === workRow.entry.vm)
-        #expect((workRow.parent as? SidebarGroupHeader)?.id == work)
-        #expect((labRow.parent as? SidebarGroupHeader)?.id == lab)
-        #expect(tree.sections.last?.children.count == 2)
+        // Each header is listed just before its rows, beside them.
+        let children = try #require(tree.sections.last?.children)
+        #expect(children.count == 4)
+        #expect((children[0] as? SidebarGroupHeader)?.id == work)
+        #expect(children[1] === workRow)
+        #expect((children[2] as? SidebarGroupHeader)?.id == lab)
+        #expect(children[3] === labRow)
     }
 
     @Test("An entry replaced under its identifier reloads its row in place")
@@ -239,14 +245,14 @@ struct SidebarProjectionTests {
         #expect(library.preferences.lastSelectedVMID == alpha.id)
 
         // Already selected: the row it is selected in stays.
-        library.selectedID = alpha.id
+        library.selectRevealing(alpha.id)
         #expect(library.selection == inWork)
 
-        library.selectedID = beta.id
+        library.selectRevealing(beta.id)
         #expect(library.selection == .library(beta.id))
         #expect(library.preferences.lastSelectedVMID == beta.id)
 
-        library.selectedID = nil
+        library.selection = nil
         #expect(library.selection == nil)
     }
 

@@ -26,7 +26,8 @@ struct VMCommandEnvelopeTests {
             memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
-            hasSavedState: true, isEphemeral: false, snapshotCount: 2,
+            hasSavedState: true, isEphemeral: false, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
+            stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }
 

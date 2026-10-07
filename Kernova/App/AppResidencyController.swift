@@ -346,7 +346,7 @@ final class AppResidencyController: WindowResidencyHosting {
                     self.summonStatusItemTarget(for: vmID)
                     return
                 }
-                self.viewModel.selectedID = vmID
+                self.viewModel.selectRevealing(vmID)
                 self.summonUserInterface(showing: .clipboard(instance))
             },
             onQuit: { [weak self] in self?.host?.requestFullQuit() }
@@ -419,7 +419,7 @@ final class AppResidencyController: WindowResidencyHosting {
             summonUserInterface()
             return
         }
-        viewModel.selectedID = entry.id
+        viewModel.selectRevealing(entry.id)
         guard let instance = entry.vm else {
             summonUserInterface()
             return

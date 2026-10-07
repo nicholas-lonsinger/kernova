@@ -69,15 +69,25 @@ final class VMLibraryViewModel {
 
     var arrivals: [VMArrival] { library.arrivals }
 
-    var selectedID: UUID? {
-        get { library.selectedID }
-        set { library.selectedID = newValue }
-    }
+    var selectedID: UUID? { library.selectedID }
 
     var selection: SidebarRowKey? {
         get { library.selection }
         set { library.selection = newValue }
     }
+
+    var sidebarOptions: SidebarViewOptions {
+        get { library.sidebarOptions }
+        set { library.sidebarOptions = newValue }
+    }
+
+    var sidebarLayout: SidebarLayout { library.sidebarLayout }
+
+    var sidebarContext: SidebarLayout.Context { library.sidebarContext }
+
+    func reconcileSelection(with layout: SidebarLayout) { library.reconcileSelection(with: layout) }
+
+    func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
     var selectedInstance: VMInstance? { library.selectedInstance }
 
@@ -763,7 +773,7 @@ final class VMLibraryViewModel {
     /// to be taken to another window.
     private func focusInlineDisplay(for instance: VMInstance) {
         guard instance.hostState.displayPreference == .inline else { return }
-        selectedID = instance.id
+        selectRevealing(instance.id)
         deliverInlineFocus(to: instance)
     }
 
@@ -779,10 +789,11 @@ final class VMLibraryViewModel {
         presenter.focusGuestDisplay(for: instance)
     }
 
-    /// Selects the row and asks for the library window — what a reveal lands on
+    /// Selects the row, dropping any sidebar filter that hides it, and asks for
+    /// the library window — what a reveal lands on
     /// when there is no display to surface.
     private func revealInLibrary(_ id: UUID) {
-        selectedID = id
+        selectRevealing(id)
         onSurfaceLibrary?()
     }
 

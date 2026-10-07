@@ -22,6 +22,9 @@ enum VMIntentFixtures {
         hasSavedState: Bool = false,
         isEphemeral: Bool = false,
         snapshotCount: Int = 0,
+        hasSnapshots: Bool = false,
+        guestAgent: VMGuestAgentBucket? = nil,
+        stateBucket: VMStateBucket = .stopped,
         bundlePath: String = "/tmp/vm.kernova",
         heldByAnotherCopy: Bool = false
     ) -> VMInfo {
@@ -42,6 +45,9 @@ enum VMIntentFixtures {
             hasSavedState: hasSavedState,
             isEphemeral: isEphemeral,
             snapshotCount: snapshotCount,
+            hasSnapshots: hasSnapshots,
+            guestAgent: guestAgent,
+            stateBucket: stateBucket,
             bundlePath: bundlePath, heldByAnotherCopy: heldByAnotherCopy)
     }
 

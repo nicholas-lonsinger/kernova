@@ -107,7 +107,7 @@ struct VMLibraryViewModelTests {
     func deleteVM() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        viewModel.selectedID = instance.id
+        viewModel.selectRevealing(instance.id)
 
         // Pre-populate mock storage so delete doesn't throw
         storage.bundles[instance.bundleURL] = instance.configuration
@@ -125,7 +125,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let first = viewModel.library.admitFixture(name: "First")
         let second = viewModel.library.admitFixture(name: "Second")
-        viewModel.selectedID = second.id
+        viewModel.selectRevealing(second.id)
 
         storage.bundles[second.bundleURL] = second.configuration
 
@@ -152,7 +152,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
         instance.activity.placeForTesting(.suspended)
-        viewModel.selectedID = instance.id
+        viewModel.selectRevealing(instance.id)
         storage.bundles[instance.bundleURL] = instance.configuration
 
         #expect(instance.isSuspended)
@@ -215,7 +215,7 @@ struct VMLibraryViewModelTests {
     func deleteVMPermanentlyUsesHardDelete() async {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        viewModel.selectedID = instance.id
+        viewModel.selectRevealing(instance.id)
         storage.bundles[instance.bundleURL] = instance.configuration
 
         await viewModel.delete(instance, permanently: true)
@@ -1065,7 +1065,7 @@ struct VMLibraryViewModelTests {
         let onScreen = viewModel.library.admitFixture(name: "OnScreen")
         let wanted = viewModel.library.admitFixture(name: "Wanted")
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
-        viewModel.selectedID = onScreen.id
+        viewModel.selectRevealing(onScreen.id)
 
         try viewModel.commands.open(.id(wanted.id))
 
@@ -1134,7 +1134,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel()
         let onScreen = viewModel.library.admitFixture(name: "OnScreen")
         let wanted = viewModel.library.admitFixture(name: "Wanted")
-        viewModel.selectedID = onScreen.id
+        viewModel.selectRevealing(onScreen.id)
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -1235,7 +1235,7 @@ struct VMLibraryViewModelTests {
         let onScreen = viewModel.library.admitFixture(name: "OnScreen")
         let wanted = viewModel.library.admitFixture(name: "Wanted", hostState: VMHostState(displayPreference: .popOut))
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
-        viewModel.selectedID = onScreen.id
+        viewModel.selectRevealing(onScreen.id)
 
         try viewModel.commands.open(.id(wanted.id))
 
@@ -3773,7 +3773,7 @@ struct VMLibraryViewModelTests {
             )
         }
         installing.activity.placeForTesting(.initialBoot)
-        viewModel.selectedID = installing.id
+        viewModel.selectRevealing(installing.id)
         storage.bundles[installing.bundleURL] = installing.configuration
 
         let cancelStream = AsyncStream<Void>.makeStream()
@@ -4765,7 +4765,7 @@ struct VMLibraryViewModelTests {
         let saved = makeAutoStartInstance(in: viewModel.library, name: "Suspended")
         saved.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: saved)
-        viewModel.selectedID = inline.id
+        viewModel.selectRevealing(inline.id)
         var readied: [UUID] = []
         var displayWindows = 0
         var libraryRequests = 0
@@ -5049,7 +5049,7 @@ struct VMLibraryViewModelTests {
         let gate = GatedStep()
         let preparing = viewModel.library.beginGatedArrival(
             .cloning, named: "Already Preparing", gate: gate)
-        viewModel.selectedID = preparing.id
+        viewModel.selectRevealing(preparing.id)
 
         let source = try makeImportSource(name: "Concurrent Import", storage: storage)
 
@@ -5558,7 +5558,7 @@ struct VMLibraryViewModelTests {
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
             .cloning, named: "Cloning VM", gate: gate)
-        viewModel.selectedID = arrival.id
+        viewModel.selectRevealing(arrival.id)
 
         viewModel.cancelArrival(arrival)
         try await waitForChange { arrival.stage == .cancelling }
@@ -5760,7 +5760,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let a = viewModel.library.admitFixture(name: "A")
         let b = viewModel.library.admitFixture(name: "B")
-        viewModel.selectedID = b.id
+        viewModel.selectRevealing(b.id)
         storage.bundles[b.bundleURL] = b.configuration
 
         await viewModel.delete(b)

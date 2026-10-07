@@ -1,3 +1,4 @@
+import KernovaKit
 import Foundation
 
 /// A network the user named: the VMs naming it in their membership

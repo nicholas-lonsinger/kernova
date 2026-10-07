@@ -148,7 +148,7 @@ struct AppResidencySummonTests {
             .importing,
             configuration: VMConfiguration(name: "Arriving", guestOS: .linux, bootMode: .efi))
         viewModel.library.register(arrival)
-        viewModel.selectedID = nil
+        viewModel.selection = nil
 
         controller.summonStatusItemTarget(for: arrival.id)
         try await foreground.gate.wait { foreground.activations > 0 }

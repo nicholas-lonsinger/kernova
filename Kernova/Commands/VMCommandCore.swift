@@ -599,6 +599,7 @@ final class VMCommandCore: VMCommanding {
 
     private func info(_ instance: VMInstance) -> VMInfo {
         let config = instance.configuration
+        let subject = library.sidebarContext.subject(of: .vm(instance))
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
@@ -614,8 +615,11 @@ final class VMCommandCore: VMCommanding {
             ipAddress: library.guestAddresses.address(for: instance),
             agentStatus: instance.agentStatus.wireName,
             hasSavedState: instance.hasSaveFile,
-            isEphemeral: instance.hostState.ephemeralModeEnabled,
+            isEphemeral: subject.isEphemeral,
             snapshotCount: instance.snapshotManifest.snapshots.count,
+            hasSnapshots: subject.hasSnapshots,
+            guestAgent: subject.guestAgent,
+            stateBucket: subject.state,
             bundlePath: instance.bundleURL.path(percentEncoded: false),
             heldByAnotherCopy: instance.heldByAnotherCopy
         )
@@ -625,6 +629,7 @@ final class VMCommandCore: VMCommanding {
     /// saved state, no snapshots, and the bundle path it publishes at.
     private func info(_ arrival: VMArrival) -> VMInfo {
         let config = arrival.configuration
+        let subject = library.sidebarContext.subject(of: .arriving(arrival))
         return VMInfo(
             id: arrival.id,
             name: arrival.name,
@@ -640,8 +645,11 @@ final class VMCommandCore: VMCommanding {
             ipAddress: GuestAddressObserver.address(withNoLiveGuest: config),
             agentStatus: AgentStatus.waiting.wireName,
             hasSavedState: false,
-            isEphemeral: false,
+            isEphemeral: subject.isEphemeral,
             snapshotCount: 0,
+            hasSnapshots: subject.hasSnapshots,
+            guestAgent: subject.guestAgent,
+            stateBucket: subject.state,
             bundlePath: arrival.destinationURL.path(percentEncoded: false),
             heldByAnotherCopy: false
         )
