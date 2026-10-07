@@ -125,15 +125,11 @@ final class SidebarViewController: NSViewController {
         expandCreated(changes.created)
     }
 
-    /// Opens each section as last saved and each group header, in the order
-    /// the tree created them — every section before its headers.
+    /// Opens each created section as last saved; a group header lists its rows
+    /// beside it and opens nothing.
     private func expandCreated(_ nodes: [SidebarNode]) {
-        for node in nodes {
-            if let section = node as? SidebarSection {
-                applySavedExpansion(to: section)
-            } else {
-                outlineView.expandItem(node)
-            }
+        for case let section as SidebarSection in nodes {
+            applySavedExpansion(to: section)
         }
     }
 
@@ -457,7 +453,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is SidebarSection || item is SidebarGroupHeader
+        item is SidebarSection
     }
 
     // MARK: Drag source
@@ -485,18 +481,24 @@ extension SidebarViewController: NSOutlineViewDataSource {
         proposedChildIndex index: Int
     ) -> NSDragOperation {
         if info.draggingSource as? NSOutlineView === outlineView {
-            // Internal reorder — constrained to between the dragged row's
-            // siblings.
-            guard let source = draggedRow(info), let parent = source.parent else { return [] }
-            let count = parent.children.count
+            // Internal reorder — constrained to the gaps of the dragged row's
+            // own list: its group's rows, which follow its header.
+            guard let source = draggedRow(info), let parent = source.parent,
+                let list = Self.list(of: source)
+            else { return [] }
             let target: Int
             switch item {
             case let row as SidebarRow:
-                guard row.parent === parent else { return [] }
-                target = parent.children.firstIndex { $0 === row } ?? count
+                guard row.parent === parent, row.key.group == source.key.group else { return [] }
+                target = parent.children.firstIndex { $0 === row } ?? list.upperBound
             case let node as SidebarNode:
                 guard node === parent else { return [] }
-                target = index == NSOutlineViewDropOnItemIndex ? count : index
+                if index == NSOutlineViewDropOnItemIndex {
+                    target = list.upperBound
+                } else {
+                    guard (list.lowerBound...list.upperBound).contains(index) else { return [] }
+                    target = index
+                }
             default:
                 // Outside every section. AppKit proposes the root with
                 // `NSOutlineViewDropOnItemIndex` for the empty space below the
@@ -504,9 +506,10 @@ extension SidebarViewController: NSOutlineViewDataSource {
                 // above its section is that list's top.
                 let section = tree.sections.firstIndex { $0.id == source.key.section } ?? 0
                 target =
-                    index == NSOutlineViewDropOnItemIndex || index > section ? count : 0
+                    index == NSOutlineViewDropOnItemIndex || index > section
+                    ? list.upperBound : list.lowerBound
             }
-            outlineView.setDropItem(parent, dropChildIndex: max(0, min(target, count)))
+            outlineView.setDropItem(parent, dropChildIndex: target)
             return .move
         }
         if info.draggingPasteboard.canReadObject(
@@ -534,18 +537,38 @@ extension SidebarViewController: NSOutlineViewDataSource {
     /// sibling it was dropped above — or after the last sibling — whatever
     /// entries the section leaves out.
     private func acceptReorder(info: NSDraggingInfo, parent: SidebarNode?, childIndex: Int) -> Bool {
-        guard let source = draggedRow(info), let parent, source.parent === parent else {
+        guard let source = draggedRow(info), let parent, source.parent === parent,
+            let list = Self.list(of: source)
+        else {
             return false
         }
-        let visible = parent.children.compactMap { ($0 as? SidebarRow)?.key.entryID }
+        let visible = parent.children[list].compactMap { ($0 as? SidebarRow)?.key.entryID }
         let order = viewModel.entries.map(\.id)
-        let index = childIndex == NSOutlineViewDropOnItemIndex ? visible.count : childIndex
+        let gap = childIndex == NSOutlineViewDropOnItemIndex ? list.upperBound : childIndex
+        let index = min(max(gap, list.lowerBound), list.upperBound) - list.lowerBound
         guard let sourceIndex = order.firstIndex(of: source.key.entryID),
             let offset = SidebarLayout.manualOrderOffset(
                 moving: source.key.entryID, toVisibleIndex: index, amongVisible: visible, in: order)
         else { return false }
         viewModel.moveEntries(fromOffsets: IndexSet(integer: sourceIndex), toOffset: offset)
         return true
+    }
+
+    /// The offsets in `row`'s parent of the list `row` reorders within: the
+    /// run of rows of its group, which a group header — listed beside its
+    /// rows — bounds.
+    static func list(of row: SidebarRow) -> Range<Int>? {
+        guard let siblings = row.parent?.children,
+            let at = siblings.firstIndex(where: { $0 === row })
+        else { return nil }
+        func inList(_ node: SidebarNode) -> Bool {
+            (node as? SidebarRow)?.key.group == row.key.group
+        }
+        var lower = at
+        while lower > 0, inList(siblings[lower - 1]) { lower -= 1 }
+        var upper = at + 1
+        while upper < siblings.count, inList(siblings[upper]) { upper += 1 }
+        return lower..<upper
     }
 
     /// Filters the drop to `.kernova` bundles and imports the batch.

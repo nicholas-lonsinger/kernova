@@ -757,32 +757,94 @@ struct SidebarFilterSortGroupTests {
         #expect(abs(nameFrame.minX - detailFrame.minX) < 1)
     }
 
-    @Test("The fit width shows a grouped row's whole name")
-    func fitWidthCoversGroupedRows() throws {
+    /// A sidebar in a window sized to its own fit width, as the divider's
+    /// snap leaves it, and what each VM row shows there: the row's cell frame
+    /// in the outline view, and whether its name is drawn whole.
+    private struct SidebarWindow {
+        let controller: SidebarViewController
+        let window: NSWindow
+        let outline: NSOutlineView
+
+        @MainActor
+        init(_ viewModel: VMLibraryViewModel) throws {
+            controller = SidebarViewController(viewModel: viewModel)
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 200, height: 400), styleMask: [.titled],
+                backing: .buffered, defer: false)
+            window.contentViewController = controller
+            controller.viewDidAppear()
+            outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        }
+
+        /// Each VM row's name, cell frame, and whether the name fits, after
+        /// a sync pass and a snap to the fit width.
+        @MainActor
+        func rows() throws -> [(name: String, cell: NSRect, nameFits: Bool)] {
+            controller.viewDidAppear()
+            controller.view.layoutSubtreeIfNeeded()
+            let fit = try #require(controller.widthToFitLongestRow())
+            window.setContentSize(NSSize(width: fit, height: 400))
+            controller.view.layoutSubtreeIfNeeded()
+            for row in 0..<outline.numberOfRows { _ = outline.rowView(atRow: row, makeIfNecessary: true) }
+            controller.view.layoutSubtreeIfNeeded()
+            return try (0..<outline.numberOfRows).compactMap { row in
+                guard let item = outline.item(atRow: row) as? SidebarRow else { return nil }
+                let cell = try #require(
+                    outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
+                let label = try #require(cell.textField)
+                return (item.entry.name, cell.frame, label.frame.width >= label.fittingSize.width)
+            }
+        }
+    }
+
+    @Test("Grouping and ungrouping leave every row where a fresh load puts it, its name whole")
+    func groupingRoundTripMatchesFreshLoad() throws {
+        let long = "Ubuntu Desktop 26.04 LTS Workstation"
+        func makeLibrary() -> VMLibraryViewModel {
+            let viewModel = makeViewModel()
+            viewModel.library.admitFixture(name: long, guestOS: .linux)
+            viewModel.library.admitFixture(name: "macOS 26", guestOS: .macOS)
+            return viewModel
+        }
+        let fresh = try SidebarWindow(makeLibrary()).rows()
+        #expect(fresh.allSatisfy { $0.nameFits })
+
+        let viewModel = makeLibrary()
+        let sidebar = try SidebarWindow(viewModel)
+        _ = try sidebar.rows()
+        viewModel.sidebarOptions.grouping = .guestOS
+        let grouped = try sidebar.rows()
+        viewModel.sidebarOptions.grouping = .none
+        let ungrouped = try sidebar.rows()
+
+        // A grouped row sits where an ungrouped one does: headers are listed
+        // beside their rows, not above a level of their own.
+        #expect(grouped.allSatisfy { $0.nameFits })
+        #expect(Set(grouped.map(\.cell.minX)) == Set(fresh.map(\.cell.minX)))
+        #expect(ungrouped.map(\.name) == fresh.map(\.name))
+        #expect(ungrouped.map(\.cell.minX) == fresh.map(\.cell.minX))
+        #expect(ungrouped.map(\.cell.width) == fresh.map(\.cell.width))
+        #expect(ungrouped.allSatisfy { $0.nameFits })
+    }
+
+    @Test("A drop lands only among the dragged row's own group")
+    func dropListIsTheRowsGroup() throws {
         let viewModel = makeViewModel()
-        let name = "Ubuntu Desktop 26.04 LTS Workstation"
-        viewModel.library.admitFixture(name: name)
-        viewModel.sidebarOptions.grouping = .state
-        viewModel.sidebarOptions.showsDetails = true
+        viewModel.library.admitFixture(name: "Linux A", guestOS: .linux)
+        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.library.admitFixture(name: "Linux B", guestOS: .linux)
+        viewModel.sidebarOptions.grouping = .guestOS
         let controller = SidebarViewController(viewModel: viewModel)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.titled],
-            backing: .buffered, defer: false)
-        window.contentViewController = controller
-        controller.view.layoutSubtreeIfNeeded()
-        let fit = try #require(controller.widthToFitLongestRow())
-
-        window.setContentSize(NSSize(width: fit, height: 200))
-        controller.view.layoutSubtreeIfNeeded()
+        controller.loadViewIfNeeded()
         let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        _ = outline.rowView(atRow: 2, makeIfNecessary: true)
-        controller.view.layoutSubtreeIfNeeded()
-        let cell = try #require(
-            outline.view(atColumn: 0, row: 2, makeIfNecessary: false) as? SidebarVMRowCellView)
-        let label = try #require(cell.textField)
+        let section = try #require(outline.item(atRow: 0) as? SidebarSection)
+        // Section children: [macOS header, Mac, Linux header, Linux A, Linux B].
+        let linuxB = try #require(section.children[4] as? SidebarRow)
+        #expect(section.children[2] is SidebarGroupHeader)
 
-        #expect(outline.bounds.width >= fit - 1)
-        #expect(label.frame.width >= label.fittingSize.width)
+        #expect(SidebarViewController.list(of: linuxB) == 3..<5)
+        let mac = try #require(section.children[1] as? SidebarRow)
+        #expect(SidebarViewController.list(of: mac) == 1..<2)
     }
 
     // MARK: - State buckets

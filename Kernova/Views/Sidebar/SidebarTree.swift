@@ -27,7 +27,7 @@ final class SidebarSection: SidebarNode {
     }
 }
 
-/// A group header within a section.
+/// A group header within a section, listed just before its group's rows.
 final class SidebarGroupHeader: SidebarNode {
     let id: SidebarGroupID
     fileprivate(set) var title: String
@@ -146,7 +146,7 @@ final class SidebarTree {
         func retitle(_ node: SidebarNode, from old: String, to new: String, apply: () -> Void) {
             guard old != new else { return }
             apply()
-            // Not detached: reloading a header leaves its children's views up.
+            // Not detached: reloading a title leaves the rows' views up.
             changes.reloaded.append(node)
         }
 
@@ -182,7 +182,12 @@ final class SidebarTree {
             }
         }
 
-        func header(_ group: SidebarLayout.Group, in section: SidebarSectionID) -> SidebarNode {
+        // A group header and its rows are siblings, each header listed just
+        // before its rows: an outline view that has once shown a level below
+        // the section keeps indenting that section's rows as if one were
+        // there, through every reload (observed macOS 27.2, 2026-10-07), so the sidebar
+        // never nests one.
+        func header(_ group: SidebarLayout.Group, in section: SidebarSectionID) -> [SidebarNode] {
             let key = HeaderKey(section: section, group: group.id)
             let existing = self.headersByKey[key]
             let header = existing ?? SidebarGroupHeader(id: group.id, title: group.title)
@@ -192,10 +197,7 @@ final class SidebarTree {
                 changes.created.append(header)
             }
             headersByKey[key] = header
-            setChildren(
-                of: header, to: rows(group.rows, section: section, group: group.id),
-                isNew: existing == nil)
-            return header
+            return [header] + rows(group.rows, section: section, group: group.id)
         }
 
         var newSections: [SidebarSection] = []
@@ -221,7 +223,7 @@ final class SidebarTree {
                 children =
                     switch spec.content {
                     case .rows(let entries): rows(entries, section: spec.id, group: nil)
-                    case .groups(let groups): groups.groups.map { header($0, in: spec.id) }
+                    case .groups(let groups): groups.groups.flatMap { header($0, in: spec.id) }
                     }
             }
             setChildren(of: section, to: children, isNew: existing == nil)
