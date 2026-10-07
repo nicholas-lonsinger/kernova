@@ -280,6 +280,32 @@ public struct NetworkSummary: Codable, Sendable, Hashable {
     }
 }
 
+/// One group of the library's VMs that a listing can be narrowed to.
+public struct GroupSummary: Codable, Sendable, Hashable {
+    /// The group's stable identifier, which names it as its name does.
+    public let id: UUID
+    /// What the user called it, unique among groups of its kind ignoring case.
+    public let name: String
+    /// What kind of group it is.
+    public let kind: VMGroupKind
+    /// The virtual machines in it, in library order.
+    public let members: [VMSummary]
+
+    /// Describes one group.
+    public init(id: UUID, name: String, kind: VMGroupKind, members: [VMSummary]) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.members = members
+    }
+}
+
+/// What kind of group a ``GroupSummary`` or a ``VMGroupReference`` is.
+public enum VMGroupKind: String, Codable, Sendable, Hashable, CaseIterable {
+    /// A saved library filter: its members are the VMs the filter admits.
+    case smartGroup
+}
+
 /// What kind of consent a refusal is asking for, so a surface can pick its
 /// native affordance without parsing the copy.
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {

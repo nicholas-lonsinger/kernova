@@ -29,6 +29,7 @@ public enum VMSelector: Codable, Sendable, Hashable {
 /// state does allow, and so each transport can map a verb to its own naming.
 public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case list
+    case groups
     case info
     case ipAddress
     case snapshots
@@ -81,6 +82,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     public var displayName: String {
         switch self {
         case .list: "List"
+        case .groups: "List Groups"
         case .info: "Get Info"
         case .ipAddress: "Get IP Address"
         case .snapshots: "List Snapshots"
@@ -147,7 +149,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
             .usbAccessories, .availableUSBAccessories, .usbPairings,
             .forgetUSBPairing, .events, .reveal,
             .showInFinder, .configurationKeys, .configuration, .setConfiguration,
-            .networks, .createNetwork, .renameNetwork, .deleteNetwork, .quit:
+            .groups, .networks, .createNetwork, .renameNetwork, .deleteNetwork, .quit:
             true
         case .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .open,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,

@@ -63,7 +63,16 @@ struct VMCommandEnvelopeTests {
     @Test("Every request verb round-trips, and reports which verb it is")
     func everyRequestRoundTrips() throws {
         let verbs: [VMCommandRequest.Verb] = [
-            .list,
+            .list(),
+            .list(
+                VMListQuery(
+                    filter: VMLibraryFilter(
+                        guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
+                        networks: [.unlisted, VMLibraryFilter.Network(.shared) { _, _ in true }],
+                        guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
+                    networkNames: ["Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
+                    sort: .dateCreated)),
+            .groups,
             .info(selector),
             .ipAddress(selector),
             .snapshots(selector),
@@ -263,6 +272,8 @@ struct VMCommandEnvelopeTests {
             .networks([NetworkSummary(id: snapshotID, name: "Lab", kind: .hostOnly, members: [summary])]),
             .networks([]),
             .network(NetworkSummary(id: snapshotID, name: "Lab", kind: .shared, members: [])),
+            .groups([GroupSummary(id: snapshotID, name: "Linux Lab", kind: .smartGroup, members: [summary])]),
+            .groups([]),
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),

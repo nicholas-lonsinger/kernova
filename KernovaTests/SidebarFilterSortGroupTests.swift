@@ -170,10 +170,10 @@ struct SidebarFilterSortGroupTests {
     func detailText() {
         let created = Date(timeIntervalSince1970: 1_800_000_000)
         let entry = vm("Running", phase: .running(sessionID: UUID())) { $0.createdAt = created }
-        #expect(SidebarSort.name.detail(for: entry) == "Running")
-        #expect(SidebarSort.manual.detail(for: entry) == "Running")
+        #expect(VMLibrarySort.name.detail(for: entry) == "Running")
+        #expect(VMLibrarySort.manual.detail(for: entry) == "Running")
         #expect(
-            SidebarSort.dateCreated.detail(for: entry)
+            VMLibrarySort.dateCreated.detail(for: entry)
                 == "Created \(created.formatted(date: .abbreviated, time: .omitted))")
     }
 

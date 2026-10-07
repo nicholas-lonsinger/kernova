@@ -305,6 +305,18 @@ final class MockVMCommanding: VMCommanding {
         return library
     }
 
+    /// Every query `list(_:)` was asked.
+    private(set) var listQueries: [VMListQuery] = []
+    /// What `groups()` answers with.
+    var groupsToReturn: [GroupSummary] = []
+
+    func list(_ query: VMListQuery) throws -> [VMSummary] {
+        listQueries.append(query)
+        return library
+    }
+
+    func groups() throws -> [GroupSummary] { groupsToReturn }
+
     func info(_ selector: VMSelector) throws -> VMInfo {
         infoSelectors.append(selector)
         if let infoError { throw infoError }

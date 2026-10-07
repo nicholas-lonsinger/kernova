@@ -36,6 +36,17 @@ protocol VMCommanding: AnyObject {
     /// Every VM in the library, in library order.
     func list() -> [VMSummary]
 
+    /// The VMs `query` admits, in its order — each one the sidebar would list
+    /// under the same filter, an arrival included.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a network or
+    ///   group `query` names that the library does not list.
+    func list(_ query: VMListQuery) throws -> [VMSummary]
+
+    /// The library's smart groups, in the order the sidebar lists them, each
+    /// with its members in library order.
+    func groups() throws -> [GroupSummary]
+
     func info(_ selector: VMSelector) throws -> VMInfo
 
     /// What the guest's address resolves to on the network its mode joins.

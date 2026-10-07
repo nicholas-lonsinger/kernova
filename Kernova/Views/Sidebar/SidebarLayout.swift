@@ -145,7 +145,7 @@ struct SidebarLayout {
 
     /// `folder`'s section: its members the library lists, in `sort`'s order —
     /// under the manual sort, the folder's own — with their count.
-    private static func section(for folder: VMFolder, entries: [LibraryEntry], sort: SidebarSort) -> Section {
+    private static func section(for folder: VMFolder, entries: [LibraryEntry], sort: VMLibrarySort) -> Section {
         let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let members = folder.members.compactMap { byID[$0] }
         return Section(
@@ -158,7 +158,7 @@ struct SidebarLayout {
     /// leaves it and the selection falls back by ``resolve(_:)``.
     private static func section(
         for group: VMSmartGroup, entries: [LibraryEntry], subjects: [UUID: VMLibraryFilter.Subject],
-        sort: SidebarSort
+        sort: VMLibrarySort
     ) -> Section {
         let members = entries.filter { subjects[$0.id].map(group.filter.admits) ?? false }
         return Section(

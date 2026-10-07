@@ -117,7 +117,7 @@ struct VMCommandSocketListenerTests {
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        try client.send(VMCommandRequest(verb: .list))
+        try client.send(VMCommandRequest(verb: .list()))
         let response = try await client.nextResponse()
 
         #expect(response?.result == .summaries([alpha]))
@@ -131,7 +131,7 @@ struct VMCommandSocketListenerTests {
         defer { harness.listener.stop() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
-        try client.send(VMCommandRequest(verb: .list))
+        try client.send(VMCommandRequest(verb: .list()))
         // The answer proves the connection was adopted on the main actor: the
         // count is written in the same hop that starts reading.
         _ = try await client.nextResponse()
@@ -157,7 +157,7 @@ struct VMCommandSocketListenerTests {
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        try client.send(VMCommandRequest(verb: .list))
+        try client.send(VMCommandRequest(verb: .list()))
 
         client.observe(forAtMost: 2)
         #expect(try await client.nextResponse() == nil)
@@ -230,7 +230,7 @@ struct VMCommandSocketListenerTests {
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        try client.send(VMCommandRequest(verb: .list))
+        try client.send(VMCommandRequest(verb: .list()))
         #expect(try await client.nextResponse()?.result == .summaries([alpha]))
 
         // A headless start is a bring-up nobody asked to see.
@@ -341,7 +341,7 @@ struct VMCommandSocketListenerTests {
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
 
-        var request = VMCommandRequest(verb: .list)
+        var request = VMCommandRequest(verb: .list())
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
         try client.send(request)
 

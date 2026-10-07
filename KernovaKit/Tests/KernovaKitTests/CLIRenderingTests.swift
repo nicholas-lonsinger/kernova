@@ -338,6 +338,53 @@ struct CLIRenderingTests {
         #expect(rendered.contains("\"kind\" : \"hostOnly\""))
     }
 
+    // MARK: - Groups
+
+    private var groups: [GroupSummary] {
+        [
+            GroupSummary(
+                id: UUID(uuidString: "CCCCCCCC-BBBB-CCCC-DDDD-EEEEEEEEEEEE") ?? UUID(),
+                name: "Linux Lab", kind: .smartGroup, members: [alpha, longName]),
+            GroupSummary(
+                id: UUID(uuidString: "DDDDDDDD-CCCC-DDDD-EEEE-FFFFFFFFFFFF") ?? UUID(),
+                name: "Empty", kind: .smartGroup, members: []),
+        ]
+    }
+
+    @Test("A group listing names each group's kind and members, with the identifier last")
+    func groupListingCarriesEveryColumn() {
+        let lines = TableRenderer.render(groups, quiet: false).components(separatedBy: "\n")
+
+        #expect(lines.count == 3)
+        #expect(lines[0].hasPrefix("NAME"))
+        for heading in ["KIND", "MEMBERS"] {
+            #expect(lines[0].contains(heading), "missing \(heading)")
+        }
+        #expect(lines[0].hasSuffix("ID"))
+        #expect(lines[1].hasPrefix("Linux Lab"))
+        #expect(lines[1].contains("smartGroup"))
+        #expect(lines[1].contains("Alpha, \(longName.name)"))
+        #expect(lines[1].hasSuffix(groups[0].id.uuidString))
+        #expect(lines[2].contains("None"))
+        #expect(lines[2].hasSuffix(groups[1].id.uuidString))
+        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    @Test("--quiet on a group listing prints the names --smart-group takes back")
+    func quietGroupListingIsNamesOnly() {
+        #expect(TableRenderer.render(groups, quiet: true) == "Linux Lab\nEmpty")
+        #expect(TableRenderer.render([GroupSummary](), quiet: false).isEmpty)
+    }
+
+    @Test("A group's JSON is the wire DTO, members and all, decodable back")
+    func groupJSONIsTheWireDTO() throws {
+        let rendered = try JSONRenderer.render(groups)
+        let decoded = try JSONDecoder().decode([GroupSummary].self, from: Data(rendered.utf8))
+        #expect(decoded == groups)
+        #expect(rendered.contains("\"kind\" : \"smartGroup\""))
+        #expect(rendered.contains("\"members\""))
+    }
+
     // MARK: - Configuration
 
     private let settings = [

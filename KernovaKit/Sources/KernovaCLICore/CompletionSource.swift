@@ -88,6 +88,13 @@ enum CompletionSource {
     /// The named networks a `<network>` argument offers.
     static let network = CompletionKind.custom { _, _, _ in networkNames() }
 
+    /// The networks a `list --network` value offers: each mode, then the
+    /// library's named networks by name.
+    static let networkFilter = CompletionKind.custom { _, _, _ in networkFilterValues() }
+
+    /// The smart groups a `--smart-group` value offers.
+    static let smartGroup = CompletionKind.custom { _, _, _ in groupNames(of: .smartGroup) }
+
     /// The settings a `get` key argument offers.
     static let configurationKey = CompletionKind.custom { _, _, _ in configurationKeys() }
 
@@ -108,7 +115,7 @@ enum CompletionSource {
     /// Every virtual machine in the library, by name or — under `--id` — by
     /// identifier.
     static func vmNames(byIdentifier: Bool, in context: CompletionContext = .live) -> [String] {
-        guard case .summaries(let rows)? = answer(to: .list, in: context) else { return [] }
+        guard case .summaries(let rows)? = answer(to: .list(), in: context) else { return [] }
         return rows.map {
             byIdentifier
                 ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
@@ -194,6 +201,22 @@ enum CompletionSource {
     static func networkNames(in context: CompletionContext = .live) -> [String] {
         guard case .networks(let networks)? = answer(to: .networks, in: context) else { return [] }
         return networks.map { candidate($0.name, describedBy: $0.kind.rawValue, for: context.shell) }
+    }
+
+    /// Every network mode a listing filters by, then every named network by
+    /// name. The modes are offered with no app to ask.
+    static func networkFilterValues(in context: CompletionContext = .live) -> [String] {
+        VMLibraryFilter.Network.spellings.map { candidate($0, describedBy: "", for: context.shell) }
+            + networkNames(in: context)
+    }
+
+    /// Every group of `kind` in the library, by the name `--smart-group` takes
+    /// back, described by how many VMs it holds.
+    static func groupNames(of kind: VMGroupKind, in context: CompletionContext = .live) -> [String] {
+        guard case .groups(let groups)? = answer(to: .groups, in: context) else { return [] }
+        return groups.filter { $0.kind == kind }.map {
+            candidate($0.name, describedBy: "\($0.members.count) VMs", for: context.shell)
+        }
     }
 
     /// Every setting `get` and `set` address, each with `suffix` appended.

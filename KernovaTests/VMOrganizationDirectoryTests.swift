@@ -165,6 +165,26 @@ struct VMOrganizationDirectoryTests {
         // Its own name, recased, is a rename.
         try directory.renameSmartGroup(lab.id, to: "LAB")
         #expect(directory.smartGroups.map(\.name) == ["LAB", "Bench"])
+        // An identifier already names a group wherever a name does.
+        let identifier = UUID().uuidString
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameIsIdentifier(identifier, .smartGroup)) {
+            try directory.createSmartGroup(named: identifier, filter: VMLibraryFilter())
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameIsIdentifier(identifier, .smartGroup)) {
+            try directory.renameSmartGroup(bench.id, to: identifier)
+        }
+    }
+
+    @Test("A name or an identifier selects a group, the name ignoring case")
+    func namesSelectGroups() throws {
+        let directory = VMOrganizationDirectory(fileURL: nil)
+        let lab = try directory.createSmartGroup(named: "Linux Lab", filter: VMLibraryFilter())
+
+        #expect(directory.smartGroup(named: "linux lab") == lab)
+        #expect(directory.smartGroup(named: " LINUX LAB ") == lab)
+        #expect(directory.smartGroup(named: lab.id.uuidString) == lab)
+        #expect(directory.smartGroup(named: "Linux") == nil)
+        #expect(directory.smartGroup(named: UUID().uuidString) == nil)
     }
 
     @Test("A suggested name steps past the names already taken")

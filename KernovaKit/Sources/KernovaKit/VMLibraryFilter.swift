@@ -115,6 +115,29 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// The coded spelling.
         public var rawValue: String { choice?.rawValue ?? Self.unlistedValue }
 
+        /// The value `text` spells as typed: a ``rawValue`` naming no named
+        /// network, or a vmnet mode alone (`shared`, `hostOnly`) for that
+        /// mode's common network. `nil` for anything else — a named network
+        /// is typed by its name or identifier, which only the library
+        /// resolves, so no network can be named one of these.
+        public init?(spelling text: String) {
+            if let kind = VmnetNetworkKind(rawValue: text) {
+                self.init(storing: .vmnet(kind, .common))
+                return
+            }
+            guard let network = Self(rawValue: text) else { return nil }
+            if case .vmnet(_, .network)? = network.choice { return nil }
+            self = network
+        }
+
+        /// What ``init(spelling:)`` reads, but for `bridged:<interface>`, in
+        /// the order the Mode picker lists them.
+        public static let spellings: [String] =
+            [VmnetNetworkKind.shared, .hostOnly].flatMap { kind in
+                [kind.rawValue, NetworkModeChoice.vmnet(kind, .isolated).rawValue]
+            }
+            + [NetworkModeChoice.bridged(nil).rawValue, NetworkModeChoice.none.rawValue, unlistedValue]
+
         /// Reads the one string ``rawValue`` spells.
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()

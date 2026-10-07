@@ -19,7 +19,7 @@ public struct KernovaCommand: ParsableCommand {
         discussion: launchNote + "\n\n" + CLIExitCode.contract,
         version: toolVersion,
         subcommands: [
-            List.self, Info.self, IP.self,
+            List.self, Groups.self, Info.self, IP.self,
             Start.self, Stop.self, Suspend.self, Pause.self, Resume.self, Restart.self, Open.self,
             Wait.self,
             Snapshot.self,
