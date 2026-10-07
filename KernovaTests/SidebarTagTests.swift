@@ -326,10 +326,24 @@ struct SidebarTagTests {
             let fromVM = try #require(vmMenu.items.first { $0.title == tag.name }?.image)
             let fromFilter = try #require(filterMenu.items.first { $0.title == tag.name }?.image)
             let expected = tag.color.dotImage()
+            let color = try tag.color.nsColor.resolvedSRGB(in: NSApp.effectiveAppearance.name)
             for image in [fromVM, fromFilter] {
-                #expect(image.size == expected.size, "\(tag.name)")
+                #expect(image.size == NSSize(width: 8, height: 8), "\(tag.name)")
+                #expect(!image.isTemplate, "\(tag.name)")
                 #expect(image.accessibilityDescription == tag.color.title, "\(tag.name)")
                 #expect(image.tiffRepresentation == expected.tiffRepresentation, "\(tag.name)")
+                // A menu draws an item image only from pixels: a
+                // drawing-handler image holds none, and showed as nothing.
+                let bitmaps = image.representations.compactMap { $0 as? NSBitmapImageRep }
+                #expect(bitmaps.map(\.pixelsWide).sorted() == [8, 16], "\(tag.name)")
+                for bitmap in bitmaps {
+                    let center = try #require(
+                        bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+                    #expect(center.alphaComponent == 1, "\(tag.name)")
+                    #expect(abs(center.redComponent - color.redComponent) < 0.02, "\(tag.name)")
+                    #expect(abs(center.greenComponent - color.greenComponent) < 0.02, "\(tag.name)")
+                    #expect(abs(center.blueComponent - color.blueComponent) < 0.02, "\(tag.name)")
+                }
             }
         }
         // The swatches tell the colors apart, so the comparison is not vacuous.
