@@ -28,10 +28,11 @@ extension VMLibrary {
         try organization.renameSmartGroup(id, to: name)
     }
 
-    /// Deletes the smart group `id` identifies; a VM selected in it stays
-    /// selected in the library section.
+    /// Deletes the smart group `id` identifies, and its saved collapsed state;
+    /// a VM selected in it stays selected in the library section.
     func deleteSmartGroup(_ id: UUID) throws {
         try organization.removeSmartGroup(id)
+        forgetCollapsed(.smartGroup(id))
         reconcileSelection()
     }
 }

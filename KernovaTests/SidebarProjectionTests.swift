@@ -242,7 +242,7 @@ struct SidebarProjectionTests {
 
         library.selection = inWork
         #expect(library.selectedID == alpha.id)
-        #expect(library.preferences.lastSelectedVMID == alpha.id)
+        #expect(library.preferences.sidebarSelection == inWork)
 
         // Already selected: the row it is selected in stays.
         library.selectRevealing(alpha.id)
@@ -250,7 +250,7 @@ struct SidebarProjectionTests {
 
         library.selectRevealing(beta.id)
         #expect(library.selection == .library(beta.id))
-        #expect(library.preferences.lastSelectedVMID == beta.id)
+        #expect(library.preferences.sidebarSelection == .library(beta.id))
 
         library.selection = nil
         #expect(library.selection == nil)

@@ -5,6 +5,7 @@ import KernovaKit
 ///
 /// A projection only: the library's own order — ``VMLibrary/entries``, the
 /// status menu, `kernova list` — stays the manual one whatever these say.
+/// Persisted as ``AppPreferences/sidebarViewOptions``.
 struct SidebarViewOptions: Codable, Hashable, Sendable {
     var filter = VMLibraryFilter()
     var sort: VMLibrarySort = .manual
@@ -30,6 +31,22 @@ struct SidebarViewOptions: Codable, Hashable, Sendable {
         case .showsDetails(let showsDetails): edited.showsDetails = showsDetails
         }
         return edited
+    }
+}
+
+extension SidebarViewOptions {
+    private enum CodingKeys: String, CodingKey {
+        case filter, sort, grouping, showsDetails
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = SidebarViewOptions()
+        self.init(
+            filter: try c.decodeIfPresent(VMLibraryFilter.self, forKey: .filter) ?? defaults.filter,
+            sort: try c.decodeIfPresent(VMLibrarySort.self, forKey: .sort) ?? defaults.sort,
+            grouping: try c.decodeIfPresent(SidebarGrouping.self, forKey: .grouping) ?? defaults.grouping,
+            showsDetails: try c.decodeIfPresent(Bool.self, forKey: .showsDetails) ?? defaults.showsDetails)
     }
 }
 

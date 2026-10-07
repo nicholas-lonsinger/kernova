@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// App-wide user preferences backed by `UserDefaults`.
 ///
@@ -8,6 +9,8 @@ import KernovaKit
 struct AppPreferences {
     /// Shared production instance over the standard defaults domain.
     @MainActor static let shared = AppPreferences(defaults: .standard)
+
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppPreferences")
 
     private let defaults: UserDefaults
 
@@ -23,7 +26,8 @@ struct AppPreferences {
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
         static let collapsedSidebarSections = "KernovaSidebarCollapsedSections"
-        static let lastSelectedVMID = "lastSelectedVMID"
+        static let sidebarViewOptions = "KernovaSidebarViewOptions"
+        static let sidebarSelection = "KernovaSidebarSelection"
         static let vmOrder = "vmOrder"
         static let quitTerminatesApp = "quitTerminatesApp"
         static let menuBarQuitReminderDismissed = "menuBarQuitReminderDismissed"
@@ -68,11 +72,52 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.collapsedSidebarSections) }
     }
 
-    /// The most recently selected VM, or `nil` when none has been selected yet
-    /// (or the value fails to parse as a UUID).
-    var lastSelectedVMID: UUID? {
-        get { defaults.string(forKey: Keys.lastSelectedVMID).flatMap(UUID.init(uuidString:)) }
-        nonmutating set { defaults.set(newValue?.uuidString, forKey: Keys.lastSelectedVMID) }
+    /// How the sidebar narrows, orders and groups the library, defaulting to
+    /// ``SidebarViewOptions/init()``.
+    ///
+    /// A filter value the library no longer lists — a deleted tag or named
+    /// network — is kept as stored: the filter menu offers to clear it.
+    var sidebarViewOptions: SidebarViewOptions {
+        get { decoded(SidebarViewOptions.self, forKey: Keys.sidebarViewOptions) ?? SidebarViewOptions() }
+        nonmutating set { setEncoded(newValue, forKey: Keys.sidebarViewOptions) }
+    }
+
+    /// The most recently selected sidebar row, or `nil` when none is.
+    var sidebarSelection: SidebarRowKey? {
+        get { decoded(SidebarRowKey.self, forKey: Keys.sidebarSelection) }
+        nonmutating set { setEncoded(newValue, forKey: Keys.sidebarSelection) }
+    }
+
+    /// The value stored as JSON under `key`, or `nil` when none is stored or
+    /// it does not decode as `type` — a failure logged, and the caller's
+    /// default standing in for the value.
+    private func decoded<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Stored \(key, privacy: .public) did not decode; using the default: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    /// Stores `value` as JSON under `key`, or removes the key for `nil`; a
+    /// value that fails to encode is logged and leaves the stored one.
+    private func setEncoded<Value: Encodable>(_ value: Value?, forKey key: String) {
+        guard let value else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        do {
+            defaults.set(try JSONEncoder().encode(value), forKey: key)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Could not store \(key, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// The user's custom VM ordering, or `nil` when no order has been saved yet.

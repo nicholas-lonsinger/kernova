@@ -30,23 +30,55 @@ struct AppPreferencesTests {
         #expect(prefs.alwaysShowAdvancedOptions == false)
     }
 
-    @Test("lastSelectedVMID defaults to nil")
-    func lastSelectedVMIDDefaultsToNil() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.lastSelectedVMID == nil)
+    @Test("sidebarSelection defaults to nil, round-trips a row in any section, and clears on nil")
+    func sidebarSelectionRoundTrips() {
+        let (prefs, defaults) = makePreferences()
+        #expect(prefs.sidebarSelection == nil)
+
+        let row = SidebarRowKey(
+            section: .smartGroup(UUID()), group: SidebarGroupID(rawValue: "state:running"), entryID: UUID())
+        prefs.sidebarSelection = row
+        #expect(prefs.sidebarSelection == row)
+        #expect(defaults.data(forKey: "KernovaSidebarSelection") != nil)
+
+        prefs.sidebarSelection = nil
+        #expect(prefs.sidebarSelection == nil)
+        #expect(defaults.object(forKey: "KernovaSidebarSelection") == nil)
     }
 
-    @Test("lastSelectedVMID round-trips through UserDefaults and clears on nil")
-    func lastSelectedVMIDRoundTrips() {
+    @Test("sidebarViewOptions defaults to the default options and round-trips every field")
+    func sidebarViewOptionsRoundTrips() {
         let (prefs, defaults) = makePreferences()
-        let id = UUID()
-        prefs.lastSelectedVMID = id
-        #expect(prefs.lastSelectedVMID == id)
-        #expect(defaults.string(forKey: "lastSelectedVMID") == id.uuidString)
+        #expect(prefs.sidebarViewOptions == SidebarViewOptions())
 
-        prefs.lastSelectedVMID = nil
-        #expect(prefs.lastSelectedVMID == nil)
-        #expect(defaults.string(forKey: "lastSelectedVMID") == nil)
+        let options = SidebarViewOptions(
+            filter: VMLibraryFilter(guestOSes: [.macOS], states: [.running], tags: [UUID()]), sort: .lastRun,
+            grouping: .tag, showsDetails: true)
+        prefs.sidebarViewOptions = options
+
+        #expect(prefs.sidebarViewOptions == options)
+        #expect(defaults.data(forKey: "KernovaSidebarViewOptions") != nil)
+    }
+
+    @Test("Stored sidebar options missing a field decode it with its default")
+    func sidebarViewOptionsDecodeMissingFieldsWithDefaults() throws {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(
+            Data(#"{"sort":"name","filter":{"guestOSes":["macOS"]}}"#.utf8), forKey: "KernovaSidebarViewOptions")
+
+        #expect(
+            prefs.sidebarViewOptions
+                == SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), sort: .name))
+    }
+
+    @Test("Stored sidebar state that does not decode reads as the defaults")
+    func undecodableSidebarStateReadsAsDefaults() {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(Data("not json".utf8), forKey: "KernovaSidebarViewOptions")
+        defaults.set(Data(#"{"section":"virtualMachines"}"#.utf8), forKey: "KernovaSidebarSelection")
+
+        #expect(prefs.sidebarViewOptions == SidebarViewOptions())
+        #expect(prefs.sidebarSelection == nil)
     }
 
     @Test("vmOrder defaults to nil")

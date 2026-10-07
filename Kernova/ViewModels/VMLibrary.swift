@@ -149,13 +149,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// through ``selectRevealing(_:)``, which first makes the entry listed.
     var selection: SidebarRowKey? {
         didSet {
-            let entryID = selection?.entryID
             if selectedLibraryEntryID != retainedEntryID {
                 retainedEntryID = selectedLibraryEntryID.flatMap { sidebarNarrowingAdmits($0) ? $0 : nil }
             }
             if pendingReveal != selection { pendingReveal = nil }
-            guard entryID != oldValue?.entryID else { return }
-            preferences.lastSelectedVMID = entryID
+            if selection != oldValue { preferences.sidebarSelection = selection }
         }
     }
 
@@ -210,14 +208,17 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
     }
 
-    /// How the sidebar narrows, orders and groups the library.
+    /// How the sidebar narrows, orders and groups the library, read from
+    /// ``AppPreferences/sidebarViewOptions`` at init and written back on every
+    /// change — whether or not a library window is open.
     ///
     /// Beside ``selection`` because every rule that moves the selection reads
     /// what the sidebar shows: a filter edit that hides the selected VM clears
     /// the selection, and a sort, grouping or details edit keeps it.
-    var sidebarOptions = SidebarViewOptions() {
+    var sidebarOptions: SidebarViewOptions {
         didSet {
             guard sidebarOptions != oldValue else { return }
+            preferences.sidebarViewOptions = sidebarOptions
             guard sidebarOptions.filter != oldValue.filter else {
                 reconcileSelection()
                 return
@@ -261,6 +262,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// stand.
     func editSidebarOptions(_ edit: SidebarViewOptions.Edit) {
         sidebarOptions = sidebarOptions.applying(edit)
+    }
+
+    /// Drops `section` from ``AppPreferences/collapsedSidebarSections``, for a
+    /// smart group or folder deleted: no section will list it again.
+    func forgetCollapsed(_ section: SidebarSectionID) {
+        preferences.collapsedSidebarSections.removeAll { $0 == section.rawValue }
     }
 
     /// The rows the sidebar shows for the library as it stands.
@@ -325,12 +332,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     /// Selects what a library read lands on when nothing listed is selected:
-    /// the last-selected VM while the sidebar lists it, else the first row.
+    /// the last-selected row as ``SidebarLayout/resolve(_:)`` finds it, else
+    /// the first row. Restoring is no reveal, so it opens no collapsed
+    /// section.
     func restoreSelection() {
         guard selectedID == nil || !entries.contains(where: { $0.id == selectedID }) else { return }
-        if let savedID = preferences.lastSelectedVMID, sidebarShows(savedID) {
-            selectedID = savedID
-            #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
+        if let saved = preferences.sidebarSelection, let row = sidebarLayout.resolve(saved) {
+            selection = row
+            #log(Self.logger, .debug, "Restored the last-selected sidebar row for \(row.entryID.uuidString)")
         } else {
             selection = firstShownRow
         }
@@ -449,6 +458,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         self.lifecycle = lifecycle
         self.preferences = preferences
         self.entitlements = entitlements
+        self.sidebarOptions = preferences.sidebarViewOptions
         self.removableMedia = VMRemovableMediaReconciler(lifecycle: lifecycle)
         let guestAddresses = GuestAddressObserver(
             reader: arpTable, vmnetNetworks: vmnetNetworks, entitlements: entitlements)

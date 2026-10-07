@@ -26,10 +26,12 @@ extension VMLibrary {
         try organization.renameFolder(id, to: name)
     }
 
-    /// Deletes the folder `id` identifies, keeping every VM it held; a VM
-    /// selected in it stays selected in the library section.
+    /// Deletes the folder `id` identifies, and its saved collapsed state,
+    /// keeping every VM it held; a VM selected in it stays selected in the
+    /// library section.
     func deleteFolder(_ id: UUID) throws {
         try organization.removeFolder(id)
+        forgetCollapsed(.folder(id))
         reconcileSelection()
     }
 
