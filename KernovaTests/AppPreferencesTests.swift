@@ -71,6 +71,16 @@ struct AppPreferencesTests {
                 == SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), sort: .name))
     }
 
+    @Test("Stored sidebar state that does not decode reads as the defaults")
+    func undecodableSidebarStateReadsAsDefaults() {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(Data("not json".utf8), forKey: "KernovaSidebarViewOptions")
+        defaults.set(Data(#"{"section":"virtualMachines"}"#.utf8), forKey: "KernovaSidebarSelection")
+
+        #expect(prefs.sidebarViewOptions == SidebarViewOptions())
+        #expect(prefs.sidebarSelection == nil)
+    }
+
     @Test("vmOrder defaults to nil")
     func vmOrderDefaultsToNil() {
         let (prefs, _) = makePreferences()

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 
 /// App-wide user preferences backed by `UserDefaults`.
 ///
@@ -8,6 +9,8 @@ import KernovaKit
 struct AppPreferences {
     /// Shared production instance over the standard defaults domain.
     @MainActor static let shared = AppPreferences(defaults: .standard)
+
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppPreferences")
 
     private let defaults: UserDefaults
 
@@ -86,18 +89,35 @@ struct AppPreferences {
     }
 
     /// The value stored as JSON under `key`, or `nil` when none is stored or
-    /// it does not decode as `type`.
+    /// it does not decode as `type` — a failure logged, and the caller's
+    /// default standing in for the value.
     private func decoded<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
-        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
+        guard let data = defaults.data(forKey: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(type, from: data)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Stored \(key, privacy: .public) did not decode; using the default: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
     }
 
-    /// Stores `value` as JSON under `key`, or removes the key for `nil`.
+    /// Stores `value` as JSON under `key`, or removes the key for `nil`; a
+    /// value that fails to encode is logged and leaves the stored one.
     private func setEncoded<Value: Encodable>(_ value: Value?, forKey key: String) {
-        guard let value, let data = try? JSONEncoder().encode(value) else {
+        guard let value else {
             defaults.removeObject(forKey: key)
             return
         }
-        defaults.set(data, forKey: key)
+        do {
+            defaults.set(try JSONEncoder().encode(value), forKey: key)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Could not store \(key, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// The user's custom VM ordering, or `nil` when no order has been saved yet.
