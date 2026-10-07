@@ -16,7 +16,28 @@ struct SidebarViewOptions: Codable, Hashable, Sendable {
 extension LibraryEntry {
     /// What a ``VMLibrarySort`` reads of this entry.
     var sortKeys: VMLibrarySort.Keys {
-        VMLibrarySort.Keys(name: name, createdAt: configuration.createdAt)
+        VMLibrarySort.Keys(name: name, createdAt: configuration.createdAt, lastRun: lastRun)
+    }
+
+    /// When this entry last ran: live while it is in a session, or held by
+    /// another copy, which may be running it — ``VMHostState/lastRunAt`` then
+    /// holds a session's start. An arrival has no run recorded.
+    var lastRun: VMLibrarySort.LastRun {
+        guard case .vm(let instance) = self else { return .unrecorded }
+        switch instance.stateBucket {
+        case .running, .heldByAnotherCopy: return .live
+        case .stopped, .suspended, .preparing: return instance.hostState.lastRunAt.map { .ended($0) } ?? .unrecorded
+        }
+    }
+
+    /// What a person reads for this entry's status.
+    fileprivate var statusName: String {
+        switch self {
+        case .vm(let instance):
+            instance.status.displayName(heldByAnotherCopy: instance.heldByAnotherCopy)
+        case .arriving(let arrival):
+            arrival.displayLabel
+        }
     }
 }
 
@@ -28,19 +49,64 @@ extension VMLibrarySort {
     }
 
     /// The second line a row shows under this key: the value it is ordered by,
-    /// or its status where the order is by name or by hand.
+    /// or its status where the order is by name or by hand. Only a line stated
+    /// relative to the present reads `now`, counting days in `calendar`.
     @MainActor
-    func detail(for entry: LibraryEntry) -> String {
+    func detail(
+        for entry: LibraryEntry, at now: @autoclosure () -> Date, calendar: Calendar = .current
+    ) -> String {
         switch self {
         case .name, .manual:
-            switch entry {
-            case .vm(let instance):
-                instance.status.displayName(heldByAnotherCopy: instance.heldByAnotherCopy)
-            case .arriving(let arrival):
-                arrival.displayLabel
-            }
+            entry.statusName
         case .dateCreated:
             "Created \(entry.configuration.createdAt.formatted(date: .abbreviated, time: .omitted))"
+        case .lastRun:
+            switch entry.lastRun {
+            case .live:
+                // A session settled running states when it started — not how
+                // long it ran, which pauses and host sleep would overstate;
+                // one starting, paused, or held by another copy states its
+                // status.
+                if case .vm(let instance) = entry, instance.status == .running,
+                    let started = instance.sessionContext?.runningSince
+                {
+                    "Started \(Self.ago(started, now: now(), calendar: calendar))"
+                } else {
+                    entry.statusName
+                }
+            case .ended(let date):
+                "Last run \(Self.ago(date, now: now(), calendar: calendar))"
+            case .unrecorded:
+                "No run recorded"
+            }
+        }
+    }
+
+    /// When `date` was, seen from `now`: "just now", then whole minutes or
+    /// hours under a day, then calendar days in `calendar` — "yesterday",
+    /// "3 days ago" — and the date itself from a week back.
+    private static func ago(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let elapsed = now.timeIntervalSince(date)
+        guard elapsed >= 60 else { return "just now" }
+        let days =
+            calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now))
+            .day ?? 0
+        // The day the clocks fall back runs 25 hours, so a run a full day
+        // back can share today's date.
+        guard elapsed >= 24 * 60 * 60, days >= 1 else {
+            let units = Duration.seconds(Int(elapsed)).formatted(
+                .units(
+                    allowed: [.hours, .minutes], width: .wide, maximumUnitCount: 1,
+                    fractionalPart: .hide(rounded: .down)))
+            return "\(units) ago"
+        }
+        switch days {
+        case 1: return "yesterday"
+        case 2...6: return "\(days) days ago"
+        default:
+            var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+            style.timeZone = calendar.timeZone
+            return date.formatted(style)
         }
     }
 }

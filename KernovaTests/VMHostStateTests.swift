@@ -14,7 +14,8 @@ struct VMHostStateTests {
         var hostState = VMHostState(
             startsAutomaticallyOnLaunch: true, displayPreference: .popOut,
             lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true,
-            tags: [UUID(), UUID()], lastRunAt: Date(timeIntervalSince1970: 1_700_000_000))
+            tags: [UUID(), UUID()],
+            lastRunAt: Date(timeIntervalSince1970: 1_700_000_000))
         hostState.applyEphemeralMode(
             enabled: true, baseline: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"))
         return hostState

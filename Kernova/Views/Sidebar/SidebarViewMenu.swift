@@ -117,7 +117,7 @@ final class SidebarViewMenu: NSObject {
             })
         menu.addItem(
             choiceMenu(
-                "Sort By", current: options.sort, cases: [.name, .dateCreated], trailing: .manual,
+                "Sort By", current: options.sort, cases: [.name, .dateCreated, .lastRun], trailing: .manual,
                 title: \.title
             ) { sort in
                 var picked = options
