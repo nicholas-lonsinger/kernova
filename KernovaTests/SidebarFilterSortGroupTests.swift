@@ -170,10 +170,10 @@ struct SidebarFilterSortGroupTests {
     func detailText() {
         let created = Date(timeIntervalSince1970: 1_800_000_000)
         let entry = vm("Running", phase: .running(sessionID: UUID())) { $0.createdAt = created }
-        #expect(VMLibrarySort.name.detail(for: entry) == "Running")
-        #expect(VMLibrarySort.manual.detail(for: entry) == "Running")
+        #expect(VMLibrarySort.name.detail(for: entry, at: Date()) == "Running")
+        #expect(VMLibrarySort.manual.detail(for: entry, at: Date()) == "Running")
         #expect(
-            VMLibrarySort.dateCreated.detail(for: entry)
+            VMLibrarySort.dateCreated.detail(for: entry, at: Date())
                 == "Created \(created.formatted(date: .abbreviated, time: .omitted))")
     }
 
@@ -416,7 +416,7 @@ struct SidebarFilterSortGroupTests {
         #expect(built.items[7].badge?.stringValue == "Manual")
         #expect(built.items.last?.isEnabled == false)
         #expect(built.items[6].submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "", "None"])
-        #expect(built.items[7].submenu?.items.map(\.title) == ["Name", "Date Created", "", "Manual"])
+        #expect(built.items[7].submenu?.items.map(\.title) == ["Name", "Date Created", "Last Run", "", "Manual"])
     }
 
     @Test("Submenu counts are over the whole library, and a pick toggles that value")

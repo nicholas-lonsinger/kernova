@@ -282,11 +282,13 @@ struct VMLibraryFilterTests {
 
     private struct Row {
         let name: String
-        let createdAt: Date
+        var createdAt = Date(timeIntervalSince1970: 0)
+        var lastRun = VMLibrarySort.LastRun.never
     }
 
     private func sorted(_ rows: [Row], by sort: VMLibrarySort) -> [String] {
-        sort.ordered(rows) { VMLibrarySort.Keys(name: $0.name, createdAt: $0.createdAt) }.map(\.name)
+        sort.ordered(rows) { VMLibrarySort.Keys(name: $0.name, createdAt: $0.createdAt, lastRun: $0.lastRun) }
+            .map(\.name)
     }
 
     @Test("Each sort has one direction, and rows its key ties keep the order they came in")
@@ -300,7 +302,21 @@ struct VMLibraryFilterTests {
         #expect(sorted(rows, by: .name) == ["Alpha 9", "Alpha 10", "beta", "Twin"])
         // "beta" and "Twin" tie on creation, so they keep the order they came in.
         #expect(sorted(rows, by: .dateCreated) == ["Alpha 10", "Alpha 9", "beta", "Twin"])
-        #expect(VMLibrarySort.allCases.map(\.rawValue) == ["name", "dateCreated", "manual"])
+        #expect(VMLibrarySort.allCases.map(\.rawValue) == ["name", "dateCreated", "lastRun", "manual"])
+    }
+
+    @Test("Last run lists live VMs first, then most recent first, then never run, each tie A→Z")
+    func lastRunOrder() {
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        let rows = [
+            Row(name: "never b"), Row(name: "older", lastRun: .ended(base)),
+            Row(name: "Live b", lastRun: .live), Row(name: "recent", lastRun: .ended(base + 60)),
+            Row(name: "Never a"), Row(name: "twin b", lastRun: .ended(base + 30)),
+            Row(name: "live a", lastRun: .live), Row(name: "Twin a", lastRun: .ended(base + 30)),
+        ]
+        #expect(
+            sorted(rows, by: .lastRun)
+                == ["live a", "Live b", "recent", "Twin a", "twin b", "older", "Never a", "never b"])
     }
 
     @Test("A named network the library stops listing, still held by a filter, admits no VM")

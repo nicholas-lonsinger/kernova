@@ -17,6 +17,8 @@ final class SidebarViewController: NSViewController {
     static let logger = KernovaLogger(subsystem: "app.kernova", category: "SidebarViewController")
 
     let viewModel: VMLibraryViewModel
+    /// What a detail line stated relative to the present reads it from.
+    private let clock: MinuteClock
     private var preferences: AppPreferences { viewModel.preferences }
     let outlineView = SidebarOutlineView()
     private let scrollView = NSScrollView()
@@ -45,8 +47,9 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Init
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, clock: MinuteClock = .wall) {
         self.viewModel = viewModel
+        self.clock = clock
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -553,7 +556,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         { [weak self] in
             guard let self, let entry = entry() else { return nil }
             let options = self.viewModel.sidebarOptions
-            return options.showsDetails ? options.sort.detail(for: entry) : nil
+            return options.showsDetails ? options.sort.detail(for: entry, at: self.clock.now) : nil
         }
     }
 
