@@ -620,6 +620,8 @@ extension AppDelegate: AppLaunchHosting {
 
 extension AppDelegate: MainMenuHosting {
     func menuCommandTarget(of sender: Any?) -> VMInstance? { target(of: sender) }
+
+    var librarySidebar: SidebarViewController? { windows.librarySidebar }
 }
 
 // MARK: - DisplayBootGeometryProviding

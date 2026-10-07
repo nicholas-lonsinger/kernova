@@ -32,12 +32,7 @@ final class SidebarViewController: NSViewController {
 
     /// Builds each section header's menu and a row's folder and tag items; a
     /// pick runs its command.
-    lazy var viewMenu = SidebarViewMenu(
-        networkTitle: { [weak self] network in
-            SidebarLayout.heldNetworkTitle(network, networks: self?.viewModel.networks.networks ?? [])
-        },
-        tags: { [weak self] in self?.viewModel.library.tags ?? [] },
-        perform: { [weak self] command in self?.perform(command) })
+    lazy var viewMenu = SidebarViewMenu(viewModel: viewModel) { [weak self] command in self?.perform(command) }
 
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
     private static let placeholderCellID = NSUserInterfaceItemIdentifier("SidebarPlaceholderCell")

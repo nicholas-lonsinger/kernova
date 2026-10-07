@@ -228,6 +228,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
     }
 
+    /// Makes `edit` to ``sidebarOptions``, leaving the other options as they
+    /// stand.
+    func editSidebarOptions(_ edit: SidebarViewOptions.Edit) {
+        sidebarOptions = sidebarOptions.applying(edit)
+    }
+
     /// The rows the sidebar shows for the library as it stands.
     ///
     /// Reads every value ``sidebarOptions`` filters, orders or groups by, so

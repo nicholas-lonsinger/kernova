@@ -9,7 +9,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     private var preferences: AppPreferences { viewModel.preferences }
     private let toolbarManager: VMToolbarManager
     private let splitViewController = SnapToFitSplitViewController()
-    private let sidebarViewController: SidebarViewController
+    let sidebarViewController: SidebarViewController
     private let sidebarItem: NSSplitViewItem
     /// The detail pane, retained so the display-boot geometry of the inline
     /// display can be measured.

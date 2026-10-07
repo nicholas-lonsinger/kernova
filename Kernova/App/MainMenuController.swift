@@ -3,13 +3,17 @@ import KernovaKit
 import KernovaLogging
 
 /// The application-level seam a ``MainMenuController`` needs but cannot own:
-/// which VM a command acts on.
+/// which VM a command acts on, and which sidebar the View menu mirrors.
 @MainActor
 protocol MainMenuHosting: AnyObject {
     /// The VM a menu command acts on: the one the sending item names, else the
     /// key window's VM, else the sidebar selection. A `nil` sender asks for the
     /// active instance.
     func menuCommandTarget(of sender: Any?) -> VMInstance?
+
+    /// The sidebar the View menu's section items read and act on: the library
+    /// window's, while that window is on screen.
+    var librarySidebar: SidebarViewController? { get }
 }
 
 /// The one owner of the menu bar: its construction, the rebuilds an opening menu
@@ -58,6 +62,25 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// What that submenu currently lists, for the reason
     /// ``revertSnapshotMenuModel`` exists.
     private var usbAccessoryMenuModel: USBAccessoryMenuModel?
+
+    /// The View menu, retained so its opening can rebuild its sidebar items.
+    private var viewMenu: NSMenu?
+    /// Builds the View menu's sidebar items from the rows the sidebar's
+    /// header menus are built from. A pick that edits the library section's
+    /// options sets them on the library, which holds them whether or not a
+    /// library window is open; every other pick is the library sidebar's.
+    private lazy var sidebarMenu = SidebarViewMenu(viewModel: viewModel) { [weak self] command in
+        guard let self else { return }
+        if case .editOptions(let edit) = command {
+            viewModel.library.editSidebarOptions(edit)
+        } else {
+            host?.librarySidebar?.perform(command)
+        }
+    }
+    /// The separator closing the View menu's sidebar items, which are every
+    /// item before it. The section leads the menu so the items AppKit appends
+    /// to a View menu stay clear of it.
+    private var viewMenuSidebarSectionEnd: NSMenuItem?
 
     /// The Window menu, retained so its opening can set the clipboard item's
     /// enablement and so the presence check reads this controller's own menu.
@@ -170,6 +193,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
                 host?.menuCommandTarget(of: nil).map {
                     viewModel.capabilities.isAvailable(.showClipboard, on: $0)
                 } ?? false
+        } else if menu === viewMenu {
+            rebuildViewMenuSidebarSection()
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
             // the next open.
@@ -182,6 +207,28 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             if let revertSnapshotMenu { rebuildRevertSnapshotMenu(revertSnapshotMenu) }
             if let usbAccessoryMenu { rebuildUSBAccessoryMenu(usbAccessoryMenu) }
         }
+    }
+
+    /// Rebuilds the View menu's sidebar items from the library's options and
+    /// the library sidebar as they stand: the sections' expansion and the
+    /// selected row's section are offered only while a library window is on
+    /// screen.
+    private func rebuildViewMenuSidebarSection() {
+        guard let viewMenu, let sectionEnd = viewMenuSidebarSectionEnd else { return }
+        let end = viewMenu.index(of: sectionEnd)
+        guard end >= 0 else {
+            #log(Self.logger, .fault, "View menu sidebar-section separator is not in the View menu")
+            assertionFailure("View menu sidebar-section separator is not in the View menu")
+            return
+        }
+        for _ in 0..<end { viewMenu.removeItem(at: 0) }
+        let sidebar = host?.librarySidebar
+        let expansion = sidebar?.sectionExpansion ?? []
+        let items = sidebarMenu.menuBarItems(
+            options: viewModel.sidebarOptions, values: SidebarViewMenu.values(of: viewModel),
+            hasCollapsedSection: expansion.contains(false), hasExpandedSection: expansion.contains(true),
+            selectedGroup: sidebar?.selectedGroupMenu())
+        for (index, item) in items.enumerated() { viewMenu.insertItem(item, at: index) }
     }
 
     /// Rebuilds the USB submenu from the accessories macOS has assigned to
@@ -496,6 +543,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // responder chain, so AppKit retitles and disables these items itself.
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
+        let sidebarSectionEnd = NSMenuItem.separator()
+        viewMenu.addItem(sidebarSectionEnd)
+        self.viewMenu = viewMenu
+        viewMenuSidebarSectionEnd = sidebarSectionEnd
+        viewMenu.delegate = self
+        rebuildViewMenuSidebarSection()
         let toggleToolbarItem = viewMenu.addItem(
             withTitle: "Show Toolbar",
             action: #selector(NSWindow.toggleToolbarShown(_:)),

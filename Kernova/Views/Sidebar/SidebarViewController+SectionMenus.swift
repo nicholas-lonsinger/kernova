@@ -2,32 +2,20 @@ import AppKit
 import KernovaKit
 import KernovaLogging
 
-/// Each section header's count and menu, and the commands their picks — and
-/// a VM row's folder items — run.
+/// Each section header's count and menu, what the View menu reads of the
+/// sidebar, and the commands their picks — and a VM row's folder items — run.
 extension SidebarViewController {
-    /// The library as the filter menu counts it.
-    private func viewMenuValues() -> [SidebarViewMenu.Value] {
-        let context = viewModel.sidebarContext
-        return viewModel.entries.map { entry in
-            let subject = context.subject(of: entry)
-            return SidebarViewMenu.Value(
-                subject: subject,
-                networkTitle: SidebarLayout.networkTitle(
-                    subject.network, of: entry.configuration, context: context))
-        }
-    }
-
     /// The menu `section`'s header button and a right-click on the header
     /// open: the library's filter, group and sort menu, a smart group's own,
     /// or a folder's; `nil` for a section with none.
     func viewMenu(for section: SidebarSectionID) -> NSMenu? {
         let organization = viewModel.library.organization
         if section == .library {
-            return viewMenu.menu(options: viewModel.sidebarOptions, values: viewMenuValues())
+            return viewMenu.menu(options: viewModel.sidebarOptions, values: SidebarViewMenu.values(of: viewModel))
         }
         if let id = section.smartGroupID, let group = organization.smartGroup(withID: id) {
             return viewMenu.menu(
-                smartGroup: group, values: viewMenuValues(),
+                smartGroup: group, values: SidebarViewMenu.values(of: viewModel),
                 actionCounts: viewModel.groupActionCounts(
                     for: VMGroupReference(.smartGroup, named: id.uuidString)))
         }
@@ -37,6 +25,20 @@ extension SidebarViewController {
                 actionCounts: viewModel.groupActionCounts(for: VMGroupReference(.folder, named: id.uuidString)))
         }
         return nil
+    }
+
+    /// Whether each section is expanded, in the sidebar's order.
+    var sectionExpansion: [Bool] {
+        tree.sections.map { outlineView.isItemExpanded($0) }
+    }
+
+    /// The kind and header menu of the selected row's section, while that
+    /// section is a smart group or a folder.
+    func selectedGroupMenu() -> (kind: VMGroupKind, menu: NSMenu)? {
+        guard let section = viewModel.selection?.section else { return nil }
+        let kind: VMGroupKind? = section.smartGroupID != nil ? .smartGroup : section.folderID != nil ? .folder : nil
+        guard let kind, let menu = viewMenu(for: section) else { return nil }
+        return (kind, menu)
     }
 
     private func popUpViewMenu(for section: SidebarSectionID, from button: NSButton) {
@@ -55,7 +57,8 @@ extension SidebarViewController {
             guard let group = organization.smartGroup(withID: id) else { return nil }
             return SidebarGroupHeaderCellView.Filtering(
                 countText: counts.map { "\($0.shown)" }, isActive: false,
-                activeDescription: viewMenu.activeFilterDescription(filter: group.filter, values: viewMenuValues()),
+                activeDescription: viewMenu.activeFilterDescription(
+                    filter: group.filter, values: SidebarViewMenu.values(of: viewModel)),
                 buttonLabel: SidebarViewMenu.smartGroupAccessibilityLabel)
         }
         if let id = section.id.folderID {
@@ -71,7 +74,7 @@ extension SidebarViewController {
         return SidebarGroupHeaderCellView.Filtering(
             countText: "\(counts.shown) of \(counts.total)", isActive: true,
             activeDescription: viewMenu.activeFilterDescription(
-                filter: viewModel.sidebarOptions.filter, values: viewMenuValues()))
+                filter: viewModel.sidebarOptions.filter, values: SidebarViewMenu.values(of: viewModel)))
     }
 
     /// Shows `section`'s title, count and menu button in `cell`.
@@ -102,8 +105,8 @@ extension SidebarViewController {
     func perform(_ command: SidebarViewMenu.Command) {
         let library = viewModel.library
         switch command {
-        case .setOptions(let options):
-            viewModel.sidebarOptions = options
+        case .editOptions(let edit):
+            viewModel.library.editSidebarOptions(edit)
         case .saveAsSmartGroup:
             presentSaveAsSmartGroup()
         case .setSmartGroupFilter(let id, let filter):
@@ -130,6 +133,10 @@ extension SidebarViewController {
             attempt("Couldn\u{2019}t Change the Tags") { try library.setTag(tag, assigned: isAssigned, on: instance) }
         case .editTags:
             NSApp.sendAction(#selector(AppDelegate.showTagsSettings(_:)), to: nil, from: self)
+        case .setSectionsExpanded(let expanded):
+            for section in tree.sections {
+                if expanded { outlineView.expandItem(section) } else { outlineView.collapseItem(section) }
+            }
         }
     }
 
@@ -139,7 +146,7 @@ extension SidebarViewController {
     private func presentSaveAsSmartGroup(name: String? = nil) {
         guard let window = view.window else { return }
         let filter = viewModel.sidebarOptions.filter
-        let values = viewMenuValues()
+        let values = SidebarViewMenu.values(of: viewModel)
         presentSheetAlert(
             SidebarNameSheet.newSmartGroup(
                 suggestedName: name

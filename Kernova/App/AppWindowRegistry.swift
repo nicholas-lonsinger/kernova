@@ -75,6 +75,12 @@ final class AppWindowRegistry {
         mainWindowController?.revealSidebar()
     }
 
+    /// The library window's sidebar while that window is on screen.
+    var librarySidebar: SidebarViewController? {
+        guard let mainWindowController, mainWindowController.window?.isVisible == true else { return nil }
+        return mainWindowController.sidebarViewController
+    }
+
     // MARK: - Settings
 
     var settingsWindow: NSWindow? { settingsWindowController?.window }
