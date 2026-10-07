@@ -143,7 +143,7 @@ struct SidebarFolderTests {
         // The folder's own order under the manual sort; a member the library
         // does not list is not listed.
         #expect(names(in: layout.sections[0]) == ["Charlie", "Alpha"])
-        #expect(layout.sections[0].filterCounts == SidebarLayout.FilterCounts(shown: 2, total: 3))
+        #expect(layout.sections[0].count == .members(2))
         #expect(names(in: layout.sections[3]).isEmpty)
         #expect(layout.sections[3].emptyText == SidebarLayout.emptyFolderText)
         // Charlie is listed in four sections, once in each.

@@ -514,7 +514,7 @@ struct SidebarSmartGroupTests {
 
         let library = try #require(viewModel.sidebarLayout.sections.first { $0.id == .library })
         #expect(names(in: library) == ["Linux"])
-        #expect(library.filterCounts == SidebarLayout.FilterCounts(shown: 1, total: 2))
+        #expect(library.count == .narrowed(shown: 1, of: 2))
         #expect(viewModel.selection == inGroup)
     }
 

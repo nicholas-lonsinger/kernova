@@ -48,15 +48,15 @@ extension SidebarViewController {
 
     /// What `section`'s header shows beside its title; `nil` for a section
     /// with no menu.
-    private func filtering(for section: SidebarSection) -> SidebarGroupHeaderCellView.Filtering? {
+    func filtering(for section: SidebarSection) -> SidebarGroupHeaderCellView.Filtering? {
         // The counts the projection the tree lists computed, so they change
         // exactly when the rows do.
-        let counts = tree.layout.sections.first { $0.id == section.id }?.filterCounts
+        let count = tree.layout.sections.first { $0.id == section.id }?.count
         let organization = viewModel.library.organization
         if let id = section.id.smartGroupID {
             guard let group = organization.smartGroup(withID: id) else { return nil }
             return SidebarGroupHeaderCellView.Filtering(
-                countText: counts.map { "\($0.shown)" }, isActive: false,
+                countText: count?.text, isActive: false,
                 activeDescription: viewMenu.activeFilterDescription(
                     filter: group.filter, values: SidebarViewMenu.values(of: viewModel)),
                 buttonLabel: SidebarViewMenu.smartGroupAccessibilityLabel)
@@ -64,17 +64,20 @@ extension SidebarViewController {
         if let id = section.id.folderID {
             guard organization.folder(withID: id) != nil else { return nil }
             return SidebarGroupHeaderCellView.Filtering(
-                countText: counts.map { "\($0.shown)" }, isActive: false, activeDescription: nil,
+                countText: count?.text, isActive: false, activeDescription: nil,
                 buttonLabel: SidebarViewMenu.folderAccessibilityLabel)
         }
         guard section.id == .library else { return nil }
-        guard let counts else {
-            return SidebarGroupHeaderCellView.Filtering(countText: nil, isActive: false, activeDescription: nil)
+        // The count shows while the search narrows the section too; the
+        // button reads active, and describes, only the filter.
+        let filter = viewModel.sidebarOptions.filter
+        guard filter.isActive else {
+            return SidebarGroupHeaderCellView.Filtering(countText: count?.text, isActive: false, activeDescription: nil)
         }
         return SidebarGroupHeaderCellView.Filtering(
-            countText: "\(counts.shown) of \(counts.total)", isActive: true,
+            countText: count?.text, isActive: true,
             activeDescription: viewMenu.activeFilterDescription(
-                filter: viewModel.sidebarOptions.filter, values: SidebarViewMenu.values(of: viewModel)))
+                filter: filter, values: SidebarViewMenu.values(of: viewModel)))
     }
 
     /// Shows `section`'s title, count and menu button in `cell`.

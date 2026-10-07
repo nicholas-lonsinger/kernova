@@ -66,9 +66,10 @@ struct MainWindowControllerNewVMTests {
         subject.toolbar.insertItem(withItemIdentifier: NSToolbarItem.Identifier(newVM), at: 0)
         let customized = subject.layout
         try #require(
-            Array(customized.prefix(3)) == [
+            Array(customized.prefix(4)) == [
                 newVM,
                 NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "search",
                 NSToolbarItem.Identifier.toggleSidebar.rawValue,
             ])
 

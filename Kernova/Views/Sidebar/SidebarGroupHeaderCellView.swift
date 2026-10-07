@@ -10,8 +10,8 @@ import AppKit
 final class SidebarGroupHeaderCellView: NSTableCellView {
     /// What a filtering section's header shows beside its title.
     struct Filtering: Equatable {
-        /// How many VMs the section lists — "3 of 7" while a filter narrows
-        /// the library — or `nil` to show none.
+        /// How many VMs the section lists — "3 of 7" while a filter or the
+        /// search narrows it — or `nil` to show none.
         let countText: String?
         /// Whether any filter is on, which fills the button's symbol.
         let isActive: Bool

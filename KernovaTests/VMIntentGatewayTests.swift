@@ -164,6 +164,9 @@ struct VMIntentGatewayTests {
         #expect(twins.count == 2)
         #expect(byPrefix.map(\.name) == ["Ubuntu"])
         #expect(none.isEmpty)
+        // The sidebar search's own predicate: the trimmed term, diacritics
+        // ignored.
+        #expect(await gateway.vms(matching: "  sónoma ").count == 2)
     }
 
     @Test("The whole library is enumerable, so Shortcuts offers a picker")
@@ -339,59 +342,31 @@ struct VMIntentGatewayTests {
 
     // MARK: - Search
 
-    /// A gateway that records every request for the library window, for the
-    /// search that has no VM to reveal.
-    private func makeSearchGateway(
-        _ commands: MockVMCommanding, surfaced: @escaping @MainActor () -> Void
-    ) -> VMIntentGateway {
-        VMIntentGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
-            record: makeTestIndexRecord(), surfaceLibrary: surfaced)
-    }
-
-    @Test("A search term reveals the first VM whose name carries it")
-    func searchRevealsTheFirstMatch() async throws {
+    @Test("A search term reaches the library's search once the library has landed, addressing no VM")
+    func searchFillsTheLibrarySearchOnceReady() async {
         let commands = MockVMCommanding()
-        let ubuntu = makeSummary(name: "Ubuntu")
-        let sonoma = makeSummary(name: "Sonoma Test")
-        commands.library = [ubuntu, sonoma]
-        var libraryRequests = 0
-        let gateway = makeSearchGateway(commands, surfaced: { libraryRequests += 1 })
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        var terms: [String] = []
+        let gateway = VMIntentGateway(
+            commands: commands,
+            readiness: LibraryReadiness(awaitReady: {
+                entered.continuation.yield(())
+                for await _ in release.stream { break }
+            }),
+            index: MockVMEntityIndex(), record: makeTestIndexRecord(),
+            showSearchResults: { terms.append($0) })
 
-        // Typed the way a person types it: neither the case nor the whole name.
-        try await gateway.revealSearchResult(matching: "sonoma")
+        let search = Task { await gateway.showSearchResults(for: "sonoma") }
+        for await _ in entered.stream { break }
+        #expect(terms.isEmpty)
 
-        #expect(commands.revealSelectors == [.id(sonoma.id)])
-        #expect(libraryRequests == 0)
-    }
+        release.continuation.yield(())
+        release.continuation.finish()
+        await search.value
 
-    @Test("A search term prefers the VM named exactly that, then one whose name it begins")
-    func searchPrefersTheClosestName() async throws {
-        let commands = MockVMCommanding()
-        let server = makeSummary(name: "Ubuntu Server")
-        let exact = makeSummary(name: "ubuntu")
-        let older = makeSummary(name: "Old Ubuntu")
-        commands.library = [older, server, exact]
-        let gateway = makeSearchGateway(commands, surfaced: {})
-
-        try await gateway.revealSearchResult(matching: "Ubuntu")
-        try await gateway.revealSearchResult(matching: "Ubuntu S")
-        try await gateway.revealSearchResult(matching: "buntu")
-
-        #expect(commands.revealSelectors == [.id(exact.id), .id(server.id), .id(older.id)])
-    }
-
-    @Test("A search term no VM answers to brings the library forward instead")
-    func searchWithNoMatchSurfacesTheLibrary() async throws {
-        let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "Ubuntu")]
-        var libraryRequests = 0
-        let gateway = makeSearchGateway(commands, surfaced: { libraryRequests += 1 })
-
-        try await gateway.revealSearchResult(matching: "Sequoia")
-
+        #expect(terms == ["sonoma"])
         #expect(commands.revealSelectors.isEmpty)
-        #expect(libraryRequests == 1)
     }
 
     @Test("Spotlight's Open on an indexed VM has an intent to run")

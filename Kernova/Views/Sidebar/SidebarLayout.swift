@@ -4,7 +4,7 @@ import KernovaKit
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:options:retaining:sections:context:)`` is the one function from the library
+/// ``project(entries:options:search:retaining:sections:context:)`` is the one function from the library
 /// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
 /// Each list a layout holds — its sections, a section's groups, a list's
 /// entries — keeps the first of any repeated identifier: a repeat would be a
@@ -19,9 +19,9 @@ struct SidebarLayout {
         /// What the section lists in place of rows when it has none; `nil` to
         /// list nothing.
         var emptyText: String? = nil
-        /// How many VMs the section lists of the library's: always for a smart
-        /// group or a folder, and for the library while a filter constrains it.
-        var filterCounts: FilterCounts? = nil
+        /// The count its header shows: always for a smart group or a folder,
+        /// and for the library while a filter or the search narrows it.
+        var count: Count? = nil
     }
 
     @MainActor
@@ -86,11 +86,23 @@ struct SidebarLayout {
         }
     }
 
-    /// How many VMs a filtering section lists — a retained VM the filter no
-    /// longer matches included — of how many the library holds.
-    struct FilterCounts: Equatable {
-        let shown: Int
-        let total: Int
+    /// What a section's header counts.
+    enum Count: Equatable {
+        /// How many VMs a smart group or a folder holds, while no search
+        /// narrows it.
+        case members(Int)
+        /// How many VMs a narrowed section lists — a retained VM the filter no
+        /// longer matches included — of how many it holds: a smart group or a
+        /// folder its members, the library every VM.
+        case narrowed(shown: Int, of: Int)
+
+        /// The header's text for it: "3", or "2 of 7".
+        var text: String {
+            switch self {
+            case .members(let count): "\(count)"
+            case .narrowed(let shown, let total): "\(shown) of \(total)"
+            }
+        }
     }
 
     static let noMatchesText = "No matching VMs"
@@ -112,20 +124,23 @@ struct SidebarLayout {
 
     /// The layout the sidebar shows for `entries`: a section for each of
     /// `sections`, in its order — the library's listing the entries `options`
-    /// admits, in its order, under its groups.
+    /// admits, in its order, under its groups. `search` narrows every section
+    /// to the VMs it admits.
     ///
     /// The entry `retaining` names is listed in the library section whether
-    /// or not the filter admits it: the selected VM a change to its own values
-    /// took out of the filter, which stays until the selection moves off it.
+    /// or not the filter and the search admit it: the selected VM a change to
+    /// its own values took out of them, which stays until the selection moves
+    /// off it.
     static func project(
-        entries: [LibraryEntry], options: SidebarViewOptions, retaining: UUID? = nil,
-        sections: [VMOrganizationDirectory.Section] = [.library], context: Context
+        entries: [LibraryEntry], options: SidebarViewOptions, search: SidebarNameSearch = SidebarNameSearch(),
+        retaining: UUID? = nil, sections: [VMOrganizationDirectory.Section] = [.library], context: Context
     ) -> SidebarLayout {
         // Every entry's subject is read, the retained one's included, so an
         // observation of the projection tracks every value the counts read.
         var subjects: [UUID: VMLibraryFilter.Subject] = [:]
         for entry in entries { subjects[entry.id] = context.subject(of: entry) }
-        let matching = Set(entries.filter { subjects[$0.id].map(options.filter.admits) ?? false }.map(\.id))
+        let found = entries.filter { search.admits($0.name) }
+        let matching = Set(found.filter { subjects[$0.id].map(options.filter.admits) ?? false }.map(\.id))
         let shown = options.sort.ordered(entries.filter { $0.id == retaining || matching.contains($0.id) })
         let content: Content =
             switch options.grouping {
@@ -133,43 +148,56 @@ struct SidebarLayout {
             case let grouping:
                 .groups(Groups(groups(of: shown, by: grouping, subjects: subjects, context: context)))
             }
+        let narrowed = options.filter.isActive || search.isActive
         let library = Section(
             id: .library, title: "Virtual Machines", content: content,
-            emptyText: options.filter.isActive && !entries.isEmpty ? noMatchesText : nil,
-            filterCounts: options.filter.isActive
-                ? FilterCounts(shown: shown.count, total: entries.count) : nil)
+            emptyText: narrowed && !entries.isEmpty ? noMatchesText : nil,
+            count: narrowed ? .narrowed(shown: shown.count, of: entries.count) : nil)
         return SidebarLayout(
             sections: sections.map { listed in
                 switch listed {
                 case .smartGroup(let group):
-                    section(for: group, entries: entries, subjects: subjects, sort: options.sort)
-                case .folder(let folder): section(for: folder, entries: entries, sort: options.sort)
+                    section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
+                case .folder(let folder): section(for: folder, entries: entries, search: search, sort: options.sort)
                 case .library: library
                 }
             })
     }
 
-    /// `folder`'s section: its members the library lists, in `sort`'s order —
-    /// under the manual sort, the folder's own — with their count.
-    private static func section(for folder: VMFolder, entries: [LibraryEntry], sort: VMLibrarySort) -> Section {
+    /// `folder`'s section: its members the library lists that `search`
+    /// admits, in `sort`'s order — under the manual sort, the folder's own —
+    /// with their count.
+    private static func section(
+        for folder: VMFolder, entries: [LibraryEntry], search: SidebarNameSearch, sort: VMLibrarySort
+    ) -> Section {
         let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let members = folder.members.compactMap { byID[$0] }
+        let shown = members.filter { search.admits($0.name) }
         return Section(
-            id: .folder(folder.id), title: folder.name, content: .rows(Rows(sort.ordered(members))),
-            emptyText: emptyFolderText, filterCounts: FilterCounts(shown: members.count, total: entries.count))
+            id: .folder(folder.id), title: folder.name, content: .rows(Rows(sort.ordered(shown))),
+            emptyText: search.isActive && !members.isEmpty ? noMatchesText : emptyFolderText,
+            count: count(shown: shown.count, of: members.count, search: search))
     }
 
-    /// `group`'s section: the entries its filter admits, in `sort`'s order,
-    /// with their count. It retains no entry, so a row whose VM stops matching
-    /// leaves it and the selection falls back by ``resolve(_:)``.
+    /// `group`'s section: the entries its filter and `search` admit, in
+    /// `sort`'s order, with their count. It retains no entry, so a row whose VM
+    /// stops matching leaves it and the selection falls back by
+    /// ``resolve(_:)``.
     private static func section(
         for group: VMSmartGroup, entries: [LibraryEntry], subjects: [UUID: VMLibraryFilter.Subject],
-        sort: VMLibrarySort
+        search: SidebarNameSearch, sort: VMLibrarySort
     ) -> Section {
         let members = entries.filter { subjects[$0.id].map(group.filter.admits) ?? false }
+        let shown = members.filter { search.admits($0.name) }
         return Section(
-            id: .smartGroup(group.id), title: group.name, content: .rows(Rows(sort.ordered(members))),
-            emptyText: noMatchesText, filterCounts: FilterCounts(shown: members.count, total: entries.count))
+            id: .smartGroup(group.id), title: group.name, content: .rows(Rows(sort.ordered(shown))),
+            emptyText: noMatchesText, count: count(shown: shown.count, of: members.count, search: search))
+    }
+
+    /// A smart group's or a folder's count: its members, or while `search`
+    /// narrows it, how many of them it lists.
+    private static func count(shown: Int, of members: Int, search: SidebarNameSearch) -> Count {
+        search.isActive ? .narrowed(shown: shown, of: members) : .members(members)
     }
 
     /// One group per distinct value of `grouping` among `entries`, in that

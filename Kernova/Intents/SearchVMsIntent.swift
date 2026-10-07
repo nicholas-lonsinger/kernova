@@ -2,12 +2,9 @@ import AppIntents
 import Foundation
 
 /// Answers a typed search for a virtual machine — Siri's "search for ⟨name⟩ in
-/// Kernova" — by revealing the VM whose name the term matches.
-///
-/// The library has no search field, so the term is resolved the way the entity
-/// string query resolves a typed name and the first match is revealed. A term
-/// nothing answers to brings the library forward with the selection it already
-/// had, which is what a search surface with nothing to show can honestly do.
+/// Kernova" — by putting the term in the library's search field and bringing
+/// the library forward, the VM the term most likely names selected
+/// (``VMLibrary/showSearchResults(for:)``).
 @AppIntent(schema: .system.search)
 struct SearchVMsIntent: ShowInAppSearchResultsIntent {
     static let title: LocalizedStringResource = "Search Virtual Machines"
@@ -27,7 +24,7 @@ struct SearchVMsIntent: ShowInAppSearchResultsIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await gateway.revealSearchResult(matching: criteria.term)
+        await gateway.showSearchResults(for: criteria.term)
         return .result()
     }
 }

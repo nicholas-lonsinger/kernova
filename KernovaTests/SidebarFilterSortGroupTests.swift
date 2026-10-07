@@ -605,8 +605,7 @@ struct SidebarFilterSortGroupTests {
         viewModel.selectRevealing(started.id)
         started.activity.placeForTesting(.running(sessionID: UUID()))
         #expect(
-            viewModel.sidebarLayout.sections.first?.filterCounts
-                == SidebarLayout.FilterCounts(shown: 2, total: 2))
+            viewModel.sidebarLayout.sections.first?.count == .narrowed(shown: 2, of: 2))
 
         // The rows stay the same, so only the retained VM's own state can wake
         // the pass that recounts: an observation of the layout must track it.
@@ -620,8 +619,7 @@ struct SidebarFilterSortGroupTests {
 
         #expect(woke.withLock { $0 })
         #expect(
-            viewModel.sidebarLayout.sections.first?.filterCounts
-                == SidebarLayout.FilterCounts(shown: 2, total: 2))
+            viewModel.sidebarLayout.sections.first?.count == .narrowed(shown: 2, of: 2))
     }
 
     @Test("A filter edit while the selected VM no longer matches hides it and clears the selection")

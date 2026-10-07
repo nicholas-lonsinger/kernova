@@ -75,6 +75,13 @@ final class AppWindowRegistry {
         mainWindowController?.revealSidebar()
     }
 
+    /// Brings the library window forward — opening it if there is none — with
+    /// the keyboard in its sidebar's search field.
+    func focusLibrarySearch() {
+        showLibrary(bringToFront: true)
+        mainWindowController?.focusSearch()
+    }
+
     /// The library window's sidebar while that window is on screen.
     var librarySidebar: SidebarViewController? {
         guard let mainWindowController, mainWindowController.window?.isVisible == true else { return nil }

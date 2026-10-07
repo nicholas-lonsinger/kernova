@@ -543,6 +543,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.renameVMInSidebar(instance)
     }
 
+    @objc func findVM(_ sender: Any?) {
+        windows.focusLibrarySearch()
+    }
+
     @objc func cloneVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         viewModel.cloneVM(instance)
