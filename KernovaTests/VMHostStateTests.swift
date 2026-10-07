@@ -13,7 +13,8 @@ struct VMHostStateTests {
     private func everyFieldSet() -> VMHostState {
         var hostState = VMHostState(
             startsAutomaticallyOnLaunch: true, displayPreference: .popOut,
-            lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true)
+            lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true,
+            tags: [UUID(), UUID()])
         hostState.applyEphemeralMode(
             enabled: true, baseline: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"))
         return hostState
@@ -29,6 +30,7 @@ struct VMHostStateTests {
         #expect(hostState.displayPreference == .inline)
         #expect(hostState.lastFullscreenDisplayID == nil)
         #expect(!hostState.agentInstallNudgeDismissed)
+        #expect(hostState.tags.isEmpty)
     }
 
     @Test("An encoded host state decodes back as itself")
@@ -47,5 +49,26 @@ struct VMHostStateTests {
         #expect(
             try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
                 == VMHostState(displayPreference: .fullscreen))
+    }
+
+    @Test("A copy arrives keeping only the tags the library defines, never set to start at launch")
+    func copyArrivesWithKnownTags() {
+        let work = UUID()
+        let elsewhere = UUID()
+        var copy = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut, tags: [work, elsewhere])
+
+        copy.arriveAsCopy(knownTags: [work, UUID()])
+
+        #expect(copy == VMHostState(displayPreference: .popOut, tags: [work]))
+    }
+
+    @Test("A New Machine clone starts from a new VM's host state, carrying the source's known tags")
+    func newMachineCarriesKnownTags() {
+        let work = UUID()
+        let source = everyFieldSet()
+        var tagged = source
+        tagged.tags = [work, UUID()]
+
+        #expect(VMHostState.newMachine(cloning: tagged, knownTags: [work]) == VMHostState(tags: [work]))
     }
 }

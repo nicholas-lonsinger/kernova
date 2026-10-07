@@ -2,8 +2,8 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// How the library is organized beyond its VMs — its smart groups and
-/// folders — and the one writer of the file that holds it.
+/// How the library is organized beyond its VMs — its smart groups, folders
+/// and tags — and the one writer of the file that holds it.
 @MainActor
 @Observable
 final class VMOrganizationDirectory {
@@ -22,24 +22,49 @@ final class VMOrganizationDirectory {
         var smartGroups: [VMSmartGroup]
         /// In the order the sidebar lists them.
         var folders: [VMFolder]
+        /// In the order every list of them shows them.
+        var tags: [VMTag]
 
-        init(smartGroups: [VMSmartGroup] = [], folders: [VMFolder] = []) {
+        init(smartGroups: [VMSmartGroup] = [], folders: [VMFolder] = [], tags: [VMTag] = []) {
             self.smartGroups = smartGroups
             self.folders = folders
+            self.tags = tags
         }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             smartGroups = try container.decode([VMSmartGroup].self, forKey: .smartGroups)
             folders = try container.decodeIfPresent([VMFolder].self, forKey: .folders) ?? []
+            tags = try container.decodeIfPresent([VMTag].self, forKey: .tags) ?? []
+        }
+    }
+
+    /// What the organization holds that a name selects.
+    enum Element: Equatable, Sendable {
+        case smartGroup, folder, tag
+
+        init(_ kind: VMGroupKind) {
+            switch kind {
+            case .smartGroup: self = .smartGroup
+            case .folder: self = .folder
+            }
+        }
+
+        /// What a sentence calls one.
+        var noun: String {
+            switch self {
+            case .smartGroup: "smart group"
+            case .folder: "folder"
+            case .tag: "tag"
+            }
         }
     }
 
     /// Why a change to the organization was refused.
     enum ChangeError: LocalizedError, Equatable {
-        case nameRequired(VMGroupKind)
-        case nameTaken(String, VMGroupKind)
-        case nameIsIdentifier(String, VMGroupKind)
+        case nameRequired(Element)
+        case nameTaken(String, Element)
+        case nameIsIdentifier(String, Element)
         case unreadable(String)
         case unsaved(String)
 
@@ -52,9 +77,9 @@ final class VMOrganizationDirectory {
             case .nameIsIdentifier(let name, let kind):
                 "\u{201C}\(name)\u{201D} can\u{2019}t name a \(kind.noun): an identifier already names one."
             case .unreadable(let reason):
-                "Kernova couldn\u{2019}t read its smart groups and folders, so it changes none: \(reason)"
+                "Kernova couldn\u{2019}t read its smart groups, folders and tags, so it changes none: \(reason)"
             case .unsaved(let reason):
-                "Kernova couldn\u{2019}t save its smart groups and folders: \(reason)"
+                "Kernova couldn\u{2019}t save its smart groups, folders and tags: \(reason)"
             }
         }
     }
@@ -64,6 +89,9 @@ final class VMOrganizationDirectory {
 
     /// Every folder, in the order the sidebar lists them.
     private(set) var folders: [VMFolder] = []
+
+    /// Every tag, in the order every list of them shows them.
+    private(set) var tags: [VMTag] = []
 
     /// Why the file could not be read the last time, `nil` when it was, or
     /// holds nothing yet. A change reads the file again first and refuses
@@ -101,6 +129,7 @@ final class VMOrganizationDirectory {
     private func show(_ read: File) {
         if read.smartGroups != smartGroups { smartGroups = read.smartGroups }
         if read.folders != folders { folders = read.folders }
+        if read.tags != tags { tags = read.tags }
     }
 
     // MARK: - Reads
@@ -115,6 +144,15 @@ final class VMOrganizationDirectory {
         folders.first { $0.id == id }
     }
 
+    /// The tag `id` identifies, `nil` when the library defines none.
+    func tag(withID id: UUID) -> VMTag? {
+        tags.first { $0.id == id }
+    }
+
+    /// Every tag's identifier — what a VM arriving in the library keeps of
+    /// its own (``VMHostState/arriveAsCopy(knownTags:)``).
+    var tagIDs: Set<UUID> { Set(tags.map(\.id)) }
+
     /// The smart group `text` names — by identifier, or by name ignoring case
     /// — `nil` when the library lists none.
     func smartGroup(named text: String) -> VMSmartGroup? {
@@ -127,9 +165,15 @@ final class VMOrganizationDirectory {
         Self.element(named: text, in: folders, name: \.name)
     }
 
-    private static func element<Element: Identifiable<UUID>>(
-        named text: String, in elements: [Element], name: (Element) -> String
-    ) -> Element? {
+    /// The tag `text` names — by identifier, or by name ignoring case — `nil`
+    /// when the library defines none.
+    func tag(named text: String) -> VMTag? {
+        Self.element(named: text, in: tags, name: \.name)
+    }
+
+    private static func element<Named: Identifiable<UUID>>(
+        named text: String, in elements: [Named], name: (Named) -> String
+    ) -> Named? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let id = UUID(uuidString: trimmed), let element = elements.first(where: { $0.id == id }) {
             return element
@@ -137,13 +181,14 @@ final class VMOrganizationDirectory {
         return elements.first { name($0).caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
-    /// `base`, or the first of "`base` 2", "`base` 3", … no `kind` is named —
-    /// what a new one's name field starts from.
-    func unusedName(from base: String, for kind: VMGroupKind) -> String {
+    /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
+    /// named — what a new one's name field starts from.
+    func unusedName(from base: String, for element: Element) -> String {
         let names =
-            switch kind {
+            switch element {
             case .smartGroup: smartGroups.map(\.name)
             case .folder: folders.map(\.name)
+            case .tag: tags.map(\.name)
             }
         let taken = Set(names.map { $0.lowercased() })
         guard taken.contains(base.lowercased()) else { return base }
@@ -267,13 +312,55 @@ final class VMOrganizationDirectory {
         }
     }
 
+    // MARK: - Tags
+
+    /// Defines a new tag named `name` in `color`, after every other.
+    @discardableResult
+    func createTag(named name: String, color: VMTagColor) throws -> VMTag {
+        var created: VMTag?
+        try commit { file in
+            let tag = VMTag(
+                id: UUID(),
+                name: try Self.validatedName(name, of: .tag, for: nil, among: file.tags.map { ($0.id, $0.name) }),
+                color: color)
+            created = tag
+            file.tags.append(tag)
+        }
+        guard let created else { preconditionFailure("A committed create made no tag") }
+        return created
+    }
+
+    /// Renames the tag `id` identifies.
+    func renameTag(_ id: UUID, to name: String) throws {
+        try commit { file in
+            let name = try Self.validatedName(name, of: .tag, for: id, among: file.tags.map { ($0.id, $0.name) })
+            Self.edit(id, in: &file.tags) { $0.name = name }
+        }
+    }
+
+    /// Shows the tag `id` identifies in `color`.
+    func setColor(_ color: VMTagColor, ofTag id: UUID) throws {
+        try commit { file in Self.edit(id, in: &file.tags) { $0.color = color } }
+    }
+
+    /// Stops defining the tag `id` identifies, and drops it from every smart
+    /// group's filter in the same write.
+    func removeTag(_ id: UUID) throws {
+        try commit { file in
+            file.tags.removeAll { $0.id == id }
+            for index in file.smartGroups.indices {
+                file.smartGroups[index].filter.tags.remove(id)
+            }
+        }
+    }
+
     // MARK: - Commit
 
     /// `name` trimmed, refusing an empty one, one spelling an identifier, and
     /// one an element of `named` other than `id` holds, ignoring case — what
     /// lets a name select one.
     private static func validatedName(
-        _ name: String, of kind: VMGroupKind, for id: UUID?, among named: [(id: UUID, name: String)]
+        _ name: String, of kind: Element, for id: UUID?, among named: [(id: UUID, name: String)]
     ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ChangeError.nameRequired(kind) }
@@ -287,8 +374,8 @@ final class VMOrganizationDirectory {
     }
 
     /// Applies `change` to the element of `list` that `id` identifies, if any.
-    private static func edit<Element: Identifiable>(
-        _ id: Element.ID, in list: inout [Element], _ change: (inout Element) -> Void
+    private static func edit<Listed: Identifiable>(
+        _ id: Listed.ID, in list: inout [Listed], _ change: (inout Listed) -> Void
     ) {
         guard let index = list.firstIndex(where: { $0.id == id }) else { return }
         change(&list[index])
@@ -296,8 +383,8 @@ final class VMOrganizationDirectory {
 
     /// Moves the element `key` names to just before the one `successor`
     /// names, or to the end when `successor` is `nil` or not in `list`.
-    private static func move<Element, Key: Equatable>(
-        _ key: Key, before successor: Key?, in list: inout [Element], by keyPath: KeyPath<Element, Key>
+    private static func move<Listed, Key: Equatable>(
+        _ key: Key, before successor: Key?, in list: inout [Listed], by keyPath: KeyPath<Listed, Key>
     ) {
         guard key != successor, let from = list.firstIndex(where: { $0[keyPath: keyPath] == key }) else {
             return
@@ -322,7 +409,7 @@ final class VMOrganizationDirectory {
             return next
         }
         guard let file else {
-            show(try changed(File(smartGroups: smartGroups, folders: folders)))
+            show(try changed(File(smartGroups: smartGroups, folders: folders, tags: tags)))
             return
         }
         do {
@@ -339,10 +426,5 @@ final class VMOrganizationDirectory {
 
 extension VMGroupKind {
     /// What a sentence calls a group of this kind.
-    var noun: String {
-        switch self {
-        case .smartGroup: "smart group"
-        case .folder: "folder"
-        }
-    }
+    var noun: String { VMOrganizationDirectory.Element(self).noun }
 }

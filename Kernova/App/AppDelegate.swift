@@ -455,6 +455,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         windows.showSettings(sender)
     }
 
+    /// Shows the Settings window on its Tags pane.
+    @objc func showTagsSettings(_ sender: Any?) {
+        windows.showSettings(sender, pane: .tags)
+    }
+
     // MARK: - VM Actions
 
     @objc func startVM(_ sender: Any?) {

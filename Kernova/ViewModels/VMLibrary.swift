@@ -51,7 +51,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// The host interfaces a network naming one is titled from.
     @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
-    /// The library's smart groups and folders.
+    /// The library's smart groups, folders and tags.
     let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
@@ -250,6 +250,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
+            tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.title(
                     of: config, entitlements: entitlements, interfaces: interfaces.interfaces,

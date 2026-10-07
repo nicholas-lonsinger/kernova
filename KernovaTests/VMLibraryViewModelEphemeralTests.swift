@@ -313,6 +313,7 @@ struct VMLibraryViewModelEphemeralTests {
                 $0.displayPreference = .fullscreen
                 $0.lastFullscreenDisplayID = 4_280_803_137
                 $0.agentInstallNudgeDismissed = true
+                $0.tags = [UUID()]
             })
         let editedHostState = instance.hostState
 

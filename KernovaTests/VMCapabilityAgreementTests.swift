@@ -150,7 +150,7 @@ struct VMCapabilityAgreementTests {
         case .showInFinder: try core.showInFinder(vm)
         case .toggleGuestAgentDisk: _ = try core.mountGuestAgentDisk(vm)
         case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen,
-            .showClipboard, .toggleSettingsPane:
+            .showClipboard, .toggleSettingsPane, .editTags:
             Issue.record("\(capability) has no verb to call")
         }
     }

@@ -484,6 +484,23 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(!harness.viewModel.quitMustWaitOut)
     }
 
+    @Test("Reverting keeps the VM's tags, which its host state holds")
+    func revertKeepsTheTags() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+        let target = makeSnapshot(name: "Fresh install")
+        seed(harness, instance, [target], currentID: target.id)
+        let library = harness.viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        try library.setTag(work.id, assigned: true, on: instance)
+
+        await harness.viewModel.revert(instance, to: target)
+
+        #expect(harness.virtualization.revertedSnapshots == [target])
+        #expect(library.tags(of: instance) == [work])
+        #expect(harness.storage.hostStates[instance.bundleURL]?.tags == [work.id])
+    }
+
     @Test("Reverting to an unlisted snapshot does nothing")
     func revertToAnUnlistedSnapshotDoesNothing() async {
         let harness = makeHarness()

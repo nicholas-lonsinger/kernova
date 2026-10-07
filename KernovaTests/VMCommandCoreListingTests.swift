@@ -203,6 +203,54 @@ struct VMCommandCoreListingTests {
         #expect(try listed(harness, VMListQuery(filter: VMLibraryFilter(networks: [.unlisted]))) == ["Stray"])
     }
 
+    // MARK: - Tags
+
+    @Test("A tag text reads as a tag's name ignoring case or its identifier, any tag given admitting a VM")
+    func tagTextsResolve() throws {
+        let harness = makeHarness()
+        let work = try harness.library.createTag(named: "Work", color: .blue)
+        let lab = try harness.library.createTag(named: "Lab", color: .green)
+        makeInstance(in: harness, name: "Both", hostState: VMHostState(tags: [work.id, lab.id]))
+        makeInstance(in: harness, name: "Desk", hostState: VMHostState(tags: [work.id]))
+        makeInstance(in: harness, name: "Bench", guestOS: .macOS, hostState: VMHostState(tags: [lab.id]))
+        makeInstance(in: harness, name: "Plain")
+
+        #expect(try listed(harness, VMListQuery(tags: ["work"])) == ["Both", "Desk"])
+        #expect(try listed(harness, VMListQuery(tags: [lab.id.uuidString.lowercased()])) == ["Both", "Bench"])
+        #expect(try listed(harness, VMListQuery(tags: ["WORK", "lab"])) == ["Both", "Desk", "Bench"])
+        // ANDed with the other flags.
+        #expect(
+            try listed(harness, VMListQuery(filter: VMLibraryFilter(guestOSes: [.linux]), tags: ["Lab"])) == ["Both"])
+
+        guard case .itemNotFoundOnHost(let item)? = refusal(harness, VMListQuery(tags: ["Home"])) else {
+            Issue.record("expected a not-found refusal")
+            return
+        }
+        #expect(item == "tag named \u{201C}Home\u{201D}")
+    }
+
+    @Test("A tag filter lists exactly what the sidebar's library section lists under it")
+    func tagFilterMatchesTheSidebar() throws {
+        let harness = makeHarness()
+        let work = try harness.library.createTag(named: "Work", color: .blue)
+        let lab = try harness.library.createTag(named: "Lab", color: .green)
+        makeInstance(in: harness, name: "Both", hostState: VMHostState(tags: [work.id, lab.id]))
+        makeInstance(in: harness, name: "Desk", guestOS: .macOS, hostState: VMHostState(tags: [work.id]))
+        // A tag the library does not define is carried by no VM.
+        makeInstance(in: harness, name: "Stray", hostState: VMHostState(tags: [UUID()]))
+        let filters = [
+            VMLibraryFilter(tags: [work.id]), VMLibraryFilter(tags: [lab.id]),
+            VMLibraryFilter(guestOSes: [.macOS], tags: [work.id, lab.id]),
+        ]
+        for filter in filters {
+            harness.library.sidebarOptions.filter = filter
+            let sidebar = names(in: harness.library.sidebarLayout.sections.last)
+            #expect(try listed(harness, VMListQuery(filter: filter)) == sidebar, "\(filter)")
+        }
+        #expect(try listed(harness, VMListQuery(filter: filters[0])) == ["Both", "Desk"])
+        #expect(try listed(harness, VMListQuery(filter: filters[2])) == ["Desk"])
+    }
+
     // MARK: - Smart groups
 
     @Test("A smart group named by any case or by identifier lists what its sidebar section lists")

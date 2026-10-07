@@ -141,16 +141,17 @@ struct VMCommandEnvelopeRouterTests {
         #expect(unknown.failure == .itemNotFoundOnHost(item: "smart group named \u{201C}Nope\u{201D}"))
     }
 
-    @Test("A listing written in the vocabulary before the list query is refused as another version")
+    @Test("A listing written in the vocabulary before the list query's tags is refused as another version")
     func listingOfThePreviousVocabularyIsRefused() async throws {
         let harness = makeHarness()
-        let request = Data(#"{"protocolVersion":8,"verb":{"list":{}}}"#.utf8)
+        let request = Data(#"{"protocolVersion":10,"verb":{"list":{}}}"#.utf8)
 
         let response = try await harness.transport.sendRaw(request)
 
+        #expect(VMCommandRequest.currentProtocolVersion == 11)
         #expect(
             response.result
-                == .refused(.unsupportedProtocolVersion(peer: 8, expected: VMCommandRequest.currentProtocolVersion)))
+                == .refused(.unsupportedProtocolVersion(peer: 10, expected: VMCommandRequest.currentProtocolVersion)))
     }
 
     @Test("A group action written in the vocabulary before group actions is refused as another version")
@@ -162,7 +163,6 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 10)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 9, expected: VMCommandRequest.currentProtocolVersion)))

@@ -3,8 +3,8 @@ import KernovaKit
 
 /// The menus a sidebar section's header opens — from its button or a
 /// right-click: the library section's filter, group and sort menu, a smart
-/// group's own filter menu, and a folder's menu — and the folder items of a
-/// VM row's menu.
+/// group's own filter menu, and a folder's menu — and the folder and tag
+/// items of a VM row's menu.
 ///
 /// Each item carries the ``Command`` picking it runs, so a menu is a pure
 /// function of what it is built over, and a pick only hands its command to
@@ -44,6 +44,11 @@ final class SidebarViewMenu: NSObject {
         case setMembership(entry: UUID, folder: UUID, isMember: Bool)
         /// Takes `action` on every VM in `group`.
         case groupAction(VMGroupAction, VMGroupReference)
+        /// Puts the tag `tag` on the VM `entry`, or takes it off.
+        case setTag(entry: UUID, tag: UUID, isAssigned: Bool)
+        /// Opens the Settings pane that creates, renames, recolors and
+        /// deletes the library's tags.
+        case editTags
     }
 
     /// An item's command, as its represented object.
@@ -62,12 +67,16 @@ final class SidebarViewMenu: NSObject {
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
     private let networkTitle: (VMLibraryFilter.Network) -> String
+    /// The library's tags, in their order.
+    private let tags: () -> [VMTag]
 
     init(
         networkTitle: @escaping (VMLibraryFilter.Network) -> String,
+        tags: @escaping () -> [VMTag],
         perform: @escaping (Command) -> Void
     ) {
         self.networkTitle = networkTitle
+        self.tags = tags
         self.perform = perform
     }
 
@@ -95,7 +104,7 @@ final class SidebarViewMenu: NSObject {
         menu.addItem(.separator())
         menu.addItem(
             choiceMenu(
-                "Group By", current: options.grouping, cases: [.guestOS, .state, .network], trailing: .none,
+                "Group By", current: options.grouping, cases: [.guestOS, .state, .network, .tag], trailing: .none,
                 title: \.title
             ) { grouping in
                 var picked = options
@@ -214,6 +223,30 @@ final class SidebarViewMenu: NSObject {
             "Remove from Folder", state: .off, command: .setMembership(entry: entry, folder: folder, isMember: false))
     }
 
+    /// A VM row's Tags item for the VM `entry`, which carries the tags
+    /// `assigned` identifies: a submenu listing each of the library's tags
+    /// with its color, checked where the VM carries it and each pick toggling
+    /// that — offered only while `isEnabled` — then Edit Tags….
+    func tagsItem(entry: UUID, assigned: Set<UUID>, isEnabled: Bool) -> NSMenuItem {
+        let item = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Tags")
+        submenu.autoenablesItems = false
+        let tags = tags()
+        for tag in tags {
+            let isAssigned = assigned.contains(tag.id)
+            let tagItem = pickItem(
+                tag.name, state: isAssigned ? .on : .off,
+                command: .setTag(entry: entry, tag: tag.id, isAssigned: !isAssigned))
+            tagItem.image = tag.color.dotImage()
+            tagItem.isEnabled = isEnabled
+            submenu.addItem(tagItem)
+        }
+        if !tags.isEmpty { submenu.addItem(.separator()) }
+        submenu.addItem(pickItem("Edit Tags\u{2026}", state: .off, command: .editTags))
+        item.submenu = submenu
+        return item
+    }
+
     // MARK: - Descriptions
 
     /// `filter`'s active attributes, as a header button's accessibility value
@@ -234,7 +267,7 @@ final class SidebarViewMenu: NSObject {
                 on.count <= 2
                 ? on.joined(separator: " or ")
                 : on.dropLast().joined(separator: ", ") + ", or " + (on.last ?? "")
-            return ["\(attribute.title) is \(either)"]
+            return ["\(attribute.conditionTitle ?? attribute.title) is \(either)"]
         }
     }
 
@@ -267,6 +300,7 @@ final class SidebarViewMenu: NSObject {
                 let choiceItem = pickItem(
                     choice.title, state: choice.isOn ? .on : .off, command: picking(choice.picked))
                 choiceItem.badge = NSMenuItemBadge(count: choice.count)
+                choiceItem.image = choice.image
                 submenu.addItem(choiceItem)
             }
             item.submenu = submenu
@@ -313,6 +347,8 @@ final class SidebarViewMenu: NSObject {
             let count: Int
             let isOn: Bool
             let picked: VMLibraryFilter
+            /// What the item shows before its title: a tag's color.
+            var image: NSImage? = nil
         }
 
         let title: String
@@ -321,6 +357,8 @@ final class SidebarViewMenu: NSObject {
         /// Whether its choices are values the attribute takes ("Guest OS is
         /// macOS") rather than flags of their own (Other).
         var isPredicate = true
+        /// What a condition calls the attribute, when not its ``title``.
+        var conditionTitle: String? = nil
         let cleared: VMLibraryFilter
         let choices: [Choice]
 
@@ -369,6 +407,17 @@ final class SidebarViewMenu: NSObject {
                     title: choice.title, count: choice.count, isOn: filter.networks.contains(choice.network),
                     picked: with { $0.networks = toggled($0.networks, choice.network) })
             })
+        // Any picked tag admits a VM, so picks widen the set.
+        let tagged = Attribute(
+            title: "Tags", allTitle: "All Tags", isActive: !filter.tags.isEmpty, conditionTitle: "Tag",
+            cleared: with { $0.tags = [] },
+            choices: tags().map { tag in
+                Attribute.Choice(
+                    title: tag.name, count: values.count { $0.subject.tags.contains(tag.id) },
+                    isOn: filter.tags.contains(tag.id),
+                    picked: with { $0.tags = toggled($0.tags, tag.id) },
+                    image: tag.color.dotImage())
+            })
         let guestAgent = Attribute(
             title: "Guest Agent", allTitle: "All", isActive: !filter.guestAgents.isEmpty,
             cleared: with { $0.guestAgents = [] },
@@ -393,7 +442,10 @@ final class SidebarViewMenu: NSObject {
                     title: "Has Snapshots", count: values.count(where: \.subject.hasSnapshots),
                     isOn: filter.withSnapshotsOnly, picked: with { $0.withSnapshotsOnly.toggle() }),
             ])
-        return [guestOS, state, network, guestAgent, other]
+        // A library with no tags lists no Tags row, unless the filter still
+        // names one to clear.
+        let offersTags = !tagged.choices.isEmpty || tagged.isActive
+        return [guestOS, state, network] + (offersTags ? [tagged] : []) + [guestAgent, other]
     }
 
     /// The Network submenu's choices: one per network the library's VMs are

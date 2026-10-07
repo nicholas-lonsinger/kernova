@@ -184,7 +184,7 @@ struct SidebarSmartGroupTests {
 
     @Test("The naming sheet suggests a name from the filter and lists its conditions")
     func namingSheet() throws {
-        let menu = SidebarViewMenu(networkTitle: { $0.rawValue }, perform: { _ in })
+        let menu = SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { _ in })
         let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
         let values = [
             SidebarViewMenu.Value(

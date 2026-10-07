@@ -139,6 +139,14 @@ struct CLIArgumentParsingTests {
         #expect(query.filter.networks.isEmpty)
     }
 
+    @Test("--tag sends every value as typed, in order, for the app to read as a tag's name or identifier")
+    func tagsGoAsTyped() throws {
+        let typed = ["Work", "lab", "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21"]
+        let query = try listQuery(typed.flatMap { ["--tag", $0] } + ["--os", "linux"])
+        #expect(query.tags == typed)
+        #expect(query.filter == VMLibraryFilter(guestOSes: [.linux]))
+    }
+
     @Test("--sort takes each order by its name and defaults to the manual order")
     func sortParses() throws {
         for sort in VMLibrarySort.allCases {

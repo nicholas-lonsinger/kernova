@@ -60,6 +60,8 @@ enum VMCapability: CaseIterable, Hashable {
     case switchNetworkMembership
     case clone
     case rename
+    /// Put a library tag on the VM or take it off.
+    case editTags
     case delete
     case showInFinder
     case togglePopOut
@@ -107,7 +109,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
         case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .toggleSettingsPane:
+            .toggleSettingsPane, .editTags:
             nil
         }
     }
@@ -130,6 +132,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .switchNetworkMembership: .networkMembership
         case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
+        case .editTags: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
@@ -183,7 +186,7 @@ enum VMCapability: CaseIterable, Hashable {
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
             .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia,
             .removeRemovableMedia, .forgetUSBPairing, .editLiveConfiguration, .switchNetworkMode,
-            .switchNetworkMembership, .rename:
+            .switchNetworkMembership, .rename, .editTags:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)

@@ -31,10 +31,10 @@ extension VMInstance {
 
 extension LibraryEntry {
     /// What a ``VMLibraryFilter`` reads of this entry, with `networks` the
-    /// library's named networks. An arrival is preparing, with no session, no
-    /// Ephemeral Mode and no snapshots.
+    /// library's named networks and `tags` its tags. An arrival is preparing,
+    /// with no session, no Ephemeral Mode, no snapshots and no tags.
     func filterSubject(
-        bundledAgentVersion: String?, networks: [VMNamedNetwork]
+        bundledAgentVersion: String?, networks: [VMNamedNetwork], tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         let configuration = configuration
         let network = VMLibraryFilter.Network(NetworkModeChoice(configuration)) { kind, id in
@@ -51,7 +51,8 @@ extension LibraryEntry {
             return VMLibraryFilter.Subject(
                 guestOS: configuration.guestOS, state: instance.stateBucket, network: network,
                 guestAgent: guestAgent, isEphemeral: instance.hostState.ephemeralModeEnabled,
-                hasSnapshots: !instance.snapshotManifest.isEmpty)
+                hasSnapshots: !instance.snapshotManifest.isEmpty,
+                tags: Set(tags.assigned(instance.hostState.tags).map(\.id)))
         case .arriving:
             return VMLibraryFilter.Subject(
                 guestOS: configuration.guestOS, state: .preparing, network: network,
