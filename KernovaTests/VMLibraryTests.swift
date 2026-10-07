@@ -202,7 +202,7 @@ struct VMLibraryTests {
 
         library.selectRevealing(instance.id)
 
-        #expect(preferences.lastSelectedVMID == instance.id)
+        #expect(preferences.sidebarSelection == .library(instance.id))
     }
 
     @Test("selectedID clears UserDefaults when set to nil")
@@ -213,7 +213,7 @@ struct VMLibraryTests {
 
         library.selection = nil
 
-        #expect(preferences.lastSelectedVMID == nil)
+        #expect(preferences.sidebarSelection == nil)
     }
 
     @Test("loadVMs restores selection from UserDefaults when VM still exists")
@@ -229,7 +229,7 @@ struct VMLibraryTests {
         storage.bundles[url2] = config2
 
         // Seed preferences before the load, which is what consults them
-        preferences.lastSelectedVMID = config2.id
+        preferences.sidebarSelection = .library(config2.id)
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
@@ -272,7 +272,7 @@ struct VMLibraryTests {
         storage.bundles[url] = config
 
         // Seed preferences with a UUID that doesn't match any VM
-        preferences.lastSelectedVMID = UUID()
+        preferences.sidebarSelection = .library(UUID())
 
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()

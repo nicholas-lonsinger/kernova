@@ -544,7 +544,7 @@ struct SidebarSmartGroupTests {
         // As a relaunch finds it: the VM last selected — in the group — and
         // nothing selected yet.
         viewModel.selection = nil
-        preferences.lastSelectedVMID = mac.id
+        preferences.sidebarSelection = .library(mac.id)
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         let library = try #require(outline.item(atRow: 2) as? SidebarSection)
