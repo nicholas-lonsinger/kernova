@@ -16,26 +16,135 @@ final class VMOrganizationDirectory {
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("Organization.json", isDirectory: false)
 
-    /// The file's payload.
+    /// The file's payload: every sidebar section — each smart group, each
+    /// folder, and the library exactly once — in the order the sidebar lists
+    /// them, and the tags the library defines.
+    ///
+    /// On disk the smart groups and folders are two lists by kind, and
+    /// `sectionOrder` lists every section's ``SidebarSectionID`` in sidebar
+    /// order. A section `sectionOrder` does not name follows the ones it does,
+    /// smart groups, then folders, each in its list's order, then the library
+    /// — every section, for a file with no `sectionOrder`; an identifier no
+    /// section carries is ignored.
     struct File: Codable, Equatable, Sendable {
-        /// In the order the sidebar lists them.
-        var smartGroups: [VMSmartGroup]
-        /// In the order the sidebar lists them.
-        var folders: [VMFolder]
+        private(set) var sections: [Section]
         /// In the order every list of them shows them.
         var tags: [VMTag]
 
-        init(smartGroups: [VMSmartGroup] = [], folders: [VMFolder] = [], tags: [VMTag] = []) {
-            self.smartGroups = smartGroups
-            self.folders = folders
-            self.tags = tags
+        /// Only the library section, and no tags.
+        init() {
+            sections = [.library]
+            tags = []
+        }
+
+        var smartGroups: [VMSmartGroup] { sections.compactMap(\.smartGroup) }
+        var folders: [VMFolder] { sections.compactMap(\.folder) }
+
+        private enum CodingKeys: String, CodingKey {
+            case smartGroups, folders, sectionOrder, tags
         }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            smartGroups = try container.decode([VMSmartGroup].self, forKey: .smartGroups)
-            folders = try container.decodeIfPresent([VMFolder].self, forKey: .folders) ?? []
+            let byDefault =
+                try container.decode([VMSmartGroup].self, forKey: .smartGroups).map(Section.smartGroup)
+                + (try container.decodeIfPresent([VMFolder].self, forKey: .folders) ?? []).map(Section.folder)
+                + [.library]
+            let order = try container.decodeIfPresent([SidebarSectionID].self, forKey: .sectionOrder) ?? []
+            var rank: [SidebarSectionID: Int] = [:]
+            for (index, id) in order.enumerated() where rank[id] == nil { rank[id] = index }
+            sections = byDefault.enumerated()
+                .sorted { lhs, rhs in
+                    (rank[lhs.element.id] ?? order.count, lhs.offset) < (
+                        rank[rhs.element.id] ?? order.count, rhs.offset
+                    )
+                }
+                .map(\.element)
             tags = try container.decodeIfPresent([VMTag].self, forKey: .tags) ?? []
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(smartGroups, forKey: .smartGroups)
+            try container.encode(folders, forKey: .folders)
+            try container.encode(sections.map(\.id), forKey: .sectionOrder)
+            try container.encode(tags, forKey: .tags)
+        }
+
+        /// Lists `group` after every other section.
+        mutating func append(_ group: VMSmartGroup) {
+            sections.append(.smartGroup(group))
+        }
+
+        /// Lists `folder` after every other section.
+        mutating func append(_ folder: VMFolder) {
+            sections.append(.folder(folder))
+        }
+
+        /// Stops listing the smart group `id` identifies.
+        mutating func removeSmartGroup(_ id: UUID) {
+            sections.removeAll { $0.smartGroup?.id == id }
+        }
+
+        /// Stops listing the folder `id` identifies.
+        mutating func removeFolder(_ id: UUID) {
+            sections.removeAll { $0.folder?.id == id }
+        }
+
+        /// Moves the section `id` identifies to just before the one
+        /// `successor` identifies, or after every other when `successor` is
+        /// `nil` or not listed.
+        mutating func move(_ id: SidebarSectionID, before successor: SidebarSectionID?) {
+            guard id != successor, let from = sections.firstIndex(where: { $0.id == id }) else { return }
+            let moved = sections.remove(at: from)
+            let to = successor.flatMap { next in sections.firstIndex { $0.id == next } } ?? sections.endIndex
+            sections.insert(moved, at: to)
+        }
+
+        /// Applies `change` to each smart group `included` admits.
+        mutating func editSmartGroups(
+            where included: (VMSmartGroup) -> Bool, _ change: (inout VMSmartGroup) -> Void
+        ) {
+            for index in sections.indices {
+                guard case .smartGroup(var group) = sections[index], included(group) else { continue }
+                change(&group)
+                sections[index] = .smartGroup(group)
+            }
+        }
+
+        /// Applies `change` to each folder `included` admits.
+        mutating func editFolders(where included: (VMFolder) -> Bool, _ change: (inout VMFolder) -> Void) {
+            for index in sections.indices {
+                guard case .folder(var folder) = sections[index], included(folder) else { continue }
+                change(&folder)
+                sections[index] = .folder(folder)
+            }
+        }
+    }
+
+    /// One sidebar section: a smart group, a folder, or the library.
+    enum Section: Equatable, Sendable, Identifiable {
+        case smartGroup(VMSmartGroup)
+        case folder(VMFolder)
+        /// The section listing every library entry.
+        case library
+
+        var id: SidebarSectionID {
+            switch self {
+            case .smartGroup(let group): .smartGroup(group.id)
+            case .folder(let folder): .folder(folder.id)
+            case .library: .library
+            }
+        }
+
+        var smartGroup: VMSmartGroup? {
+            guard case .smartGroup(let group) = self else { return nil }
+            return group
+        }
+
+        var folder: VMFolder? {
+            guard case .folder(let folder) = self else { return nil }
+            return folder
         }
     }
 
@@ -84,14 +193,21 @@ final class VMOrganizationDirectory {
         }
     }
 
+    /// What the file holds, as last read or written.
+    private var current = File()
+
+    /// Every section, the library's included, in the order the sidebar lists
+    /// them.
+    var sections: [Section] { current.sections }
+
     /// Every smart group, in the order the sidebar lists them.
-    private(set) var smartGroups: [VMSmartGroup] = []
+    var smartGroups: [VMSmartGroup] { current.smartGroups }
 
     /// Every folder, in the order the sidebar lists them.
-    private(set) var folders: [VMFolder] = []
+    var folders: [VMFolder] { current.folders }
 
     /// Every tag, in the order every list of them shows them.
-    private(set) var tags: [VMTag] = []
+    var tags: [VMTag] { current.tags }
 
     /// Why the file could not be read the last time, `nil` when it was, or
     /// holds nothing yet. A change reads the file again first and refuses
@@ -124,12 +240,10 @@ final class VMOrganizationDirectory {
         }
     }
 
-    /// Lists what `read` holds, assigning only the lists that changed so an
-    /// observer of one is not told about the other.
+    /// Lists what `read` holds, assigning only when it changed so an
+    /// observer is told of changes alone.
     private func show(_ read: File) {
-        if read.smartGroups != smartGroups { smartGroups = read.smartGroups }
-        if read.folders != folders { folders = read.folders }
-        if read.tags != tags { tags = read.tags }
+        if read != current { current = read }
     }
 
     // MARK: - Reads
@@ -207,7 +321,7 @@ final class VMOrganizationDirectory {
                     name, of: .smartGroup, for: nil, among: file.smartGroups.map { ($0.id, $0.name) }),
                 filter: filter)
             created = group
-            file.smartGroups.append(group)
+            file.append(group)
         }
         guard let created else { preconditionFailure("A committed create made no smart group") }
         return created
@@ -218,25 +332,18 @@ final class VMOrganizationDirectory {
         try commit { file in
             let name = try Self.validatedName(
                 name, of: .smartGroup, for: id, among: file.smartGroups.map { ($0.id, $0.name) })
-            Self.edit(id, in: &file.smartGroups) { $0.name = name }
+            file.editSmartGroups(where: { $0.id == id }) { $0.name = name }
         }
     }
 
     /// Makes the smart group `id` identifies show what `filter` admits.
     func setFilter(_ filter: VMLibraryFilter, ofSmartGroup id: UUID) throws {
-        try commit { file in Self.edit(id, in: &file.smartGroups) { $0.filter = filter } }
+        try commit { file in file.editSmartGroups(where: { $0.id == id }) { $0.filter = filter } }
     }
 
     /// Stops listing the smart group `id` identifies.
     func removeSmartGroup(_ id: UUID) throws {
-        try commit { file in file.smartGroups.removeAll { $0.id == id } }
-    }
-
-    /// Moves the smart group `id` identifies to just before the one `successor`
-    /// identifies, or after every other when `successor` is `nil` or no longer
-    /// listed.
-    func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {
-        try commit { file in Self.move(id, before: successor, in: &file.smartGroups, by: \.id) }
+        try commit { file in file.removeSmartGroup(id) }
     }
 
     // MARK: - Folders
@@ -251,7 +358,7 @@ final class VMOrganizationDirectory {
                 name: try Self.validatedName(name, of: .folder, for: nil, among: file.folders.map { ($0.id, $0.name) }),
                 members: Self.unique(members))
             created = folder
-            file.folders.append(folder)
+            file.append(folder)
         }
         guard let created else { preconditionFailure("A committed create made no folder") }
         return created
@@ -261,33 +368,26 @@ final class VMOrganizationDirectory {
     func renameFolder(_ id: UUID, to name: String) throws {
         try commit { file in
             let name = try Self.validatedName(name, of: .folder, for: id, among: file.folders.map { ($0.id, $0.name) })
-            Self.edit(id, in: &file.folders) { $0.name = name }
+            file.editFolders(where: { $0.id == id }) { $0.name = name }
         }
     }
 
     /// Stops listing the folder `id` identifies; its VMs stay in the library.
     func removeFolder(_ id: UUID) throws {
-        try commit { file in file.folders.removeAll { $0.id == id } }
-    }
-
-    /// Moves the folder `id` identifies to just before the one `successor`
-    /// identifies, or after every other when `successor` is `nil` or no longer
-    /// listed.
-    func moveFolder(_ id: UUID, before successor: UUID?) throws {
-        try commit { file in Self.move(id, before: successor, in: &file.folders, by: \.id) }
+        try commit { file in file.removeFolder(id) }
     }
 
     /// Puts each of `entries` the folder `id` identifies does not hold yet
     /// after its members, in `entries`' order.
     func add(_ entries: [UUID], toFolder id: UUID) throws {
         try commit { file in
-            Self.edit(id, in: &file.folders) { $0.members = Self.unique($0.members + entries) }
+            file.editFolders(where: { $0.id == id }) { $0.members = Self.unique($0.members + entries) }
         }
     }
 
     /// Takes the entry `entry` out of the folder `id` identifies.
     func remove(_ entry: UUID, fromFolder id: UUID) throws {
-        try commit { file in Self.edit(id, in: &file.folders) { $0.members.removeAll { $0 == entry } } }
+        try commit { file in file.editFolders(where: { $0.id == id }) { $0.members.removeAll { $0 == entry } } }
     }
 
     /// Moves the member `entry` of the folder `id` identifies to just before
@@ -295,16 +395,14 @@ final class VMOrganizationDirectory {
     /// or no longer a member.
     func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
         try commit { file in
-            Self.edit(id, in: &file.folders) { Self.move(entry, before: successor, in: &$0.members, by: \.self) }
+            file.editFolders(where: { $0.id == id }) { Self.move(entry, before: successor, in: &$0.members) }
         }
     }
 
     /// Takes each of `entries` out of every folder.
     func removeFromEveryFolder(_ entries: Set<UUID>) throws {
         try commit { file in
-            for index in file.folders.indices {
-                file.folders[index].members.removeAll(where: entries.contains)
-            }
+            file.editFolders(where: { _ in true }) { $0.members.removeAll(where: entries.contains) }
         }
     }
 
@@ -347,6 +445,15 @@ final class VMOrganizationDirectory {
         try commit { file in file.tags.removeAll { $0.id == id } }
     }
 
+    // MARK: - Order
+
+    /// Moves the section `id` identifies — a smart group, a folder or the
+    /// library — to just before the one `successor` identifies, or after every
+    /// other when `successor` is `nil` or no longer listed.
+    func moveSection(_ id: SidebarSectionID, before successor: SidebarSectionID?) throws {
+        try commit { file in file.move(id, before: successor) }
+    }
+
     // MARK: - Commit
 
     /// `name` trimmed, refusing an empty one, one spelling an identifier, and
@@ -374,17 +481,12 @@ final class VMOrganizationDirectory {
         change(&list[index])
     }
 
-    /// Moves the element `key` names to just before the one `successor`
-    /// names, or to the end when `successor` is `nil` or not in `list`.
-    private static func move<Listed, Key: Equatable>(
-        _ key: Key, before successor: Key?, in list: inout [Listed], by keyPath: KeyPath<Listed, Key>
-    ) {
-        guard key != successor, let from = list.firstIndex(where: { $0[keyPath: keyPath] == key }) else {
-            return
-        }
-        let moved = list.remove(at: from)
-        let to = successor.flatMap { next in list.firstIndex { $0[keyPath: keyPath] == next } } ?? list.endIndex
-        list.insert(moved, at: to)
+    /// Moves `entry` to just before `successor`, or to the end when
+    /// `successor` is `nil` or not in `list`.
+    private static func move(_ entry: UUID, before successor: UUID?, in list: inout [UUID]) {
+        guard entry != successor, let from = list.firstIndex(of: entry) else { return }
+        list.remove(at: from)
+        list.insert(entry, at: successor.flatMap { list.firstIndex(of: $0) } ?? list.endIndex)
     }
 
     /// `ids` with every repeat after the first dropped.
@@ -396,13 +498,13 @@ final class VMOrganizationDirectory {
     /// Applies `change` to what the file holds now and writes the result
     /// (``CoordinatedJSONFile/update(_:)``), then lists the result.
     private func commit(_ change: (inout File) throws -> Void) throws {
-        func changed(_ current: File) throws -> File {
-            var next = current
+        func changed(_ base: File) throws -> File {
+            var next = base
             try change(&next)
             return next
         }
         guard let file else {
-            show(try changed(File(smartGroups: smartGroups, folders: folders, tags: tags)))
+            show(try changed(current))
             return
         }
         do {

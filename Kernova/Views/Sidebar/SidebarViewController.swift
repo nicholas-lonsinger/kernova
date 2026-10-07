@@ -4,11 +4,11 @@ import KernovaLogging
 import UniformTypeIdentifiers
 
 /// Pure-AppKit sidebar: a source-list `NSOutlineView` listing virtual machines
-/// under collapsible sections — each smart group, each folder, then "Virtual
-/// Machines".
+/// under collapsible sections — the smart groups, the folders and "Virtual
+/// Machines", in the order the user arranges them.
 ///
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
-/// ``SidebarLayout/project(entries:options:retaining:smartGroups:folders:context:)``,
+/// ``SidebarLayout/project(entries:options:retaining:sections:context:)``,
 /// updated by inserts and removes; per-row live updates are owned by each
 /// ``SidebarVMRowCellView``. Selection is a two-way binding to
 /// `viewModel.selection`, idempotent in both directions.
@@ -251,12 +251,25 @@ final class SidebarViewController: NSViewController {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
-        if outlineView.selectedRow != row {
+        let moved = outlineView.selectedRow != row
+        if moved {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
         }
         // NSOutlineView doesn't auto-scroll programmatic selection into view, so a
-        // created/cloned/imported VM's row could land off-screen.
-        outlineView.scrollRowToVisible(row)
+        // created/cloned/imported VM's row could land off-screen. A pass that
+        // leaves the selection where it was scrolls nothing: the view stays
+        // where the user, or a section just made, put it.
+        if moved || revealing { outlineView.scrollRowToVisible(row) }
+    }
+
+    /// Brings the outline view to the model, then scrolls the header of the
+    /// section `id` identifies into view — a section just made lands after
+    /// every other, where a long library can hide it.
+    func scrollSectionIntoView(_ id: SidebarSectionID) {
+        sync()
+        guard let section = tree.sections.first(where: { $0.id == id }) else { return }
+        let row = outlineView.row(forItem: section)
+        if row >= 0 { outlineView.scrollRowToVisible(row) }
     }
 
     /// `node`'s outline row, `nil` while a collapsed ancestor hides it.
