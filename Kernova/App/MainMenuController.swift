@@ -532,12 +532,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
-        // ⌥⌘F, not ⌘F: an item matching a keystroke swallows it before a
-        // focused guest display's keyDown sees it, even while disabled
-        // (measured on macOS 27.0), so plain ⌘F stays the guest's.
-        let findItem = editMenu.addItem(
+        // A guest display that captures system keys (System Key Forwarding
+        // Always, the default, or Full Screen Only in full screen) receives ⌘F
+        // first. Otherwise this item takes ⌘F before the display's keyDown sees
+        // it, even while disabled (measured on macOS 27.0), and the guest's own
+        // Find is out of reach: accepted, for the standard Find shortcut.
+        editMenu.addItem(
             withTitle: "Find VM…", action: #selector(AppDelegate.findVM(_:)), keyEquivalent: "f")
-        findItem.keyEquivalentModifierMask = [.command, .option]
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 

@@ -23,6 +23,11 @@ final class SidebarViewController: NSViewController {
     let outlineView = SidebarOutlineView()
     /// Writes and shows the library's ``VMLibrary/sidebarSearch``.
     let searchField = NSSearchField()
+    /// Whether ``searchField`` is on screen. A hidden field holds no search, so
+    /// the list it would narrow is never narrowed out of sight.
+    private(set) var isSearchShown = false
+    /// Runs after ``isSearchShown`` changes.
+    var searchShownDidChange: (() -> Void)?
     /// The search text the field and the library last agreed on: what the
     /// field last sent, or the last outside write shown in it.
     ///
@@ -32,6 +37,9 @@ final class SidebarViewController: NSViewController {
     /// the field routinely holds text the library has not seen yet.
     private var agreedSearchText = ""
     private let scrollView = NSScrollView()
+    private lazy var scrollTopBelowSearch = scrollView.topAnchor.constraint(
+        equalTo: searchField.bottomAnchor, constant: 6)
+    private lazy var scrollTopAtEdge = scrollView.topAnchor.constraint(equalTo: view.topAnchor)
     let tree = SidebarTree()
 
     private var modelObservation: ObservationLoop?
@@ -125,6 +133,7 @@ final class SidebarViewController: NSViewController {
         searchField.stringValue = agreedSearchText
         searchField.target = self
         searchField.action = #selector(searchFieldChanged(_:))
+        searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(searchField)
@@ -133,13 +142,14 @@ final class SidebarViewController: NSViewController {
             searchField.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),
             searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
             searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
         view = container
+        isSearchShown = !agreedSearchText.isEmpty
+        applySearchLayout()
     }
 
     override func viewDidLoad() {
@@ -315,11 +325,39 @@ final class SidebarViewController: NSViewController {
         guard text != agreedSearchText else { return }
         agreedSearchText = text
         searchField.stringValue = text
+        if !text.isEmpty { setSearchShown(true) }
     }
 
-    /// Puts the keyboard in the search field.
+    /// Shows the search field and puts the keyboard in it.
     func focusSearchField() {
+        setSearchShown(true)
         view.window?.makeFirstResponder(searchField)
+    }
+
+    /// Hides the search field, ending its search.
+    func hideSearchField() {
+        guard isSearchShown else { return }
+        // Before the text is cleared: an open field editor writes its own text
+        // back into the field when it ends.
+        if searchField.currentEditor() != nil { view.window?.makeFirstResponder(outlineView) }
+        searchField.stringValue = ""
+        agreedSearchText = ""
+        viewModel.library.sidebarSearch = SidebarNameSearch()
+        setSearchShown(false)
+    }
+
+    private func setSearchShown(_ shown: Bool) {
+        guard shown != isSearchShown else { return }
+        isSearchShown = shown
+        applySearchLayout()
+        searchShownDidChange?()
+    }
+
+    /// Hidden, the field leaves the layout and the outline takes the top edge.
+    private func applySearchLayout() {
+        searchField.isHidden = !isSearchShown
+        NSLayoutConstraint.deactivate([isSearchShown ? scrollTopAtEdge : scrollTopBelowSearch])
+        NSLayoutConstraint.activate([isSearchShown ? scrollTopBelowSearch : scrollTopAtEdge])
     }
 
     // MARK: - Inline rename
@@ -1205,5 +1243,19 @@ final class SidebarTableRowView: NSTableRowView {
         let showHide = (enclosingTableView as? SidebarOutlineView)?.showHideButton(in: self)
         header.trailingReserve =
             showHide.map { max(header.bounds.maxX - header.convert($0.bounds, from: $0).minX, 0) } ?? 0
+    }
+}
+
+// MARK: - NSSearchFieldDelegate
+
+extension SidebarViewController: NSSearchFieldDelegate {
+    /// Escape in an empty search field hides it; with text, the field's own
+    /// Escape clears it.
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard control === searchField, commandSelector == #selector(NSResponder.cancelOperation(_:)),
+            textView.string.isEmpty
+        else { return false }
+        hideSearchField()
+        return true
     }
 }

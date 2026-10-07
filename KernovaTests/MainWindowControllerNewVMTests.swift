@@ -45,12 +45,12 @@ struct MainWindowControllerNewVMTests {
     func collapseRemovesNewVM() throws {
         let subject = try makeSubject()
         let canonical = subject.layout
-        try #require(canonical.firstIndex(of: newVM) == 1)
+        try #require(canonical.firstIndex(of: newVM) == 2)
 
         subject.sidebar.isCollapsed = true
 
         #expect(subject.layout == canonical.filter { $0 != newVM })
-        #expect(preferences.mainToolbarNewVMCollapseIndex == 1)
+        #expect(preferences.mainToolbarNewVMCollapseIndex == 2)
 
         subject.sidebar.isCollapsed = false
 
@@ -66,9 +66,10 @@ struct MainWindowControllerNewVMTests {
         subject.toolbar.insertItem(withItemIdentifier: NSToolbarItem.Identifier(newVM), at: 0)
         let customized = subject.layout
         try #require(
-            Array(customized.prefix(3)) == [
+            Array(customized.prefix(4)) == [
                 newVM,
                 NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "search",
                 NSToolbarItem.Identifier.toggleSidebar.rawValue,
             ])
 
@@ -138,6 +139,6 @@ struct MainWindowControllerNewVMTests {
         try await gate.wait { sheetEnded.value }
 
         #expect(subject.layout == canonical.filter { $0 != newVM })
-        #expect(preferences.mainToolbarNewVMCollapseIndex == 1)
+        #expect(preferences.mainToolbarNewVMCollapseIndex == 2)
     }
 }

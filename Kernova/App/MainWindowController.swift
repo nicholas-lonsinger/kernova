@@ -29,6 +29,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
+    private static let toolbarSearch = NSToolbarItem.Identifier("search")
 
     // Palette-only items (offered in the customize sheet, not in the default
     // set). VM-scoped verbs only — app-global commands like "Open VMs Folder"
@@ -120,6 +121,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             )
         }
 
+        sidebarVC.searchShownDidChange = { [weak self] in self?.updateSearchItemSelection() }
+        updateSearchItemSelection()
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
@@ -143,11 +146,26 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarItem.animator().isCollapsed = false
     }
 
-    /// Puts the keyboard in the sidebar's search field, expanding a collapsed
-    /// sidebar first.
+    /// Shows the sidebar's search field with the keyboard in it, expanding a
+    /// collapsed sidebar first.
     func focusSearch() {
         revealSidebar()
         sidebarViewController.focusSearchField()
+    }
+
+    /// The Search toolbar button: hides a search field the user can see, and
+    /// otherwise does what Find VM does.
+    @objc func toggleSearch(_ sender: Any?) {
+        if sidebarViewController.isSearchShown, !sidebarItem.isCollapsed {
+            sidebarViewController.hideSearchField()
+        } else {
+            focusSearch()
+        }
+    }
+
+    /// Shows the Search button selected while the search field is shown.
+    private func updateSearchItemSelection() {
+        window?.toolbar?.selectedItemIdentifier = sidebarViewController.isSearchShown ? Self.toolbarSearch : nil
     }
 
     // MARK: - Window State Observation
@@ -296,11 +314,12 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     // MARK: - NSToolbarDelegate
 
-    // The leading flexible space right-aligns New VM and the toggle against
-    // the sidebar's trailing edge.
+    // The leading flexible space right-aligns Search, New VM and the toggle
+    // against the sidebar's trailing edge.
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             .flexibleSpace,
+            Self.toolbarSearch,
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
@@ -309,6 +328,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
+            Self.toolbarSearch,
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
@@ -321,6 +341,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         ]
     }
 
+    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [Self.toolbarSearch]
+    }
+
     func toolbarImmovableItemIdentifiers(_ toolbar: NSToolbar) -> Set<NSToolbarItem.Identifier> {
         [.toggleSidebar, .sidebarTrackingSeparator]
     }
@@ -331,6 +355,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         // runloop turn later so it reflects VM state.
         Task { @MainActor [weak self] in
             self?.updateToolbarItems()
+            self?.updateSearchItemSelection()
         }
     }
 
@@ -373,6 +398,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         switch itemIdentifier {
+        case Self.toolbarSearch:
+            let item = makeToolbarItem(
+                identifier: itemIdentifier,
+                label: "Search",
+                symbol: "magnifyingglass",
+                action: #selector(toggleSearch(_:)),
+                toolTip: "Search virtual machines by name"
+            )
+            item.target = self
+            return item
         case Self.toolbarNewVM:
             return makeToolbarItem(
                 identifier: itemIdentifier,
@@ -393,7 +428,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             return makeToolbarItem(
                 identifier: itemIdentifier,
                 label: "Show in Finder",
-                symbol: "magnifyingglass",
+                // SF Symbols reserves `finder` for referring to the Finder;
+                // AppKit's own reveal image (`NSRevealFreestanding`) is a
+                // magnifying glass, which Search shows.
+                symbol: "finder",
                 action: #selector(AppDelegate.showVMInFinder(_:)),
                 toolTip: "Reveal the virtual machine bundle in Finder"
             )
@@ -439,7 +477,7 @@ extension MainWindowController: NSToolbarItemValidation {
         let capabilities = viewModel.capabilities
 
         switch item.itemIdentifier {
-        case Self.toolbarNewVM:
+        case Self.toolbarNewVM, Self.toolbarSearch:
             return true
         case Self.toolbarShowInFinder:
             return instance.map { capabilities.isAvailable(.showInFinder, on: $0) } ?? false
