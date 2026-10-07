@@ -4,7 +4,10 @@ import Foundation
 /// directly or under group headers.
 ///
 /// ``project(entries:)`` is the one function from the library to a layout;
-/// ``SidebarTree`` turns a layout into the outline view's items.
+/// ``SidebarTree`` turns a layout into the outline view's items. Each list a
+/// layout holds — its sections, a section's groups, a list's entries — keeps
+/// the first of any repeated identifier: a repeat would be a second outline
+/// item under one key.
 @MainActor
 struct SidebarLayout {
     @MainActor
@@ -17,7 +20,7 @@ struct SidebarLayout {
     @MainActor
     enum Content {
         case rows(Rows)
-        case groups([Group])
+        case groups(Groups)
     }
 
     @MainActor
@@ -27,19 +30,39 @@ struct SidebarLayout {
         let rows: Rows
     }
 
-    /// Entries in display order, each at most once — a repeat would be a
-    /// second row under the same ``SidebarRowKey``.
+    /// A section's group headers in display order, each identifier at most once.
+    @MainActor
+    struct Groups {
+        let groups: [Group]
+
+        init(_ groups: [Group]) {
+            self.groups = SidebarLayout.firstOfEach(groups, by: \.id)
+        }
+    }
+
+    /// Entries in display order, each identifier at most once.
     @MainActor
     struct Rows {
         let entries: [LibraryEntry]
 
         init(_ entries: [LibraryEntry]) {
-            var seen = Set<UUID>()
-            self.entries = entries.filter { seen.insert($0.id).inserted }
+            self.entries = SidebarLayout.firstOfEach(entries, by: \.id)
         }
     }
 
+    /// The sections in display order, each identifier at most once.
     let sections: [Section]
+
+    init(sections: [Section]) {
+        self.sections = Self.firstOfEach(sections, by: \.id)
+    }
+
+    private static func firstOfEach<Element, ID: Hashable>(
+        _ elements: [Element], by id: (Element) -> ID
+    ) -> [Element] {
+        var seen = Set<ID>()
+        return elements.filter { seen.insert(id($0)).inserted }
+    }
 
     /// The layout the sidebar shows for `entries`: the library section, listing
     /// every entry in manual order.
@@ -56,7 +79,7 @@ struct SidebarLayout {
             case .rows(let rows):
                 rows.entries.map { SidebarRowKey(section: section.id, group: nil, entryID: $0.id) }
             case .groups(let groups):
-                groups.flatMap { group in
+                groups.groups.flatMap { group in
                     group.rows.entries.map {
                         SidebarRowKey(section: section.id, group: group.id, entryID: $0.id)
                     }

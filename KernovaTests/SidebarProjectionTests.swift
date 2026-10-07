@@ -29,10 +29,11 @@ struct SidebarProjectionTests {
                 SidebarLayout.Section(
                     id: running, title: "Running",
                     content: .groups(
-                        grouped.map {
-                            SidebarLayout.Group(
-                                id: $0.0, title: $0.0.rawValue, rows: SidebarLayout.Rows($0.1))
-                        })))
+                        SidebarLayout.Groups(
+                            grouped.map {
+                                SidebarLayout.Group(
+                                    id: $0.0, title: $0.0.rawValue, rows: SidebarLayout.Rows($0.1))
+                            }))))
         }
         return SidebarLayout(sections: sections)
     }
@@ -57,6 +58,35 @@ struct SidebarProjectionTests {
         let alpha = vm("A")
         let beta = vm("B")
         #expect(SidebarLayout.Rows([alpha, beta, alpha]).entries.map(\.id) == [alpha.id, beta.id])
+    }
+
+    @Test("A layout keeps the first of a repeated section, and of a repeated group in a section")
+    func layoutDropsRepeatedSectionsAndGroups() {
+        let alpha = vm("A")
+        let beta = vm("B")
+        let layout = SidebarLayout(sections: [
+            SidebarLayout.Section(
+                id: .library, title: "Virtual Machines", content: .rows(SidebarLayout.Rows([alpha]))),
+            SidebarLayout.Section(
+                id: running, title: "Running",
+                content: .groups(
+                    SidebarLayout.Groups([
+                        SidebarLayout.Group(id: work, title: "Work", rows: SidebarLayout.Rows([alpha])),
+                        SidebarLayout.Group(id: work, title: "Again", rows: SidebarLayout.Rows([beta])),
+                    ]))),
+            SidebarLayout.Section(
+                id: .library, title: "Again", content: .rows(SidebarLayout.Rows([beta]))),
+        ])
+
+        #expect(layout.sections.map(\.id) == [.library, running])
+        #expect(
+            layout.rowKeys == [
+                .library(alpha.id), SidebarRowKey(section: running, group: work, entryID: alpha.id),
+            ])
+        let tree = SidebarTree()
+        _ = tree.update(to: layout)
+        #expect(tree.sections.count == 2)
+        #expect(tree.sections.last?.children.count == 1)
     }
 
     // MARK: - Identity

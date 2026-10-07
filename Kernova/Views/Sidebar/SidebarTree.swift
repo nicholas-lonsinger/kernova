@@ -199,7 +199,7 @@ final class SidebarTree {
             let children: [SidebarNode] =
                 switch spec.content {
                 case .rows(let entries): rows(entries, section: spec.id, group: nil)
-                case .groups(let groups): groups.map { header($0, in: spec.id) }
+                case .groups(let groups): groups.groups.map { header($0, in: spec.id) }
                 }
             setChildren(of: section, to: children, isNew: existing == nil)
             newSections.append(section)

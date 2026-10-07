@@ -7,8 +7,9 @@ import UniformTypeIdentifiers
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
 /// ``SidebarLayout/project(entries:)``, updated by inserts and removes;
 /// per-row live updates are owned by each ``SidebarVMRowCellView``. Selection is
-/// a guarded two-way binding to `viewModel.selection`; reorder and Finder-bundle
-/// import ride the outline view's drag-and-drop, distinguished by drag source.
+/// a two-way binding to `viewModel.selection`, idempotent in both directions;
+/// reorder and Finder-bundle import ride the outline view's drag-and-drop,
+/// distinguished by drag source.
 @MainActor
 final class SidebarViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
@@ -17,14 +18,7 @@ final class SidebarViewController: NSViewController {
     private let scrollView = NSScrollView()
     private let tree = SidebarTree()
 
-    private var projectionObservation: ObservationLoop?
-    private var selectionObservation: ObservationLoop?
-    private var renameObservation: ObservationLoop?
-
-    /// Guards the model→view selection apply so the synchronous
-    /// `outlineViewSelectionDidChange` callback doesn't write back into the
-    /// model and ping-pong.
-    private var isUpdatingSelectionFromModel = false
+    private var modelObservation: ObservationLoop?
 
     /// The row currently hosting an inline-rename field editor, so the rename
     /// loop doesn't restart an in-flight edit.
@@ -122,51 +116,44 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        startObservations()
-        // Everything the observations watch can change while they are torn down,
-        // and re-arming them fires nothing — a `withObservationTracking`
+        if modelObservation == nil {
+            modelObservation = observeRecurring(
+                track: { [weak self] in
+                    guard let self else { return }
+                    // Everything `sync()` reads from the model.
+                    _ = self.viewModel.entries
+                    _ = self.viewModel.selection
+                    _ = self.viewModel.activeRename
+                },
+                apply: { [weak self] in self?.sync() }
+            )
+        }
+        // Everything the observation watches can change while it is torn down,
+        // and re-arming it fires nothing — a `withObservationTracking`
         // registration only reports changes made *after* it.
-        // `applyProjection()` ends with the selection and rename passes.
-        applyProjection()
+        sync()
     }
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        stopObservations()
+        modelObservation?.cancel()
+        modelObservation = nil
         outlineView.cancelPendingRename()
     }
 
-    // MARK: - Observation
+    // MARK: - Model → view
 
-    private func startObservations() {
-        if projectionObservation == nil {
-            projectionObservation = observeRecurring(
-                // Everything `SidebarLayout.project(entries:)` reads.
-                track: { [weak self] in _ = self?.viewModel.entries },
-                apply: { [weak self] in self?.applyProjection() }
-            )
-        }
-        if selectionObservation == nil {
-            selectionObservation = observeRecurring(
-                track: { [weak self] in _ = self?.viewModel.selection },
-                apply: { [weak self] in self?.applySelectionFromModel() }
-            )
-        }
-        if renameObservation == nil {
-            renameObservation = observeRecurring(
-                track: { [weak self] in _ = self?.viewModel.activeRename },
-                apply: { [weak self] in self?.applyRenameState() }
-            )
-        }
-    }
-
-    private func stopObservations() {
-        projectionObservation?.cancel()
-        projectionObservation = nil
-        selectionObservation?.cancel()
-        selectionObservation = nil
-        renameObservation?.cancel()
-        renameObservation = nil
+    /// Brings the outline view to the model: the projection first, so the
+    /// selection and the rename resolve against the tree that lists the
+    /// library's current entries.
+    ///
+    /// The one entry point to the selection and rename passes. Every step is
+    /// idempotent, so a pass the outline view's own callbacks start in the
+    /// middle of another changes nothing the outer pass then undoes.
+    private func sync() {
+        applyProjection()
+        applySelectionFromModel()
+        applyRenameState()
     }
 
     /// Brings the tree to the library's current projection and applies the
@@ -174,21 +161,17 @@ final class SidebarViewController: NSViewController {
     /// leaves alone keeps its view — and any rename open in it.
     private func applyProjection() {
         let changes = tree.update(to: .project(entries: viewModel.entries))
-        guard !changes.isEmpty else {
-            applySelectionFromModel()
-            applyRenameState()
-            return
-        }
-        // Commit a rename whose row the change takes down first: removing its
-        // view drops keyboard focus underneath the user and races a
-        // partial-text commit. Resigning first responder ends editing through
-        // the commit path.
+        guard !changes.isEmpty else { return }
+        // Commit a rename whose row the change takes down before the update,
+        // through the label's own commit path (resigning first responder).
+        // AppKit also ends the edit when it removes the view (observed macOS
+        // 27.0), but nothing documents that, and it would run the commit inside
+        // the update. The session ends with its view, so a row the change
+        // reinserts comes back closed.
         if let editingRow, changes.detaches(editingRow) {
             view.window?.makeFirstResponder(outlineView)
+            self.editingRow = nil
         }
-        // Guard the update so any selection churn it triggers isn't written
-        // back into the model.
-        isUpdatingSelectionFromModel = true
         outlineView.beginUpdates()
         // Each parent's removals index its previous children and its
         // insertions its current ones, which is the order NSOutlineView takes
@@ -210,19 +193,11 @@ final class SidebarViewController: NSViewController {
                 outlineView.expandItem(node)
             }
         }
-        isUpdatingSelectionFromModel = false
-        applySelectionFromModel()
-        applyRenameState()
     }
-
-    // MARK: - Selection (model ↔ view)
 
     /// Selects the row the model's selection lands on, and moves the model's
     /// selection onto that row when it landed by fallback.
     private func applySelectionFromModel() {
-        isUpdatingSelectionFromModel = true
-        defer { isUpdatingSelectionFromModel = false }
-
         guard let selection = viewModel.selection, let node = tree.row(resolving: selection),
             let row = revealedRow(of: node)
         else {
@@ -256,9 +231,13 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Inline rename
 
-    /// The row a sidebar rename of the entry `id` opens in: the selected row
+    /// The row a sidebar rename of the entry `id` is open in: the row already
+    /// editing it while the tree still lists that row, else the selected row
     /// when it shows that entry, else the entry's library row.
     private func renameRow(for id: UUID) -> SidebarRow? {
+        if let editingRow, editingRow.key.entryID == id, tree.row(for: editingRow.key) === editingRow {
+            return editingRow
+        }
         let selected = viewModel.selection.flatMap { tree.row(resolving: $0) }
         let row = selected?.key.entryID == id ? selected : tree.row(resolving: .library(id))
         return row?.entry.vm == nil ? nil : row
@@ -279,13 +258,10 @@ final class SidebarViewController: NSViewController {
 
         editingRow = node
 
-        // Rename implies selection; select synchronously without re-entering
-        // the model→view path.
-        isUpdatingSelectionFromModel = true
+        // Rename implies selection.
         if outlineView.selectedRow != row {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
         }
-        isUpdatingSelectionFromModel = false
         if viewModel.selection != node.key { viewModel.selection = node.key }
 
         // Make the row visible before editing so `makeIfNecessary` returns the
@@ -484,9 +460,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
                 guard node === parent else { return [] }
                 target = index == NSOutlineViewDropOnItemIndex ? count : index
             default:
-                // Between sections: above the dragged row's section is its top.
+                // Outside every section. AppKit proposes the root with
+                // `NSOutlineViewDropOnItemIndex` for the empty space below the
+                // last row, which is the dragged row's list's end; a root gap
+                // above its section is that list's top.
                 let section = tree.sections.firstIndex { $0.id == source.key.section } ?? 0
-                target = index <= section ? 0 : count
+                target =
+                    index == NSOutlineViewDropOnItemIndex || index > section ? count : 0
             }
             outlineView.setDropItem(parent, dropChildIndex: max(0, min(target, count)))
             return .move
@@ -652,7 +632,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
         // Any selection change invalidates a pending slow-second-click rename
         // (which is only armed on a click of the already-selected row).
         outlineView.cancelPendingRename()
-        guard !isUpdatingSelectionFromModel else { return }
+        // Idempotent: a selection the model→view pass makes names the row the
+        // model already resolves to, or the fallback row it then writes anyway.
         let row = outlineView.selectedRow
         if row >= 0, let node = outlineView.item(atRow: row) as? SidebarRow {
             if viewModel.selection != node.key { viewModel.selection = node.key }
@@ -660,8 +641,9 @@ extension SidebarViewController: NSOutlineViewDelegate {
             !viewModel.entries.contains(where: { $0.id == id })
         {
             // Empty selection clears the model only when the selected VM is
-            // truly gone — a transient -1 from collapsing the group (or an
-            // internal update) must not wipe a still-valid selection.
+            // truly gone — a transient -1 from collapsing the group, or from an
+            // update removing and reinserting the row, must not wipe a
+            // still-valid selection.
             viewModel.selection = nil
         }
     }
@@ -670,7 +652,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         persistExpansion()
         // Restore the highlight for a still-selected row that was hidden while
         // its group was collapsed.
-        applySelectionFromModel()
+        sync()
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
@@ -686,11 +668,9 @@ extension SidebarViewController {
     func contextMenu(forRow row: Int) -> NSMenu? {
         guard row >= 0, let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
 
-        isUpdatingSelectionFromModel = true
         if outlineView.selectedRow != row {
             outlineView.selectRowIndexes([row], byExtendingSelection: false)
         }
-        isUpdatingSelectionFromModel = false
         if viewModel.selection != node.key { viewModel.selection = node.key }
 
         return switch node.entry {

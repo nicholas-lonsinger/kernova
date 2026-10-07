@@ -436,6 +436,148 @@ struct SidebarViewControllerTests {
         #expect(viewModel.activeRename == .sidebar(alpha.id))
     }
 
+    /// A move takes the row's view down, which would drop the typed name with
+    /// it; the update commits it first.
+    @Test("A rename whose row an update moves commits its text first")
+    func renameCommitsWhenItsRowMoves() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        let alpha = viewModel.library.admitFixture(name: "Alpha", files: storage.files)
+        viewModel.library.admitFixture(name: "Beta", files: storage.files)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func alphaCell() -> SidebarVMRowCellView? {
+            outline.view(atColumn: 0, row: 1, makeIfNecessary: false) as? SidebarVMRowCellView
+        }
+        viewModel.renameVMInSidebar(alpha)
+        // The rename reaches the row through the sidebar's own observation
+        // loop, which offers no test-facing signal to await.
+        try await waitUntil { alphaCell()?.isRenaming == true }
+        let label = try nameLabel(in: try #require(alphaCell()))
+        let editor = try #require(label.currentEditor())
+        editor.string = "Renamed"
+
+        viewModel.moveEntries(fromOffsets: [0], toOffset: 2)
+
+        try await waitForChange { viewModel.activeRename == nil }
+        #expect(alpha.name == "Renamed")
+        try await waitUntil { rowNames(in: outline) == ["Beta", "Renamed"] }
+        let moved = try #require(
+            outline.view(atColumn: 0, row: 2, makeIfNecessary: true) as? SidebarVMRowCellView)
+        #expect(!moved.isRenaming)
+    }
+
+    // MARK: - Outline updates
+
+    /// Hosts the controller's view in an ordered-in window, so the outline view
+    /// realizes cells.
+    private func shownOutline(of controller: SidebarViewController) throws -> NSOutlineView {
+        let window = showTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 300, height: 600))
+        window.contentView = controller.view
+        controller.view.layoutSubtreeIfNeeded()
+        controller.viewDidAppear()
+        return try #require(firstSubview(NSOutlineView.self, in: controller.view))
+    }
+
+    /// The names of the leaf rows below the section header, as the rows hold them.
+    private func rowNames(in outline: NSOutlineView) -> [String] {
+        (1..<outline.numberOfRows).map {
+            (outline.item(atRow: $0) as? SidebarRow)?.entry.name ?? "?"
+        }
+    }
+
+    /// The names the leaf rows' cells display.
+    private func cellNames(in outline: NSOutlineView) -> [String] {
+        (1..<outline.numberOfRows).map { row in
+            let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView
+            return cell?.textField?.stringValue ?? "?"
+        }
+    }
+
+    /// Removals index the previous children and insertions the current ones,
+    /// so one update that mixes them only lands when applied in that order.
+    @Test("One update that removes, moves and inserts rows lands every row and keeps the selection")
+    func mixedUpdateLandsEveryRow() async throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        library.admitFixture(name: "A")
+        let b = library.admitFixture(name: "B")
+        let c = library.admitFixture(name: "C")
+        library.admitFixture(name: "D")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        #expect(rowNames(in: outline) == ["A", "B", "C", "D"])
+        viewModel.selectedID = c.id
+        // The outline view offers no observable to await its selection by.
+        try await waitUntil { outline.selectedRow == 3 }
+
+        // All in one main-actor turn, so the sidebar applies them as one update.
+        library.evict(b)  // A C D
+        library.moveEntries(fromOffsets: [2], toOffset: 0)  // D A C
+        library.admitFixture(name: "E")  // D A C E
+        library.moveEntries(fromOffsets: [1], toOffset: 4)  // D C E A
+
+        try await waitUntil { rowNames(in: outline) == ["D", "C", "E", "A"] }
+        #expect(cellNames(in: outline) == ["D", "C", "E", "A"])
+        #expect(outline.selectedRow == 2)
+        #expect(viewModel.selectedID == c.id)
+    }
+
+    @Test("An arrival's cell becomes a VM cell when it settles")
+    func arrivalCellBecomesVMCell() async throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Before")
+        let gate = GatedStep()
+        let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        #expect(outline.view(atColumn: 0, row: 2, makeIfNecessary: true) is SidebarArrivalRowCellView)
+
+        gate.release()
+        let instance = try #require(await arrival.settle())
+
+        try await waitUntil {
+            (outline.view(atColumn: 0, row: 2, makeIfNecessary: false) as? SidebarVMRowCellView)?
+                .textField?.stringValue == instance.name
+        }
+    }
+
+    /// Below the last row AppKit proposes the root with
+    /// `NSOutlineViewDropOnItemIndex`.
+    @Test("Dropping a row in the empty space below the list moves it to the end")
+    func dropBelowTheListAppends() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        library.admitFixture(name: "A")
+        let b = library.admitFixture(name: "B")
+        library.admitFixture(name: "C")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("sidebar-drop-\(UUID())"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setData(
+            try JSONEncoder().encode(SidebarRowKey.library(b.id)),
+            forType: NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row"))
+        pasteboard.writeObjects([item])
+        let belowRows = outline.rect(ofRow: outline.numberOfRows - 1).maxY + 100
+        #expect(belowRows < outline.bounds.maxY)
+        let drag = FakeDraggingInfo(
+            window: outline.window,
+            location: outline.convert(NSPoint(x: 100, y: belowRows), to: nil),
+            pasteboard: pasteboard, source: outline)
+
+        #expect(outline.draggingEntered(drag) == .move)
+        #expect(outline.draggingUpdated(drag) == .move)
+        #expect(outline.prepareForDragOperation(drag))
+        #expect(outline.performDragOperation(drag))
+        outline.concludeDragOperation(drag)
+
+        #expect(library.entries.map(\.name) == ["A", "C", "B"])
+    }
+
     // MARK: - Context menu
 
     @Test("Context menu for a guest running macOS 12 offers only Clone as Exact Copy")
@@ -1107,4 +1249,39 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
         )
         return cell
     }
+}
+
+/// A drag session the test drives through the outline view's own
+/// `NSDraggingDestination` methods, from a fixed point over it.
+@MainActor
+private final class FakeDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
+    let draggingDestinationWindow: NSWindow?
+    let draggingSourceOperationMask: NSDragOperation = .move
+    let draggingLocation: NSPoint
+    var draggedImageLocation: NSPoint { draggingLocation }
+    var draggedImage: NSImage? { nil }
+    let draggingPasteboard: NSPasteboard
+    let draggingSource: Any?
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+    init(window: NSWindow?, location: NSPoint, pasteboard: NSPasteboard, source: Any?) {
+        draggingDestinationWindow = window
+        draggingLocation = location
+        draggingPasteboard = pasteboard
+        draggingSource = source
+    }
+
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+
+    func enumerateDraggingItems(
+        options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+        classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {}
+
+    func resetSpringLoading() {}
 }
