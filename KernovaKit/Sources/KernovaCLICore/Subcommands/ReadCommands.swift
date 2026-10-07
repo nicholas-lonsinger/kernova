@@ -27,11 +27,7 @@ extension KernovaCommand {
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            let narrowed = filter.query
-            return .list(
-                VMListQuery(
-                    filter: narrowed.filter, networkNames: narrowed.networkNames, groups: groups.groups,
-                    sort: sort))
+            .list(VMListQuery(filter: filter.filter, networks: filter.networks, groups: groups.groups, sort: sort))
         }
 
         /// Reads the library and writes it.

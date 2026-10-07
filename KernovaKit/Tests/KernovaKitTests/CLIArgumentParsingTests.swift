@@ -104,7 +104,7 @@ struct CLIArgumentParsingTests {
     func repeatedFlagsWiden() throws {
         let query = try listQuery(["--os", "macOS", "--os", "linux", "--state", "stopped", "--os", "linux"])
         #expect(query.filter == VMLibraryFilter(guestOSes: [.macOS, .linux], states: [.stopped]))
-        #expect(query.networkNames.isEmpty)
+        #expect(query.networks.isEmpty)
         #expect(query.groups.isEmpty)
     }
 
@@ -128,24 +128,15 @@ struct CLIArgumentParsingTests {
         #expect(try listQuery(["--has-snapshots"]).filter == VMLibraryFilter(withSnapshotsOnly: true))
     }
 
-    @Test("--network reads a mode as typed, unlisted as every unlisted network, and anything else as a name")
-    func networkSpellings() throws {
-        let query = try listQuery([
-            "--network", "shared", "--network", "hostOnly:isolated", "--network", "bridged",
-            "--network", "bridged:en0", "--network", "none", "--network", "unlisted",
-            "--network", "Lab", "--network", "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21", "--network", "Lab",
-        ])
-        let any: (VmnetNetworkKind, UUID) -> Bool = { _, _ in true }
-        #expect(
-            query.filter.networks == [
-                VMLibraryFilter.Network(.vmnet(.shared, .common), isListed: any),
-                VMLibraryFilter.Network(.vmnet(.hostOnly, .isolated), isListed: any),
-                VMLibraryFilter.Network(.bridged(nil), isListed: any),
-                VMLibraryFilter.Network(.bridged("en0"), isListed: any),
-                VMLibraryFilter.Network(.none, isListed: any),
-                .unlisted,
-            ])
-        #expect(query.networkNames == ["Lab", "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21"])
+    @Test("--network sends every value as typed, in order, for the app to read as a mode or a named network")
+    func networksGoAsTyped() throws {
+        let typed = [
+            "shared", "hostOnly:isolated", "Bridged", "bridged:en0", "none", "unlisted", "Lab",
+            "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21",
+        ]
+        let query = try listQuery(typed.flatMap { ["--network", $0] })
+        #expect(query.networks == typed)
+        #expect(query.filter.networks.isEmpty)
     }
 
     @Test("--sort takes each order by its name and defaults to the manual order")

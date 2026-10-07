@@ -70,7 +70,7 @@ struct VMCommandEnvelopeTests {
                         guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
                         networks: [.unlisted, VMLibraryFilter.Network(.shared) { _, _ in true }],
                         guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
-                    networkNames: ["Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
+                    networks: ["Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
                     sort: .dateCreated)),
             .groups,
             .info(selector),

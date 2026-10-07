@@ -17,7 +17,7 @@ struct ListFilterOptions: ParsableArguments {
     @Option(
         name: .customLong("network"),
         help: ArgumentHelp(
-            "List only VMs on this network: "
+            "List only VMs on this network, ignoring case: "
                 + VMLibraryFilter.Network.spellings.joined(separator: ", ")
                 + ", bridged:<interface>, or a named network's name or identifier.",
             valueName: "network"),
@@ -37,21 +37,12 @@ struct ListFilterOptions: ParsableArguments {
     @Flag(name: .customLong("has-snapshots"), help: "List only VMs holding a snapshot.")
     var withSnapshotsOnly = false
 
-    /// The filter these flags spell, and the named networks the app resolves
-    /// into its network include-set.
-    var query: (filter: VMLibraryFilter, networkNames: [String]) {
-        var filter = VMLibraryFilter(
+    /// The filter these flags spell but for the networks, which go as typed:
+    /// only the library tells a mode from a named network of the same name.
+    var filter: VMLibraryFilter {
+        VMLibraryFilter(
             guestOSes: Set(guestOSes), states: Set(states), guestAgents: Set(guestAgents),
             ephemeralOnly: ephemeralOnly, withSnapshotsOnly: withSnapshotsOnly)
-        var networkNames: [String] = []
-        for text in networks {
-            if let network = VMLibraryFilter.Network(spelling: text) {
-                filter.networks.insert(network)
-            } else if !networkNames.contains(text) {
-                networkNames.append(text)
-            }
-        }
-        return (filter, networkNames)
     }
 }
 

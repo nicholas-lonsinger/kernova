@@ -35,11 +35,11 @@ struct VMCommandCoreListingTests {
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String, guestOS: VMGuestOS = .linux,
-        phase: VMLifecyclePhase = .stopped, hostState: VMHostState = VMHostState(),
-        mutate: (inout VMConfiguration) -> Void = { _ in }
+        phase: VMLifecyclePhase = .stopped, snapshots: [VMSnapshot] = [],
+        hostState: VMHostState = VMHostState(), mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
-            name: name, phase: phase, guestOS: guestOS, library: harness.library,
+            name: name, phase: phase, guestOS: guestOS, snapshots: snapshots, library: harness.library,
             preferences: preferences, hostState: hostState, mutate: mutate)
     }
 
@@ -50,12 +50,20 @@ struct VMCommandCoreListingTests {
             $0.applyNetworkMode(.shared)
         }
         makeInstance(in: harness, name: "Mac", guestOS: .macOS, hostState: VMHostState(ephemeralModeEnabled: true))
-        makeInstance(in: harness, name: "Build", phase: .suspended) { $0.applyNetworkMode(.hostOnly) }
+        makeInstance(
+            in: harness, name: "Build", phase: .suspended,
+            snapshots: [VMSnapshot(name: "Before", macAddress: nil)]
+        ) { $0.applyNetworkMode(.hostOnly) }
         makeInstance(in: harness, name: "Old", guestOS: .macOS) { $0.lastSeenAgentVersion = "0.0.1" }
     }
 
     private func listed(_ harness: Harness, _ query: VMListQuery) throws -> [String] {
-        try harness.core.list(query).map(\.name)
+        try harness.core.list(harness.core.selection(for: query, verb: .list)).map(\.name)
+    }
+
+    /// The refusal resolving `query` throws, `nil` for none.
+    private func refusal(_ harness: Harness, _ query: VMListQuery) -> CommandError? {
+        #expect(throws: CommandError.self) { try harness.core.selection(for: query, verb: .list) }
     }
 
     private func names(in section: SidebarLayout.Section?) -> [String] {
@@ -65,13 +73,13 @@ struct VMCommandCoreListingTests {
 
     // MARK: - Order
 
-    @Test("An unconstrained query lists every VM in library order, as list() does")
+    @Test("An unconstrained query lists every VM in library order, as the whole-library listing does")
     func defaultQueryIsTheManualOrder() throws {
         let harness = makeHarness()
         makeMixedLibrary(in: harness)
 
         #expect(try listed(harness, VMListQuery()) == ["Zed", "Alpha", "Mac", "Build", "Old"])
-        #expect(try harness.core.list(VMListQuery()) == harness.core.list())
+        #expect(try listed(harness, VMListQuery()) == harness.core.list(.all).map(\.name))
     }
 
     @Test("--sort orders by name A→Z and by creation newest first, ties keeping library order")
@@ -115,6 +123,7 @@ struct VMCommandCoreListingTests {
         #expect(try listed(harness, VMListQuery(filter: filters[2])) == ["Mac", "Old"])
         #expect(try listed(harness, VMListQuery(filter: filters[4])) == ["Old"])
         #expect(try listed(harness, VMListQuery(filter: filters[6])) == ["Mac"])
+        #expect(try listed(harness, VMListQuery(filter: filters[7])) == ["Build"])
     }
 
     @Test("An arrival is listed exactly where the sidebar's filter admits it")
@@ -141,8 +150,8 @@ struct VMCommandCoreListingTests {
 
     // MARK: - Named networks
 
-    @Test("A named network given by name or identifier joins the filter's network include-set")
-    func networkNamesResolve() throws {
+    @Test("A network text reads as a mode or a named network, by name or identifier, ignoring case")
+    func networkTextsResolve() throws {
         let harness = makeHarness()
         let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
         makeInstance(in: harness, name: "Member") {
@@ -152,19 +161,34 @@ struct VMCommandCoreListingTests {
         makeInstance(in: harness, name: "Shared") { $0.applyNetworkMode(.shared) }
         makeInstance(in: harness, name: "Offline")
 
-        #expect(try listed(harness, VMListQuery(networkNames: ["lab"])) == ["Member"])
-        #expect(try listed(harness, VMListQuery(networkNames: [lab.id.uuidString])) == ["Member"])
-        let sharedToo = VMLibraryFilter(networks: [VMLibraryFilter.Network(spelling: "shared")!])
-        #expect(try listed(harness, VMListQuery(filter: sharedToo, networkNames: ["Lab"])) == ["Member", "Shared"])
+        #expect(try listed(harness, VMListQuery(networks: ["lab"])) == ["Member"])
+        #expect(try listed(harness, VMListQuery(networks: [lab.id.uuidString.lowercased()])) == ["Member"])
+        #expect(try listed(harness, VMListQuery(networks: ["SHARED"])) == ["Shared"])
+        #expect(
+            try listed(harness, VMListQuery(networks: ["Lab", "shared", "None"])) == ["Member", "Shared", "Offline"])
 
-        let refusal = #expect(throws: CommandError.self) {
-            try harness.core.list(VMListQuery(networkNames: ["Nowhere"]))
-        }
-        guard case .itemNotFoundOnHost(let item)? = refusal else {
-            Issue.record("expected a not-found refusal, got \(String(describing: refusal))")
+        guard case .itemNotFoundOnHost(let item)? = refusal(harness, VMListQuery(networks: ["Nowhere"])) else {
+            Issue.record("expected a not-found refusal")
             return
         }
-        #expect(item.contains("Nowhere"))
+        #expect(item == "network named \u{201C}Nowhere\u{201D}")
+    }
+
+    @Test("A text naming both a mode and a named network is refused with the identifier that picks the network")
+    func ambiguousNetworkTextIsRefused() throws {
+        let harness = makeHarness()
+        let shadow = try harness.core.createNetwork(name: "Shared", kind: .hostOnly)
+        makeInstance(in: harness, name: "Member") {
+            $0.applyNetworkMode(.hostOnly)
+            $0.networkMembership = .network(shadow.id)
+        }
+
+        guard case .invalidArgument(let message)? = refusal(harness, VMListQuery(networks: ["shared"])) else {
+            Issue.record("expected an invalid-argument refusal")
+            return
+        }
+        #expect(message.contains(shadow.id.uuidString))
+        #expect(try listed(harness, VMListQuery(networks: [shadow.id.uuidString])) == ["Member"])
     }
 
     @Test("A VM on a network the library does not list passes the unlisted network")
@@ -215,11 +239,9 @@ struct VMCommandCoreListingTests {
         let harness = makeHarness()
         makeMixedLibrary(in: harness)
 
-        let refusal = #expect(throws: CommandError.self) {
-            try harness.core.list(VMListQuery(groups: [VMGroupReference(.smartGroup, named: "Nope")]))
-        }
-        guard case .itemNotFoundOnHost(let item)? = refusal else {
-            Issue.record("expected a not-found refusal, got \(String(describing: refusal))")
+        let refused = refusal(harness, VMListQuery(groups: [VMGroupReference(.smartGroup, named: "Nope")]))
+        guard case .itemNotFoundOnHost(let item)? = refused else {
+            Issue.record("expected a not-found refusal, got \(String(describing: refused))")
             return
         }
         #expect(item == "smart group named \u{201C}Nope\u{201D}")

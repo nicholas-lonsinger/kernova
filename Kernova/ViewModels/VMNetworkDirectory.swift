@@ -134,9 +134,7 @@ final class VMNetworkDirectory {
     /// `networks` — `id`'s own name excepted.
     ///
     /// A membership value reads `common`, `isolated` or an identifier before
-    /// a name, and a listing's network filter reads a mode
-    /// (``VMLibraryFilter/Network/init(spelling:)``) before one, so a name
-    /// spelling one of those could never be chosen.
+    /// a name, so a name spelling one of those could never be chosen.
     private static func validatedName(
         _ name: String, for id: UUID?, among networks: [VMNamedNetwork]
     ) throws -> String {
@@ -152,11 +150,6 @@ final class VMNetworkDirectory {
                 "\u{201C}\(trimmed)\u{201D} can\u{2019}t name a network: "
                     + "\(VMNetworkMembership.commonValue), \(VMNetworkMembership.isolatedValue) "
                     + "and identifiers already name a network membership.")
-        }
-        guard VMLibraryFilter.Network(spelling: trimmed) == nil else {
-            throw CommandError.invalidArgument(
-                "\u{201C}\(trimmed)\u{201D} can\u{2019}t name a network: "
-                    + "it already names a network mode.")
         }
         if let other = networks.first(where: {
             $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame

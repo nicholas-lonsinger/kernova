@@ -65,7 +65,7 @@ final class VMScriptingGateway {
     /// nothing, with the command asking deferred, until the library has landed.
     func virtualMachines() -> [VMScriptObject] {
         guard !deferUntilLanded() else { return [] }
-        return commands.list().compactMap { object(for: $0.id) }
+        return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
     /// The one VM called `name`, resolved by the core — or nothing, with the

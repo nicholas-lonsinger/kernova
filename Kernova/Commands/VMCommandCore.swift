@@ -582,11 +582,6 @@ final class VMCommandCore: VMCommanding {
     // is how a script sees that copy's work, and it runs without this copy
     // ever becoming active.
 
-    func list() -> [VMSummary] {
-        library.refreshFromOtherCopies()
-        return library.entries.map(summary)
-    }
-
     func info(_ selector: VMSelector) throws -> VMInfo {
         switch try resolveEntry(selector) {
         case .vm(let instance):

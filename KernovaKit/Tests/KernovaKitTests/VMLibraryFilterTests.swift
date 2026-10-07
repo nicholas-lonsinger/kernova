@@ -238,6 +238,12 @@ struct VMLibraryFilterTests {
         #expect(VMLibraryFilter.Network(spelling: "shared:common") == Self.network(.vmnet(.shared, .common)))
         #expect(VMLibraryFilter.Network(spelling: "bridged:en0") == Self.network(.bridged("en0")))
         #expect(VMLibraryFilter.Network(spelling: "unlisted") == .unlisted)
+        // Case is ignored, but for the interface a bridged network names.
+        #expect(VMLibraryFilter.Network(spelling: "Shared") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "HOSTONLY:Isolated") == Self.network(.vmnet(.hostOnly, .isolated)))
+        #expect(VMLibraryFilter.Network(spelling: "Bridged:EN0") == Self.network(.bridged("EN0")))
+        #expect(VMLibraryFilter.Network(spelling: "Unlisted") == .unlisted)
+        #expect(VMLibraryFilter.Network(spelling: "bridged:") == nil)
         for spelling in VMLibraryFilter.Network.spellings {
             #expect(VMLibraryFilter.Network(spelling: spelling) != nil, "\(spelling)")
         }
@@ -249,7 +255,7 @@ struct VMLibraryFilterTests {
     @Test("A network spelling never names a named network, which only the library resolves")
     func networkSpellingRefusesNames() {
         #expect(VMLibraryFilter.Network(spelling: "Lab") == nil)
-        #expect(VMLibraryFilter.Network(spelling: "Shared") == nil)
+        #expect(VMLibraryFilter.Network(spelling: "Shared Lab") == nil)
         #expect(VMLibraryFilter.Network(spelling: "shared:\(Self.named.uuidString)") == nil)
         #expect(VMLibraryFilter.Network(spelling: Self.named.uuidString) == nil)
     }

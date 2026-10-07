@@ -93,7 +93,7 @@ struct VMCommandEnvelopeRouter {
     /// client waiting for a state race-free against a VM already in it.
     func snapshotAndEvents() -> (VMCommandResponse, AsyncStream<VMCommandResponse>) {
         let events = eventResponses()
-        let snapshot = VMCommandResponse(result: .summaries(commands.list()))
+        let snapshot = VMCommandResponse(result: .summaries(commands.list(.all)))
         return (snapshot, events)
     }
 
@@ -124,7 +124,7 @@ struct VMCommandEnvelopeRouter {
     private func dispatch(_ verb: VMCommandRequest.Verb) async throws -> VMCommandResponse.Result {
         switch verb {
         case .list(let query):
-            return .summaries(try commands.list(query))
+            return .summaries(commands.list(try commands.selection(for: query, verb: .list)))
         case .groups:
             return .groups(try commands.groups())
         case .info(let selector):

@@ -300,19 +300,20 @@ final class MockVMCommanding: VMCommanding {
 
     // MARK: - Reads
 
-    func list() -> [VMSummary] {
+    /// Lists ``library`` whatever the selection.
+    func list(_ selection: VMLibrarySelection) -> [VMSummary] {
         listCallCount += 1
         return library
     }
 
-    /// Every query `list(_:)` was asked.
-    private(set) var listQueries: [VMListQuery] = []
+    /// Every query `selection(for:verb:)` was asked to resolve.
+    private(set) var selectionQueries: [VMListQuery] = []
     /// What `groups()` answers with.
     var groupsToReturn: [GroupSummary] = []
 
-    func list(_ query: VMListQuery) throws -> [VMSummary] {
-        listQueries.append(query)
-        return library
+    func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection {
+        selectionQueries.append(query)
+        return .all
     }
 
     func groups() throws -> [GroupSummary] { groupsToReturn }

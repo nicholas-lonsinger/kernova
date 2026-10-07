@@ -115,19 +115,27 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// The coded spelling.
         public var rawValue: String { choice?.rawValue ?? Self.unlistedValue }
 
-        /// The value `text` spells as typed: a ``rawValue`` naming no named
-        /// network, or a vmnet mode alone (`shared`, `hostOnly`) for that
-        /// mode's common network. `nil` for anything else — a named network
-        /// is typed by its name or identifier, which only the library
-        /// resolves, so no network can be named one of these.
+        /// The value `text` spells as typed, ignoring case but for a bridged
+        /// interface's identifier: a ``rawValue`` naming no named network, or
+        /// a vmnet mode alone (`shared`, `hostOnly`) for that mode's common
+        /// network. `nil` for anything else — a named network is typed by its
+        /// name or identifier, which only the library resolves.
         public init?(spelling text: String) {
-            if let kind = VmnetNetworkKind(rawValue: text) {
-                self.init(storing: .vmnet(kind, .common))
+            let bridgedPrefix = NetworkModeChoice.bridged(nil).rawValue + ":"
+            if text.count > bridgedPrefix.count, text.lowercased().hasPrefix(bridgedPrefix) {
+                self.init(storing: .bridged(String(text.dropFirst(bridgedPrefix.count))))
                 return
             }
-            guard let network = Self(rawValue: text) else { return nil }
-            if case .vmnet(_, .network)? = network.choice { return nil }
-            self = network
+            let common = VmnetNetworkKind.allCases.map { NetworkModeChoice.vmnet($0, .common).rawValue }
+            let spelled = (Self.spellings + common).first { $0.caseInsensitiveCompare(text) == .orderedSame }
+            guard let match = spelled else { return nil }
+            if let kind = VmnetNetworkKind(rawValue: match) {
+                self.init(storing: .vmnet(kind, .common))
+            } else if let network = Self(rawValue: match) {
+                self = network
+            } else {
+                return nil
+            }
         }
 
         /// What ``init(spelling:)`` reads, but for `bridged:<interface>`, in

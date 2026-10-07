@@ -109,18 +109,6 @@ struct VMCommandCoreNetworkTests {
         #expect(stopped.configuration.networkMembership == .network(lab.id))
     }
 
-    @Test("A name a listing's --network reads as a mode can't name a network")
-    func modeSpellingsCannotNameANetwork() throws {
-        let harness = makeHarness()
-        for name in VMLibraryFilter.Network.spellings + ["bridged:en0", "shared:common"] {
-            #expect(throws: CommandError.self, "\(name)") {
-                try harness.core.createNetwork(name: name, kind: .shared)
-            }
-        }
-        let lab = try harness.core.createNetwork(name: "Shared Lab", kind: .shared)
-        #expect(throws: CommandError.self) { try harness.core.renameNetwork(lab.name, to: "unlisted") }
-    }
-
     @Test("A build that cannot attach a named network refuses to create one")
     func anUnentitledBuildCreatesNone() {
         let harness = makeHarness(entitlements: .unentitled)
