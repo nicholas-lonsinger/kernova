@@ -290,7 +290,8 @@ struct VMCommandEnvelopeTests {
                         VMGroupActionResult(
                             vm: summary, outcome: .passedOver(reason: .refused(error: .terminating))),
                         VMGroupActionResult(
-                            vm: summary, outcome: .needsAnswer(question: .invalidArgument(message: "Which?"))),
+                            vm: summary,
+                            outcome: .needsAnswer(verb: .start, question: .invalidArgument(message: "Which?"))),
                         VMGroupActionResult(
                             vm: summary,
                             outcome: .failed(

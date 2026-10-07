@@ -29,11 +29,18 @@ extension VMCommandCore {
     /// memory as it comes up, and the platform's cap on running macOS guests is
     /// met by the start that exceeds it, which then fails on its own.
     ///
-    /// Asks nobody and moves nothing on screen: a VM whose own verb would raise
-    /// a question is passed by and reported, and a failure is reported in the
-    /// result rather than raised — so the caller owes the user one account of
-    /// everything left undone. Each VM is decided when its turn comes, so one
-    /// the action stopped concerning since it was counted is passed over.
+    /// Asks nobody and puts nothing in front of the user: each bring-up is
+    /// ``StartPolicy/group``, which begins no guest setup and readies its
+    /// display behind whatever the user is looking at, and a VM whose own verb
+    /// would raise a question is passed by and reported. A failure is reported
+    /// in the result rather than raised — so the caller owes the user one
+    /// account of everything left undone. Each VM is decided when its turn
+    /// comes, so one the action stopped concerning since it was counted is
+    /// passed over.
+    ///
+    /// Cancelling the calling task — a client hanging up — stops the action
+    /// between VMs: the VM in hand finishes, and every later one is reported as
+    /// passed over, untouched.
     ///
     /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
     ///   library does not list, before any VM is acted on.
@@ -47,6 +54,10 @@ extension VMCommandCore {
         )
         var results: [VMGroupActionResult] = []
         for entry in members {
+            guard !Task.isCancelled else {
+                results.append(VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .cancelled)))
+                continue
+            }
             results.append(await result(of: action, on: entry))
         }
         let report = VMGroupActionReport(
@@ -55,7 +66,7 @@ extension VMCommandCore {
         let undone = report.undone.count
         #log(
             Self.logger, .notice,
-            "\(action.rawValue, privacy: .public) on '\(resolved.name, privacy: .public)' finished — \(undone, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
+            "\(action.rawValue, privacy: .public) on '\(resolved.name, privacy: .public)' finished\(Task.isCancelled ? " after a cancel" : "", privacy: .public) — \(undone, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
         )
         return report
     }
@@ -80,34 +91,43 @@ extension VMCommandCore {
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)
     }
 
-    /// Runs `step` on `instance` with no consent and no remedy, as the verb
-    /// any door reaches it by.
+    /// Runs `step` on `instance` as a ``StartPolicy/group`` bring-up, or the
+    /// plain suspend or graceful stop, with no consent and no remedy.
     private func take(
         _ step: VMCapabilityCatalog.GroupActionStep, on instance: VMInstance
     ) async -> VMGroupActionOutcome {
         do {
             switch step {
             case .start:
-                try await start(.id(instance.id), recovery: false, consent: .none)
+                try await start(instance, recovery: false, policy: .group, macAddressRemedy: nil)
             case .resume:
-                try await resume(.id(instance.id), consent: .none)
+                try await resume(instance, policy: .group, macAddressRemedy: nil)
             case .suspend:
                 try await suspend(instance)
             case .stop:
                 try await stop(instance, disposition: .graceful, consent: .none)
             }
             return .done(verb: step.verb)
+        } catch is UnattendedGuestSetupRefusal {
+            return .passedOver(reason: .guestSetup)
         } catch {
-            let refusal = failure(error, verb: step.verb, on: instance)
-            switch refusal {
-            case .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired:
-                return .needsAnswer(question: refusal.dto)
-            case .terminating:
-                // Quitting is not this VM's failure, and nobody is told about it.
-                return .passedOver(reason: .refused(error: refusal.dto))
-            default:
-                return .failed(error: refusal.dto)
-            }
+            return Self.outcome(of: bringUpFailure(error, verb: step.verb, on: instance), takenBy: step.verb)
+        }
+    }
+
+    /// What a group action reports for a VM whose verb `verb` refused or
+    /// failed with `refusal`.
+    ///
+    /// A question becomes the VM's account of what to answer; the app quitting
+    /// is nobody's failure, so nobody is told about it; anything else failed.
+    static func outcome(of refusal: CommandError, takenBy verb: VMVerb) -> VMGroupActionOutcome {
+        switch refusal {
+        case .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired:
+            .needsAnswer(verb: verb, question: refusal.dto)
+        case .terminating:
+            .passedOver(reason: .refused(error: refusal.dto))
+        default:
+            .failed(error: refusal.dto)
         }
     }
 }

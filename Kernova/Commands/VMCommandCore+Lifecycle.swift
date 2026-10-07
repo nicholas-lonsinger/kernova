@@ -12,45 +12,63 @@ extension VMCommandCore {
         macAddressRemedy: MACAddressRemedy? = nil
     ) async throws {
         let instance = try resolve(selector)
-        let identity = VMIdentityOverride(consent)
         do {
-            if let remedy = try macAddressRemedyToTake(
-                macAddressRemedy,
-                answering: instance.activity.decide(
-                    .start(recovery: recovery), posture: .commit, identity: identity),
-                on: instance, identity: identity, holdingSavedState: instance.hasSaveFile,
-                accountFor: recovery, verb: .start)
-            {
-                try takeMACAddressRemedy(remedy, on: instance, verb: .start)
-            }
-            try await startNow(instance, recovery: recovery, policy: .command(identity)).value()
+            try await start(
+                instance, recovery: recovery, policy: .command(VMIdentityOverride(consent)),
+                macAddressRemedy: macAddressRemedy)
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
     }
 
-    /// What a start may begin beyond the bring-up itself.
-    enum StartPolicy: Sendable, Equatable {
-        /// Someone asked for this start: it runs the guest setup the VM still
-        /// owes, which chains the boot. `identity` is what they can do about
-        /// another active VM sharing its machine identity.
-        case command(VMIdentityOverride)
-        /// A standing preference asked for it
-        /// (``VMHostState/startsAutomaticallyOnLaunch``), with nobody at the
-        /// machine to watch what a start would put on screen: it begins no
-        /// guest setup, and nobody can confirm starting beside a VM sharing its
-        /// machine identity.
-        case standing
+    /// Starts `instance` under `policy`, taking the remedy a MAC address
+    /// conflict asks for first — throwing what the bring-up threw, unmapped.
+    func start(
+        _ instance: VMInstance, recovery: Bool, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
+    ) async throws {
+        let identity = policy.identity
+        if let remedy = try macAddressRemedyToTake(
+            macAddressRemedy,
+            answering: instance.activity.decide(
+                .start(recovery: recovery), posture: .commit, identity: identity),
+            on: instance, identity: identity, holdingSavedState: instance.hasSaveFile,
+            accountFor: recovery, verb: .start)
+        {
+            try takeMACAddressRemedy(remedy, on: instance, verb: .start)
+        }
+        try await startNow(instance, recovery: recovery, policy: policy).value()
+    }
 
+    /// What a start may begin beyond the bring-up itself: two independent
+    /// facts, whether anyone attends it and what it can do about another
+    /// active VM sharing its machine identity.
+    struct StartPolicy: Sendable, Equatable {
+        /// Whether somebody asked for this VM's start in particular.
+        let presence: VMBringUpPresence
         /// What this start can do about another active VM sharing its machine
         /// identity.
-        var identity: VMIdentityOverride {
-            switch self {
-            case .command(let identity): identity
-            case .standing: .unavailable
-            }
+        let identity: VMIdentityOverride
+
+        /// Someone asked for this start, and `identity` is what they can do
+        /// about a VM sharing its machine identity.
+        static func command(_ identity: VMIdentityOverride) -> StartPolicy {
+            StartPolicy(presence: .attended, identity: identity)
         }
+
+        /// A standing preference asked for it
+        /// (``VMHostState/startsAutomaticallyOnLaunch``), with nobody at the
+        /// machine: nobody can confirm starting beside a VM sharing its machine
+        /// identity either.
+        static let standing = StartPolicy(presence: .unattended, identity: .unavailable)
+
+        /// An action on a whole group asked for it: the caller is there to be
+        /// told what a VM's start would ask, but not to watch each VM come up.
+        static let group = StartPolicy(presence: .unattended, identity: .askable)
     }
+
+    /// What an unattended start throws for a VM whose start would begin the
+    /// guest setup it still owes, which only a start someone attends begins.
+    struct UnattendedGuestSetupRefusal: Error {}
 
     /// Decides the start `instance`'s state names and launches it, resolving
     /// `outcome` when its bring-up ends — the one start path, whoever asked:
@@ -86,15 +104,15 @@ extension VMCommandCore {
             throw VMAdmissionRefusal(refusal: reason)
         case .join(let running):
             logJoin(instance)
-            readyDisplay?(instance)
+            readyDisplay?(instance, policy.presence)
             running.forward(to: outcome)
             return outcome
         case .admit:
             break
         }
         let work = VMAdmission.startWork(recovery: recovery, facts: instance.admissionFacts)
-        if policy == .standing, case .setup = work {
-            throw VMAdmissionRefusal(refusal: .invalidState)
+        if policy.presence == .unattended, case .setup = work {
+            throw UnattendedGuestSetupRefusal()
         }
 
         // Before the setup dispatch, so an install nobody answered for is
@@ -118,7 +136,7 @@ extension VMCommandCore {
             // After the commit and before the body's first turn, which applies
             // the boot geometry: a pop-out VM's window is what
             // `displayBootSurface` measures, and readying is what opens it.
-            readyDisplay?(instance)
+            readyDisplay?(instance, policy.presence)
         }
         return outcome
     }
@@ -138,7 +156,7 @@ extension VMCommandCore {
         }
         .reportingFailure { [weak self, weak instance] error in
             guard let self, let instance,
-                policy != .standing || !Self.standingStartPassedOver(error)
+                policy.presence == .attended || !Self.standingStartPassedOver(error)
             else { return }
             self.reportUnattendedFailure(
                 self.bringUpFailure(error, verb: .start, on: instance), on: instance)
@@ -147,10 +165,11 @@ extension VMCommandCore {
 
     /// Whether a standing start that ended with `error` passed its VM over
     /// rather than failed: the VM's state takes no start — it is running
-    /// already, here or in another copy of Kernova, gone, or has a guest setup
-    /// still to run — or its start would ask the account question nobody is
-    /// there to answer.
+    /// already, here or in another copy of Kernova, or gone — or it has a guest
+    /// setup still to run, or its start would ask the account question nobody
+    /// is there to answer.
     static func standingStartPassedOver(_ error: any Error) -> Bool {
+        if error is UnattendedGuestSetupRefusal { return true }
         if case .guestAccountPasswordRequired? = error as? CommandError { return true }
         guard let refused = error as? VMAdmissionRefusal else { return false }
         switch refused.refusal {
@@ -783,7 +802,7 @@ extension VMCommandCore {
         _ instance: VMInstance, identity: VMIdentityOverride
     ) async throws {
         do {
-            try await resumeOrRestore(instance, identity: identity)
+            try await resumeOrRestore(instance, policy: .command(identity))
             try await lifecycle.requestStop(instance)
         } catch {
             #log(
@@ -927,53 +946,52 @@ extension VMCommandCore {
         _ selector: VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy? = nil
     ) async throws {
         let instance = try resolve(selector)
-        let identity = VMIdentityOverride(consent)
-        let decision = instance.activity.decide(.resume, posture: .commit, identity: identity)
         do {
-            if let remedy = try macAddressRemedyToTake(
-                macAddressRemedy, answering: decision, on: instance, identity: identity,
-                holdingSavedState: instance.hasSaveFile, accountFor: false, verb: .resume)
-            {
-                try takeMACAddressRemedy(remedy, on: instance, verb: .resume)
-                try await startNow(instance, policy: .command(identity)).value()
-                return
-            }
+            try await resume(
+                instance, policy: .command(VMIdentityOverride(consent)), macAddressRemedy: macAddressRemedy)
         } catch {
             throw bringUpFailure(error, verb: .resume, on: instance)
+        }
+    }
+
+    /// Resumes `instance` under `policy` — throwing what the bring-up threw,
+    /// unmapped, but for a refusal, which is raised in the command vocabulary.
+    func resume(
+        _ instance: VMInstance, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
+    ) async throws {
+        let identity = policy.identity
+        let decision = instance.activity.decide(.resume, posture: .commit, identity: identity)
+        if let remedy = try macAddressRemedyToTake(
+            macAddressRemedy, answering: decision, on: instance, identity: identity,
+            holdingSavedState: instance.hasSaveFile, accountFor: false, verb: .resume)
+        {
+            try takeMACAddressRemedy(remedy, on: instance, verb: .resume)
+            try await startNow(instance, policy: policy).value()
+            return
         }
         switch decision {
         case .refuse(let reason):
             throw admissionRefusal(reason, on: instance, verb: .resume)
         case .join(let outcome):
             logJoin(instance)
-            readyDisplay?(instance)
-            do {
-                try await outcome.value()
-            } catch {
-                throw bringUpFailure(error, verb: .resume, on: instance)
-            }
+            readyDisplay?(instance, policy.presence)
+            try await outcome.value()
             return
         case .admit:
             break
         }
         // A restore readies the display as every start does.
-        if VMAdmission.resumeWork(phase: instance.phase) == .hot { readyDisplay?(instance) }
-        do {
-            try await resumeOrRestore(instance, identity: identity)
-        } catch {
-            throw bringUpFailure(error, verb: .resume, on: instance)
-        }
+        if VMAdmission.resumeWork(phase: instance.phase) == .hot { readyDisplay?(instance, policy.presence) }
+        try await resumeOrRestore(instance, policy: policy)
     }
 
     /// The Resume `instance`'s state names: the restore of the saved state it
     /// holds — which is what a start of that VM performs — or a hot resume
     /// from memory.
-    private func resumeOrRestore(
-        _ instance: VMInstance, identity: VMIdentityOverride
-    ) async throws {
+    private func resumeOrRestore(_ instance: VMInstance, policy: StartPolicy) async throws {
         switch VMAdmission.resumeWork(phase: instance.phase) {
         case .restore:
-            try await startNow(instance, policy: .command(identity)).value()
+            try await startNow(instance, policy: policy).value()
         case .hot:
             try await lifecycle.resume(instance)
         }

@@ -503,7 +503,8 @@ struct VMCapabilityCatalog {
     /// Read at the offer posture, as a menu item's enablement is: a VM held by
     /// work in flight is refused rather than joined or waited for. Two rules
     /// narrow the capabilities. A start that would begin a guest setup is
-    /// passed over, as the launch's auto-start passes one over. And Stop takes
+    /// passed over — the unattended start the action commits refuses one
+    /// anyway (``VMCommandCore/StartPolicy/group``). And Stop takes
     /// running guests only: a paused guest's stop resumes it first, and a
     /// suspended VM's discards its saved state (``discardSavedState``).
     func groupAction(_ action: VMGroupAction, on instance: VMInstance) -> GroupActionStanding {

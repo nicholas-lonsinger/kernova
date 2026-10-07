@@ -147,18 +147,19 @@ final class VMDisplayPlacementController {
     /// it the Dock icon and menu bar it came up without.
     ///
     /// A bring-up is not a request to look at the guest, so the window takes
-    /// key and the screen only where the user is already in Kernova. From
-    /// another app it goes up behind what they are looking at, which is also
-    /// why fullscreen is reserved for the foreground: entering it moves the
-    /// user to a Space they did not ask for.
+    /// key and the screen only where the user is already in Kernova and asked
+    /// for this VM. From another app, or for a VM nobody asked for in
+    /// particular, it goes up behind what they are looking at — which is also
+    /// why fullscreen is reserved for that one case: entering it moves the user
+    /// to a Space they did not ask for.
     nonisolated static func readying(
-        preference: VMDisplayPreference, posture: GUIPosture
+        preference: VMDisplayPreference, posture: GUIPosture, presence: VMBringUpPresence
     ) -> WindowShow? {
         guard preference != .inline else { return nil }
-        switch posture {
-        case .absent: return nil
-        case .background: return .behind
-        case .foreground: return .front(fullscreen: preference == .fullscreen)
+        switch (posture, presence) {
+        case (.absent, _): return nil
+        case (.background, _), (.foreground, .unattended): return .behind
+        case (.foreground, .attended): return .front(fullscreen: preference == .fullscreen)
         }
     }
 
@@ -210,11 +211,11 @@ final class VMDisplayPlacementController {
     /// behind what they are looking at — and a fullscreen VM readied that way
     /// runs in a pop-out window, its persisted preference untouched, until the
     /// user brings it forward and enters fullscreen themselves.
-    func readyDisplay(for instance: VMInstance) {
+    func readyDisplay(for instance: VMInstance, presence: VMBringUpPresence) {
         guard
             let show = Self.readying(
                 preference: instance.hostState.displayPreference,
-                posture: residency?.guiPosture ?? .absent)
+                posture: residency?.guiPosture ?? .absent, presence: presence)
         else { return }
         guard windows[instance.instanceID] == nil else { return }
         openDisplayWindow(for: instance, show: show)

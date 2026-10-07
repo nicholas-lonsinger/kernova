@@ -527,11 +527,13 @@ final class VMLibraryViewModel {
     /// front of the user.
     @ObservationIgnored var onOpenDisplayWindow: ((VMInstance) -> Void)?
 
-    /// Reports that a VM is coming up, so its display can be readied.
+    /// Reports that a VM is coming up, and whether anyone asked for it in
+    /// particular, so its display can be readied.
     ///
     /// What that costs on screen is the delegate's decision, taken from the
-    /// app's own posture — a bring-up is not a request to look at the guest.
-    @ObservationIgnored var onReadyDisplay: ((VMInstance) -> Void)?
+    /// app's own posture and that presence — a bring-up is not a request to
+    /// look at the guest.
+    @ObservationIgnored var onReadyDisplay: ((VMInstance, VMBringUpPresence) -> Void)?
 
     /// Asks for the library window, for an inline surface with nowhere to land.
     ///
@@ -655,8 +657,8 @@ final class VMLibraryViewModel {
         }
         // Straight through: what a bring-up puts on screen is decided from the
         // app's own posture, which only the delegate can read.
-        core.readyDisplay = { [weak self] instance in
-            self?.onReadyDisplay?(instance)
+        core.readyDisplay = { [weak self] instance, presence in
+            self?.onReadyDisplay?(instance, presence)
         }
         core.revealInLibrary = { [weak self] id in
             self?.revealInLibrary(id)

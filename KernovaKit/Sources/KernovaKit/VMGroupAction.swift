@@ -100,11 +100,13 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
             return "Skipped \(name): \(error.message)"
         case .passedOver(.guestSetup):
             return "Skipped \(name): its first start sets up its guest, which only its own Start begins."
-        case .needsAnswer(let question):
+        case .passedOver(.cancelled):
+            return "Skipped \(name): the \(action.rawValue) was cancelled before its turn."
+        case .needsAnswer(let verb, let question):
             // Every other question's own words already say where it is answered.
             let answer =
                 if case .confirmationRequired = question {
-                    " \(action.verb.displayName) it on its own to answer."
+                    " \(verb.displayName) it on its own to answer."
                 } else {
                     ""
                 }
@@ -123,10 +125,10 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
     /// The action does not concern the VM, for `reason`, and asked nothing of
     /// it.
     case passedOver(reason: PassOver)
-    /// The VM's own verb asks a question first — a confirmation, its account's
-    /// password, or a change to its network — which a group action asks
-    /// nobody. `question` is that refusal.
-    case needsAnswer(question: CommandErrorDTO)
+    /// The VM's own verb `verb` asks a question first — a confirmation, its
+    /// account's password, or a change to its network — which a group action
+    /// asks nobody. `question` is that refusal.
+    case needsAnswer(verb: VMVerb, question: CommandErrorDTO)
     /// The verb was tried and did not complete.
     case failed(error: CommandErrorDTO)
 
@@ -142,6 +144,8 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         /// Starting it would begin the guest setup it still owes — a macOS
         /// install or an installer download — which a group never begins.
         case guestSetup
+        /// The caller cancelled the action before the VM's turn came.
+        case cancelled
     }
 
     /// Whether the action concerned the VM and left it undone.

@@ -176,7 +176,7 @@ struct VMCommandCoreGroupActionTests {
         #expect(try harness.core.concernedCounts(in: VMGroupReference(.folder, named: "Pair"))[.start] == 2)
         let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
 
-        guard case .needsAnswer(let question) = report.results[0].outcome,
+        guard case .needsAnswer(.start, let question) = report.results[0].outcome,
             case .confirmationRequired(let prompt) = question
         else {
             Issue.record("expected the twin skipped for a confirmation, got \(report.results[0].outcome)")
@@ -287,5 +287,153 @@ struct VMCommandCoreGroupActionTests {
         #expect(harness.library.selectedID == selected)
         #expect(surfaced.isEmpty)
         #expect(revealed.isEmpty)
+    }
+
+    // MARK: - Unattended bring-ups
+
+    @Test("Every bring-up a group action takes is readied as unattended, a detached display's included")
+    func groupBringUpsAreReadiedUnattended() async throws {
+        let harness = makeHarness()
+        let popOut = RegisteredVMInstanceFixture.register(
+            name: "Pop Out", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences,
+            hostState: VMHostState(displayPreference: .fullscreen))
+        let paused = RegisteredVMInstanceFixture.register(
+            name: "Paused", phase: .livePaused(sessionID: UUID()), guestOS: .linux, library: harness.library,
+            preferences: preferences, hostState: VMHostState(displayPreference: .popOut))
+        try harness.library.organization.createFolder(named: "Lab", members: [popOut.id, paused.id])
+        var readied: [String: VMBringUpPresence] = [:]
+        harness.core.readyDisplay = { readied[$0.name] = $1 }
+
+        _ = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
+
+        #expect(readied == ["Pop Out": .unattended, "Paused": .unattended])
+
+        // The same VM started on its own is attended.
+        try await harness.core.stop(.id(popOut.id), disposition: .force, consent: .all, timeout: nil)
+        readied = [:]
+        try await harness.core.start(.id(popOut.id), recovery: false, consent: .none)
+        #expect(readied == ["Pop Out": .attended])
+    }
+
+    @Test("A group start refuses a guest setup at the commit, whatever was decided before it")
+    func groupStartRefusesGuestSetupAtTheCommit() async throws {
+        let harness = makeHarness()
+        let fresh = makeInstance(in: harness, name: "Fresh", guestOS: .macOS, phase: .initialBoot) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+
+        await #expect(throws: VMCommandCore.UnattendedGuestSetupRefusal.self) {
+            try await harness.core.start(fresh, recovery: false, policy: .group, macAddressRemedy: nil)
+        }
+        #expect(fresh.status == .initialBoot)
+        #expect(VMCommandCore.StartPolicy.group.presence == VMCommandCore.StartPolicy.standing.presence)
+        #expect(VMCommandCore.StartPolicy.group.identity == .askable)
+        #expect(VMCommandCore.StartPolicy.standing.identity == .unavailable)
+        #expect(VMCommandCore.standingStartPassedOver(VMCommandCore.UnattendedGuestSetupRefusal()))
+    }
+
+    // MARK: - Order and cancellation
+
+    private struct SuspendingHarness {
+        let core: VMCommandCore
+        let library: VMLibrary
+        let virtualization: SuspendingMockVirtualizationService
+    }
+
+    private func makeSuspendingHarness() -> SuspendingHarness {
+        let storage = MockVMStorageService()
+        let fileSystem = MockFileSystem()
+        let virtualization = SuspendingMockVirtualizationService()
+        let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
+        let library = makeWiredLibrary(
+            storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
+            fileSystem: fileSystem, preferences: preferences)
+        let core = VMCommandCore(
+            library: library, lifecycle: lifecycle, storageService: storage,
+            diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
+        return SuspendingHarness(core: core, library: library, virtualization: virtualization)
+    }
+
+    /// Two stopped VMs in a folder, in that order.
+    private func makePair(in harness: SuspendingHarness) throws -> (VMInstance, VMInstance) {
+        let first = RegisteredVMInstanceFixture.register(
+            name: "First", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
+        let second = RegisteredVMInstanceFixture.register(
+            name: "Second", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
+        try harness.library.organization.createFolder(named: "Pair", members: [first.id, second.id])
+        return (first, second)
+    }
+
+    @Test("VMs are acted on one after another: the second start waits for the first bring-up to end")
+    func actsOneAfterAnother() async throws {
+        let harness = makeSuspendingHarness()
+        let (first, second) = try makePair(in: harness)
+
+        let running = Task { @MainActor in
+            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
+        }
+        await harness.virtualization.waitUntilSuspended()
+
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(second.status == .stopped)
+        harness.virtualization.shouldSuspendOnStart = false
+        harness.virtualization.resumeSuspended()
+        let report = try await running.value
+
+        #expect(harness.virtualization.startCallCount == 2)
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
+        #expect(first.status == .running && second.status == .running)
+    }
+
+    @Test("A cancel lets the VM in hand finish and reports every later one untouched")
+    func cancelStopsBetweenVMs() async throws {
+        let harness = makeSuspendingHarness()
+        let (first, second) = try makePair(in: harness)
+
+        let running = Task { @MainActor in
+            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
+        }
+        await harness.virtualization.waitUntilSuspended()
+        running.cancel()
+        harness.virtualization.resumeSuspended()
+        let report = try await running.value
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .cancelled)])
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+        #expect(report.undone.isEmpty)
+    }
+
+    // MARK: - Error mapping
+
+    @Test("Every question a VM's verb raises is a VM to answer for, the quit is nobody's failure, the rest fail")
+    func refusalsMapToOutcomes() {
+        let vm = VMSummary(id: UUID(), name: "VM", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+        let confirmation = CommandError.confirmationRequired(
+            ConfirmationPrompt(
+                kind: .startBesideSharedMachineIdentity, title: "T", message: "M", confirmTitle: "C",
+                dismissTitle: "D"))
+        let account = CommandError.guestAccountPasswordRequired(
+            GuestAccountPrompt(vm: vm, username: "me", fullName: "Me", message: "M"))
+        let remedy = CommandError.macAddressRemedyRequired(
+            MACAddressRemedyPrompt(
+                vm: vm, other: vm, verb: .resume, title: "T", message: "M",
+                offers: [MACAddressRemedyOffer(remedy: .ownNetwork, title: "Own", isDestructive: false)],
+                dismissTitle: "D"))
+
+        for question in [confirmation, account, remedy] {
+            #expect(
+                VMCommandCore.outcome(of: question, takenBy: .resume)
+                    == .needsAnswer(verb: .resume, question: question.dto))
+        }
+        #expect(
+            VMCommandCore.outcome(of: .terminating, takenBy: .start)
+                == .passedOver(reason: .refused(error: .terminating)))
+        let failed = CommandError.operationFailed(verb: .start, message: "No.")
+        #expect(VMCommandCore.outcome(of: failed, takenBy: .start) == .failed(error: failed.dto))
+        #expect(
+            VMCommandCore.outcome(of: .busy(vm: vm, operation: "saving"), takenBy: .suspend)
+                == .failed(error: .busy(vm: vm, operation: "saving")))
     }
 }

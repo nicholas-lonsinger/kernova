@@ -192,7 +192,8 @@ protocol VMCommanding: AnyObject {
     /// raise a question — a confirmation, its account's password, a change to
     /// its network — is passed by and reported, as is every failure, so the
     /// whole of the outcome is the report. Which VMs the action acts on is
-    /// ``VMCapabilityCatalog/groupAction(_:on:)``'s rule.
+    /// ``VMCapabilityCatalog/groupAction(_:on:)``'s rule. Cancelling the
+    /// calling task stops it between VMs, reporting the rest untouched.
     ///
     /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
     ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``

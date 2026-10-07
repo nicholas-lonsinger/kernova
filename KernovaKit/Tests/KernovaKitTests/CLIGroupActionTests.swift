@@ -34,7 +34,7 @@ struct CLIGroupActionTests {
                     vm: summary("Fresh", status: "initialBoot"), outcome: .passedOver(reason: .guestSetup)),
                 VMGroupActionResult(
                     vm: summary("Twin", status: "stopped"),
-                    outcome: .needsAnswer(question: .confirmationRequired(prompt: prompt))),
+                    outcome: .needsAnswer(verb: .start, question: .confirmationRequired(prompt: prompt))),
                 VMGroupActionResult(
                     vm: summary("Third", status: "stopped"),
                     outcome: .failed(
@@ -143,6 +143,21 @@ struct CLIGroupActionTests {
         #expect(
             VMGroupActionResult(vm: paused, outcome: .passedOver(reason: .state)).line(for: .stop)
                 == "Skipped Held: it is in use by another copy of Kernova.")
+    }
+
+    @Test("A question is answered by the verb the VM was taken by, and a cancel names the action")
+    func questionAndCancelLines() {
+        let vm = summary("Twin", status: "suspended")
+        let prompt = ConfirmationPrompt(
+            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Twin\u{201D} Anyway?",
+            message: "Shared.", confirmTitle: "Resume Anyway", dismissTitle: "Cancel")
+        let resumed = VMGroupActionResult(
+            vm: vm, outcome: .needsAnswer(verb: .resume, question: .confirmationRequired(prompt: prompt)))
+        #expect(resumed.line(for: .start) == "Skipped Twin: Shared. Resume it on its own to answer.")
+        #expect(
+            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .cancelled)).line(for: .stop)
+                == "Skipped Twin: the stop was cancelled before its turn.")
+        #expect(!VMGroupActionOutcome.passedOver(reason: .cancelled).isUndone)
     }
 
     // MARK: - Exit
