@@ -74,6 +74,11 @@ final class VMLibraryViewModel {
         set { library.selectedID = newValue }
     }
 
+    var selection: SidebarRowKey? {
+        get { library.selection }
+        set { library.selection = newValue }
+    }
+
     var selectedInstance: VMInstance? { library.selectedInstance }
 
     var selectedEntry: LibraryEntry? { library.selectedEntry }

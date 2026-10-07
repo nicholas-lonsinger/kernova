@@ -138,10 +138,23 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// answer is then known to be empty.
     var hasLoadedLibrary = false
 
-    var selectedID: UUID? {
+    /// The selected sidebar row, whose entry is ``selectedID``.
+    var selection: SidebarRowKey? {
         didSet {
-            guard selectedID != oldValue else { return }
-            preferences.lastSelectedVMID = selectedID
+            guard selection?.entryID != oldValue?.entryID else { return }
+            preferences.lastSelectedVMID = selection?.entryID
+        }
+    }
+
+    /// The selected entry's identifier.
+    ///
+    /// Setting a different entry selects its library row; setting the entry
+    /// already selected leaves the row it is selected in.
+    var selectedID: UUID? {
+        get { selection?.entryID }
+        set {
+            guard newValue != selection?.entryID else { return }
+            selection = newValue.map(SidebarRowKey.library)
         }
     }
 
