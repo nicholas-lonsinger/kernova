@@ -33,8 +33,23 @@ import KernovaKit
 protocol VMCommanding: AnyObject {
     // MARK: - Reads
 
-    /// Every VM in the library, in library order.
-    func list() -> [VMSummary]
+    /// The VMs `selection` admits, in its order — each one the sidebar would
+    /// list under the same filter, an arrival included. ``VMLibrarySelection/all``
+    /// is every VM in library order.
+    func list(_ selection: VMLibrarySelection) -> [VMSummary]
+
+    /// `query` with every name in it resolved.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a network or
+    ///   group `query` names that the library does not list, and
+    ///   ``CommandError/invalidArgument(_:)`` for a network text naming both a
+    ///   mode and a named network.
+    func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection
+
+    /// The library's smart groups, then its folders, each in the order the
+    /// sidebar lists them, with their members — in library order, a folder's
+    /// in its own.
+    func groups() throws -> [GroupSummary]
 
     func info(_ selector: VMSelector) throws -> VMInfo
 

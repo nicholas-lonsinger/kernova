@@ -81,6 +81,91 @@ struct CLIArgumentParsingTests {
         }
     }
 
+    // MARK: - list filters
+
+    /// The query `arguments`, after `list`, put on the wire.
+    private func listQuery(_ arguments: [String]) throws -> VMListQuery {
+        let list = try #require(try parse(["list"] + arguments) as? KernovaCommand.List)
+        guard case .list(let query) = try list.verb() else {
+            Issue.record("list asked for something other than a listing")
+            return VMListQuery()
+        }
+        return query
+    }
+
+    @Test("list with no flag asks for every VM in library order")
+    func listDefaultsToEverything() throws {
+        #expect(try listQuery([]) == VMListQuery())
+        #expect(try listQuery([]).sort == .manual)
+        #expect(try parse(["groups"]) is KernovaCommand.Groups)
+    }
+
+    @Test("A repeated filter flag forms an include-set; different flags constrain together")
+    func repeatedFlagsWiden() throws {
+        let query = try listQuery(["--os", "macOS", "--os", "linux", "--state", "stopped", "--os", "linux"])
+        #expect(query.filter == VMLibraryFilter(guestOSes: [.macOS, .linux], states: [.stopped]))
+        #expect(query.networks.isEmpty)
+        #expect(query.groups.isEmpty)
+    }
+
+    @Test("--state takes each state bucket by its name, and refuses any other")
+    func stateTakesBucketNames() throws {
+        for bucket in VMStateBucket.allCases {
+            #expect(try listQuery(["--state", bucket.rawValue]).filter.states == [bucket])
+        }
+        #expect(
+            VMStateBucket.allCases.map(\.rawValue)
+                == ["running", "suspended", "stopped", "heldByAnotherCopy", "preparing"])
+        #expect(throws: (any Error).self) { try parse(["list", "--state", "paused"]) }
+        #expect(throws: (any Error).self) { try parse(["list", "--os", "windows"]) }
+        #expect(throws: (any Error).self) { try parse(["list", "--agent", "current"]) }
+    }
+
+    @Test("--agent, --ephemeral and --has-snapshots each set their own attribute")
+    func agentAndFlagsParse() throws {
+        let query = try listQuery(["--agent", "neverConnected", "--agent", "upToDate", "--ephemeral"])
+        #expect(query.filter == VMLibraryFilter(guestAgents: [.neverConnected, .upToDate], ephemeralOnly: true))
+        #expect(try listQuery(["--has-snapshots"]).filter == VMLibraryFilter(withSnapshotsOnly: true))
+    }
+
+    @Test("--network sends every value as typed, in order, for the app to read as a mode or a named network")
+    func networksGoAsTyped() throws {
+        let typed = [
+            "shared", "hostOnly:isolated", "Bridged", "bridged:en0", "none", "unlisted", "Lab",
+            "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21",
+        ]
+        let query = try listQuery(typed.flatMap { ["--network", $0] })
+        #expect(query.networks == typed)
+        #expect(query.filter.networks.isEmpty)
+    }
+
+    @Test("--sort takes each order by its name and defaults to the manual order")
+    func sortParses() throws {
+        for sort in VMLibrarySort.allCases {
+            #expect(try listQuery(["--sort", sort.rawValue]).sort == sort)
+        }
+        #expect(throws: (any Error).self) { try parse(["list", "--sort", "size"]) }
+    }
+
+    @Test("--smart-group names one group, ANDed with the flags; a second is a usage error")
+    func smartGroupParses() throws {
+        let query = try listQuery(["--smart-group", "Linux Lab", "--os", "linux"])
+        #expect(query.groups == [VMGroupReference(.smartGroup, named: "Linux Lab")])
+        #expect(query.filter == VMLibraryFilter(guestOSes: [.linux]))
+        #expect(throws: (any Error).self) {
+            try parse(["list", "--smart-group", "A", "--smart-group", "B"])
+        }
+    }
+
+    @Test("--folder names one folder; a second group of either kind is a usage error")
+    func folderParses() throws {
+        let query = try listQuery(["--folder", "Client Project", "--state", "running"])
+        #expect(query.groups == [VMGroupReference(.folder, named: "Client Project")])
+        #expect(query.filter == VMLibraryFilter(states: [.running]))
+        #expect(throws: (any Error).self) { try parse(["list", "--folder", "A", "--folder", "B"]) }
+        #expect(throws: (any Error).self) { try parse(["list", "--smart-group", "A", "--folder", "B"]) }
+    }
+
     @Test("clone follows the app's preference unless an outcome flag says otherwise")
     func cloneParsesItsOutcomeFlags() throws {
         let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)

@@ -143,23 +143,11 @@ final class VMOrganizationDirectory {
         }
     }
 
-    /// What a name names, which its refusals say.
-    enum Kind: Sendable, Equatable {
-        case smartGroup
-        case folder
-
-        var noun: String {
-            switch self {
-            case .smartGroup: "smart group"
-            case .folder: "folder"
-            }
-        }
-    }
-
     /// Why a change to the organization was refused.
     enum ChangeError: LocalizedError, Equatable {
-        case nameRequired(Kind)
-        case nameTaken(String, Kind)
+        case nameRequired(VMGroupKind)
+        case nameTaken(String, VMGroupKind)
+        case nameIsIdentifier(String, VMGroupKind)
         case unreadable(String)
         case unsaved(String)
 
@@ -169,6 +157,8 @@ final class VMOrganizationDirectory {
                 "A \(kind.noun) needs a name."
             case .nameTaken(let name, let kind):
                 "A \(kind.noun) named \u{201C}\(name)\u{201D} already exists. Give this one another name."
+            case .nameIsIdentifier(let name, let kind):
+                "\u{201C}\(name)\u{201D} can\u{2019}t name a \(kind.noun): an identifier already names one."
             case .unreadable(let reason):
                 "Kernova couldn\u{2019}t read its smart groups and folders, so it changes none: \(reason)"
             case .unsaved(let reason):
@@ -239,9 +229,31 @@ final class VMOrganizationDirectory {
         folders.first { $0.id == id }
     }
 
+    /// The smart group `text` names — by identifier, or by name ignoring case
+    /// — `nil` when the library lists none.
+    func smartGroup(named text: String) -> VMSmartGroup? {
+        Self.element(named: text, in: smartGroups, name: \.name)
+    }
+
+    /// The folder `text` names — by identifier, or by name ignoring case —
+    /// `nil` when the library lists none.
+    func folder(named text: String) -> VMFolder? {
+        Self.element(named: text, in: folders, name: \.name)
+    }
+
+    private static func element<Element: Identifiable<UUID>>(
+        named text: String, in elements: [Element], name: (Element) -> String
+    ) -> Element? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id = UUID(uuidString: trimmed), let element = elements.first(where: { $0.id == id }) {
+            return element
+        }
+        return elements.first { name($0).caseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
     /// `base`, or the first of "`base` 2", "`base` 3", … no `kind` is named —
     /// what a new one's name field starts from.
-    func unusedName(from base: String, for kind: Kind) -> String {
+    func unusedName(from base: String, for kind: VMGroupKind) -> String {
         let names =
             switch kind {
             case .smartGroup: smartGroups.map(\.name)
@@ -371,13 +383,15 @@ final class VMOrganizationDirectory {
 
     // MARK: - Commit
 
-    /// `name` trimmed, refusing an empty one and one an element of `named`
-    /// other than `id` holds, ignoring case — what lets a name select one.
+    /// `name` trimmed, refusing an empty one, one spelling an identifier, and
+    /// one an element of `named` other than `id` holds, ignoring case — what
+    /// lets a name select one.
     private static func validatedName(
-        _ name: String, of kind: Kind, for id: UUID?, among named: [(id: UUID, name: String)]
+        _ name: String, of kind: VMGroupKind, for id: UUID?, among named: [(id: UUID, name: String)]
     ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ChangeError.nameRequired(kind) }
+        guard UUID(uuidString: trimmed) == nil else { throw ChangeError.nameIsIdentifier(trimmed, kind) }
         if let other = named.first(where: {
             $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
         }) {
@@ -421,5 +435,15 @@ final class VMOrganizationDirectory {
             }
         }
         readFailure = nil
+    }
+}
+
+extension VMGroupKind {
+    /// What a sentence calls a group of this kind.
+    var noun: String {
+        switch self {
+        case .smartGroup: "smart group"
+        case .folder: "folder"
+        }
     }
 }

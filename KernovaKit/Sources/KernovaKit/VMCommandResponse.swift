@@ -49,6 +49,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case networks([NetworkSummary])
         /// One named network a verb created.
         case network(NetworkSummary)
+        /// The library's groups.
+        case groups([GroupSummary])
         /// One library change, for a transport streaming them.
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.

@@ -332,7 +332,7 @@ struct VMOtherCopyHoldTests {
         let instance = harness.library.registerFixture()
         let url = instance.bundleURL
         let reads: [(String, () throws -> Bool)] = [
-            ("list", { harness.core.list().first { $0.id == instance.id }?.heldByAnotherCopy ?? false }),
+            ("list", { harness.core.list(.all).first { $0.id == instance.id }?.heldByAnotherCopy ?? false }),
             ("info", { try harness.core.info(.id(instance.id)).heldByAnotherCopy }),
             (
                 "get",

@@ -102,7 +102,7 @@ struct VMCommandEnvelopeRouterTests {
         makeInstance(in: harness, name: "First")
         makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
 
-        let response = try await harness.transport.send(.list)
+        let response = try await harness.transport.send(.list())
 
         guard case .summaries(let summaries) = response.result else {
             Issue.record("expected summaries, got \(response.result)")
@@ -110,6 +110,48 @@ struct VMCommandEnvelopeRouterTests {
         }
         #expect(summaries.map(\.name) == ["First", "Second"])
         #expect(summaries.map(\.status) == ["stopped", "running"])
+    }
+
+    @Test("A filtered listing and the groups cross the wire, and an unknown group is refused")
+    func filteredListAndGroupsCrossTheWire() async throws {
+        let harness = makeHarness()
+        makeInstance(in: harness, name: "First")
+        makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
+        let running = try harness.library.organization.createSmartGroup(
+            named: "Running", filter: VMLibraryFilter(states: [.running]))
+
+        let listed = try await harness.transport.send(
+            .list(VMListQuery(groups: [VMGroupReference(.smartGroup, named: "running")], sort: .name)))
+        guard case .summaries(let summaries) = listed.result else {
+            Issue.record("expected summaries, got \(listed.result)")
+            return
+        }
+        #expect(summaries.map(\.name) == ["Second"])
+
+        let grouped = try await harness.transport.send(.groups)
+        guard case .groups(let groups) = grouped.result else {
+            Issue.record("expected groups, got \(grouped.result)")
+            return
+        }
+        #expect(groups.map(\.id) == [running.id])
+        #expect(groups.first?.members.map(\.name) == ["Second"])
+
+        let unknown = try await harness.transport.send(
+            .list(VMListQuery(groups: [VMGroupReference(.smartGroup, named: "Nope")])))
+        #expect(unknown.failure == .itemNotFoundOnHost(item: "smart group named \u{201C}Nope\u{201D}"))
+    }
+
+    @Test("A listing written in the vocabulary before the list query is refused as another version")
+    func listingOfThePreviousVocabularyIsRefused() async throws {
+        let harness = makeHarness()
+        let request = Data(#"{"protocolVersion":8,"verb":{"list":{}}}"#.utf8)
+
+        let response = try await harness.transport.sendRaw(request)
+
+        #expect(VMCommandRequest.currentProtocolVersion == 9)
+        #expect(
+            response.result
+                == .refused(.unsupportedProtocolVersion(peer: 8, expected: VMCommandRequest.currentProtocolVersion)))
     }
 
     @Test("An info read crosses the wire whole")
@@ -1062,7 +1104,7 @@ struct VMCommandEnvelopeRouterTests {
         double.pauseError = CommandError.unsupported(capability: "pausing")
         let transport = makeTransport(over: double)
 
-        let listed = try await transport.send(.list)
+        let listed = try await transport.send(.list())
         #expect(listed.result == .summaries(double.library))
 
         let refused = try await transport.send(.pause(.name("Anything")))

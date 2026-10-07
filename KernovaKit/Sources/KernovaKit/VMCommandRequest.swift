@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 8
+    public static let currentProtocolVersion = 9
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -24,7 +24,12 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
     /// One call on the facade, with its arguments.
     public enum Verb: Codable, Sendable, Hashable {
-        case list
+        /// The VMs `query` admits, in its order.
+        case list(VMListQuery = VMListQuery())
+        /// The library's groups — its smart groups, then its folders, in the
+        /// order the sidebar lists them — each with its members. Addresses no
+        /// VM.
+        case groups
         case info(VMSelector)
         case ipAddress(VMSelector)
         case snapshots(VMSelector)
@@ -130,6 +135,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         public var verb: VMVerb {
             switch self {
             case .list: .list
+            case .groups: .groups
             case .info: .info
             case .ipAddress: .ipAddress
             case .snapshots: .snapshots

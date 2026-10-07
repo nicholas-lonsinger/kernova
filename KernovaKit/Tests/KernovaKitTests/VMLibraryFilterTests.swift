@@ -228,4 +228,60 @@ struct VMLibraryFilterTests {
         // A build that does not know its own version calls no agent old.
         #expect(VMGuestAgentBucket(lastSeenVersion: "0.1", bundledVersion: nil) == .upToDate)
     }
+
+    // MARK: - Spelling
+
+    @Test("A network spelling reads a mode alone as its common network, and every spelling round-trips")
+    func networkSpellings() {
+        #expect(VMLibraryFilter.Network(spelling: "shared") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "hostOnly") == Self.network(.vmnet(.hostOnly, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "shared:common") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "bridged:en0") == Self.network(.bridged("en0")))
+        #expect(VMLibraryFilter.Network(spelling: "unlisted") == .unlisted)
+        // Case is ignored, but for the interface a bridged network names.
+        #expect(VMLibraryFilter.Network(spelling: "Shared") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "HOSTONLY:Isolated") == Self.network(.vmnet(.hostOnly, .isolated)))
+        #expect(VMLibraryFilter.Network(spelling: "Bridged:EN0") == Self.network(.bridged("EN0")))
+        #expect(VMLibraryFilter.Network(spelling: "Unlisted") == .unlisted)
+        #expect(VMLibraryFilter.Network(spelling: "bridged:") == nil)
+        for spelling in VMLibraryFilter.Network.spellings {
+            #expect(VMLibraryFilter.Network(spelling: spelling) != nil, "\(spelling)")
+        }
+        #expect(
+            VMLibraryFilter.Network.spellings
+                == ["shared", "shared:isolated", "hostOnly", "hostOnly:isolated", "bridged", "none", "unlisted"])
+    }
+
+    @Test("A network spelling never names a named network, which only the library resolves")
+    func networkSpellingRefusesNames() {
+        #expect(VMLibraryFilter.Network(spelling: "Lab") == nil)
+        #expect(VMLibraryFilter.Network(spelling: "Shared Lab") == nil)
+        #expect(VMLibraryFilter.Network(spelling: "shared:\(Self.named.uuidString)") == nil)
+        #expect(VMLibraryFilter.Network(spelling: Self.named.uuidString) == nil)
+    }
+
+    // MARK: - Sort
+
+    private struct Row {
+        let name: String
+        let createdAt: Date
+    }
+
+    private func sorted(_ rows: [Row], by sort: VMLibrarySort) -> [String] {
+        sort.ordered(rows) { VMLibrarySort.Keys(name: $0.name, createdAt: $0.createdAt) }.map(\.name)
+    }
+
+    @Test("Each sort has one direction, and rows its key ties keep the order they came in")
+    func sortOrders() {
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        let rows = [
+            Row(name: "beta", createdAt: base), Row(name: "Alpha 10", createdAt: base + 20),
+            Row(name: "Alpha 9", createdAt: base + 10), Row(name: "Twin", createdAt: base),
+        ]
+        #expect(sorted(rows, by: .manual) == ["beta", "Alpha 10", "Alpha 9", "Twin"])
+        #expect(sorted(rows, by: .name) == ["Alpha 9", "Alpha 10", "beta", "Twin"])
+        // "beta" and "Twin" tie on creation, so they keep the order they came in.
+        #expect(sorted(rows, by: .dateCreated) == ["Alpha 10", "Alpha 9", "beta", "Twin"])
+        #expect(VMLibrarySort.allCases.map(\.rawValue) == ["name", "dateCreated", "manual"])
+    }
 }

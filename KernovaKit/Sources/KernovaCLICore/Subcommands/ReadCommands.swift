@@ -3,19 +3,32 @@ import Foundation
 import KernovaKit
 
 extension KernovaCommand {
-    /// `kernova list` — every virtual machine, in library order.
+    /// `kernova list` — the virtual machines a filter admits, in library order
+    /// unless `--sort` says otherwise.
     struct List: VerbCommand {
         /// What `kernova list --help` says.
         static let configuration = CommandConfiguration(
             commandName: "list",
-            abstract: "List every virtual machine.")
+            abstract: "List virtual machines.",
+            discussion: "With no filter, lists every virtual machine. Repeating a filter flag "
+                + "widens it: a virtual machine passes when it matches any value given. A virtual "
+                + "machine is listed only when it passes every flag given and is in the smart "
+                + "group or folder named, as the sidebar lists it. Under the manual sort, a folder's "
+                + "virtual machines are listed in the folder's own order.")
+
+        @OptionGroup var filter: ListFilterOptions
+
+        @OptionGroup var groups: GroupTargetOptions
+
+        @Option(name: .long, help: "The order to list them in.")
+        var sort: VMLibrarySort = .manual
 
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .list
+            .list(VMListQuery(filter: filter.filter, networks: filter.networks, groups: groups.groups, sort: sort))
         }
 
         /// Reads the library and writes it.
@@ -26,6 +39,33 @@ extension KernovaCommand {
                 options.format == .json
                     ? try JSONRenderer.render(rows)
                     : TableRenderer.render(rows, quiet: options.quiet))
+        }
+    }
+
+    /// `kernova groups` — the library's groups and the VMs in each.
+    struct Groups: VerbCommand {
+        /// What `kernova groups --help` says.
+        static let configuration = CommandConfiguration(
+            commandName: "groups",
+            abstract: "List the library's smart groups and folders.",
+            discussion: "Each row names the virtual machines in the group, which `kernova list "
+                + "--smart-group` or `--folder` lists: the smart groups, then the folders, in the "
+                + "order the sidebar shows them.")
+
+        /// The options every subcommand carries.
+        @OptionGroup var options: GlobalOptions
+
+        /// The request this command line stands for.
+        func verb() throws -> VMCommandRequest.Verb { .groups }
+
+        /// Reads the groups and writes them.
+        func run() throws {
+            let answered = try answer()
+            guard case .groups(let groups) = answered else { throw answered.unexpectedAnswer }
+            Console.out(
+                options.format == .json
+                    ? try JSONRenderer.render(groups)
+                    : TableRenderer.render(groups, quiet: options.quiet))
         }
     }
 

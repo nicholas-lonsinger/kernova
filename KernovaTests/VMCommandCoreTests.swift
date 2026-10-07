@@ -242,8 +242,8 @@ struct VMCommandCoreTests {
         makeInstance(in: harness, name: "First")
         makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
 
-        #expect(harness.core.list().map(\.name) == ["First", "Second"])
-        #expect(harness.core.list().map(\.status) == ["stopped", "running"])
+        #expect(harness.core.list(.all).map(\.name) == ["First", "Second"])
+        #expect(harness.core.list(.all).map(\.status) == ["stopped", "running"])
     }
 
     @Test("list and info tell a suspended VM from a live-paused one")
@@ -253,7 +253,7 @@ struct VMCommandCoreTests {
         try VMInstanceFixture.writeSaveFile(for: suspended)
         let paused = makeInstance(in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
 
-        #expect(harness.core.list().map(\.status) == ["suspended", "paused"])
+        #expect(harness.core.list(.all).map(\.status) == ["suspended", "paused"])
         #expect(try harness.core.info(.id(suspended.id)).status == "suspended")
         #expect(try harness.core.info(.id(paused.id)).status == "paused")
     }
@@ -2774,12 +2774,12 @@ struct VMCommandCoreTests {
             .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         #expect(summary.status == "preparing")
-        #expect(harness.core.list().first { $0.id == summary.id }?.status == "preparing")
+        #expect(harness.core.list(.all).first { $0.id == summary.id }?.status == "preparing")
         #expect(try harness.core.info(.id(summary.id)).status == "preparing")
 
         hold.signal()
         await harness.library.arrivals.first { $0.id == summary.id }?.settle()
-        #expect(harness.core.list().first { $0.id == summary.id }?.status == "stopped")
+        #expect(harness.core.list(.all).first { $0.id == summary.id }?.status == "stopped")
     }
 
     @Test("An arrival's addition reports the preparing wire status")

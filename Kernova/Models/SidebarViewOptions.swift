@@ -7,55 +7,24 @@ import KernovaKit
 /// status menu, `kernova list` — stays the manual one whatever these say.
 struct SidebarViewOptions: Codable, Hashable, Sendable {
     var filter = VMLibraryFilter()
-    var sort: SidebarSort = .manual
+    var sort: VMLibrarySort = .manual
     var grouping: SidebarGrouping = .none
     /// Whether each row carries a second line stating its sort key's value.
     var showsDetails = false
 }
 
-/// The order the library section lists its rows in. Each key has one fixed
-/// direction.
-enum SidebarSort: String, Codable, CaseIterable, Sendable {
-    /// A→Z.
-    case name
-    /// Newest first.
-    case dateCreated
-    /// The library's own order, or a folder's own in its section — the
-    /// order dragging a row there changes.
-    case manual
-
-    var title: String {
-        switch self {
-        case .name: "Name"
-        case .dateCreated: "Date Created"
-        case .manual: "Manual"
-        }
+extension LibraryEntry {
+    /// What a ``VMLibrarySort`` reads of this entry.
+    var sortKeys: VMLibrarySort.Keys {
+        VMLibrarySort.Keys(name: name, createdAt: configuration.createdAt)
     }
+}
 
+extension VMLibrarySort {
     /// `entries` in this order; entries the key ties keep their manual order.
     @MainActor
     func ordered(_ entries: [LibraryEntry]) -> [LibraryEntry] {
-        let precedes: (LibraryEntry, LibraryEntry) -> Bool? =
-            switch self {
-            case .manual: { _, _ in nil }
-            case .name:
-                { lhs, rhs in
-                    switch lhs.name.localizedStandardCompare(rhs.name) {
-                    case .orderedAscending: true
-                    case .orderedDescending: false
-                    case .orderedSame: nil
-                    }
-                }
-            case .dateCreated:
-                { lhs, rhs in
-                    let left = lhs.configuration.createdAt
-                    let right = rhs.configuration.createdAt
-                    return left == right ? nil : left > right
-                }
-            }
-        return entries.enumerated()
-            .sorted { lhs, rhs in precedes(lhs.element, rhs.element) ?? (lhs.offset < rhs.offset) }
-            .map(\.element)
+        ordered(entries, by: \.sortKeys)
     }
 
     /// The second line a row shows under this key: the value it is ordered by,

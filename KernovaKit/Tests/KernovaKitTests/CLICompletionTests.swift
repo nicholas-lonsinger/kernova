@@ -194,7 +194,7 @@ struct CLICompletionTests {
         let names = CompletionSource.vmNames(byIdentifier: false, in: context(to: listener))
 
         #expect(names == ["Alpha", "Beta"])
-        #expect(listener.requests().map(\.verb) == [.list])
+        #expect(listener.requests().map(\.verb) == [.list()])
     }
 
     @Test("--id offers the identifiers the same listing carries")
@@ -360,7 +360,7 @@ struct CLICompletionTests {
             connect: { try VMCommandClient(socketPath: listener.path) }, deadline: 0.5, shell: nil)
 
         #expect(CompletionSource.vmNames(byIdentifier: false, in: silent).isEmpty)
-        #expect(listener.requests().map(\.verb) == [.list])
+        #expect(listener.requests().map(\.verb) == [.list()])
     }
 
     @Test("zsh is answered with each value's description beside it")
@@ -414,6 +414,49 @@ struct CLICompletionTests {
             CompletionSource.networkNames(in: context(to: listener, asking: .zsh))
                 == ["Lab:hostOnly"])
         #expect(listener.requests().map(\.verb) == [.networks])
+    }
+
+    @Test("--smart-group and --folder each offer their own kind's groups by name, described by their size")
+    func groupNamesComeFromTheGroups() throws {
+        let answer = VMCommandResponse(
+            result: .groups([
+                GroupSummary(id: UUID(), name: "Linux: Lab", kind: .smartGroup, members: [alpha, beta]),
+                GroupSummary(id: UUID(), name: "Client", kind: .folder, members: [beta]),
+            ]))
+        let smart = try TestCommandSocket()
+        defer { smart.close() }
+        smart.serve([[answer]])
+        let folders = try TestCommandSocket()
+        defer { folders.close() }
+        folders.serve([[answer]])
+
+        #expect(
+            CompletionSource.groupNames(of: .smartGroup, in: context(to: smart, asking: .zsh))
+                == ["Linux\\: Lab:2 VMs"])
+        #expect(CompletionSource.groupNames(of: .folder, in: context(to: folders, asking: .zsh)) == ["Client:1 VMs"])
+        #expect(smart.requests().map(\.verb) == [.groups])
+        #expect(folders.requests().map(\.verb) == [.groups])
+    }
+
+    @Test("A --network value offers every mode with no app to ask, then the named networks")
+    func networkFilterOffersModesThenNames() throws {
+        let unreachable = CompletionContext(
+            connect: { throw CLIFailure(.unavailable, "no app group") }, deadline: testWaitBackstop,
+            shell: nil)
+        #expect(CompletionSource.networkFilterValues(in: unreachable) == VMLibraryFilter.Network.spellings)
+        #expect(CompletionSource.groupNames(of: .smartGroup, in: unreachable).isEmpty)
+
+        let listener = try TestCommandSocket()
+        defer { listener.close() }
+        listener.serve([
+            [
+                VMCommandResponse(
+                    result: .networks([NetworkSummary(id: UUID(), name: "Lab", kind: .hostOnly, members: [])]))
+            ]
+        ])
+        #expect(
+            CompletionSource.networkFilterValues(in: context(to: listener))
+                == VMLibraryFilter.Network.spellings + ["Lab"])
     }
 
     // MARK: - Handing them to a shell

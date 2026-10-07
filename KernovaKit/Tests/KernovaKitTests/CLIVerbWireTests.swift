@@ -33,8 +33,38 @@ struct CLIVerbWireTests {
         let exchanged = try CLIWire.exchange(
             ["list"], answering: VMCommandResponse(result: .summaries([alpha])))
 
-        #expect(exchanged.sent == [.list])
+        #expect(exchanged.sent == [.list(VMListQuery())])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
+    }
+
+    @Test("list crosses as one query: repeated flags an include-set, different flags each constraining")
+    func listSendsItsFilter() throws {
+        let exchanged = try CLIWire.exchange(
+            [
+                "list", "--os", "linux", "--state", "running", "--state", "heldByAnotherCopy",
+                "--network", "shared", "--network", "unlisted", "--network", "Lab",
+                "--agent", "olderVersion", "--ephemeral", "--has-snapshots",
+                "--smart-group", "Linux Lab", "--sort", "dateCreated",
+            ],
+            answering: VMCommandResponse(result: .summaries([alpha])))
+
+        let expected = VMListQuery(
+            filter: VMLibraryFilter(
+                guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
+                guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
+            networks: ["shared", "unlisted", "Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
+            sort: .dateCreated)
+        #expect(exchanged.sent == [.list(expected)])
+        #expect(try exchanged.answer.payload() == .summaries([alpha]))
+    }
+
+    @Test("groups asks for the library's groups")
+    func groupsAsksForTheGroups() throws {
+        let group = GroupSummary(id: alpha.id, name: "Linux Lab", kind: .smartGroup, members: [alpha])
+        let exchanged = try CLIWire.exchange(["groups"], answering: VMCommandResponse(result: .groups([group])))
+
+        #expect(exchanged.sent == [.groups])
+        #expect(try exchanged.answer.payload() == .groups([group]))
     }
 
     @Test("info crosses as the selector its argument names, and --id forces an identifier")

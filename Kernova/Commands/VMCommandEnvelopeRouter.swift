@@ -28,20 +28,27 @@ struct VMCommandEnvelopeRouter {
     ///
     /// An envelope refusal is a frame, not a thrown error: the peer asked a
     /// question and is owed an answer, and only the transport can send one.
+    ///
+    /// The version is read before the verb: a verb another vocabulary spells
+    /// differently would not decode, and its peer is owed the version refusal.
     nonisolated func decode(_ data: Data) -> Result<VMCommandRequest, VMCommandTransportRefusal> {
         let request: VMCommandRequest
         do {
+            let version = try JSONDecoder().decode(VersionHeader.self, from: data).protocolVersion
+            guard version == VMCommandRequest.currentProtocolVersion else {
+                return .failure(
+                    .unsupportedProtocolVersion(peer: version, expected: VMCommandRequest.currentProtocolVersion))
+            }
             request = try JSONDecoder().decode(VMCommandRequest.self, from: data)
         } catch {
             return .failure(.undecodableRequest(error.localizedDescription))
         }
-        guard request.protocolVersion == VMCommandRequest.currentProtocolVersion else {
-            return .failure(
-                .unsupportedProtocolVersion(
-                    peer: request.protocolVersion,
-                    expected: VMCommandRequest.currentProtocolVersion))
-        }
         return .success(request)
+    }
+
+    /// The one field every vocabulary's request carries.
+    private struct VersionHeader: Decodable {
+        let protocolVersion: Int
     }
 
     /// Serializes one response for the wire.
@@ -86,7 +93,7 @@ struct VMCommandEnvelopeRouter {
     /// client waiting for a state race-free against a VM already in it.
     func snapshotAndEvents() -> (VMCommandResponse, AsyncStream<VMCommandResponse>) {
         let events = eventResponses()
-        let snapshot = VMCommandResponse(result: .summaries(commands.list()))
+        let snapshot = VMCommandResponse(result: .summaries(commands.list(.all)))
         return (snapshot, events)
     }
 
@@ -116,8 +123,10 @@ struct VMCommandEnvelopeRouter {
 
     private func dispatch(_ verb: VMCommandRequest.Verb) async throws -> VMCommandResponse.Result {
         switch verb {
-        case .list:
-            return .summaries(commands.list())
+        case .list(let query):
+            return .summaries(commands.list(try commands.selection(for: query, verb: .list)))
+        case .groups:
+            return .groups(try commands.groups())
         case .info(let selector):
             return .info(try commands.info(selector))
         case .ipAddress(let selector):

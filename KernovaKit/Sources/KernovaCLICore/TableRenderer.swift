@@ -151,6 +151,24 @@ enum TableRenderer {
             })
     }
 
+    /// The library's groups, in the order the app listed them.
+    ///
+    /// Laid out as the named networks are. `quiet` prints names alone, which
+    /// `list --smart-group` and `list --folder` accept back.
+    static func render(_ rows: [GroupSummary], quiet: Bool) -> String {
+        guard !quiet else { return rows.map(\.name).joined(separator: "\n") }
+        guard !rows.isEmpty else { return "" }
+        return columns(
+            headings: ["NAME", "KIND", "MEMBERS", "ID"],
+            rows: rows.map {
+                [
+                    $0.name, $0.kind.rawValue,
+                    $0.members.isEmpty ? "None" : $0.members.map(\.name).joined(separator: ", "),
+                    $0.id.uuidString,
+                ]
+            })
+    }
+
     /// What `usb attach` or `usb detach` takes back for one accessory: the
     /// attachment while a guest holds it, the accessory itself while none does.
     private static func handle(_ accessory: USBAccessorySummary) -> String {

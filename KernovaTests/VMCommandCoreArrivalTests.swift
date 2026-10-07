@@ -236,7 +236,7 @@ struct VMCommandCoreArrivalTests {
 
         #expect(harness.library.instances.map(\.id) == [source.id])
         #expect(Set(harness.library.entries.map(\.id)) == [source.id, row.id])
-        #expect(harness.core.list().map(\.status).contains(VMStatus.preparingWireName))
+        #expect(harness.core.list(.all).map(\.status).contains(VMStatus.preparingWireName))
         #expect(try harness.core.info(.id(row.id)).status == VMStatus.preparingWireName)
         let renameRefusal = #expect(throws: CommandError.self) {
             try harness.core.rename(.id(row.id), to: "Renamed")

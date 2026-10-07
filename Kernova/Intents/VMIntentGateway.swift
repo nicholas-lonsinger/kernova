@@ -84,7 +84,7 @@ final class VMIntentGateway {
     /// asserted and skipped rather than being taken for a VM that left.
     func vms() async -> [VMEntity] {
         await ready()
-        return commands.list().compactMap { entity(for: $0.id) }
+        return commands.list(.all).compactMap { entity(for: $0.id) }
     }
 
     /// One listed VM's whole read, `nil` — asserted — for a row with none.
@@ -283,7 +283,7 @@ final class VMIntentGateway {
     /// source's snapshot identifiers: one the named VM lists can still be a
     /// pick made in the VM it was copied from.
     private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
-        guard let summary = commands.list().first(where: { $0.id == vm }) else {
+        guard let summary = commands.list(.all).first(where: { $0.id == vm }) else {
             throw CommandError.notFound(.id(vm))
         }
         let listed = try commands.snapshots(of: .id(vm))
