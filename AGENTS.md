@@ -75,7 +75,7 @@ A new host↔guest feature scopes to macOS guests: its issue or design states th
 
 ### Current-Only Surfaces
 
-No compatibility path is written for any shape that is not the current one.
+No compatibility path is written for any shape that is not the current one. A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
 
 **Persisted formats:** adding a field to a persisted `Codable` type is `decodeIfPresent ?? default` with the default a new instance gets, and nothing else. Migration code takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
 
