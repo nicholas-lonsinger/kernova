@@ -463,15 +463,6 @@ final class VMInstance {
     var heldByAnotherCopy: Bool { activity.heldByAnotherCopy }
     var isAtRest: Bool { activity.isAtRest }
 
-    /// How long this VM's current session has been running at `now`, counted
-    /// from when it first settled running; `nil` while no session has.
-    ///
-    /// A fact about this session, not the guest's own uptime: a restore from
-    /// a saved state starts a new session on a guest that ran before it.
-    func sessionRunningDuration(at now: Date = Date()) -> TimeInterval? {
-        sessionContext?.runningSince.map { now.timeIntervalSince($0) }
-    }
-
     /// Whether this VM claims its machine identity and MAC address right now:
     /// live in this copy (``holdsLiveIdentity``), or held by another copy of
     /// Kernova, which may be running it.

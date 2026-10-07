@@ -42,7 +42,8 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
 
     /// When a VM last ran, as ``lastRun`` orders it.
     public enum LastRun: Sendable, Equatable {
-        /// Live now: its recorded run is this session's start, not its end.
+        /// In a session, or held by another copy, which may be running it: its
+        /// recorded run is then a session's start, not its end.
         case live
         /// Last ran at this moment.
         case ended(Date)

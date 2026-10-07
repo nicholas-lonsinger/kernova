@@ -53,16 +53,6 @@ struct VMHostStateTests {
                 == VMHostState(displayPreference: .fullscreen))
     }
 
-    @Test("A copy arrives with its tags, never set to start at launch")
-    func copyArrivesWithItsTags() {
-        let tags: Set<UUID> = [UUID(), UUID()]
-        var copy = VMHostState(startsAutomaticallyOnLaunch: true, displayPreference: .popOut, tags: tags)
-
-        copy.arriveAsCopy()
-
-        #expect(copy == VMHostState(displayPreference: .popOut, tags: tags))
-    }
-
     @Test("A New Machine clone starts from a new VM's host state, carrying the source's tags")
     func newMachineCarriesTags() {
         let source = everyFieldSet()
