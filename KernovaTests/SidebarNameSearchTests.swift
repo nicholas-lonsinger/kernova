@@ -413,15 +413,15 @@ struct SidebarNameSearchTests {
         #expect(!subject.fieldShown)
     }
 
-    @Test("The default toolbar puts Search beside New VM, ahead of the sidebar toggle")
+    @Test("The default toolbar puts Search right after New VM, ahead of the sidebar toggle")
     func searchButtonInDefaultToolbar() throws {
         let subject = try makeWindow(makeViewModel())
         let layout = try #require(subject.window.toolbar).items.map(\.itemIdentifier)
-        let index = try #require(layout.firstIndex(of: Window.search))
+        let index = try #require(layout.firstIndex(of: NSToolbarItem.Identifier("newVM")))
 
         #expect(
             Array(layout[index...].prefix(3)) == [
-                Window.search, NSToolbarItem.Identifier("newVM"), .toggleSidebar,
+                NSToolbarItem.Identifier("newVM"), Window.search, .toggleSidebar,
             ])
     }
 

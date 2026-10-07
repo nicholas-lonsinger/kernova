@@ -45,12 +45,12 @@ struct MainWindowControllerNewVMTests {
     func collapseRemovesNewVM() throws {
         let subject = try makeSubject()
         let canonical = subject.layout
-        try #require(canonical.firstIndex(of: newVM) == 2)
+        try #require(canonical.firstIndex(of: newVM) == 1)
 
         subject.sidebar.isCollapsed = true
 
         #expect(subject.layout == canonical.filter { $0 != newVM })
-        #expect(preferences.mainToolbarNewVMCollapseIndex == 2)
+        #expect(preferences.mainToolbarNewVMCollapseIndex == 1)
 
         subject.sidebar.isCollapsed = false
 
@@ -139,6 +139,6 @@ struct MainWindowControllerNewVMTests {
         try await gate.wait { sheetEnded.value }
 
         #expect(subject.layout == canonical.filter { $0 != newVM })
-        #expect(preferences.mainToolbarNewVMCollapseIndex == 2)
+        #expect(preferences.mainToolbarNewVMCollapseIndex == 1)
     }
 }
