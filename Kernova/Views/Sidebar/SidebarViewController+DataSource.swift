@@ -6,7 +6,7 @@ import KernovaKit
 ///
 /// A drag carries a VM's row (its ``SidebarRowKey``), a smart group's or a
 /// folder's header (its ``SidebarSectionID``), or, from the Finder, `.kernova`
-/// bundles. Where each lands is ``drop(of:onto:childIndex:)``.
+/// bundles. Where each lands is ``drop(of:)``.
 extension SidebarViewController: NSOutlineViewDataSource {
     static let rowPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row")
     static let sectionPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-section")
@@ -51,8 +51,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
 
     // MARK: Drop
 
-    /// What a drop does, and the item and child index it is retargeted to —
-    /// which, proposed again, decide the same drop.
+    /// What a drop does, and the item and child index it is retargeted to.
     private enum Drop {
         case refused
         /// The dragged row's entry joins `folder` (proposed onto the section).
@@ -66,36 +65,71 @@ extension SidebarViewController: NSOutlineViewDataSource {
         case importBundles(into: SidebarSection?)
     }
 
-    /// Where a drag of `info` proposed at `item` and `index` lands, by the
-    /// section it is over:
+    /// Where the pointer is over the outline: a section, and where in it.
+    private struct Spot {
+        let section: SidebarSection
+        /// The section's offset among the root's children.
+        let offset: Int
+        /// The gap among the section's children nearest the pointer, `nil`
+        /// over the section's header.
+        let gap: Int?
+        /// Whether the pointer is in the upper half of its row.
+        let isUpperHalf: Bool
+    }
+
+    /// The spot under `location`, in window coordinates; `nil` below every
+    /// row.
+    ///
+    /// Every drop is decided from this alone, never from the item and index
+    /// AppKit proposes: at the boundary between one section's last row and
+    /// the next section's header, AppKit can propose the first section while
+    /// the pointer is over the second.
+    private func spot(at location: NSPoint) -> Spot? {
+        let point = outlineView.convert(location, from: nil)
+        let row = outlineView.row(at: point)
+        guard row >= 0, let node = outlineView.item(atRow: row) as? SidebarNode else { return nil }
+        var top = node
+        while let parent = top.parent { top = parent }
+        guard let section = top as? SidebarSection, let offset = tree.sections.firstIndex(where: { $0 === section })
+        else { return nil }
+        let isUpperHalf = point.y < outlineView.rect(ofRow: row).midY
+        let gap = section.children.firstIndex { $0 === node }.map { isUpperHalf ? $0 : $0 + 1 }
+        return Spot(section: section, offset: offset, gap: gap, isUpperHalf: isUpperHalf)
+    }
+
+    /// Where a drag of `info` lands, by the ``Spot`` under the pointer:
     ///
     /// - a row over a folder other than its own section — the header, a row,
     ///   the gaps between them — joins it, unless it holds the VM already;
-    /// - a row over its own section reorders its list under the manual sort:
+    /// - a row over its own section reorders its list under the manual sort,
+    ///   into the gap nearest the pointer (its list's top over the header):
     ///   the library's order in the library, the folder's own in a folder;
+    ///   below every row, it goes to the end of the last section's list;
     /// - a row over any other section is refused. A smart group lists by its
     ///   filter and takes no drop, its own rows' included;
-    /// - a header moves among its own kind's headers;
+    /// - a header moves among its own kind's headers: before the section
+    ///   under the upper half of its header, else after it;
     /// - bundles over a folder are imported into it; anywhere else, imported.
-    private func drop(of info: NSDraggingInfo, onto item: Any?, childIndex index: Int) -> Drop {
-        let over = section(under: item, at: info.draggingLocation)
+    private func drop(of info: NSDraggingInfo) -> Drop {
+        let spot = spot(at: info.draggingLocation)
         guard info.draggingSource as? NSOutlineView === outlineView else {
             guard
                 info.draggingPasteboard.canReadObject(
                     forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
             else { return .refused }
-            return .importBundles(into: over?.id.folderID == nil ? nil : over)
+            return .importBundles(into: spot?.section.id.folderID == nil ? nil : spot?.section)
         }
         if let section = draggedSection(info) {
             guard let run = sectionRun(of: section) else { return .refused }
-            return .moveSection(section, index: sectionDropIndex(proposedItem: item, childIndex: index, run: run))
+            let target = spot.map { $0.gap == nil && $0.isUpperHalf ? $0.offset : $0.offset + 1 } ?? run.upperBound
+            return .moveSection(section, index: min(max(target, run.lowerBound), run.upperBound))
         }
         guard let source = draggedRow(info) else { return .refused }
-        if let over, over.id != source.key.section {
-            guard let id = over.id.folderID,
+        if let spot, spot.section.id != source.key.section {
+            guard let id = spot.section.id.folderID,
                 viewModel.library.organization.folder(withID: id)?.members.contains(source.key.entryID) == false
             else { return .refused }
-            return .join(folder: over)
+            return .join(folder: spot.section)
         }
         guard viewModel.sidebarOptions.sort == .manual, source.key.section.smartGroupID == nil,
             let parent = source.parent, let list = Self.list(of: source)
@@ -103,29 +137,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
         // Constrained to the gaps of the dragged row's own list: its group's
         // rows, which follow its header.
         let target: Int
-        switch item {
-        case let row as SidebarRow:
-            guard row.parent === parent, row.key.group == source.key.group else { return .refused }
-            target = parent.children.firstIndex { $0 === row } ?? list.upperBound
-        case let node as SidebarNode:
-            guard node === parent else { return .refused }
-            if index == NSOutlineViewDropOnItemIndex {
-                target = list.upperBound
-            } else {
-                guard (list.lowerBound...list.upperBound).contains(index) else { return .refused }
-                target = index
-            }
-        default:
-            // A root proposal. Over the dragged row's own section, a gap
-            // above it is its list's top; below every row, where AppKit
-            // proposes the root with `NSOutlineViewDropOnItemIndex`, is the
-            // end of the list of the last section's row.
-            let section = tree.sections.firstIndex { $0.id == source.key.section } ?? 0
-            guard over != nil || section == tree.sections.count - 1 else { return .refused }
-            target =
-                index == NSOutlineViewDropOnItemIndex || index > section
-                ? list.upperBound : list.lowerBound
+        if let spot {
+            target = spot.gap ?? list.lowerBound
+        } else {
+            guard source.key.section == tree.sections.last?.id else { return .refused }
+            target = list.upperBound
         }
+        guard (list.lowerBound...list.upperBound).contains(target) else { return .refused }
         return .reorder(parent: parent, index: target)
     }
 
@@ -135,7 +153,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         proposedItem item: Any?,
         proposedChildIndex index: Int
     ) -> NSDragOperation {
-        switch drop(of: info, onto: item, childIndex: index) {
+        switch drop(of: info) {
         case .refused:
             return []
         case .join(let folder):
@@ -159,7 +177,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         item: Any?,
         childIndex index: Int
     ) -> Bool {
-        switch drop(of: info, onto: item, childIndex: index) {
+        switch drop(of: info) {
         case .refused:
             return false
         case .join(let folder):
@@ -183,20 +201,6 @@ extension SidebarViewController: NSOutlineViewDataSource {
         }
     }
 
-    /// The section `item` is or is listed in; for a root proposal, the one
-    /// whose row is under `location` (in window coordinates), which AppKit
-    /// proposes as a gap between sections even over a section's header.
-    /// `nil` below every row.
-    private func section(under item: Any?, at location: NSPoint) -> SidebarSection? {
-        var node = item as? SidebarNode
-        if node == nil {
-            let row = outlineView.row(at: outlineView.convert(location, from: nil))
-            node = row >= 0 ? outlineView.item(atRow: row) as? SidebarNode : nil
-        }
-        while let parent = node?.parent { node = parent }
-        return node as? SidebarSection
-    }
-
     /// Which kind of reorderable section `id` is, `nil` for the library.
     private static func kind(of id: SidebarSectionID) -> VMOrganizationDirectory.Kind? {
         if id.smartGroupID != nil { return .smartGroup }
@@ -211,27 +215,6 @@ extension SidebarViewController: NSOutlineViewDataSource {
         let offsets = tree.sections.indices.filter { Self.kind(of: tree.sections[$0].id) == kind }
         guard let first = offsets.first, let last = offsets.last else { return nil }
         return first..<(last + 1)
-    }
-
-    /// The root offset within `run` a dragged header lands at: before the
-    /// section the drag is over — after it when over the section's own rows —
-    /// or at the run's end when below it.
-    private func sectionDropIndex(proposedItem item: Any?, childIndex index: Int, run: Range<Int>) -> Int {
-        let target: Int
-        switch item {
-        case nil:
-            target = index == NSOutlineViewDropOnItemIndex ? run.upperBound : index
-        case let section as SidebarSection:
-            let offset = tree.sections.firstIndex { $0 === section } ?? run.upperBound
-            target = index == NSOutlineViewDropOnItemIndex || index == 0 ? offset : offset + 1
-        case let node as SidebarNode:
-            var top = node
-            while let parent = top.parent { top = parent }
-            target = (tree.sections.firstIndex { $0 === top } ?? run.upperBound) + 1
-        default:
-            target = run.upperBound
-        }
-        return min(max(target, run.lowerBound), run.upperBound)
     }
 
     /// Moves the dragged header's smart group or folder to the root offset it

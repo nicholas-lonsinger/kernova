@@ -564,10 +564,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// user is already watching, and only when the sidebar shows the arrival,
     /// so a filter hiding it leaves the selection where the user can see it.
     func register(_ arrival: VMArrival) {
-        // An import carries its bundle's identifier, which folders may still
-        // list from a VM that left while nothing watched — a bundle trashed
-        // with Kernova closed.
-        leaveEveryFolder(arrival.id)
         entries.append(.arriving(arrival))
         sortEntries()
         persistOrder()

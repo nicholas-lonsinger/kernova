@@ -5,10 +5,12 @@ import KernovaLogging
 /// that can take a row out of the sidebar followed by the selection moving
 /// onto what the sidebar then lists.
 ///
-/// Membership holds only entries the library lists: an entry leaving the
-/// library leaves every folder (``leaveEveryFolder(_:)``), and one entering
-/// it — a create, clone or import — enters none, whatever a VM with its
-/// identifier once belonged to.
+/// A folder section lists only the members the library holds
+/// (``SidebarLayout``), so an identifier no entry carries is listed nowhere.
+/// An entry leaving the library while it runs leaves every folder
+/// (``leaveEveryFolder(_:)``); one that left unseen — its bundle trashed with
+/// Kernova closed — keeps its identifier there, and a VM coming back under
+/// it is listed in those folders again, whichever way it returns.
 extension VMLibrary {
     /// Every folder, in the order the sidebar lists them.
     var folders: [VMFolder] { organization.folders }
@@ -56,13 +58,12 @@ extension VMLibrary {
         try organization.move(entry, before: successor, inFolder: id)
     }
 
-    /// Takes the entry `id` out of every folder, as it leaves the library or
-    /// enters it anew.
+    /// Takes the entry `id` out of every folder, as it leaves the library.
     ///
     /// A failed write leaves the identifier listed in the file, where no
     /// section shows it while the library lists no entry under it; it is
     /// logged rather than presented, since the change the user asked for —
-    /// the delete, the import — went through.
+    /// the delete, the cancel — went through.
     func leaveEveryFolder(_ id: UUID) {
         do {
             try organization.removeFromEveryFolder([id])

@@ -37,7 +37,8 @@ final class SidebarViewMenu: NSObject {
         case newFolder(adding: UUID?)
         /// Asks for a new name for the folder the identifier names.
         case renameFolder(UUID)
-        /// Deletes the folder the identifier names, keeping its VMs.
+        /// Asks before deleting the folder the identifier names, which keeps
+        /// its VMs.
         case deleteFolder(UUID)
         /// Puts the entry `entry` in the folder `folder`, or takes it out.
         case setMembership(entry: UUID, folder: UUID, isMember: Bool)

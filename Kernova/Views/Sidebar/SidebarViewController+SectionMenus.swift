@@ -112,7 +112,7 @@ extension SidebarViewController {
         case .renameFolder(let id):
             presentRename(.folder, id)
         case .deleteFolder(let id):
-            attempt("Couldn\u{2019}t Delete the Folder") { try library.deleteFolder(id) }
+            presentDeleteFolder(id)
         case .setMembership(let entry, let folder, true):
             attempt("Couldn\u{2019}t Add to the Folder") { try library.add([entry], toFolder: folder) }
         case .setMembership(let entry, let folder, false):
@@ -159,6 +159,39 @@ extension SidebarViewController {
                 ) { try self?.viewModel.library.createFolder(named: typed, members: entry.map { [$0] } ?? []) }
             },
             in: window)
+    }
+
+    /// Asks before deleting the folder `id` identifies: its membership was
+    /// picked by hand and nothing rebuilds it, as a smart group's filter does.
+    private func presentDeleteFolder(_ id: UUID) {
+        let library = viewModel.library
+        guard let window = view.window, let folder = library.organization.folder(withID: id) else { return }
+        let held = folder.members.count { member in library.entries.contains { $0.id == member } }
+        presentSheetAlert(
+            Self.deleteFolderConfirmation(name: folder.name, memberCount: held) { [weak self] in
+                self?.attempt("Couldn\u{2019}t Delete the Folder") { try library.deleteFolder(id) }
+            },
+            in: window)
+    }
+
+    /// The confirmation deleting the folder `name`, holding `memberCount` of
+    /// the library's VMs, asks for; Delete runs `delete`.
+    static func deleteFolderConfirmation(
+        name: String, memberCount: Int, delete: @escaping () -> Void
+    ) -> AlertConfiguration {
+        let quoted = "\u{201C}\(name)\u{201D}"
+        let message =
+            switch memberCount {
+            case 0: "\(quoted) holds no VMs."
+            case 1: "\(quoted) holds 1 VM. Deleting the folder keeps it in the library."
+            default: "\(quoted) holds \(memberCount) VMs. Deleting the folder keeps them in the library."
+            }
+        return AlertConfiguration(
+            title: "Delete the Folder \(quoted)?", message: message,
+            buttons: [
+                AlertButton("Delete", role: .destructive, action: delete),
+                AlertButton("Cancel", role: .cancel),
+            ])
     }
 
     /// Asks for a new name for the `kind` `id` identifies, starting from

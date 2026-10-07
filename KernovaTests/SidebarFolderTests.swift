@@ -321,7 +321,7 @@ struct SidebarFolderTests {
         #expect(viewModel.library.folders.last?.members == [a.id])
     }
 
-    @Test("Rename retitles the folder; Delete removes it, keeps its VMs, and moves its selection to the library")
+    @Test("Rename retitles the folder; Delete asks first, then removes it, keeps its VMs, and moves its selection")
     func renameAndDelete() async throws {
         let viewModel = makeViewModel()
         let a = viewModel.library.admitFixture(name: "A")
@@ -329,15 +329,27 @@ struct SidebarFolderTests {
         viewModel.selection = inFolder(folder, a.id)
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
 
         try viewModel.library.renameFolder(folder.id, to: "New")
         try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.title == "New" }
         #expect(viewModel.selection == inFolder(folder, a.id))
 
-        let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
-        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Delete Folder" }))
+        func pickDelete() throws -> NSWindow {
+            let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
+            menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Delete Folder" }))
+            return try #require(window.attachedSheet)
+        }
+        let declined = try pickDelete()
+        let texts = allSubviews(NSTextField.self, in: try #require(declined.contentView)).map(\.stringValue)
+        #expect(texts.contains("Delete the Folder \u{201C}New\u{201D}?"))
+        #expect(texts.contains("\u{201C}New\u{201D} holds 1 VM. Deleting the folder keeps it in the library."))
+        window.endSheet(declined, returnCode: .alertSecondButtonReturn)
+        try await waitUntil { window.attachedSheet == nil }
+        #expect(viewModel.library.folders.map(\.id) == [folder.id])
 
-        #expect(viewModel.library.folders.isEmpty)
+        window.endSheet(try pickDelete(), returnCode: .alertFirstButtonReturn)
+        try await waitUntil { viewModel.library.folders.isEmpty }
         #expect(viewModel.instances.map(\.id) == [a.id])
         #expect(viewModel.selection == .library(a.id))
         try await waitUntil { outline.numberOfRows == 2 }
@@ -493,6 +505,39 @@ struct SidebarFolderTests {
         #expect(members(of: demo, in: viewModel) == [b.id])
     }
 
+    /// AppKit can propose the section above while the pointer is over the
+    /// next section's header, or the section below while it is over the last
+    /// row above; the pointer decides.
+    @Test("At the boundary between two folders, the row under the pointer decides which one a drop joins")
+    func boundaryDropFollowsThePointer() throws {
+        let viewModel = makeViewModel()
+        let a = viewModel.library.admitFixture(name: "A")
+        let b = viewModel.library.admitFixture(name: "B")
+        let x = viewModel.library.admitFixture(name: "X")
+        let y = viewModel.library.admitFixture(name: "Y")
+        let first = try viewModel.library.createFolder(named: "First", members: [a.id])
+        let second = try viewModel.library.createFolder(named: "Second", members: [b.id])
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let lastOfFirst = row(inFolder(first, a.id), in: outline)
+        let secondHeader = row(of: .folder(second.id), in: outline)
+        #expect(secondHeader == lastOfFirst + 1)
+
+        let topOfHeader = NSPoint(x: 100, y: outline.rect(ofRow: secondHeader).minY + 1)
+        #expect(
+            drag(
+                [try writer(ofRow: row(.library(x.id), in: outline), in: outline, controller: controller)],
+                to: topOfHeader, in: outline) == .copy)
+        let bottomOfLastRow = NSPoint(x: 100, y: outline.rect(ofRow: lastOfFirst).maxY - 1)
+        #expect(
+            drag(
+                [try writer(ofRow: row(.library(y.id), in: outline), in: outline, controller: controller)],
+                to: bottomOfLastRow, in: outline) == .copy)
+
+        #expect(members(of: second, in: viewModel) == [b.id, x.id])
+        #expect(members(of: first, in: viewModel) == [a.id, y.id])
+    }
+
     @Test("Dragging a folder's header reorders the folders, among the folders only")
     func dragReordersFolders() throws {
         let viewModel = makeViewModel()
@@ -558,18 +603,26 @@ struct SidebarFolderTests {
         #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == clone.id && $0.section.folderID != nil })
     }
 
-    @Test("An import joins no folder its identifier was listed in before it left")
-    func importJoinsNoFolder() async throws {
+    /// A VM trashed while Kernova was closed leaves its identifier in its
+    /// folders, unseen; it comes back by an import, or by a load or the
+    /// directory watcher adopting its bundle after Finder's Put Back.
+    @Test("A VM returning under an identifier its folders still hold is listed in them again, whichever way it returns")
+    func returningIdentityRejoinsOnEveryPath() async throws {
         let viewModel = makeViewModel()
-        let source = try scratch.importSource(name: "Returning")
-        // As a VM trashed while Kernova was closed leaves it.
-        let clients = try viewModel.library.organization.createFolder(named: "Clients", members: [source.config.id])
+        let imported = try scratch.importSource(name: "Imported")
+        let putBack = UUID()
+        let clients = try viewModel.library.organization.createFolder(
+            named: "Clients", members: [imported.config.id, putBack])
+        #expect(names(in: try #require(viewModel.sidebarLayout.sections.first)).isEmpty)
 
-        _ = viewModel.importVMs(fromDroppedURLs: [source.url])
+        _ = viewModel.importVMs(fromDroppedURLs: [imported.url])
         await viewModel.awaitArrivalsForTesting()
+        viewModel.library.admitFixture(name: "Put Back") { $0.id = putBack }
 
-        #expect(viewModel.instances.map(\.id) == [source.config.id])
-        #expect(members(of: clients, in: viewModel) == [])
+        let folder = try #require(viewModel.sidebarLayout.sections.first)
+        #expect(folder.id == .folder(clients.id))
+        #expect(names(in: folder) == ["Imported", "Put Back"])
+        #expect(members(of: clients, in: viewModel) == [imported.config.id, putBack])
     }
 
     @Test("A VM leaving the library leaves every folder")
