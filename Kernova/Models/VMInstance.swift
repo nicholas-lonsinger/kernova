@@ -67,7 +67,7 @@ final class VMInstance {
     /// Where this VM's display currently lives.
     ///
     /// ``VMDisplayPlacementController`` owns every transition; the model writes
-    /// this only once the session ends (``sessionDidEnd()``), to the sole mode a
+    /// this only once the session ends (``sessionDidEnd(afterRunning:)``), to the sole mode a
     /// sessionless VM can rest in.
     var displayMode: VMDisplayMode = .inline
 
@@ -744,11 +744,13 @@ final class VMInstance {
 
     // MARK: - Activity Callbacks
 
-    /// Called by ``activity`` once the session is released.
-    func sessionDidEnd() {
+    /// Called by ``activity`` once the session is released; `afterRunning`
+    /// is whether that session ever settled running.
+    func sessionDidEnd(afterRunning: Bool) {
         // A VM with no session has no display to place, and `.hidden`
         // (headless) has no window whose close would say so.
         displayMode = .inline
+        if afterRunning { recordLastRun(at: Date()) }
     }
 
     /// Called by ``activity`` once a power-off has rested the VM, before
@@ -762,6 +764,11 @@ final class VMInstance {
     /// Called by ``activity`` once an operation of `kind` has ended with the
     /// guest running.
     func operationDidSettleRunning(_ kind: VMOperationKind) {
+        if let sessionContext, sessionContext.runningSince == nil {
+            let now = Date()
+            sessionContext.runningSince = now
+            recordLastRun(at: now)
+        }
         switch kind {
         case .bringUp(.guestStart(.starting)), .resuming:
             activateNetworkAttachment()
@@ -1128,6 +1135,14 @@ final class VMInstance {
         guard agentVersionChanged else { return }
         if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: KernovaMacOSAgentInfo.bundledVersion) {
             onAgentBecameCurrent?()
+        }
+    }
+
+    /// Records `date` as the last moment this VM was running
+    /// (``VMHostState/lastRunAt``).
+    private func recordLastRun(at date: Date) {
+        recordObservation("the last run") { permit in
+            _ = permit.updateSettings(configuration: { _ in }, hostState: { $0.lastRunAt = date })
         }
     }
 
