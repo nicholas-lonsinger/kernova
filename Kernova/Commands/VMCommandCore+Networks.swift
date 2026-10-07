@@ -76,6 +76,11 @@ extension VMCommandCore {
             try setConfiguration(
                 .id(instance.instanceID), assignments: [key.assigning(isolated)], consent: .none)
         }
+        do {
+            try library.removeNetworkFromFilters(network.id)
+        } catch {
+            throw CommandError.operationFailed(verb: .deleteNetwork, message: error.localizedDescription)
+        }
         try library.networks.remove(network.id, verb: .deleteNetwork)
         #log(
             Self.logger, .notice,

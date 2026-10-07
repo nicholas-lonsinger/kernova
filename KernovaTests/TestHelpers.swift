@@ -81,6 +81,7 @@ func makeWiredLibrary(
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitlements: EntitlementService = .entitled,
     networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
+    organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
     guestAccountPasswords: any GuestAccountPasswordStoring = InMemoryGuestAccountPasswordStore(),
     bridgedInterfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
     activationCenter: NotificationCenter = NotificationCenter()
@@ -94,6 +95,7 @@ func makeWiredLibrary(
         arpTable: arpTable,
         entitlements: entitlements,
         networks: networks,
+        organization: organization,
         guestAccountPasswords: guestAccountPasswords,
         bridgedInterfaces: bridgedInterfaces,
         activationCenter: activationCenter)

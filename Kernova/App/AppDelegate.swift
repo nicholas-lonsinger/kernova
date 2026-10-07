@@ -120,7 +120,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             vmnetNetworks: vmnetNetworks,
             arpTable: HostARPTableReader(),
             entitlements: entitlements,
-            networks: VMNetworkDirectory(fileURL: VMNetworkDirectory.productionFileURL))
+            networks: VMNetworkDirectory(fileURL: VMNetworkDirectory.productionFileURL),
+            organization: VMOrganizationDirectory(fileURL: VMOrganizationDirectory.productionFileURL))
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,

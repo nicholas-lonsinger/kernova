@@ -51,6 +51,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// The host interfaces a network naming one is titled from.
     @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
+    /// The library's smart groups.
+    let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
 
@@ -207,7 +209,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// an observation computing it tracks exactly those.
     var sidebarLayout: SidebarLayout {
         .project(
-            entries: entries, options: sidebarOptions, retaining: retainedEntryID, context: sidebarContext)
+            entries: entries, options: sidebarOptions, retaining: retainedEntryID,
+            smartGroups: organization.smartGroups, context: sidebarContext)
     }
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``
@@ -259,7 +262,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             selectedID = savedID
             #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
         } else {
-            selectedID = firstShownEntryID
+            selection = firstShownRow
         }
     }
 
@@ -268,8 +271,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         sidebarLayout.resolve(.library(id)) != nil
     }
 
-    /// The first entry the sidebar lists.
-    var firstShownEntryID: UUID? { sidebarLayout.rowKeys.first?.entryID }
+    /// The first row the sidebar lists.
+    var firstShownRow: SidebarRowKey? { sidebarLayout.rowKeys.first }
 
     /// The selected row, whichever kind it is.
     var selectedEntry: LibraryEntry? {
@@ -361,6 +364,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
         networks: VMNetworkDirectory,
+        organization: VMOrganizationDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore(),
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
@@ -370,6 +374,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         self.bridgedInterfaces = bridgedInterfaces
         self.activationCenter = activationCenter
         self.networks = networks
+        self.organization = organization
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences

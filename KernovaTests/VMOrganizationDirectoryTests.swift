@@ -1,0 +1,126 @@
+import Foundation
+import KernovaKit
+import KernovaTestSupport
+import Testing
+
+@testable import Kernova
+
+@Suite("VMOrganizationDirectory Tests", .caseScoped)
+@MainActor
+struct VMOrganizationDirectoryTests {
+    private let scratch = TestScratchDirectory(prefix: "VMOrganizationDirectoryTests")
+
+    private var fileURL: URL { scratch.url.appendingPathComponent("Organization.json") }
+
+    @Test("Smart groups persist in their own order, with their filters, and a rename keeps the identifier")
+    func smartGroupsRoundTrip() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let running = try directory.createSmartGroup(
+            named: " Running ", filter: VMLibraryFilter(states: [.running]))
+        let macs = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let everything = try directory.createSmartGroup(named: "Everything", filter: VMLibraryFilter())
+        #expect(running.name == "Running")
+
+        try directory.renameSmartGroup(macs.id, to: "Apple")
+        try directory.setFilter(VMLibraryFilter(guestOSes: [.macOS], ephemeralOnly: true), ofSmartGroup: macs.id)
+        try directory.moveSmartGroup(everything.id, before: running.id)
+
+        let reread = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(reread.smartGroups.map(\.name) == ["Everything", "Running", "Apple"])
+        #expect(reread.smartGroups == directory.smartGroups)
+        #expect(reread.smartGroup(withID: macs.id)?.filter == VMLibraryFilter(guestOSes: [.macOS], ephemeralOnly: true))
+        #expect(reread.smartGroup(withID: everything.id)?.filter.isActive == false)
+
+        try reread.moveSmartGroup(everything.id, before: nil)
+        try reread.removeSmartGroup(running.id)
+        #expect(VMOrganizationDirectory(fileURL: fileURL).smartGroups.map(\.id) == [macs.id, everything.id])
+    }
+
+    @Test("The file is JSON keyed by smartGroups, each group its id, name and filter")
+    func fileFormat() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let group = try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter(guestOSes: [.linux]))
+
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any])
+        let groups = try #require(json["smartGroups"] as? [[String: Any]])
+        #expect(groups.count == 1)
+        #expect(groups[0]["id"] as? String == group.id.uuidString)
+        #expect(groups[0]["name"] as? String == "Linux")
+        let filter = try #require(groups[0]["filter"] as? [String: Any])
+        #expect(filter["guestOSes"] as? [String] == ["linux"])
+    }
+
+    @Test("A name has to be non-empty and unique ignoring case")
+    func namesAreValidated() throws {
+        let directory = VMOrganizationDirectory(fileURL: nil)
+        let lab = try directory.createSmartGroup(named: "Lab", filter: VMLibraryFilter())
+        let bench = try directory.createSmartGroup(named: "Bench", filter: VMLibraryFilter())
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameRequired) {
+            try directory.createSmartGroup(named: "  ", filter: VMLibraryFilter())
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab")) {
+            try directory.createSmartGroup(named: "LAB", filter: VMLibraryFilter())
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab")) {
+            try directory.renameSmartGroup(bench.id, to: "lab")
+        }
+        // Its own name, recased, is a rename.
+        try directory.renameSmartGroup(lab.id, to: "LAB")
+        #expect(directory.smartGroups.map(\.name) == ["LAB", "Bench"])
+    }
+
+    @Test("A suggested name steps past the names already taken")
+    func unusedName() throws {
+        let directory = VMOrganizationDirectory(fileURL: nil)
+        #expect(directory.unusedName(from: "Linux") == "Linux")
+        try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter())
+        try directory.createSmartGroup(named: "linux 2", filter: VMLibraryFilter())
+        #expect(directory.unusedName(from: "Linux") == "Linux 3")
+    }
+
+    @Test("A file that cannot be read is never overwritten")
+    func anUnreadableFileRefusesChanges() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: fileURL)
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+
+        #expect(directory.readFailure != nil)
+        #expect(throws: VMOrganizationDirectory.ChangeError.self) {
+            try directory.createSmartGroup(named: "Lab", filter: VMLibraryFilter())
+        }
+        #expect(try Data(contentsOf: fileURL) == Data("not json".utf8))
+    }
+
+    @Test("Two copies sharing the file change it rather than overwrite each other")
+    func twoCopiesKeepEachOthersGroups() throws {
+        let first = VMOrganizationDirectory(fileURL: fileURL)
+        let second = VMOrganizationDirectory(fileURL: fileURL)
+        let lab = try first.createSmartGroup(named: "Lab", filter: VMLibraryFilter())
+        try second.createSmartGroup(named: "Bench", filter: VMLibraryFilter())
+        #expect(second.smartGroups.map(\.name) == ["Lab", "Bench"])
+        // A name the other copy took is refused, though this one never saw it.
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Bench")) {
+            try first.createSmartGroup(named: "bench", filter: VMLibraryFilter())
+        }
+        try second.setFilter(VMLibraryFilter(states: [.running]), ofSmartGroup: lab.id)
+
+        first.reload()
+        #expect(first.smartGroups.map(\.name) == ["Lab", "Bench"])
+        #expect(first.smartGroup(withID: lab.id)?.filter == VMLibraryFilter(states: [.running]))
+    }
+
+    @Test("The library takes in another copy's edits when it refreshes from other copies")
+    func libraryRefreshReadsOtherCopiesEdits() throws {
+        let mine = VMOrganizationDirectory(fileURL: fileURL)
+        let library = makeWiredLibrary(organization: mine)
+        let theirs = VMOrganizationDirectory(fileURL: fileURL)
+        let group = try theirs.createSmartGroup(named: "Theirs", filter: VMLibraryFilter())
+        #expect(library.smartGroups.isEmpty)
+
+        library.refreshFromOtherCopies()
+
+        #expect(library.smartGroups.map(\.id) == [group.id])
+        #expect(library.sidebarLayout.sections.map(\.id) == [.smartGroup(group.id), .library])
+    }
+}

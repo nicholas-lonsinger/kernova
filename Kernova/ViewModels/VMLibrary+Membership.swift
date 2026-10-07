@@ -22,7 +22,8 @@ extension VMLibrary {
         startDirectoryWatcher()
     }
 
-    /// Catches the named networks, and every VM at rest, up with what another
+    /// Catches the named networks, the smart groups, and every VM at rest, up
+    /// with what another
     /// copy of Kernova holds and wrote (``VMActivity/refreshFromBundle()``) —
     /// every VM, or only those `ids` names.
     ///
@@ -30,6 +31,7 @@ extension VMLibrary {
     /// to watch, so a mark stays what the last of these found.
     func refreshFromOtherCopies(only ids: Set<UUID>? = nil) {
         networks.reload()
+        organization.reload()
         for instance in instances where ids?.contains(instance.id) ?? true {
             instance.activity.refreshFromBundle()
         }

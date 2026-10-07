@@ -22,7 +22,7 @@ struct AppPreferences {
     /// namespacing reads inconsistently against its neighbours.
     private enum Keys {
         static let alwaysShowAdvancedOptions = "alwaysShowAdvancedOptions"
-        static let expandedSidebarSections = "KernovaSidebarExpandedSections"
+        static let collapsedSidebarSections = "KernovaSidebarCollapsedSections"
         static let lastSelectedVMID = "lastSelectedVMID"
         static let vmOrder = "vmOrder"
         static let quitTerminatesApp = "quitTerminatesApp"
@@ -61,13 +61,11 @@ struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.alwaysShowAdvancedOptions) }
     }
 
-    /// Identifiers of the sidebar sections the user has expanded, or `nil` when
-    /// no preference has been saved yet.
-    ///
-    /// When `nil`, the sidebar defaults each section to expanded.
-    var expandedSidebarSections: [String]? {
-        get { defaults.array(forKey: Keys.expandedSidebarSections) as? [String] }
-        nonmutating set { defaults.set(newValue, forKey: Keys.expandedSidebarSections) }
+    /// Identifiers of the sidebar sections the user has collapsed; every other
+    /// section is expanded.
+    var collapsedSidebarSections: [String] {
+        get { defaults.array(forKey: Keys.collapsedSidebarSections) as? [String] ?? [] }
+        nonmutating set { defaults.set(newValue, forKey: Keys.collapsedSidebarSections) }
     }
 
     /// The most recently selected VM, or `nil` when none has been selected yet

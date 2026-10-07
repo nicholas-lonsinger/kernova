@@ -1258,7 +1258,7 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
 /// A drag session the test drives through the outline view's own
 /// `NSDraggingDestination` methods, from a fixed point over it.
 @MainActor
-private final class FakeDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
+final class FakeDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
     let draggingDestinationWindow: NSWindow?
     let draggingSourceOperationMask: NSDragOperation = .move
     let draggingLocation: NSPoint

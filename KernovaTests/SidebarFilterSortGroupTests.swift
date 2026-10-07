@@ -372,7 +372,12 @@ struct SidebarFilterSortGroupTests {
         _ options: SidebarViewOptions, values: [SidebarViewMenu.Value],
         picked: @escaping (SidebarViewOptions) -> Void = { _ in }
     ) -> NSMenu {
-        SidebarViewMenu(networkTitle: { $0.rawValue }, apply: picked).menu(options: options, values: values)
+        SidebarViewMenu(
+            networkTitle: { $0.rawValue },
+            perform: { command in
+                if case .setOptions(let options) = command { picked(options) }
+            }
+        ).menu(options: options, values: values)
     }
 
     private func value(
@@ -389,17 +394,21 @@ struct SidebarFilterSortGroupTests {
     }
 
     private func picked(_ item: NSMenuItem?) -> SidebarViewOptions? {
-        (item?.representedObject as? SidebarViewMenu.Pick)?.options
+        guard case .setOptions(let options)? = (item?.representedObject as? SidebarViewMenu.Pick)?.command else {
+            return nil
+        }
+        return options
     }
 
-    @Test("The menu lists each attribute with its value trailing, then grouping, sort, details and clear")
+    @Test("The menu lists each attribute with its value trailing, then grouping, sort, details, save and clear")
     func menuStructure() {
         let built = menu(SidebarViewOptions(), values: [value()])
         #expect(
             built.items.map(\.title) == [
                 "Guest OS", "State", "Network", "Guest Agent", "Other", "", "Group By", "Sort By", "",
-                "Show Details", "", "Clear Filters",
+                "Show Details", "", "Save as Smart Group\u{2026}", "Clear Filters",
             ])
+        #expect(built.items[11].isEnabled == false)
         #expect(built.items[0].badge?.stringValue == "All")
         #expect(built.items[6].badge?.stringValue == "None")
         #expect(built.items[7].badge?.stringValue == "Manual")
