@@ -315,9 +315,16 @@ final class SidebarViewMenu: NSObject {
 
     /// An item naming `tag` after its color swatch — how every menu lists a
     /// tag, so the VM menu's Tags and the filter's Tags rows read alike.
+    ///
+    /// The swatch opts in to showing: from macOS 27 AppKit hides a menu item's
+    /// image unless `preferredImageVisibility` is `.visible` (`NSMenuItem.h`),
+    /// and the color is part of what names the tag.
     private func tagItem(_ tag: VMTag, state: NSControl.StateValue, command: Command) -> NSMenuItem {
         let item = pickItem(tag.name, state: state, command: command)
         item.image = tag.color.dotImage()
+        if #available(macOS 27, *) {
+            item.preferredImageVisibility = .visible
+        }
         return item
     }
 

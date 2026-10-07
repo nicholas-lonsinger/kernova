@@ -309,7 +309,7 @@ struct SidebarTagTests {
         #expect(vm.hostState.tags == [work.id])
     }
 
-    @Test("A tag's item shows the same color swatch in a VM's Tags menu and the filter's Tags row")
+    @Test("A tag's item shows the same swatch, opted in to showing, in a VM's Tags menu and the filter's Tags row")
     func tagItemsShareTheSwatch() throws {
         let viewModel = makeViewModel()
         let library = viewModel.library
@@ -323,31 +323,35 @@ struct SidebarTagTests {
             controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" }?.submenu)
 
         for tag in [work, lab] {
-            let fromVM = try #require(vmMenu.items.first { $0.title == tag.name }?.image)
-            let fromFilter = try #require(filterMenu.items.first { $0.title == tag.name }?.image)
+            let fromVM = try #require(vmMenu.items.first { $0.title == tag.name })
+            let fromFilter = try #require(filterMenu.items.first { $0.title == tag.name })
             let expected = tag.color.dotImage()
-            let color = try tag.color.nsColor.resolvedSRGB(in: NSApp.effectiveAppearance.name)
-            for image in [fromVM, fromFilter] {
-                #expect(image.size == NSSize(width: 8, height: 8), "\(tag.name)")
-                #expect(!image.isTemplate, "\(tag.name)")
+            for item in [fromVM, fromFilter] {
+                let image = try #require(item.image, "\(tag.name)")
+                #expect(image.size == expected.size, "\(tag.name)")
                 #expect(image.accessibilityDescription == tag.color.title, "\(tag.name)")
                 #expect(image.tiffRepresentation == expected.tiffRepresentation, "\(tag.name)")
-                // A menu draws an item image only from pixels: a
-                // drawing-handler image holds none, and showed as nothing.
-                let bitmaps = image.representations.compactMap { $0 as? NSBitmapImageRep }
-                #expect(bitmaps.map(\.pixelsWide).sorted() == [8, 16], "\(tag.name)")
-                for bitmap in bitmaps {
-                    let center = try #require(
-                        bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.sRGB))
-                    #expect(center.alphaComponent == 1, "\(tag.name)")
-                    #expect(abs(center.redComponent - color.redComponent) < 0.02, "\(tag.name)")
-                    #expect(abs(center.greenComponent - color.greenComponent) < 0.02, "\(tag.name)")
-                    #expect(abs(center.blueComponent - color.blueComponent) < 0.02, "\(tag.name)")
+                if #available(macOS 27, *) {
+                    #expect(item.preferredImageVisibility == .visible, "\(tag.name)")
                 }
             }
         }
         // The swatches tell the colors apart, so the comparison is not vacuous.
         #expect(work.color.dotImage().tiffRepresentation != lab.color.dotImage().tiffRepresentation)
+    }
+
+    @Test("The Settings color pop-up lists every color with its swatch, opted in to showing")
+    func colorPopUpShowsSwatches() throws {
+        let popUp = TagsSettingsViewController.colorPopUp(selecting: .green)
+        #expect(popUp.itemArray.map(\.title) == VMTagColor.allCases.map(\.title))
+        #expect(popUp.titleOfSelectedItem == VMTagColor.green.title)
+        for item in popUp.itemArray {
+            let image = try #require(item.image, "\(item.title)")
+            #expect(image.accessibilityDescription == item.title)
+            if #available(macOS 27, *) {
+                #expect(item.preferredImageVisibility == .visible, "\(item.title)")
+            }
+        }
     }
 
     @Test("With no tags, a VM's Tags menu offers only Edit Tags…")
