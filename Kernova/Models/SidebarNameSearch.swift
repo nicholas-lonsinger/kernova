@@ -1,6 +1,6 @@
 import Foundation
 
-/// What the toolbar's search field narrows every sidebar section to: the VMs
+/// What the sidebar's search field narrows every sidebar section to: the VMs
 /// whose name contains its text.
 ///
 /// Apart from ``SidebarViewOptions`` and its ``VMLibraryFilter``: a smart group

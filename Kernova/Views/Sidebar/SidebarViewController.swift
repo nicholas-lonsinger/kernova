@@ -21,6 +21,8 @@ final class SidebarViewController: NSViewController {
     private let clock: MinuteClock
     private var preferences: AppPreferences { viewModel.preferences }
     let outlineView = SidebarOutlineView()
+    /// Writes and shows the library's ``VMLibrary/sidebarSearch``.
+    let searchField = NSSearchField()
     private let scrollView = NSScrollView()
     let tree = SidebarTree()
 
@@ -109,9 +111,20 @@ final class SidebarViewController: NSViewController {
         // content below the toolbar instead of letting rows scroll under it.
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        searchField.placeholderString = "Search"
+        searchField.setAccessibilityLabel("Search virtual machines by name")
+        searchField.stringValue = viewModel.library.sidebarSearch.text
+        searchField.target = self
+        searchField.action = #selector(searchFieldChanged(_:))
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(searchField)
         container.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            searchField.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 8),
+            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            searchField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
@@ -149,6 +162,7 @@ final class SidebarViewController: NSViewController {
                     _ = self.viewModel.selection
                     _ = self.viewModel.pendingReveal
                     _ = self.viewModel.activeRename
+                    _ = self.viewModel.library.sidebarSearch
                 },
                 apply: { [weak self] in self?.sync() }
             )
@@ -176,6 +190,9 @@ final class SidebarViewController: NSViewController {
     /// idempotent, so a pass the outline view's own callbacks start in the
     /// middle of another changes nothing the outer pass then undoes.
     private func sync() {
+        if searchField.stringValue != viewModel.library.sidebarSearch.text {
+            searchField.stringValue = viewModel.library.sidebarSearch.text
+        }
         applyProjection()
         applySelectionFromModel()
         applyRenameState()
@@ -274,6 +291,17 @@ final class SidebarViewController: NSViewController {
         }
         let row = outlineView.row(forItem: node)
         return row >= 0 ? row : nil
+    }
+
+    // MARK: - Search
+
+    @objc private func searchFieldChanged(_ field: NSSearchField) {
+        viewModel.library.sidebarSearch = SidebarNameSearch(text: field.stringValue)
+    }
+
+    /// Puts the keyboard in the search field.
+    func focusSearchField() {
+        view.window?.makeFirstResponder(searchField)
     }
 
     // MARK: - Inline rename

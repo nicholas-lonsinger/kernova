@@ -6,7 +6,7 @@ import Testing
 
 @testable import Kernova
 
-/// The toolbar's name search: how it narrows every sidebar section and what
+/// The sidebar's name search: how it narrows every sidebar section and what
 /// their headers count, how it stays apart from the filter, what a search from
 /// outside the app makes of it, and Find VM.
 @Suite("Sidebar name search", .serialized, .caseScoped, .scopedWindows)
@@ -237,7 +237,7 @@ struct SidebarNameSearchTests {
         #expect(viewModel.selectedID == exact.id)
     }
 
-    @Test("A search from outside the app that nothing matches fills the search and leaves the selection")
+    @Test("A search from outside the app that nothing matches fills the search and clears the selection it hides")
     func showSearchResultsWithNoMatch() {
         let viewModel = makeViewModel()
         let ubuntu = viewModel.library.admitFixture(name: "Ubuntu")
@@ -246,21 +246,22 @@ struct SidebarNameSearchTests {
         viewModel.library.showSearchResults(for: "Sequoia")
 
         #expect(viewModel.library.sidebarSearch == search("Sequoia"))
+        #expect(viewModel.selection == nil)
         #expect(viewModel.sidebarLayout.sections.last?.emptyText == SidebarLayout.noMatchesText)
     }
 
-    // MARK: - Toolbar field and Find VM
+    // MARK: - The sidebar's field and Find VM
 
     @MainActor
     private struct Window {
         let controller: MainWindowController
         let window: NSWindow
-        let toolbar: NSToolbar
         let sidebar: NSSplitViewItem
 
-        var searchItem: NSSearchToolbarItem? {
-            toolbar.items.first { $0.itemIdentifier == MainWindowController.toolbarSearch } as? NSSearchToolbarItem
-        }
+        var field: NSSearchField { controller.sidebarViewController.searchField }
+
+        /// Whether the keyboard is in the search field.
+        var fieldHasFocus: Bool { (window.firstResponder as? NSText)?.delegate === field }
     }
 
     private func makeWindow(_ viewModel: VMLibraryViewModel) throws -> Window {
@@ -269,21 +270,26 @@ struct SidebarNameSearchTests {
         adoptAppWindow(window)
         let split = try #require(window.contentViewController as? NSSplitViewController)
         return Window(
-            controller: controller, window: window, toolbar: try #require(window.toolbar),
+            controller: controller, window: window,
             sidebar: try #require(split.splitViewItems.first { $0.behavior == .sidebar }))
     }
 
-    @Test("The toolbar's search field writes the library's search, and shows one written elsewhere")
-    func fieldMirrorsTheLibrarySearch() async throws {
+    @Test("The sidebar's field writes the library's search and shows one written elsewhere, with the toolbar hidden")
+    func fieldMirrorsTheLibrarySearchWithToolbarHidden() async throws {
         let viewModel = makeViewModel()
         let subject = try makeWindow(viewModel)
-        let field = try #require(subject.searchItem?.searchField)
+        subject.window.toolbar?.isVisible = false
+        subject.window.makeKeyAndOrderFront(nil)
+        let field = subject.field
+        #expect(field.window === subject.window)
 
         field.stringValue = "ubu"
         _ = field.sendAction(field.action, to: field.target)
         #expect(viewModel.library.sidebarSearch == search("ubu"))
 
         viewModel.library.showSearchResults(for: "sonoma")
+        // The sidebar's own observation loop writes the field, and offers no
+        // test-facing signal to await.
         try await waitUntil { field.stringValue == "sonoma" }
     }
 
@@ -292,33 +298,39 @@ struct SidebarNameSearchTests {
         let subject = try makeWindow(makeViewModel())
         subject.window.makeKeyAndOrderFront(nil)
         subject.sidebar.isCollapsed = true
-        let field = try #require(subject.searchItem?.searchField)
 
         subject.controller.focusSearch()
 
         try await waitUntil { !subject.sidebar.isCollapsed }
-        #expect((subject.window.firstResponder as? NSText)?.delegate === field)
+        #expect(subject.fieldHasFocus)
     }
 
-    @Test("Find VM is offered while the toolbar holds the search item, and disabled once it is customized out")
-    func findVMDisabledWithoutTheItem() throws {
+    @Test("Find VM is ⌥⌘F, enabled with no library window, and opens the window with its field focused")
+    func findVMOpensTheLibrary() throws {
         let viewModel = makeViewModel()
-        let subject = try makeWindow(viewModel)
-        let host = StubMenuHost()
         let menuController = MainMenuController(viewModel: viewModel)
+        let host = StubMenuHost()
         menuController.host = host
         let edit = try #require(menuController.makeMainMenu().items.first { $0.submenu?.title == "Edit" }?.submenu)
         let find = try #require(edit.items.first { $0.title == "Find VM\u{2026}" })
         #expect(find.keyEquivalent == "f")
-        #expect(find.keyEquivalentModifierMask == [.command])
-
-        host.offersLibrarySearch = subject.controller.offersSearch
+        #expect(find.keyEquivalentModifierMask == [.command, .option])
+        #expect(find.action == #selector(AppDelegate.findVM(_:)))
         #expect(menuController.validate(find))
 
-        let index = try #require(
-            subject.toolbar.items.firstIndex { $0.itemIdentifier == MainWindowController.toolbarSearch })
-        subject.toolbar.removeItem(at: index)
-        host.offersLibrarySearch = subject.controller.offersSearch
-        #expect(!menuController.validate(find))
+        // What `AppDelegate.findVM(_:)` runs.
+        let autosave = WindowAutosaveScope.unsaved()
+        let registry = AppWindowRegistry(
+            viewModel: viewModel,
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+            autosaveScope: autosave)
+        #expect(registry.libraryWindow == nil)
+
+        registry.focusLibrarySearch()
+
+        let window = try #require(registry.libraryWindow)
+        adoptAppWindow(window)
+        let sidebar = try #require(registry.librarySidebar)
+        #expect((window.firstResponder as? NSText)?.delegate === sidebar.searchField)
     }
 }

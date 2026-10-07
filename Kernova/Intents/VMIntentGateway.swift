@@ -107,11 +107,13 @@ final class VMIntentGateway {
         return await vms().filter { wanted.contains($0.id) }
     }
 
-    /// Every VM whose name contains `text`, matched the way a person types it
+    /// Every VM the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``), matched the way a person types it
     /// rather than the way the core's `.name` selector matches — a typed
     /// "sonoma" has neither the case nor the whole of the display name.
     func vms(matching text: String) async -> [VMEntity] {
-        await vms().filter { $0.name.localizedCaseInsensitiveContains(text) }
+        let search = SidebarNameSearch(text: text)
+        return await vms().filter { search.admits($0.name) }
     }
 
     func info(_ id: UUID) async throws -> VMInfo {

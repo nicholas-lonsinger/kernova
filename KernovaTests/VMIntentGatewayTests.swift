@@ -164,6 +164,9 @@ struct VMIntentGatewayTests {
         #expect(twins.count == 2)
         #expect(byPrefix.map(\.name) == ["Ubuntu"])
         #expect(none.isEmpty)
+        // The sidebar search's own predicate: the trimmed term, diacritics
+        // ignored.
+        #expect(await gateway.vms(matching: "  sónoma ").count == 2)
     }
 
     @Test("The whole library is enumerable, so Shortcuts offers a picker")

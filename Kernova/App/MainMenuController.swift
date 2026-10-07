@@ -14,9 +14,6 @@ protocol MainMenuHosting: AnyObject {
     /// The sidebar the View menu's section items read and act on: the library
     /// window's, while that window is on screen.
     var librarySidebar: SidebarViewController? { get }
-
-    /// Whether the library window has a search field for Find VM to focus.
-    var offersLibrarySearch: Bool { get }
 }
 
 /// The one owner of the menu bar: its construction, the rebuilds an opening menu
@@ -398,9 +395,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Decides `menuItem`'s enablement and, for the commands whose wording
     /// depends on state, retitles it.
     func validate(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(AppDelegate.findVM(_:)) {
-            return host?.offersLibrarySearch ?? false
-        }
         // App-level commands — New, Show Library, Open VMs Folder, Quit
         // Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
@@ -538,7 +532,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Find VM…", action: #selector(AppDelegate.findVM(_:)), keyEquivalent: "f")
+        // ⌥⌘F, not ⌘F: an item matching a keystroke swallows it before a
+        // focused guest display's keyDown sees it, even while disabled
+        // (measured on macOS 27.0), so plain ⌘F stays the guest's.
+        let findItem = editMenu.addItem(
+            withTitle: "Find VM…", action: #selector(AppDelegate.findVM(_:)), keyEquivalent: "f")
+        findItem.keyEquivalentModifierMask = [.command, .option]
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 

@@ -226,7 +226,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         }
     }
 
-    /// What the toolbar's search field narrows every sidebar section to.
+    /// What the sidebar's search field narrows every sidebar section to.
     ///
     /// Held beside ``sidebarOptions`` rather than in it, so nothing that
     /// reads or keeps the options — a saved smart group, Clear Filters — takes

@@ -15,7 +15,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
     /// display can be measured.
     let detailContainer: DetailContainerViewController
     private var windowStateObservation: ObservationLoop?
-    private var searchObservation: ObservationLoop?
     private var sidebarCollapseObservation: NSKeyValueObservation?
     /// The toolbar index New VM was programmatically removed from for a
     /// collapsed sidebar, or `nil` when it is in the toolbar (or the user
@@ -30,7 +29,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "MainWindowController")
     private static let toolbarNewVM = NSToolbarItem.Identifier("newVM")
-    static let toolbarSearch = NSToolbarItem.Identifier("search")
 
     // Palette-only items (offered in the customize sheet, not in the default
     // set). VM-scoped verbs only — app-global commands like "Open VMs Folder"
@@ -121,7 +119,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         updateToolbarItems()
         updateWindowTitle()
         observeWindowState()
-        observeSearch()
         adoptPersistedNewVMRemoval()
         observeSidebarCollapse()
         #log(Self.logger, .notice, "Main window controller initialized")
@@ -142,39 +139,11 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         sidebarItem.animator().isCollapsed = false
     }
 
-    // MARK: - Search
-
-    /// The toolbar's search item, while the toolbar is shown and holds it.
-    private var searchItem: NSSearchToolbarItem? {
-        guard let toolbar = window?.toolbar, toolbar.isVisible else { return nil }
-        return toolbar.items.first { $0.itemIdentifier == Self.toolbarSearch } as? NSSearchToolbarItem
-    }
-
-    /// Whether Find VM has a search field to focus.
-    var offersSearch: Bool { searchItem != nil }
-
-    /// Puts the keyboard in the search field, showing the sidebar its results
-    /// list in first.
+    /// Puts the keyboard in the sidebar's search field, expanding a collapsed
+    /// sidebar first.
     func focusSearch() {
-        guard let searchItem else { return }
         revealSidebar()
-        searchItem.beginSearchInteraction()
-    }
-
-    /// Keeps the search field's text the library's, which a search from
-    /// outside the app and a reveal also write.
-    private func observeSearch() {
-        searchObservation = observeRecurring(
-            track: { [weak self] in _ = self?.viewModel.library.sidebarSearch },
-            apply: { [weak self] in
-                guard let self, let field = self.searchItem?.searchField else { return }
-                let text = self.viewModel.library.sidebarSearch.text
-                if field.stringValue != text { field.stringValue = text }
-            })
-    }
-
-    @objc private func searchFieldChanged(_ field: NSSearchField) {
-        viewModel.library.sidebarSearch = SidebarNameSearch(text: field.stringValue)
+        sidebarViewController.focusSearchField()
     }
 
     // MARK: - Window State Observation
@@ -331,7 +300,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             Self.toolbarNewVM,
             .toggleSidebar,
             .sidebarTrackingSeparator,
-        ] + toolbarManager.defaultItemIdentifiers + [.flexibleSpace, Self.toolbarSearch]
+        ] + toolbarManager.defaultItemIdentifiers
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -342,7 +311,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             .space,
             .flexibleSpace,
         ] + toolbarManager.sharedItemIdentifiers + [
-            Self.toolbarSearch,
             Self.toolbarClone,
             Self.toolbarShowInFinder,
             Self.toolbarMoveToTrash,
@@ -401,13 +369,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         }
 
         switch itemIdentifier {
-        case Self.toolbarSearch:
-            let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-            item.toolTip = "Search virtual machines by name"
-            item.searchField.stringValue = viewModel.library.sidebarSearch.text
-            item.searchField.target = self
-            item.searchField.action = #selector(searchFieldChanged(_:))
-            return item
         case Self.toolbarNewVM:
             return makeToolbarItem(
                 identifier: itemIdentifier,
@@ -474,7 +435,7 @@ extension MainWindowController: NSToolbarItemValidation {
         let capabilities = viewModel.capabilities
 
         switch item.itemIdentifier {
-        case Self.toolbarNewVM, Self.toolbarSearch:
+        case Self.toolbarNewVM:
             return true
         case Self.toolbarShowInFinder:
             return instance.map { capabilities.isAvailable(.showInFinder, on: $0) } ?? false
