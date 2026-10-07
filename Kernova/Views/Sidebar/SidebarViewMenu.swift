@@ -1,12 +1,13 @@
 import AppKit
 import KernovaKit
 
-/// The library section's filter, group and sort menu — what its header's
-/// filter button and a right-click on the header open.
+/// The menus a sidebar section's header opens — from its button or a
+/// right-click: the library section's filter, group and sort menu, and a
+/// smart group's own filter menu.
 ///
-/// Each pickable item carries the ``SidebarViewOptions`` picking it produces,
-/// so the menu is a pure function of the options and the library it is built
-/// over, and a pick only hands those options to ``apply``.
+/// Each item carries the ``Command`` picking it runs, so a menu is a pure
+/// function of what it is built over, and a pick only hands its command to
+/// ``perform``.
 @MainActor
 final class SidebarViewMenu: NSObject {
     /// One library entry as the menu counts it.
@@ -17,58 +18,65 @@ final class SidebarViewMenu: NSObject {
         let networkTitle: String
     }
 
-    /// What an item's pick sets the options to.
-    final class Pick: NSObject {
-        let options: SidebarViewOptions
+    /// What picking an item does.
+    enum Command: Equatable {
+        /// Sets the library section's options.
+        case setOptions(SidebarViewOptions)
+        /// Asks for a name to save the library section's filter under as a
+        /// smart group.
+        case saveAsSmartGroup
+        /// Sets the filter of the smart group the identifier names.
+        case setSmartGroupFilter(UUID, VMLibraryFilter)
+        /// Asks for a new name for the smart group the identifier names.
+        case renameSmartGroup(UUID)
+        /// Deletes the smart group the identifier names.
+        case deleteSmartGroup(UUID)
+    }
 
-        init(_ options: SidebarViewOptions) {
-            self.options = options
+    /// An item's command, as its represented object.
+    final class Pick: NSObject {
+        let command: Command
+
+        init(_ command: Command) {
+            self.command = command
         }
     }
 
-    static let accessibilityLabel = "Filter and Sort"
+    nonisolated static let accessibilityLabel = "Filter and Sort"
+    nonisolated static let smartGroupAccessibilityLabel = "Smart Group Options"
 
-    private let apply: (SidebarViewOptions) -> Void
+    private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
     private let networkTitle: (VMLibraryFilter.Network) -> String
 
     init(
         networkTitle: @escaping (VMLibraryFilter.Network) -> String,
-        apply: @escaping (SidebarViewOptions) -> Void
+        perform: @escaping (Command) -> Void
     ) {
         self.networkTitle = networkTitle
-        self.apply = apply
+        self.perform = perform
     }
 
     @objc private func pick(_ sender: NSMenuItem) {
         guard let pick = sender.representedObject as? Pick else { return }
-        apply(pick.options)
+        perform(pick.command)
     }
 
-    // MARK: - Menu
+    // MARK: - Menus
 
-    /// The menu for `options` over a library of `values`, whose counts are
-    /// over every one of them whatever the filter admits.
+    /// The library section's menu for `options` over a library of `values`,
+    /// whose counts are over every one of them whatever the filter admits.
     func menu(options: SidebarViewOptions, values: [Value]) -> NSMenu {
         let menu = NSMenu(title: Self.accessibilityLabel)
         menu.autoenablesItems = false
         let filter = options.filter
-        for attribute in attributes(of: options, values: values) {
-            let item = NSMenuItem(title: attribute.title, action: nil, keyEquivalent: "")
-            item.badge = NSMenuItemBadge(string: attribute.summary)
-            let submenu = NSMenu(title: attribute.title)
-            submenu.autoenablesItems = false
-            submenu.addItem(
-                pickItem(attribute.allTitle, state: attribute.isActive ? .off : .on, options: attribute.cleared))
-            submenu.addItem(.separator())
-            for choice in attribute.choices {
-                let choiceItem = pickItem(choice.title, state: choice.isOn ? .on : .off, options: choice.picked)
-                choiceItem.badge = NSMenuItemBadge(count: choice.count)
-                submenu.addItem(choiceItem)
-            }
-            item.submenu = submenu
-            menu.addItem(item)
-        }
+        addFilterRows(
+            to: menu, filter: filter, values: values,
+            picking: { picked in
+                var changed = options
+                changed.filter = picked
+                return .setOptions(changed)
+            })
 
         menu.addItem(.separator())
         menu.addItem(
@@ -78,7 +86,7 @@ final class SidebarViewMenu: NSObject {
             ) { grouping in
                 var picked = options
                 picked.grouping = grouping
-                return picked
+                return .setOptions(picked)
             })
         menu.addItem(
             choiceMenu(
@@ -87,39 +95,105 @@ final class SidebarViewMenu: NSObject {
             ) { sort in
                 var picked = options
                 picked.sort = sort
-                return picked
+                return .setOptions(picked)
             })
 
         menu.addItem(.separator())
         var toggledDetails = options
         toggledDetails.showsDetails.toggle()
         menu.addItem(
-            pickItem("Show Details", state: options.showsDetails ? .on : .off, options: toggledDetails))
+            pickItem("Show Details", state: options.showsDetails ? .on : .off, command: .setOptions(toggledDetails)))
 
         menu.addItem(.separator())
+        let save = pickItem("Save as Smart Group\u{2026}", state: .off, command: .saveAsSmartGroup)
+        save.isEnabled = filter.isActive
+        menu.addItem(save)
         var cleared = options
         cleared.filter = VMLibraryFilter()
-        let clear = pickItem("Clear Filters", state: .off, options: cleared)
+        let clear = pickItem("Clear Filters", state: .off, command: .setOptions(cleared))
         clear.isEnabled = filter.isActive
         menu.addItem(clear)
         return menu
     }
 
-    /// The active filters, as the filter button's accessibility value names
-    /// them — `nil` when none is.
-    func activeFilterDescription(options: SidebarViewOptions, values: [Value]) -> String? {
-        let active = attributes(of: options, values: values).filter(\.isActive)
+    /// `group`'s menu over a library of `values`: its filter's rows, then
+    /// Rename and Delete.
+    func menu(smartGroup group: VMSmartGroup, values: [Value]) -> NSMenu {
+        let menu = NSMenu(title: Self.smartGroupAccessibilityLabel)
+        menu.autoenablesItems = false
+        menu.addItem(.sectionHeader(title: "Show VMs in \u{201C}\(group.name)\u{201D} where"))
+        addFilterRows(
+            to: menu, filter: group.filter, values: values,
+            picking: { .setSmartGroupFilter(group.id, $0) })
+        menu.addItem(.separator())
+        menu.addItem(pickItem("Rename Smart Group\u{2026}", state: .off, command: .renameSmartGroup(group.id)))
+        menu.addItem(pickItem("Delete Smart Group", state: .off, command: .deleteSmartGroup(group.id)))
+        return menu
+    }
+
+    /// `filter`'s active attributes, as a header button's accessibility value
+    /// names them — `nil` when none is.
+    func activeFilterDescription(filter: VMLibraryFilter, values: [Value]) -> String? {
+        let active = attributes(of: filter, values: values).filter(\.isActive)
         guard !active.isEmpty else { return nil }
         return active.map { "\($0.title): \($0.summary)" }.joined(separator: ", ")
     }
 
-    private func pickItem(
-        _ title: String, state: NSControl.StateValue, options: SidebarViewOptions
-    ) -> NSMenuItem {
+    /// One sentence per attribute `filter` constrains — "Guest OS is macOS",
+    /// "State is Running or Suspended" — and one per flag it sets.
+    func conditions(of filter: VMLibraryFilter, values: [Value]) -> [String] {
+        attributes(of: filter, values: values).filter(\.isActive).flatMap { attribute in
+            let on = attribute.choices.filter(\.isOn).map(\.title)
+            guard attribute.isPredicate else { return on }
+            let either =
+                on.count <= 2
+                ? on.joined(separator: " or ")
+                : on.dropLast().joined(separator: ", ") + ", or " + (on.last ?? "")
+            return ["\(attribute.title) is \(either)"]
+        }
+    }
+
+    /// What a smart group of `filter` is named until the user names it: each
+    /// attribute that picks one value, in menu order, joined by "·" — or
+    /// "Smart Group" when none does. Flags (Other) name nothing.
+    func suggestedName(for filter: VMLibraryFilter, values: [Value]) -> String {
+        let picked = attributes(of: filter, values: values).compactMap { attribute -> String? in
+            let on = attribute.choices.filter(\.isOn)
+            return attribute.isPredicate && attribute.isActive && on.count == 1 ? on[0].title : nil
+        }
+        return picked.isEmpty ? "Smart Group" : picked.joined(separator: " \u{00B7} ")
+    }
+
+    private func addFilterRows(
+        to menu: NSMenu, filter: VMLibraryFilter, values: [Value],
+        picking: (VMLibraryFilter) -> Command
+    ) {
+        for attribute in attributes(of: filter, values: values) {
+            let item = NSMenuItem(title: attribute.title, action: nil, keyEquivalent: "")
+            item.badge = NSMenuItemBadge(string: attribute.summary)
+            let submenu = NSMenu(title: attribute.title)
+            submenu.autoenablesItems = false
+            submenu.addItem(
+                pickItem(
+                    attribute.allTitle, state: attribute.isActive ? .off : .on,
+                    command: picking(attribute.cleared)))
+            submenu.addItem(.separator())
+            for choice in attribute.choices {
+                let choiceItem = pickItem(
+                    choice.title, state: choice.isOn ? .on : .off, command: picking(choice.picked))
+                choiceItem.badge = NSMenuItemBadge(count: choice.count)
+                submenu.addItem(choiceItem)
+            }
+            item.submenu = submenu
+            menu.addItem(item)
+        }
+    }
+
+    private func pickItem(_ title: String, state: NSControl.StateValue, command: Command) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(pick(_:)), keyEquivalent: "")
         item.target = self
         item.state = state
-        item.representedObject = Pick(options)
+        item.representedObject = Pick(command)
         return item
     }
 
@@ -127,7 +201,7 @@ final class SidebarViewMenu: NSObject {
     /// separator.
     private func choiceMenu<Choice: Equatable>(
         _ title: String, current: Choice, cases: [Choice], trailing: Choice,
-        title choiceTitle: (Choice) -> String, picking: (Choice) -> SidebarViewOptions
+        title choiceTitle: (Choice) -> String, picking: (Choice) -> Command
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.badge = NSMenuItemBadge(string: choiceTitle(current))
@@ -135,11 +209,11 @@ final class SidebarViewMenu: NSObject {
         submenu.autoenablesItems = false
         for choice in cases {
             submenu.addItem(
-                pickItem(choiceTitle(choice), state: choice == current ? .on : .off, options: picking(choice)))
+                pickItem(choiceTitle(choice), state: choice == current ? .on : .off, command: picking(choice)))
         }
         submenu.addItem(.separator())
         submenu.addItem(
-            pickItem(choiceTitle(trailing), state: trailing == current ? .on : .off, options: picking(trailing)))
+            pickItem(choiceTitle(trailing), state: trailing == current ? .on : .off, command: picking(trailing)))
         item.submenu = submenu
         return item
     }
@@ -147,19 +221,22 @@ final class SidebarViewMenu: NSObject {
     // MARK: - Attributes
 
     /// One filter attribute's row: its title, the value it shows trailing, and
-    /// the choices its submenu lists.
+    /// the choices its submenu lists, each with the filter picking it makes.
     private struct Attribute {
         struct Choice {
             let title: String
             let count: Int
             let isOn: Bool
-            let picked: SidebarViewOptions
+            let picked: VMLibraryFilter
         }
 
         let title: String
         let allTitle: String
         let isActive: Bool
-        let cleared: SidebarViewOptions
+        /// Whether its choices are values the attribute takes ("Guest OS is
+        /// macOS") rather than flags of their own (Other).
+        var isPredicate = true
+        let cleared: VMLibraryFilter
         let choices: [Choice]
 
         /// "All", the one choice that is on, or how many are.
@@ -170,11 +247,10 @@ final class SidebarViewMenu: NSObject {
         }
     }
 
-    private func attributes(of options: SidebarViewOptions, values: [Value]) -> [Attribute] {
-        let filter = options.filter
-        func with(_ change: (inout VMLibraryFilter) -> Void) -> SidebarViewOptions {
-            var picked = options
-            change(&picked.filter)
+    private func attributes(of filter: VMLibraryFilter, values: [Value]) -> [Attribute] {
+        func with(_ change: (inout VMLibraryFilter) -> Void) -> VMLibraryFilter {
+            var picked = filter
+            change(&picked)
             return picked
         }
         func toggled<Element>(_ set: Set<Element>, _ element: Element) -> Set<Element> {
@@ -219,6 +295,7 @@ final class SidebarViewMenu: NSObject {
             })
         let other = Attribute(
             title: "Other", allTitle: "All", isActive: filter.ephemeralOnly || filter.withSnapshotsOnly,
+            isPredicate: false,
             cleared: with {
                 $0.ephemeralOnly = false
                 $0.withSnapshotsOnly = false

@@ -51,6 +51,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// The host interfaces a network naming one is titled from.
     @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
+    /// The library's smart groups.
+    let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
 
@@ -148,22 +150,47 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var selection: SidebarRowKey? {
         didSet {
             let entryID = selection?.entryID
-            if entryID != retainedEntryID {
-                retainedEntryID = entryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
+            if selectedLibraryEntryID != retainedEntryID {
+                retainedEntryID = selectedLibraryEntryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
             }
+            if pendingReveal != selection { pendingReveal = nil }
             guard entryID != oldValue?.entryID else { return }
             preferences.lastSelectedVMID = entryID
         }
     }
 
-    /// The selected entry the sidebar keeps listing once a change to its own
-    /// values — a status, a network — stops the filter admitting it, as Mail
-    /// keeps a selected message the filter no longer matches.
+    /// The entry selected in the library section that the section keeps
+    /// listing once a change to its own values — a status, a network — stops
+    /// the filter admitting it, as Mail keeps a selected message the filter no
+    /// longer matches.
     ///
-    /// Follows the selection onto any entry the filter admits, so it lapses as
-    /// soon as the selection moves off; a filter edit drops it before it
-    /// re-applies, so an edit still hides the VM and clears the selection.
+    /// Follows the selection onto any library row the filter admits, so it
+    /// lapses as soon as the selection moves off the row — into a smart group
+    /// included; a filter edit drops it before it re-applies, so an edit still
+    /// hides the VM and clears the selection.
     private(set) var retainedEntryID: UUID?
+
+    /// The selected entry when its row is in the library section, the one
+    /// section that retains.
+    private var selectedLibraryEntryID: UUID? {
+        selection?.section == .library ? selection?.entryID : nil
+    }
+
+    /// The selected row, while the sidebar still owes it a reveal: opening
+    /// the collapsed sections that hide it.
+    ///
+    /// Set by ``selectRevealing(_:)`` and an arrival's registration, and held
+    /// until the sidebar takes it (``takePendingReveal()``) — however long
+    /// before the sidebar exists that is. Any other selection drops it, so a
+    /// reveal never outlives the selection it was made for, and a restored or
+    /// clicked selection opens nothing.
+    private(set) var pendingReveal: SidebarRowKey?
+
+    /// The row owed a reveal, which is then no longer owed.
+    func takePendingReveal() -> SidebarRowKey? {
+        defer { pendingReveal = nil }
+        return pendingReveal
+    }
 
     private func sidebarFilterAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
@@ -197,7 +224,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             }
             retainedEntryID = nil
             reconcileSelection()
-            retainedEntryID = selection?.entryID
+            retainedEntryID = selectedLibraryEntryID
         }
     }
 
@@ -207,7 +234,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// an observation computing it tracks exactly those.
     var sidebarLayout: SidebarLayout {
         .project(
-            entries: entries, options: sidebarOptions, retaining: retainedEntryID, context: sidebarContext)
+            entries: entries, options: sidebarOptions, retaining: retainedEntryID,
+            smartGroups: organization.smartGroups, context: sidebarContext)
     }
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``
@@ -249,6 +277,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
         }
         selectedID = id
+        pendingReveal = selection
     }
 
     /// Selects what a library read lands on when nothing listed is selected:
@@ -259,7 +288,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             selectedID = savedID
             #log(Self.logger, .debug, "Restored last-selected VM from UserDefaults: \(savedID.uuidString)")
         } else {
-            selectedID = firstShownEntryID
+            selection = firstShownRow
         }
     }
 
@@ -268,8 +297,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         sidebarLayout.resolve(.library(id)) != nil
     }
 
-    /// The first entry the sidebar lists.
-    var firstShownEntryID: UUID? { sidebarLayout.rowKeys.first?.entryID }
+    /// The first row the sidebar lists.
+    var firstShownRow: SidebarRowKey? { sidebarLayout.rowKeys.first }
 
     /// The selected row, whichever kind it is.
     var selectedEntry: LibraryEntry? {
@@ -361,6 +390,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
         networks: VMNetworkDirectory,
+        organization: VMOrganizationDirectory,
         guestAccountPasswords: any GuestAccountPasswordStoring =
             InMemoryGuestAccountPasswordStore(),
         bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider(),
@@ -370,6 +400,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         self.bridgedInterfaces = bridgedInterfaces
         self.activationCenter = activationCenter
         self.networks = networks
+        self.organization = organization
         self.guestAccountPasswords = guestAccountPasswords
         self.lifecycle = lifecycle
         self.preferences = preferences
@@ -538,6 +569,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         persistOrder()
         if selectedEntry?.arrival == nil, sidebarShows(arrival.id) {
             selectedID = arrival.id
+            pendingReveal = selection
         }
     }
 

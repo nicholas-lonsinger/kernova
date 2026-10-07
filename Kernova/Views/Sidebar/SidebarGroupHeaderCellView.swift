@@ -5,17 +5,20 @@ import AppKit
 ///
 /// `NSOutlineView` in `.sourceList` style draws the group-row background and the
 /// hover disclosure control; this cell supplies the title, and for a section
-/// that filters, how many VMs it shows and the button opening its filter menu.
+/// that filters, how many VMs it shows and the button opening its menu.
 @MainActor
 final class SidebarGroupHeaderCellView: NSTableCellView {
     /// What a filtering section's header shows beside its title.
     struct Filtering: Equatable {
-        /// "3 of 7" while a filter narrows the section, `nil` otherwise.
+        /// How many VMs the section lists — "3 of 7" while a filter narrows
+        /// the library — or `nil` to show none.
         let countText: String?
         /// Whether any filter is on, which fills the button's symbol.
         let isActive: Bool
         /// The active filters, named for VoiceOver; `nil` when none is.
         let activeDescription: String?
+        /// The button's name, for its tooltip and VoiceOver.
+        var buttonLabel = SidebarViewMenu.accessibilityLabel
     }
 
     private let label = NSTextField(labelWithString: "")
@@ -73,8 +76,10 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
         let symbol =
             filtering.isActive
             ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
-        button.image = NSImage.systemSymbol(symbol, accessibilityDescription: SidebarViewMenu.accessibilityLabel)
+        button.image = NSImage.systemSymbol(symbol, accessibilityDescription: filtering.buttonLabel)
         button.contentTintColor = filtering.isActive ? .controlAccentColor : .secondaryLabelColor
+        button.toolTip = filtering.buttonLabel
+        button.setAccessibilityLabel(filtering.buttonLabel)
         button.setAccessibilityValue(filtering.activeDescription ?? "No filters")
     }
 
@@ -86,8 +91,6 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
         button.target = self
         button.action = #selector(filterButtonClicked(_:))
-        button.toolTip = SidebarViewMenu.accessibilityLabel
-        button.setAccessibilityLabel(SidebarViewMenu.accessibilityLabel)
         addSubview(button)
         let trailing = button.trailingAnchor.constraint(
             equalTo: trailingAnchor, constant: -(trailingReserve + Self.filterButtonGap))

@@ -1,18 +1,22 @@
 import AppKit
 import KernovaKit
+import KernovaLogging
 import UniformTypeIdentifiers
 
 /// Pure-AppKit sidebar: a source-list `NSOutlineView` listing virtual machines
-/// under a collapsible "Virtual Machines" group.
+/// under collapsible sections — each smart group, then "Virtual Machines".
 ///
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
-/// ``SidebarLayout/project(entries:options:retaining:context:)``, updated by inserts and removes;
-/// per-row live updates are owned by each ``SidebarVMRowCellView``. Selection is
-/// a two-way binding to `viewModel.selection`, idempotent in both directions;
-/// reorder and Finder-bundle import ride the outline view's drag-and-drop,
-/// distinguished by drag source.
+/// ``SidebarLayout/project(entries:options:retaining:smartGroups:context:)``,
+/// updated by inserts and removes; per-row live updates are owned by each
+/// ``SidebarVMRowCellView``. Selection is a two-way binding to
+/// `viewModel.selection`, idempotent in both directions; row reorder, smart
+/// group reorder and Finder-bundle import ride the outline view's
+/// drag-and-drop, distinguished by drag source and pasteboard type.
 @MainActor
 final class SidebarViewController: NSViewController {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SidebarViewController")
+
     private let viewModel: VMLibraryViewModel
     private var preferences: AppPreferences { viewModel.preferences }
     private let outlineView = SidebarOutlineView()
@@ -25,16 +29,17 @@ final class SidebarViewController: NSViewController {
     /// loop doesn't restart an in-flight edit.
     private var editingRow: SidebarRow?
 
-    /// Builds the library section's filter menu; a pick sets the options.
+    /// Builds each section header's menu; a pick runs its command.
     private lazy var viewMenu = SidebarViewMenu(
         networkTitle: { [weak self] network in
             network.choice?.title(
                 attachable: true, interfaces: [], networks: self?.viewModel.networks.networks ?? [])
                 ?? NetworkModeChoice.unlistedNetworkTitle
         },
-        apply: { [weak self] options in self?.viewModel.sidebarOptions = options })
+        perform: { [weak self] command in self?.perform(command) })
 
     private static let rowPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-vm-row")
+    private static let smartGroupPasteboardType = NSPasteboard.PasteboardType("app.kernova.sidebar-smart-group")
     private static let groupCellID = NSUserInterfaceItemIdentifier("SidebarGroupHeaderCell")
     private static let placeholderCellID = NSUserInterfaceItemIdentifier("SidebarPlaceholderCell")
     private static let mainColumnID = NSUserInterfaceItemIdentifier("main")
@@ -83,6 +88,7 @@ final class SidebarViewController: NSViewController {
         }
         outlineView.registerForDraggedTypes([
             Self.rowPasteboardType,
+            Self.smartGroupPasteboardType,
             .fileURL,
             NSPasteboard.PasteboardType(UTType.kernovaVM.identifier),
         ])
@@ -145,6 +151,7 @@ final class SidebarViewController: NSViewController {
                     // grouping read of every VM.
                     _ = self.viewModel.sidebarLayout
                     _ = self.viewModel.selection
+                    _ = self.viewModel.pendingReveal
                     _ = self.viewModel.activeRename
                 },
                 apply: { [weak self] in self?.sync() }
@@ -204,12 +211,16 @@ final class SidebarViewController: NSViewController {
             self.editingRow = nil
         }
         outlineView.beginUpdates()
-        // Each parent's removals index its previous children and its
-        // insertions its current ones, which is the order NSOutlineView takes
-        // them in; parents' offsets are independent of each other.
+        // Each parent's removals index its previous children, its moves the
+        // children as each finds them, and its insertions its current ones,
+        // which is the order NSOutlineView takes them in; parents' offsets are
+        // independent of each other.
         for change in changes.children {
             if !change.removed.isEmpty {
                 outlineView.removeItems(at: change.removed, inParent: change.parent, withAnimation: [])
+            }
+            for move in change.moves {
+                outlineView.moveItem(at: move.from, inParent: change.parent, to: move.to, inParent: change.parent)
             }
             if !change.inserted.isEmpty {
                 outlineView.insertItems(at: change.inserted, inParent: change.parent, withAnimation: [])
@@ -222,10 +233,20 @@ final class SidebarViewController: NSViewController {
 
     /// Selects the row the model's selection lands on, and moves the model's
     /// selection onto that row when it landed by fallback.
+    ///
+    /// Only a reveal the library still owes the row
+    /// (``VMLibrary/pendingReveal``) opens the collapsed sections hiding it,
+    /// and taking it settles it. Any other selection — a restored one
+    /// included — leaves the user's collapsed sections as they are, and the
+    /// outline shows no selected row while the model keeps the selection.
     private func applySelectionFromModel() {
-        guard let selection = viewModel.selection, let node = tree.row(resolving: selection),
-            let row = revealedRow(of: node)
-        else {
+        guard let selection = viewModel.selection, let node = tree.row(resolving: selection) else {
+            if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
+            return
+        }
+        if node.key != selection { viewModel.selection = node.key }
+        let revealing = viewModel.pendingReveal == node.key && viewModel.takePendingReveal() != nil
+        guard let row = revealing ? revealedRow(of: node) : shownRow(of: node) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
@@ -235,7 +256,12 @@ final class SidebarViewController: NSViewController {
         // NSOutlineView doesn't auto-scroll programmatic selection into view, so a
         // created/cloned/imported VM's row could land off-screen.
         outlineView.scrollRowToVisible(row)
-        if node.key != selection { viewModel.selection = node.key }
+    }
+
+    /// `node`'s outline row, `nil` while a collapsed ancestor hides it.
+    private func shownRow(of node: SidebarNode) -> Int? {
+        let row = outlineView.row(forItem: node)
+        return row >= 0 ? row : nil
     }
 
     /// `node`'s outline row, expanding its collapsed ancestors first; `nil` when
@@ -363,20 +389,32 @@ final class SidebarViewController: NSViewController {
 
     // MARK: - Expansion persistence
 
-    /// Expands or collapses `section` as last saved — expanded when nothing is
-    /// saved yet.
+    /// Collapses `section` when it was last saved collapsed, and expands it
+    /// otherwise — so a section new to this sidebar, a smart group just
+    /// created among them, opens expanded.
     private func applySavedExpansion(to section: SidebarSection) {
-        let expanded = preferences.expandedSidebarSections.map(Set.init)
-        if expanded?.contains(section.id.rawValue) ?? true {
-            outlineView.expandItem(section)
-        } else {
+        if preferences.collapsedSidebarSections.contains(section.id.rawValue) {
             outlineView.collapseItem(section)
+        } else {
+            outlineView.expandItem(section)
         }
     }
 
-    private func persistExpansion() {
-        preferences.expandedSidebarSections = tree.sections.filter { outlineView.isItemExpanded($0) }
-            .map(\.id.rawValue)
+    /// Saves `item`'s expansion when it is a section, keeping only sections
+    /// the sidebar lists.
+    ///
+    /// One section at a time: the sections a load creates open one after
+    /// another, so a snapshot of them all mid-way would save the ones not yet
+    /// opened as collapsed.
+    private func persistExpansion(of item: Any?, expanded: Bool) {
+        guard let section = item as? SidebarSection else { return }
+        var collapsed = Set(preferences.collapsedSidebarSections)
+        if expanded {
+            collapsed.remove(section.id.rawValue)
+        } else {
+            collapsed.insert(section.id.rawValue)
+        }
+        preferences.collapsedSidebarSections = tree.sections.map(\.id.rawValue).filter(collapsed.contains)
     }
 
     // MARK: - Content-fit width
@@ -434,6 +472,12 @@ final class SidebarViewController: NSViewController {
         else { return nil }
         return tree.row(for: key)
     }
+
+    /// The smart group an internal drag of its header carries.
+    private func draggedSmartGroup(_ info: NSDraggingInfo) -> UUID? {
+        info.draggingPasteboard.pasteboardItems?.first?.string(forType: Self.smartGroupPasteboardType)
+            .flatMap(UUID.init(uuidString:))
+    }
 }
 
 // MARK: - NSOutlineViewDataSource
@@ -461,6 +505,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
     func outlineView(
         _ outlineView: NSOutlineView, pasteboardWriterForItem item: Any
     ) -> NSPasteboardWriting? {
+        // A smart group's header drags to reorder the smart groups.
+        if let section = item as? SidebarSection {
+            guard let id = section.id.smartGroupID else { return nil }
+            let pbItem = NSPasteboardItem()
+            pbItem.setString(id.uuidString, forType: Self.smartGroupPasteboardType)
+            return pbItem
+        }
         // Arrivals are not draggable: their place is settled once they are VMs.
         // Rows drag only under the manual sort — the one order a drop changes.
         guard viewModel.sidebarOptions.sort == .manual,
@@ -480,6 +531,10 @@ extension SidebarViewController: NSOutlineViewDataSource {
         proposedItem item: Any?,
         proposedChildIndex index: Int
     ) -> NSDragOperation {
+        if info.draggingSource as? NSOutlineView === outlineView, draggedSmartGroup(info) != nil {
+            outlineView.setDropItem(nil, dropChildIndex: smartGroupDropIndex(proposedItem: item, childIndex: index))
+            return .move
+        }
         if info.draggingSource as? NSOutlineView === outlineView {
             // Internal reorder — constrained to the gaps of the dragged row's
             // own list: its group's rows, which follow its header.
@@ -527,10 +582,45 @@ extension SidebarViewController: NSOutlineViewDataSource {
         item: Any?,
         childIndex index: Int
     ) -> Bool {
+        if info.draggingSource as? NSOutlineView === outlineView, let moved = draggedSmartGroup(info) {
+            return acceptSmartGroupMove(moved, toSectionIndex: index)
+        }
         if info.draggingSource as? NSOutlineView === outlineView {
             return acceptReorder(info: info, parent: item as? SidebarNode, childIndex: index)
         }
         return acceptImport(info: info)
+    }
+
+    /// The root offset a dragged smart group lands at, among the smart group
+    /// sections that lead the sidebar: before the section the drag is over —
+    /// after it when over the section's own rows — or after the last smart
+    /// group when below them.
+    private func smartGroupDropIndex(proposedItem item: Any?, childIndex index: Int) -> Int {
+        let smartCount = tree.sections.prefix { $0.id.smartGroupID != nil }.count
+        let target: Int
+        switch item {
+        case nil:
+            target = index == NSOutlineViewDropOnItemIndex ? smartCount : index
+        case let section as SidebarSection:
+            let offset = tree.sections.firstIndex { $0 === section } ?? smartCount
+            target = index == NSOutlineViewDropOnItemIndex || index == 0 ? offset : offset + 1
+        case let node as SidebarNode:
+            var top = node
+            while let parent = top.parent { top = parent }
+            target = (tree.sections.firstIndex { $0 === top } ?? smartCount) + 1
+        default:
+            target = smartCount
+        }
+        return min(max(target, 0), smartCount)
+    }
+
+    /// Moves the dragged smart group to the root offset it was dropped at.
+    private func acceptSmartGroupMove(_ moved: UUID, toSectionIndex index: Int) -> Bool {
+        let smartSections = tree.sections.prefix { $0.id.smartGroupID != nil }
+        let successor = index < smartSections.count ? smartSections[index].id.smartGroupID : nil
+        guard successor != moved else { return false }
+        attempt("Couldn\u{2019}t Move the Smart Group") { try viewModel.moveSmartGroup(moved, before: successor) }
+        return true
     }
 
     /// Moves the dragged row's entry in the manual order to just before the
@@ -602,9 +692,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
         _ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any
     ) -> NSView? {
         switch item {
-        case let section as SidebarSection:
-            headerCell(title: section.title, filtering: filtering(for: section))
-        case let header as SidebarGroupHeader: headerCell(title: header.title, filtering: nil)
+        case let section as SidebarSection: headerCell(for: section)
+        case let header as SidebarGroupHeader: headerCell(title: header.title)
         case let placeholder as SidebarPlaceholder: placeholderCell(placeholder.text)
         case let row as SidebarRow:
             switch row.entry {
@@ -615,9 +704,13 @@ extension SidebarViewController: NSOutlineViewDelegate {
         }
     }
 
-    private func headerCell(
-        title: String, filtering: SidebarGroupHeaderCellView.Filtering?
-    ) -> NSView {
+    private func headerCell(for section: SidebarSection) -> NSView {
+        let cell = headerCell(title: section.title)
+        configureHeader(cell, for: section)
+        return cell
+    }
+
+    private func headerCell(title: String) -> SidebarGroupHeaderCellView {
         let cell =
             outlineView.makeView(withIdentifier: Self.groupCellID, owner: nil)
             as? SidebarGroupHeaderCellView
@@ -626,9 +719,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 made.identifier = Self.groupCellID
                 return made
             }()
-        cell.configure(
-            title: title, filtering: filtering,
-            onFilterButton: filtering == nil ? nil : { [weak self] button in self?.popUpViewMenu(from: button) })
+        cell.configure(title: title)
         return cell
     }
 
@@ -752,14 +843,14 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
-        persistExpansion()
+        persistExpansion(of: notification.userInfo?["NSObject"], expanded: true)
         // Restore the highlight for a still-selected row that was hidden while
         // its group was collapsed.
         sync()
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
-        persistExpansion()
+        persistExpansion(of: notification.userInfo?["NSObject"], expanded: false)
     }
 }
 
@@ -778,31 +869,54 @@ extension SidebarViewController {
         }
     }
 
-    /// The library section's filter menu, as its header's button and a
-    /// right-click on the header open it.
-    func libraryViewMenu() -> NSMenu {
-        viewMenu.menu(options: viewModel.sidebarOptions, values: viewMenuValues())
+    /// The menu `section`'s header button and a right-click on the header
+    /// open: the library's filter, group and sort menu, or a smart group's
+    /// own; `nil` for a section with neither.
+    func viewMenu(for section: SidebarSectionID) -> NSMenu? {
+        if section == .library {
+            return viewMenu.menu(options: viewModel.sidebarOptions, values: viewMenuValues())
+        }
+        guard let id = section.smartGroupID, let group = viewModel.smartGroups.first(where: { $0.id == id })
+        else { return nil }
+        return viewMenu.menu(smartGroup: group, values: viewMenuValues())
     }
 
-    private func popUpViewMenu(from button: NSButton) {
-        libraryViewMenu().popUp(
+    private func popUpViewMenu(for section: SidebarSectionID, from button: NSButton) {
+        viewMenu(for: section)?.popUp(
             positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
     }
 
     /// What `section`'s header shows beside its title; `nil` for a section
-    /// with no filter.
+    /// with no menu.
     private func filtering(for section: SidebarSection) -> SidebarGroupHeaderCellView.Filtering? {
-        guard section.id == .library else { return nil }
         // The counts the projection the tree lists computed, so they change
         // exactly when the rows do.
-        guard let counts = tree.layout.sections.first(where: { $0.id == section.id })?.filterCounts
-        else {
+        let counts = tree.layout.sections.first { $0.id == section.id }?.filterCounts
+        if let id = section.id.smartGroupID {
+            guard let group = viewModel.smartGroups.first(where: { $0.id == id }) else { return nil }
+            return SidebarGroupHeaderCellView.Filtering(
+                countText: counts.map { "\($0.shown)" }, isActive: false,
+                activeDescription: viewMenu.activeFilterDescription(filter: group.filter, values: viewMenuValues()),
+                buttonLabel: SidebarViewMenu.smartGroupAccessibilityLabel)
+        }
+        guard section.id == .library else { return nil }
+        guard let counts else {
             return SidebarGroupHeaderCellView.Filtering(countText: nil, isActive: false, activeDescription: nil)
         }
         return SidebarGroupHeaderCellView.Filtering(
             countText: "\(counts.shown) of \(counts.total)", isActive: true,
             activeDescription: viewMenu.activeFilterDescription(
-                options: viewModel.sidebarOptions, values: viewMenuValues()))
+                filter: viewModel.sidebarOptions.filter, values: viewMenuValues()))
+    }
+
+    /// Shows `section`'s title, count and menu button in `cell`.
+    private func configureHeader(_ cell: SidebarGroupHeaderCellView, for section: SidebarSection) {
+        let filtering = filtering(for: section)
+        let id = section.id
+        cell.configure(
+            title: section.title, filtering: filtering,
+            onFilterButton: filtering == nil
+                ? nil : { [weak self] button in self?.popUpViewMenu(for: id, from: button) })
     }
 
     /// Re-renders each section header the outline view has a view for.
@@ -813,10 +927,76 @@ extension SidebarViewController {
                 let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
                     as? SidebarGroupHeaderCellView
             else { continue }
-            let filtering = filtering(for: section)
-            cell.configure(
-                title: section.title, filtering: filtering,
-                onFilterButton: filtering == nil ? nil : { [weak self] button in self?.popUpViewMenu(from: button) })
+            configureHeader(cell, for: section)
+        }
+    }
+
+    // MARK: Commands
+
+    /// Runs what a section menu's pick asks for.
+    private func perform(_ command: SidebarViewMenu.Command) {
+        switch command {
+        case .setOptions(let options):
+            viewModel.sidebarOptions = options
+        case .saveAsSmartGroup:
+            presentSaveAsSmartGroup()
+        case .setSmartGroupFilter(let id, let filter):
+            attempt("Couldn\u{2019}t Change the Smart Group") { try viewModel.setFilter(filter, ofSmartGroup: id) }
+        case .renameSmartGroup(let id):
+            presentRenameSmartGroup(id)
+        case .deleteSmartGroup(let id):
+            attempt("Couldn\u{2019}t Delete the Smart Group") { try viewModel.deleteSmartGroup(id) }
+        }
+    }
+
+    /// Asks for a name to save the library's filter under as a smart group,
+    /// starting from `name` — a suggestion from the filter when `nil`. A name
+    /// the library refuses brings the sheet back with that name in it.
+    private func presentSaveAsSmartGroup(name: String? = nil) {
+        guard let window = view.window else { return }
+        let filter = viewModel.sidebarOptions.filter
+        let values = viewMenuValues()
+        presentSheetAlert(
+            SmartGroupNameSheet.newSmartGroup(
+                suggestedName: name
+                    ?? viewModel.unusedSmartGroupName(from: viewMenu.suggestedName(for: filter, values: values)),
+                conditions: viewMenu.conditions(of: filter, values: values)
+            ) { [weak self] typed in
+                self?.attempt(
+                    "Couldn\u{2019}t Create the Smart Group",
+                    retry: { [weak self] in self?.presentSaveAsSmartGroup(name: typed) }
+                ) { try self?.viewModel.saveSidebarFilterAsSmartGroup(named: typed) }
+            },
+            in: window)
+    }
+
+    /// Asks for a new name for the smart group `id` identifies, starting from
+    /// `name` — its current one when `nil`. A name the library refuses brings
+    /// the sheet back with that name in it.
+    private func presentRenameSmartGroup(_ id: UUID, name: String? = nil) {
+        guard let window = view.window, let group = viewModel.smartGroups.first(where: { $0.id == id }) else {
+            return
+        }
+        presentSheetAlert(
+            SmartGroupNameSheet.rename(currentName: name ?? group.name) { [weak self] typed in
+                self?.attempt(
+                    "Couldn\u{2019}t Rename the Smart Group",
+                    retry: { [weak self] in self?.presentRenameSmartGroup(id, name: typed) }
+                ) { try self?.viewModel.renameSmartGroup(id, to: typed) }
+            },
+            in: window)
+    }
+
+    /// Runs `change`, showing what it was refused with under `title`, then
+    /// `retry` once that alert is dismissed.
+    private func attempt(_ title: String, retry: (() -> Void)? = nil, _ change: () throws -> Void) {
+        do {
+            try change()
+        } catch {
+            let message = error.localizedDescription
+            #log(Self.logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
+            guard let window = view.window else { return }
+            presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
         }
     }
 }
@@ -825,12 +1005,12 @@ extension SidebarViewController {
 
 extension SidebarViewController {
     /// Builds the right-click menu for the clicked row, selecting it first
-    /// (matching standard source-list behavior); the library section's header
-    /// opens its filter menu.
+    /// (matching standard source-list behavior); a section's header opens the
+    /// menu its button does.
     func contextMenu(forRow row: Int) -> NSMenu? {
         guard row >= 0 else { return nil }
         if let section = outlineView.item(atRow: row) as? SidebarSection {
-            return section.id == .library ? libraryViewMenu() : nil
+            return viewMenu(for: section.id)
         }
         guard let node = outlineView.item(atRow: row) as? SidebarRow else { return nil }
 

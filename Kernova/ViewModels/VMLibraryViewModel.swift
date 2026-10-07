@@ -89,6 +89,31 @@ final class VMLibraryViewModel {
 
     func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
+    var pendingReveal: SidebarRowKey? { library.pendingReveal }
+
+    func takePendingReveal() -> SidebarRowKey? { library.takePendingReveal() }
+
+    var smartGroups: [VMSmartGroup] { library.smartGroups }
+
+    /// `base`, or the first numbered variant of it no smart group is named.
+    func unusedSmartGroupName(from base: String) -> String { library.organization.unusedName(from: base) }
+
+    func saveSidebarFilterAsSmartGroup(named name: String) throws {
+        try library.saveSidebarFilterAsSmartGroup(named: name)
+    }
+
+    func setFilter(_ filter: VMLibraryFilter, ofSmartGroup id: UUID) throws {
+        try library.setFilter(filter, ofSmartGroup: id)
+    }
+
+    func renameSmartGroup(_ id: UUID, to name: String) throws { try library.renameSmartGroup(id, to: name) }
+
+    func deleteSmartGroup(_ id: UUID) throws { try library.deleteSmartGroup(id) }
+
+    func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {
+        try library.moveSmartGroup(id, before: successor)
+    }
+
     var selectedInstance: VMInstance? { library.selectedInstance }
 
     var selectedEntry: LibraryEntry? { library.selectedEntry }
@@ -585,7 +610,8 @@ final class VMLibraryViewModel {
         vmnetNetworks: any VmnetNetworkProviding,
         arpTable: any ARPTableReading,
         entitlements: EntitlementService,
-        networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)
+        networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
     ) {
         self.storageService = storageService
         self.diskImageService = diskImageService
@@ -612,7 +638,8 @@ final class VMLibraryViewModel {
             vmnetNetworks: vmnetNetworks,
             arpTable: arpTable,
             entitlements: entitlements,
-            networks: networks
+            networks: networks,
+            organization: organization
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(

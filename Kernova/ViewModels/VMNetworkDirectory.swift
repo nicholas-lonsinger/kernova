@@ -23,7 +23,7 @@ final class VMNetworkDirectory {
         .appendingPathComponent("Networks.json", isDirectory: false)
 
     /// The file's payload.
-    private struct File: Codable {
+    private struct File: Codable, Equatable, Sendable {
         var networks: [VMNamedNetwork]
     }
 
@@ -36,26 +36,27 @@ final class VMNetworkDirectory {
     private(set) var readFailure: String?
 
     /// The file the networks persist in, `nil` to keep them in memory only.
-    @ObservationIgnored private let fileURL: URL?
+    @ObservationIgnored private let file: CoordinatedJSONFile<File>?
 
     /// The networks `fileURL` holds — none when there is no file yet.
     init(fileURL: URL?) {
-        self.fileURL = fileURL
+        self.file = fileURL.map { CoordinatedJSONFile(url: $0, empty: File(networks: [])) }
         reload()
     }
 
     /// Reads the file again, taking in what another copy of Kernova sharing
     /// the library wrote since.
     func reload() {
-        guard let fileURL else { return }
+        guard let file else { return }
         do {
-            networks = try Self.coordinatedRead(fileURL)
+            networks = Self.ordered(try file.read().networks)
             readFailure = nil
         } catch {
-            readFailure = error.localizedDescription
+            let reason = error.reason
+            readFailure = reason
             #log(
                 Self.logger, .error,
-                "Couldn't read the named networks at \(fileURL.path(percentEncoded: false), privacy: .public): \(error.localizedDescription, privacy: .public)"
+                "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(reason, privacy: .public)"
             )
         }
     }
@@ -160,75 +161,32 @@ final class VMNetworkDirectory {
     }
 
     /// Applies `change` to the networks the file holds now and writes the
-    /// result, under one coordinated write, so a change another copy of
-    /// Kernova made in between is changed rather than overwritten; then lists
-    /// the result.
+    /// result (``CoordinatedJSONFile/update(_:)``), then lists the result.
     private func commit(
         verb: VMVerb, _ change: ([VMNamedNetwork]) throws -> [VMNamedNetwork]
     ) throws {
-        guard let fileURL else {
+        guard let file else {
             networks = Self.ordered(try change(networks))
             return
         }
-        var coordinationError: NSError?
-        var outcome: Result<[VMNamedNetwork], any Error> = .success([])
-        try? FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        NSFileCoordinator().coordinate(
-            writingItemAt: fileURL, options: .forMerging, error: &coordinationError
-        ) { url in
-            outcome = Result {
-                let current: [VMNamedNetwork]
-                do {
-                    current = try Self.read(url)
-                } catch {
-                    throw CommandError.operationFailed(
-                        verb: verb,
-                        message:
-                            "Kernova couldn\u{2019}t read its list of networks, so it changes none: \(error.localizedDescription)"
-                    )
-                }
-                let candidate = Self.ordered(try change(current))
-                do {
-                    let encoder = JSONEncoder()
-                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                    try encoder.encode(File(networks: candidate)).write(to: url, options: .atomic)
-                } catch {
-                    throw CommandError.operationFailed(
-                        verb: verb,
-                        message: "Kernova couldn\u{2019}t save its list of networks: \(error.localizedDescription)")
-                }
-                return candidate
+        do {
+            networks = try file.update { File(networks: Self.ordered(try change(Self.ordered($0.networks)))) }
+                .networks
+        } catch let failure as CoordinatedJSONFile<File>.Failure {
+            switch failure {
+            case .unreadable(let error):
+                throw CommandError.operationFailed(
+                    verb: verb,
+                    message:
+                        "Kernova couldn\u{2019}t read its list of networks, so it changes none: \(error.localizedDescription)"
+                )
+            case .unsaved(let error):
+                throw CommandError.operationFailed(
+                    verb: verb,
+                    message: "Kernova couldn\u{2019}t save its list of networks: \(error.localizedDescription)")
             }
         }
-        if let coordinationError {
-            throw CommandError.operationFailed(
-                verb: verb,
-                message: "Kernova couldn\u{2019}t save its list of networks: \(coordinationError.localizedDescription)")
-        }
-        networks = try outcome.get()
         readFailure = nil
-    }
-
-    /// The networks the file at `url` holds, none when there is no file.
-    nonisolated private static func read(_ url: URL) throws -> [VMNamedNetwork] {
-        do {
-            return ordered(try JSONDecoder().decode(File.self, from: Data(contentsOf: url)).networks)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return []
-        }
-    }
-
-    /// ``read(_:)`` under a coordinated read.
-    nonisolated private static func coordinatedRead(_ url: URL) throws -> [VMNamedNetwork] {
-        var coordinationError: NSError?
-        var outcome: Result<[VMNamedNetwork], any Error> = .success([])
-        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) {
-            coordinated in
-            outcome = Result { try read(coordinated) }
-        }
-        if let coordinationError { throw coordinationError }
-        return try outcome.get()
     }
 
     nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
