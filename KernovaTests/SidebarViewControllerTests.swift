@@ -527,6 +527,28 @@ struct SidebarViewControllerTests {
         #expect(viewModel.selectedID == c.id)
     }
 
+    @Test("A library change leaves a sidebar the user scrolled away from the selection where they scrolled it")
+    func syncKeepsTheUsersScroll() async throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let first = library.admitFixture(name: "VM 0")
+        for index in 1...60 { library.admitFixture(name: "VM \(index)") }
+        viewModel.selection = .library(first.id)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        #expect(outline.selectedRow == 1)
+        outline.scrollRowToVisible(outline.numberOfRows - 1)
+        let scrolled = outline.visibleRect
+        #expect(!scrolled.contains(outline.rect(ofRow: 1)))
+
+        library.admitFixture(name: "Late")
+        try await waitUntil { outline.numberOfRows == 63 }
+        controller.viewDidAppear()
+
+        #expect(outline.selectedRow == 1)
+        #expect(outline.visibleRect.minY == scrolled.minY)
+    }
+
     @Test("An arrival's cell becomes a VM cell when it settles")
     func arrivalCellBecomesVMCell() async throws {
         let viewModel = makeViewModel()

@@ -23,7 +23,7 @@ struct VMOrganizationDirectoryTests {
 
         try directory.renameSmartGroup(macs.id, to: "Apple")
         try directory.setFilter(VMLibraryFilter(guestOSes: [.macOS], ephemeralOnly: true), ofSmartGroup: macs.id)
-        try directory.moveSmartGroup(everything.id, before: running.id)
+        try directory.moveSection(.smartGroup(everything.id), before: .smartGroup(running.id))
 
         let reread = VMOrganizationDirectory(fileURL: fileURL)
         #expect(reread.smartGroups.map(\.name) == ["Everything", "Running", "Apple"])
@@ -31,15 +31,27 @@ struct VMOrganizationDirectoryTests {
         #expect(reread.smartGroup(withID: macs.id)?.filter == VMLibraryFilter(guestOSes: [.macOS], ephemeralOnly: true))
         #expect(reread.smartGroup(withID: everything.id)?.filter.isActive == false)
 
-        try reread.moveSmartGroup(everything.id, before: nil)
+        try reread.moveSection(.smartGroup(everything.id), before: nil)
         try reread.removeSmartGroup(running.id)
         #expect(VMOrganizationDirectory(fileURL: fileURL).smartGroups.map(\.id) == [macs.id, everything.id])
     }
 
-    /// The file as it stands on disk, named `name`.
+    /// The file as it stands on disk, its smart group named `name`.
     private func fixture(named name: String) -> String {
         """
         {
+          "folders" : [
+            {
+              "id" : "6F1D7E2C-0000-4000-8000-000000000002",
+              "members" : [ "6F1D7E2C-0000-4000-8000-0000000000AA", "6F1D7E2C-0000-4000-8000-0000000000BB" ],
+              "name" : "Clients"
+            }
+          ],
+          "sectionOrder" : [
+            "folder:6F1D7E2C-0000-4000-8000-000000000002",
+            "virtualMachines",
+            "smartGroup:6F1D7E2C-0000-4000-8000-000000000001"
+          ],
           "smartGroups" : [
             {
               "filter" : {
@@ -68,6 +80,11 @@ struct VMOrganizationDirectoryTests {
         try Data(fixture(named: "Old").utf8).write(to: fileURL)
         let directory = VMOrganizationDirectory(fileURL: fileURL)
         let id = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))
+        #expect(
+            directory.sections.map(\.id) == [
+                .folder(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))), .library,
+                .smartGroup(id),
+            ])
         let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
         #expect(
             directory.smartGroups == [
@@ -77,10 +94,167 @@ struct VMOrganizationDirectoryTests {
                         guestOSes: [.macOS], states: [.running], networks: [shared, .unlisted],
                         guestAgents: [.upToDate], ephemeralOnly: true))
             ])
+        #expect(
+            directory.folders == [
+                VMFolder(
+                    id: try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002")), name: "Clients",
+                    members: [
+                        try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-0000000000AA")),
+                        try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-0000000000BB")),
+                    ])
+            ])
 
         try directory.renameSmartGroup(id, to: "Lab Macs")
 
         #expect(try parsed(Data(contentsOf: fileURL)) == parsed(Data(fixture(named: "Lab Macs").utf8)))
+    }
+
+    @Test("Folders persist in their own order, each with its members in its own order, a VM in several")
+    func foldersRoundTrip() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        let clients = try directory.createFolder(named: "Clients", members: [a, b, a])
+        let demo = try directory.createFolder(named: "Demo")
+        let spare = try directory.createFolder(named: "Spare")
+        #expect(clients.members == [a, b])
+
+        try directory.add([c, a, b], toFolder: clients.id)
+        try directory.add([b, a], toFolder: demo.id)
+        try directory.move(c, before: a, inFolder: clients.id)
+        try directory.remove(b, fromFolder: demo.id)
+        try directory.renameFolder(demo.id, to: "Demos")
+        try directory.moveSection(.folder(spare.id), before: .folder(clients.id))
+
+        let reread = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(reread.folders == directory.folders)
+        #expect(reread.folders.map(\.name) == ["Spare", "Clients", "Demos"])
+        #expect(reread.folder(withID: clients.id)?.members == [c, a, b])
+        #expect(reread.folder(withID: demo.id)?.members == [a])
+
+        try reread.removeFromEveryFolder([a])
+        try reread.removeFolder(spare.id)
+        let pruned = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(pruned.folders.map(\.id) == [clients.id, demo.id])
+        #expect(pruned.folders.map(\.members) == [[c, b], []])
+    }
+
+    @Test("A file holding only smart groups reads with no folders, and keeps its groups as a folder is added")
+    func smartGroupsOnlyFileReadsWithNoFolders() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let full = try #require(try parsed(Data(fixture(named: "Old").utf8)).mutableCopy() as? NSMutableDictionary)
+        full.removeObject(forKey: "folders")
+        full.removeObject(forKey: "sectionOrder")
+        try JSONSerialization.data(withJSONObject: full).write(to: fileURL)
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(directory.readFailure == nil)
+        #expect(directory.smartGroups.map(\.name) == ["Old"])
+        #expect(directory.folders.isEmpty)
+
+        let member = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-0000000000AA"))
+        let folder = try directory.createFolder(named: "Clients", members: [member])
+
+        full["folders"] = [["id": folder.id.uuidString, "members": [member.uuidString], "name": "Clients"]]
+        full["sectionOrder"] = [
+            "smartGroup:6F1D7E2C-0000-4000-8000-000000000001", "virtualMachines", "folder:\(folder.id.uuidString)",
+        ]
+        #expect(try parsed(Data(contentsOf: fileURL)) == full)
+    }
+
+    @Test(
+        "A file with no section order lists its smart groups, then its folders, each in its list's order, then the library"
+    )
+    func fileWithNoSectionOrderListsSmartGroupsFirst() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let full = try #require(try parsed(Data(fixture(named: "Old").utf8)).mutableCopy() as? NSMutableDictionary)
+        full.removeObject(forKey: "sectionOrder")
+        let second = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000003"))
+        let groups = try #require(full["smartGroups"] as? [[String: Any]])
+        var copy = try #require(groups.first)
+        copy["id"] = second.uuidString
+        copy["name"] = "Second"
+        full["smartGroups"] = groups + [copy]
+        try JSONSerialization.data(withJSONObject: full).write(to: fileURL)
+
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+
+        #expect(directory.readFailure == nil)
+        #expect(
+            directory.sections.map(\.id) == [
+                .smartGroup(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))),
+                .smartGroup(second),
+                .folder(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))),
+                .library,
+            ])
+    }
+
+    @Test("A section the order does not name follows the ones it does; an identifier no section carries is ignored")
+    func partialSectionOrder() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let full = try #require(try parsed(Data(fixture(named: "Old").utf8)).mutableCopy() as? NSMutableDictionary)
+        full["sectionOrder"] = ["folder:\(UUID().uuidString)", "folder:6F1D7E2C-0000-4000-8000-000000000002"]
+        try JSONSerialization.data(withJSONObject: full).write(to: fileURL)
+        let group = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))
+        let folder = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))
+
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(directory.sections.map(\.id) == [.folder(folder), .smartGroup(group), .library])
+
+        // The next write states every section, and only those.
+        let made = try directory.createFolder(named: "Made")
+        #expect(
+            try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == [
+                "folder:\(folder.uuidString)", "smartGroup:\(group.uuidString)", "virtualMachines",
+                "folder:\(made.id.uuidString)",
+            ])
+    }
+
+    @Test("Smart groups, folders and the library share one order, kept across a reread")
+    func interleavedOrderRoundTrip() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(directory.sections == [.library])
+        let macs = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let clients = try directory.createFolder(named: "Clients")
+        let running = try directory.createSmartGroup(named: "Running", filter: VMLibraryFilter(states: [.running]))
+        // Each new section goes after every other, the library included.
+        #expect(
+            directory.sections.map(\.id) == [
+                .library, .smartGroup(macs.id), .folder(clients.id), .smartGroup(running.id),
+            ])
+
+        try directory.moveSection(.library, before: nil)
+        try directory.moveSection(.folder(clients.id), before: .smartGroup(macs.id))
+        try directory.moveSection(.smartGroup(running.id), before: .smartGroup(macs.id))
+
+        let reread = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(reread.sections == directory.sections)
+        let order: [SidebarSectionID] = [.folder(clients.id), .smartGroup(running.id), .smartGroup(macs.id), .library]
+        #expect(reread.sections.map(\.id) == order)
+        #expect(reread.smartGroups.map(\.id) == [running.id, macs.id])
+        #expect(reread.folders.map(\.id) == [clients.id])
+        #expect(try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == order.map(\.rawValue))
+    }
+
+    @Test("Deleting a smart group or a folder leaves the order naming the rest, and a new section goes last")
+    func deleteKeepsTheOrderConsistent() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let macs = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter())
+        let clients = try directory.createFolder(named: "Clients")
+        let demo = try directory.createFolder(named: "Demo")
+        try directory.moveSection(.library, before: nil)
+
+        try directory.removeSmartGroup(macs.id)
+        try directory.removeFolder(demo.id)
+
+        let pruned = VMOrganizationDirectory(fileURL: fileURL)
+        #expect(pruned.sections.map(\.id) == [.folder(clients.id), .library])
+        #expect(
+            try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == [
+                SidebarSectionID.folder(clients.id).rawValue, SidebarSectionID.library.rawValue,
+            ])
+        let made = try pruned.createSmartGroup(named: "Made", filter: VMLibraryFilter())
+        #expect(pruned.sections.map(\.id) == [.folder(clients.id), .library, .smartGroup(made.id)])
     }
 
     @Test("A name has to be non-empty and unique ignoring case")
@@ -88,13 +262,13 @@ struct VMOrganizationDirectoryTests {
         let directory = VMOrganizationDirectory(fileURL: nil)
         let lab = try directory.createSmartGroup(named: "Lab", filter: VMLibraryFilter())
         let bench = try directory.createSmartGroup(named: "Bench", filter: VMLibraryFilter())
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameRequired) {
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameRequired(.smartGroup)) {
             try directory.createSmartGroup(named: "  ", filter: VMLibraryFilter())
         }
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab")) {
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab", .smartGroup)) {
             try directory.createSmartGroup(named: "LAB", filter: VMLibraryFilter())
         }
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab")) {
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Lab", .smartGroup)) {
             try directory.renameSmartGroup(bench.id, to: "lab")
         }
         // Its own name, recased, is a rename.
@@ -105,10 +279,10 @@ struct VMOrganizationDirectoryTests {
     @Test("A suggested name steps past the names already taken")
     func unusedName() throws {
         let directory = VMOrganizationDirectory(fileURL: nil)
-        #expect(directory.unusedName(from: "Linux") == "Linux")
+        #expect(directory.unusedName(from: "Linux", for: .smartGroup) == "Linux")
         try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter())
         try directory.createSmartGroup(named: "linux 2", filter: VMLibraryFilter())
-        #expect(directory.unusedName(from: "Linux") == "Linux 3")
+        #expect(directory.unusedName(from: "Linux", for: .smartGroup) == "Linux 3")
     }
 
     @Test("A file that cannot be read is never overwritten")
@@ -132,7 +306,7 @@ struct VMOrganizationDirectoryTests {
         try second.createSmartGroup(named: "Bench", filter: VMLibraryFilter())
         #expect(second.smartGroups.map(\.name) == ["Lab", "Bench"])
         // A name the other copy took is refused, though this one never saw it.
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Bench")) {
+        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Bench", .smartGroup)) {
             try first.createSmartGroup(named: "bench", filter: VMLibraryFilter())
         }
         try second.setFilter(VMLibraryFilter(states: [.running]), ofSmartGroup: lab.id)
@@ -153,6 +327,6 @@ struct VMOrganizationDirectoryTests {
         library.refreshFromOtherCopies()
 
         #expect(library.smartGroups.map(\.id) == [group.id])
-        #expect(library.sidebarLayout.sections.map(\.id) == [.smartGroup(group.id), .library])
+        #expect(library.sidebarLayout.sections.map(\.id) == [.library, .smartGroup(group.id)])
     }
 }

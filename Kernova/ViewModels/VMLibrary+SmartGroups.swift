@@ -42,10 +42,4 @@ extension VMLibrary {
         sidebarOptions.filter = sidebarOptions.filter.removingNetwork(id)
         reconcileSelection()
     }
-
-    /// Moves the smart group `id` identifies to just before the one
-    /// `successor` identifies, or after every other when `successor` is `nil`.
-    func moveSmartGroup(_ id: UUID, before successor: UUID?) throws {
-        try organization.moveSmartGroup(id, before: successor)
-    }
 }

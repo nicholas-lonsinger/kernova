@@ -4,7 +4,7 @@ import KernovaKit
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:options:retaining:smartGroups:context:)`` is the one function from the library
+/// ``project(entries:options:retaining:sections:context:)`` is the one function from the library
 /// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
 /// Each list a layout holds — its sections, a section's groups, a list's
 /// entries — keeps the first of any repeated identifier: a repeat would be a
@@ -20,7 +20,7 @@ struct SidebarLayout {
         /// list nothing.
         var emptyText: String? = nil
         /// How many VMs the section lists of the library's: always for a smart
-        /// group, and for the library while a filter constrains it.
+        /// group or a folder, and for the library while a filter constrains it.
         var filterCounts: FilterCounts? = nil
     }
 
@@ -92,6 +92,7 @@ struct SidebarLayout {
     }
 
     static let noMatchesText = "No matching VMs"
+    static let emptyFolderText = "Drag VMs here to add them"
 
     /// The sections in display order, each identifier at most once.
     let sections: [Section]
@@ -107,16 +108,16 @@ struct SidebarLayout {
         return elements.filter { seen.insert(id($0)).inserted }
     }
 
-    /// The layout the sidebar shows for `entries`: a section per smart group,
-    /// in `smartGroups`' order, then the library section, listing the entries
-    /// `options` admits, in its order, under its groups.
+    /// The layout the sidebar shows for `entries`: a section for each of
+    /// `sections`, in its order — the library's listing the entries `options`
+    /// admits, in its order, under its groups.
     ///
     /// The entry `retaining` names is listed in the library section whether
     /// or not the filter admits it: the selected VM a change to its own values
     /// took out of the filter, which stays until the selection moves off it.
     static func project(
         entries: [LibraryEntry], options: SidebarViewOptions, retaining: UUID? = nil,
-        smartGroups: [VMSmartGroup] = [], context: Context
+        sections: [VMOrganizationDirectory.Section] = [.library], context: Context
     ) -> SidebarLayout {
         // Every entry's subject is read, the retained one's included, so an
         // observation of the projection tracks every value the counts read.
@@ -136,8 +137,24 @@ struct SidebarLayout {
             filterCounts: options.filter.isActive
                 ? FilterCounts(shown: shown.count, total: entries.count) : nil)
         return SidebarLayout(
-            sections: smartGroups.map { section(for: $0, entries: entries, subjects: subjects, sort: options.sort) }
-                + [library])
+            sections: sections.map { listed in
+                switch listed {
+                case .smartGroup(let group):
+                    section(for: group, entries: entries, subjects: subjects, sort: options.sort)
+                case .folder(let folder): section(for: folder, entries: entries, sort: options.sort)
+                case .library: library
+                }
+            })
+    }
+
+    /// `folder`'s section: its members the library lists, in `sort`'s order —
+    /// under the manual sort, the folder's own — with their count.
+    private static func section(for folder: VMFolder, entries: [LibraryEntry], sort: SidebarSort) -> Section {
+        let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let members = folder.members.compactMap { byID[$0] }
+        return Section(
+            id: .folder(folder.id), title: folder.name, content: .rows(Rows(sort.ordered(members))),
+            emptyText: emptyFolderText, filterCounts: FilterCounts(shown: members.count, total: entries.count))
     }
 
     /// `group`'s section: the entries its filter admits, in `sort`'s order,

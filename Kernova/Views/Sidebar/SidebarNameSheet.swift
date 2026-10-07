@@ -1,9 +1,8 @@
 import AppKit
 
-/// The sheets naming a smart group: a new one, saved from the library's
-/// filter, and a rename.
+/// The sheets naming a smart group or a folder: a new one, and a rename.
 @MainActor
-enum SmartGroupNameSheet {
+enum SidebarNameSheet {
     /// Asks for the name of a new smart group showing VMs under
     /// `conditions`, starting from `suggestedName`; Create hands `create` the
     /// name typed.
@@ -43,14 +42,32 @@ enum SmartGroupNameSheet {
             accessoryView: stack, initialFirstResponder: field)
     }
 
-    /// Asks for a new name for the smart group named `currentName`; Rename
-    /// hands `rename` the name typed.
-    static func rename(currentName: String, rename: @escaping (String) -> Void) -> AlertConfiguration {
+    /// Asks for the name of a new folder, starting from `suggestedName`;
+    /// Create hands `create` the name typed.
+    static func newFolder(suggestedName: String, create: @escaping (String) -> Void) -> AlertConfiguration {
+        let field = nameField(suggestedName)
+        let row = nameRow(field)
+        row.setFrameSize(row.fittingSize)
+        return AlertConfiguration(
+            title: "New Folder",
+            message: "Drag VMs onto the folder to add them. A VM can be in several folders.",
+            buttons: [
+                AlertButton("Create", role: .default) { create(field.stringValue) },
+                AlertButton("Cancel", role: .cancel),
+            ],
+            accessoryView: row, initialFirstResponder: field)
+    }
+
+    /// Asks for a new name for the `kind` named `currentName`; Rename hands
+    /// `rename` the name typed.
+    static func rename(
+        _ kind: VMOrganizationDirectory.Kind, currentName: String, rename: @escaping (String) -> Void
+    ) -> AlertConfiguration {
         let field = nameField(currentName)
         let row = nameRow(field)
         row.setFrameSize(row.fittingSize)
         return AlertConfiguration(
-            title: "Rename Smart Group",
+            title: kind == .smartGroup ? "Rename Smart Group" : "Rename Folder",
             message: "",
             buttons: [
                 AlertButton("Rename", role: .default) { rename(field.stringValue) },

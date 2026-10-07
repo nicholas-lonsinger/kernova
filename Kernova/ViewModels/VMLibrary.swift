@@ -51,7 +51,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     /// The host interfaces a network naming one is titled from.
     @ObservationIgnored private let bridgedInterfaces: any BridgedInterfaceProviding
-    /// The library's smart groups.
+    /// The library's smart groups and folders.
     let organization: VMOrganizationDirectory
 
     // MARK: - Collaborators
@@ -235,7 +235,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarLayout: SidebarLayout {
         .project(
             entries: entries, options: sidebarOptions, retaining: retainedEntryID,
-            smartGroups: organization.smartGroups, context: sidebarContext)
+            sections: organization.sections, context: sidebarContext)
+    }
+
+    /// Moves the section `id` identifies — a smart group, a folder or the
+    /// library — to just before the one `successor` identifies, or after every
+    /// other when `successor` is `nil`.
+    func moveSection(_ id: SidebarSectionID, before successor: SidebarSectionID?) throws {
+        try organization.moveSection(id, before: successor)
     }
 
     /// What the sidebar's projection, its filter menu and every ``VMInfo``
@@ -578,19 +585,21 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// stays.
     ///
     /// Only an arrival that became no VM leaves here, so the account answer
-    /// held for it goes with it.
+    /// held for it, and any folder it was dropped into, go with it.
     func removeArrival(_ arrival: VMArrival) {
         guard let index = entries.firstIndex(where: { $0.arrival === arrival }) else { return }
         entries.remove(at: index)
         persistOrder()
+        leaveEveryFolder(arrival.id)
         reconcileSelection()
         guestAccountPasswords.remove(for: arrival.id)
     }
 
-    /// Drops `instance` from the library, moving the selection off it onto
-    /// the first row the sidebar shows.
+    /// Drops `instance` from the library and its folders, moving the
+    /// selection off it onto the first row the sidebar shows.
     func evict(_ instance: VMInstance) {
         entries.removeAll { $0.vm === instance }
+        leaveEveryFolder(instance.id)
         reconcileSelection()
         // Nothing left can ask for the account, so nothing may still hold the
         // answer — whichever way the VM left, and whether or not its bundle

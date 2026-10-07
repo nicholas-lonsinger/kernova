@@ -20,7 +20,8 @@ enum SidebarSort: String, Codable, CaseIterable, Sendable {
     case name
     /// Newest first.
     case dateCreated
-    /// The library's own order, which dragging a row changes.
+    /// The library's own order, or a folder's own in its section — the
+    /// order dragging a row there changes.
     case manual
 
     var title: String {
