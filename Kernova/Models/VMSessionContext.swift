@@ -25,6 +25,10 @@ final class VMSessionContext {
     /// `VZVirtualMachine` and its device objects.
     var session: VMSession?
 
+    /// When this session first settled running, `nil` until it has — what
+    /// `VMInstance.sessionRunningDuration(at:)` counts from.
+    var runningSince: Date?
+
     /// Security-scoped access grants this session holds, opened before the
     /// configuration build and drained in ``tearDown()``.
     @ObservationIgnored let fileAccess = RuntimeFileAccess()
