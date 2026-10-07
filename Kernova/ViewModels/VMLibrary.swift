@@ -151,7 +151,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         didSet {
             let entryID = selection?.entryID
             if selectedLibraryEntryID != retainedEntryID {
-                retainedEntryID = selectedLibraryEntryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
+                retainedEntryID = selectedLibraryEntryID.flatMap { sidebarNarrowingAdmits($0) ? $0 : nil }
             }
             if pendingReveal != selection { pendingReveal = nil }
             guard entryID != oldValue?.entryID else { return }
@@ -160,14 +160,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     /// The entry selected in the library section that the section keeps
-    /// listing once a change to its own values — a status, a network — stops
-    /// the filter admitting it, as Mail keeps a selected message the filter no
-    /// longer matches.
+    /// listing once a change to its own values — a status, a network, its
+    /// name — stops the filter or the search admitting it, as Mail keeps a
+    /// selected message the filter no longer matches.
     ///
-    /// Follows the selection onto any library row the filter admits, so it
-    /// lapses as soon as the selection moves off the row — into a smart group
-    /// included; a filter edit drops it before it re-applies, so an edit still
-    /// hides the VM and clears the selection.
+    /// Follows the selection onto any library row the filter and the search
+    /// admit, so it lapses as soon as the selection moves off the row — into a
+    /// smart group included; a filter or search edit drops it before it
+    /// re-applies, so an edit still hides the VM and clears the selection.
     private(set) var retainedEntryID: UUID?
 
     /// The selected entry when its row is in the library section, the one
@@ -192,9 +192,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         return pendingReveal
     }
 
-    private func sidebarFilterAdmits(_ id: UUID) -> Bool {
+    private func sidebarNarrowingAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
-        return sidebarOptions.filter.admits(sidebarContext.subject(of: entry))
+        return sidebarSearch.admits(entry.name) && sidebarOptions.filter.admits(sidebarContext.subject(of: entry))
     }
 
     /// The selected entry's identifier.
@@ -222,9 +222,38 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                 reconcileSelection()
                 return
             }
-            retainedEntryID = nil
-            reconcileSelection()
-            retainedEntryID = selectedLibraryEntryID
+            renarrow()
+        }
+    }
+
+    /// What the toolbar's search field narrows every sidebar section to.
+    ///
+    /// Held beside ``sidebarOptions`` rather than in it, so nothing that
+    /// reads or keeps the options — a saved smart group, Clear Filters — takes
+    /// the search along. An edit moves the selection as a filter edit does.
+    var sidebarSearch = SidebarNameSearch() {
+        didSet {
+            guard sidebarSearch != oldValue else { return }
+            renarrow()
+        }
+    }
+
+    /// Re-applies a changed filter or search: the retained entry drops first,
+    /// so the change hides it like any other, and the selection then left in
+    /// the library section is the one retained.
+    private func renarrow() {
+        retainedEntryID = nil
+        reconcileSelection()
+        retainedEntryID = selectedLibraryEntryID
+    }
+
+    /// Fills the search with `term` and selects the VM it most likely names,
+    /// by ``SidebarNameSearch/bestMatch(in:name:)`` over the library's order —
+    /// what a search from outside the app shows.
+    func showSearchResults(for term: String) {
+        sidebarSearch = SidebarNameSearch(text: term)
+        if let best = sidebarSearch.bestMatch(in: entries, name: \.name) {
+            selectRevealing(best.id)
         }
     }
 
@@ -240,7 +269,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// an observation computing it tracks exactly those.
     var sidebarLayout: SidebarLayout {
         .project(
-            entries: entries, options: sidebarOptions, retaining: retainedEntryID,
+            entries: entries, options: sidebarOptions, search: sidebarSearch, retaining: retainedEntryID,
             smartGroups: organization.smartGroups, folders: organization.folders, context: sidebarContext)
     }
 
@@ -273,8 +302,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     /// Selects the entry `id`, first dropping each sidebar filter attribute
-    /// that hides it — what every reveal, and every selection made other than
-    /// by clicking a row, lands on.
+    /// that hides it, and the search when it does — what every reveal, and
+    /// every selection made other than by clicking a row, lands on.
     ///
     /// A VM the sidebar already lists — a retained one included — relaxes
     /// nothing.
@@ -282,6 +311,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         guard let entry = entries.first(where: { $0.id == id }) else { return }
         if !sidebarShows(id) {
             sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
+            if !sidebarSearch.admits(entry.name) { sidebarSearch = SidebarNameSearch() }
         }
         selectedID = id
         pendingReveal = selection

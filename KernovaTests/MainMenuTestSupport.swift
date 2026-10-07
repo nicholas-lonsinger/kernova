@@ -17,6 +17,7 @@ import Testing
 final class StubMenuHost: MainMenuHosting {
     var instance: VMInstance?
     var librarySidebar: SidebarViewController?
+    var offersLibrarySearch = false
 
     init(instance: VMInstance? = nil, librarySidebar: SidebarViewController? = nil) {
         self.instance = instance

@@ -27,9 +27,9 @@ final class VMIntentGateway {
     private let index: any VMEntityIndexing
     /// Holds the identifiers already written to the index.
     private let record: VMIndexRecord
-    /// Puts the library window in front of the user, for a search with no VM to
-    /// reveal.
-    private let surfaceLibrary: @MainActor () -> Void
+    /// Fills the library's search with a term and puts the library window in
+    /// front of the user.
+    private let showSearchResults: @MainActor (String) -> Void
 
     /// The library subscription that keeps the Spotlight index current.
     private var libraryEvents: Task<Void, Never>?
@@ -44,13 +44,13 @@ final class VMIntentGateway {
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         record: VMIndexRecord = VMIndexRecord(),
-        surfaceLibrary: @escaping @MainActor () -> Void = {}
+        showSearchResults: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.commands = commands
         self.readiness = readiness
         self.index = index
         self.record = record
-        self.surfaceLibrary = surfaceLibrary
+        self.showSearchResults = showSearchResults
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in
@@ -181,28 +181,13 @@ final class VMIntentGateway {
         try await perform(.reveal, on: id) { try self.commands.reveal(.id(id)) }
     }
 
-    /// Reveals the VM whose name best matches `term`, and brings the library
-    /// forward with nothing revealed when no name matches at all.
+    /// Shows the library searched for `term`, once the library has landed.
     ///
-    /// The whole of what a typed search can do here: the library has no search
-    /// field to fill, so a term is resolved the way the entity string query
-    /// resolves a typed name and the VM it names is what the search shows. A
-    /// name the term equals wins over one it begins, which wins over one it
-    /// merely appears in, and library order settles the rest — "Ubuntu" is the
-    /// VM called that, not "Ubuntu Server" listed above it. Surfacing the
-    /// library takes an adapter closure rather than a verb — no VM is being
-    /// addressed, so there is nothing for ``VMCommanding`` to resolve or refuse.
-    func revealSearchResult(matching term: String) async throws {
-        let matches = await vms(matching: term)
-        guard !matches.isEmpty else {
-            surfaceLibrary()
-            return
-        }
-        let best =
-            matches.first { $0.name.caseInsensitiveCompare(term) == .orderedSame }
-            ?? matches.first { $0.name.range(of: term, options: [.caseInsensitive, .anchored]) != nil }
-            ?? matches[0]
-        try await reveal(best.id)
+    /// An adapter closure rather than a verb: no VM is addressed, so there is
+    /// nothing for ``VMCommanding`` to resolve or refuse.
+    func showSearchResults(for term: String) async {
+        await ready()
+        showSearchResults(term)
     }
 
     func cancelGuestSetup(_ id: UUID, consent: Consent) async throws {

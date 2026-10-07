@@ -146,7 +146,7 @@ final class AppResidencyController: WindowResidencyHosting {
         let gateway = VMIntentGateway(
             commands: viewModel.commands,
             readiness: readiness,
-            surfaceLibrary: { [weak self] in self?.presentSummonedInterface() })
+            showSearchResults: { [weak self] term in self?.presentSearchResults(for: term) })
         AppDependencyManager.shared.add(dependency: gateway)
 
         viewModel.attachSourceAuthority(PowerboxSourceAuthority())
@@ -392,6 +392,9 @@ final class AppResidencyController: WindowResidencyHosting {
     private enum SummonTarget {
         /// The library window — the default surface.
         case library
+        /// The library window with its sidebar shown, where a search's results
+        /// are listed.
+        case librarySidebar
         /// One VM's dedicated display window (pop-out or fullscreen, per its
         /// `displayPreference`), and nothing else.
         case display(VMInstance)
@@ -499,6 +502,14 @@ final class AppResidencyController: WindowResidencyHosting {
         presentSummonedInterface(showing: .library, arrival: .delivered)
     }
 
+    /// Fills the library's search with `term` and puts the library on screen
+    /// with its sidebar shown, as ``presentSummonedInterface()`` does — what
+    /// an App Intent's search lands on.
+    func presentSearchResults(for term: String) {
+        viewModel.library.showSearchResults(for: term)
+        presentSummonedInterface(showing: .librarySidebar, arrival: .delivered)
+    }
+
     /// Puts `target` on screen, and for a summon asks for activation once it is
     /// ordered front.
     private func presentSummonedInterface(showing target: SummonTarget, arrival: Arrival) {
@@ -513,6 +524,10 @@ final class AppResidencyController: WindowResidencyHosting {
             switch target {
             case .library:
                 self.windows.showLibrary(bringToFront: true)
+                summoned = self.windows.libraryWindow
+            case .librarySidebar:
+                self.windows.showLibrary(bringToFront: true)
+                self.windows.revealLibrarySidebar()
                 summoned = self.windows.libraryWindow
             case .display(let instance):
                 self.windows.displayPlacement.showDisplayWindow(for: instance)

@@ -75,6 +75,16 @@ final class AppWindowRegistry {
         mainWindowController?.revealSidebar()
     }
 
+    /// Whether the library window has a search field for Find VM to focus.
+    var offersLibrarySearch: Bool { mainWindowController?.offersSearch ?? false }
+
+    /// Brings the library window forward with the keyboard in its search
+    /// field.
+    func focusLibrarySearch() {
+        showLibrary(bringToFront: true)
+        mainWindowController?.focusSearch()
+    }
+
     /// The library window's sidebar while that window is on screen.
     var librarySidebar: SidebarViewController? {
         guard let mainWindowController, mainWindowController.window?.isVisible == true else { return nil }

@@ -543,6 +543,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.renameVMInSidebar(instance)
     }
 
+    @objc func findVM(_ sender: Any?) {
+        windows.focusLibrarySearch()
+    }
+
     @objc func cloneVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         viewModel.cloneVM(instance)
@@ -622,6 +626,8 @@ extension AppDelegate: MainMenuHosting {
     func menuCommandTarget(of sender: Any?) -> VMInstance? { target(of: sender) }
 
     var librarySidebar: SidebarViewController? { windows.librarySidebar }
+
+    var offersLibrarySearch: Bool { windows.offersLibrarySearch }
 }
 
 // MARK: - DisplayBootGeometryProviding
