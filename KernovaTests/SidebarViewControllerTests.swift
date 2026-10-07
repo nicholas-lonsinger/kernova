@@ -8,8 +8,8 @@ import Testing
 /// Behavioral tests for the pure-AppKit sidebar.
 ///
 /// Covers the non-trivial logic that survives the SwiftUI→AppKit port: the
-/// status-dot color mapping, the guest-agent indicator gating, the
-/// drag-reorder index math, and the status-dependent context menu. Pure
+/// status-dot color mapping, the guest-agent indicator gating, inline rename,
+/// and the status-dependent context menu. Pure
 /// layout/rendering is left to manual verification, per the project's testing
 /// guidance.
 @Suite("Sidebar Tests", .serialized, .caseScoped, .scopedWindows)
@@ -220,7 +220,7 @@ struct SidebarViewControllerTests {
         cell.configure(
             instance: instance,
             isRenaming: false,
-            installPromptDisabled: false,
+            installPromptDisabled: { false },
             isBusy: { isBusy },
             onCommitRename: { _, _ in },
             onCancelRename: {},
@@ -270,29 +270,52 @@ struct SidebarViewControllerTests {
         try await waitUntil { badge.isInstallerMounted }
     }
 
-    /// Re-arming an observation reports only changes made *after* it registers.
-    ///
-    /// So anything that moved while the sidebar was off screen — a collapsed
-    /// split item, a closed main window — arrives unobserved. The install-prompt
-    /// preference is the sharpest case: each cell snapshots it at configure
-    /// time, so without a reload on appear the badges keep answering from the
-    /// value the preference held before the user changed it in Settings.
-    @Test("Appearing reloads rows so state changed while off screen isn't stale")
-    func appearingReloadsAfterOffScreenChange() {
+    /// The preference lives in Settings, so it changes while every row is up.
+    @Test("The agent badge follows the app-wide install-prompt preference")
+    func agentBadgeFollowsAppWidePreference() async throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        let instance = viewModel.library.admitFixture(
+            guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        let cell = SidebarVMRowCellView()
+        cell.configure(
+            instance: instance,
+            isRenaming: false,
+            installPromptDisabled: { viewModel.agentInstallPromptDisabled },
+            isBusy: { false },
+            onCommitRename: { _, _ in },
+            onCancelRename: {},
+            onAgentDiskControl: {},
+            onDismissAgentNudge: {})
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+
+        viewModel.agentInstallPromptDisabled = true
+
+        // The cell's observation applies on a later main-actor turn, with no
+        // observable of its own to await.
+        try await waitUntil { badge.isHidden }
+    }
+
+    /// Re-arming an observation reports only changes made *after* it registers,
+    /// so anything that moved while the sidebar was off screen — a collapsed
+    /// split item, a closed main window — arrives unobserved.
+    @Test("Appearing lists the VMs added while the sidebar was off screen")
+    func appearingAppliesOffScreenChanges() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Alpha")
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        #expect(outline.numberOfRows == 2)
 
         controller.viewWillDisappear()
-        let reloadsWhileOffScreen = controller.reloadInstancesCallCountForTesting
-        viewModel.agentInstallPromptDisabled = true
-        #expect(controller.reloadInstancesCallCountForTesting == reloadsWhileOffScreen)
-
+        let beta = viewModel.library.admitFixture(name: "Beta")
         controller.viewDidAppear()
 
-        #expect(controller.reloadInstancesCallCountForTesting > reloadsWhileOffScreen)
+        #expect(outline.numberOfRows == 3)
+        #expect((outline.item(atRow: 2) as? SidebarRow)?.entry.vm === beta)
     }
 
     // MARK: - Inline rename
@@ -309,7 +332,7 @@ struct SidebarViewControllerTests {
         cell.configure(
             instance: instance,
             isRenaming: true,
-            installPromptDisabled: false,
+            installPromptDisabled: { false },
             isBusy: { false },
             onCommitRename: onCommitRename,
             onCancelRename: {},
@@ -382,23 +405,35 @@ struct SidebarViewControllerTests {
         #expect(!label.isEditable)
     }
 
-    // MARK: - Reorder index math
+    /// The sidebar applies a library change as inserts and removes, so a row
+    /// the change leaves alone keeps its view — and the edit open in it.
+    @Test("A library change elsewhere leaves an open rename's row and edit in place")
+    func renameSurvivesUnrelatedLibraryChange() async throws {
+        let viewModel = makeViewModel()
+        let alpha = viewModel.library.admitFixture(name: "Alpha")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let window = showTestWindow(
+            styleMask: [.titled], contentSize: NSSize(width: 300, height: 400))
+        window.contentView = controller.view
+        controller.view.layoutSubtreeIfNeeded()
+        controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
+        func alphaCell() -> SidebarVMRowCellView? {
+            outline.view(atColumn: 0, row: 1, makeIfNecessary: false) as? SidebarVMRowCellView
+        }
 
-    @Test("reorderTarget maps drops and skips no-ops")
-    func reorderTargetMapping() {
-        // Move down / up: the proposed gap maps straight through.
-        #expect(SidebarViewController.reorderTarget(sourceIndex: 0, proposedIndex: 3, count: 5) == 3)
-        #expect(SidebarViewController.reorderTarget(sourceIndex: 4, proposedIndex: 1, count: 5) == 1)
+        viewModel.renameVMInSidebar(alpha)
+        // The rename reaches the row through the sidebar's own observation
+        // loop, which offers no test-facing signal to await.
+        try await waitUntil { alphaCell()?.isRenaming == true }
+        let editing = try #require(alphaCell())
 
-        // Dropped into its own gap (above itself or just below) — no-op.
-        #expect(SidebarViewController.reorderTarget(sourceIndex: 2, proposedIndex: 2, count: 5) == nil)
-        #expect(SidebarViewController.reorderTarget(sourceIndex: 2, proposedIndex: 3, count: 5) == nil)
+        viewModel.library.admitFixture(name: "Beta")
+        try await waitUntil { outline.numberOfRows == 3 }
 
-        // Dropped "on" the group row appends to the end.
-        #expect(
-            SidebarViewController.reorderTarget(
-                sourceIndex: 0, proposedIndex: NSOutlineViewDropOnItemIndex, count: 5) == 5
-        )
+        #expect(alphaCell() === editing)
+        #expect(editing.isRenaming)
+        #expect(viewModel.activeRename == .sidebar(alpha.id))
     }
 
     // MARK: - Context menu
@@ -949,7 +984,7 @@ struct SidebarViewControllerTests {
         // One group row plus the two VM rows (group expanded by default).
         #expect(outline.numberOfRows == 3)
         #expect(outline.item(atRow: 0) is SidebarSection)
-        #expect(outline.item(atRow: 1) is VMInstance)
+        #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.vm?.name == "Alpha")
     }
 
     @Test("An arrival's row becomes its VM's row when it settles, keeping its place and selection")
@@ -962,8 +997,9 @@ struct SidebarViewControllerTests {
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
         let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        #expect((outline.item(atRow: 1) as? VMInstance) === before)
-        #expect((outline.item(atRow: 2) as? VMArrival) === arrival)
+        #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.vm === before)
+        let row = try #require(outline.item(atRow: 2) as? SidebarRow)
+        #expect(row.entry.arrival === arrival)
         #expect(viewModel.selectedID == arrival.id)
         // The outline view offers no observable to await its selection by.
         try await waitUntil { outline.selectedRow == 2 }
@@ -971,17 +1007,15 @@ struct SidebarViewControllerTests {
         gate.release()
         let instance = try #require(await arrival.settle())
 
-        try await waitUntil { (outline.item(atRow: 2) as? VMInstance) === instance }
+        try await waitUntil { row.entry.vm === instance }
         #expect(outline.numberOfRows == 3)
-        #expect(outline.row(forItem: instance) == 2)
+        #expect(outline.item(atRow: 2) as? SidebarRow === row)
         #expect(outline.selectedRow == 2)
         #expect(viewModel.selectedID == arrival.id)
     }
 
-    // MARK: - Clone completion refresh (#575)
-
-    @Test("A cloned VM's arrival row settling routes through the sidebar's reload cycle")
-    func clonedRowSettlingTriggersReload() async throws {
+    @Test("A cloned VM's arrival row becomes the clone's row")
+    func clonedRowSettlesIntoTheClone() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storageService: storage)
         let source = viewModel.library.admitFixture(name: "Source", guestOS: .macOS)
@@ -989,41 +1023,24 @@ struct SidebarViewControllerTests {
         // `VMDirectoryWatcher` — which fires on the clone's directory actually
         // landing on disk (the mock now creates it, matching production) —
         // doesn't mistake the never-persisted source for a bundle that vanished
-        // and reconcile it away, confounding the reload count below.
+        // and reconcile it away.
         storage.bundles[source.bundleURL] = source.configuration
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
+        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
 
-        let reloadsBeforeClone = controller.reloadInstancesCallCountForTesting
         viewModel.cloneVM(source)
         // The clone registers its arrival and is adopted in place under the
         // same identifier, so its settle is the second VM in the library.
         try await waitForChange { viewModel.instances.count == 2 }
         #expect(viewModel.arrivals.isEmpty)
+        let clone = try #require(viewModel.instances.last)
 
-        // Exactly two reloads are expected end to end: one for the arrival's
-        // registration and one for its adoption, which replaces the entry
-        // under the same id — the fix under test (#575). The adoption's reload
-        // has no dedicated Observable signal at the controller layer to hang a
-        // `waitForChange` off of (it fires through an internal
-        // `ObservationLoop` cascade), so poll the counter.
-        //
-        // Genuine no-signal predicate — the reload count is driven by an
-        // internal `ObservationLoop` cascade with no test-facing signal to
-        // await; `==`, not `>=`, so a stray extra reload (e.g. an unrelated
-        // `VMDirectoryWatcher` reconciliation) fails the test instead of being
-        // silently masked by a looser bound.
-        try await waitUntil {
-            controller.reloadInstancesCallCountForTesting == reloadsBeforeClone + 2
-        }
-
-        // The reload count above is the regression guard; the row's actual
-        // rendered cell is left to manual verification, per this file's
-        // top-level doc comment — `NSOutlineView` never realizes a row's cell
-        // view in this off-screen test harness (confirmed: `view(atColumn:
-        // row:makeIfNecessary: false)` is always nil here), so an assertion on
-        // it would silently never execute.
+        // The adoption reaches the outline through the projection's own
+        // observation loop, which offers no test-facing signal to await.
+        try await waitUntil { (outline.item(atRow: 2) as? SidebarRow)?.entry.vm === clone }
+        #expect(outline.numberOfRows == 3)
     }
 }
 
@@ -1081,7 +1098,7 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
         cell.configure(
             instance: instance,
             isRenaming: false,
-            installPromptDisabled: true,
+            installPromptDisabled: { true },
             isBusy: { false },
             onCommitRename: { _, _ in },
             onCancelRename: {},

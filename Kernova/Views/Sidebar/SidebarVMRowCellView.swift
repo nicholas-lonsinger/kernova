@@ -22,12 +22,9 @@ final class SidebarVMRowCellView: NSTableCellView {
     private static let iconSlotWidth: CGFloat = 20
 
     private weak var instance: VMInstance?
-    /// The app-wide install-prompt suppression as of the last `configure`.
-    ///
-    /// Snapshotted rather than read live: it lives in `AppPreferences`, so the
-    /// cell's own observation loop can't see it change — the controller reloads
-    /// the rows off its `@Observable` mirror instead.
-    private var installPromptDisabled = false
+    /// Reads the app-wide install-prompt suppression, live, so the row's
+    /// observation loop wakes when it changes.
+    private var installPromptDisabled: (() -> Bool)?
     private var rowObservation: ObservationLoop?
     /// Commits the edited name; the `Bool` is `true` when editing ended by Return,
     /// which decides whether the controller restores sidebar focus.
@@ -150,7 +147,7 @@ final class SidebarVMRowCellView: NSTableCellView {
     func configure(
         instance: VMInstance,
         isRenaming: Bool,
-        installPromptDisabled: Bool,
+        installPromptDisabled: @escaping () -> Bool,
         isBusy: @escaping () -> Bool,
         onCommitRename: @escaping (String, Bool) -> Void,
         onCancelRename: @escaping () -> Void,
@@ -203,6 +200,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.hostState.agentInstallNudgeDismissed
                 _ = instance.lastSeenAgentVersion
                 _ = instance.hostState.ephemeralModeEnabled
+                _ = self.installPromptDisabled?()
             },
             apply: { [weak self] in
                 self?.applyLiveState()
@@ -234,7 +232,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         ephemeralBadge.isHidden = !showsEphemeral
 
         if let agentStatus = Self.visibleAgentStatus(
-            for: instance, installPromptDisabled: installPromptDisabled)
+            for: instance, installPromptDisabled: installPromptDisabled?() ?? false)
         {
             agentButton.isHidden = false
             let dismissible = agentStatus == .waiting
@@ -313,6 +311,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         onCommitRename = nil
         onCancelRename = nil
         isBusy = nil
+        installPromptDisabled = nil
         spinner.stopAnimation(nil)
         // Close any popover, stop the agent spinner, and drop the closures —
         // they capture the bound VMInstance and would otherwise keep it alive.
