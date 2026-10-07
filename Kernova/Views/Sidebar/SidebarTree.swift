@@ -69,19 +69,32 @@ final class SidebarTree {
     /// current one.
     @MainActor
     struct Changes {
-        /// One parent's child-list change.
+        /// One parent's child-list change, applied in order: the removals, then
+        /// the moves, then the insertions.
         struct Children {
+            /// One child moving within its parent.
+            struct Move: Equatable {
+                let from: Int
+                let to: Int
+            }
+
             /// `nil` for the root, whose children are the sections.
             let parent: SidebarNode?
             /// Offsets into the parent's previous children.
             let removed: IndexSet
+            /// Each child the parent keeps but in another order, as offsets
+            /// into its children as they stand when that move applies — after
+            /// the removals and the moves before it.
+            let moves: [Move]
             /// Offsets into the parent's current children.
             let inserted: IndexSet
+            /// The children the moves move.
+            fileprivate let moved: [ObjectIdentifier]
         }
 
         /// The change to every parent present in both layouts whose children
-        /// differ. A child that moved within its parent is removed and
-        /// inserted.
+        /// differ. A child that moved within its parent moves, so the outline
+        /// keeps the node's expansion.
         fileprivate(set) var children: [Children] = []
 
         /// Nodes present in both layouts whose content changed: a row's entry,
@@ -91,13 +104,13 @@ final class SidebarTree {
         /// Sections and group headers the current layout added.
         fileprivate(set) var created: [SidebarNode] = []
 
-        /// Nodes whose views the change takes down: removed from their parent,
+        /// Nodes the change takes down or moves: removed from their parent,
         /// moved within it, or rows reloaded.
         fileprivate var detached: Set<ObjectIdentifier> = []
 
         var isEmpty: Bool { children.isEmpty && reloaded.isEmpty }
 
-        /// Whether applying the change takes `node`'s view down, directly or
+        /// Whether applying the change takes down or moves `node`'s view, directly or
         /// through an ancestor.
         func detaches(_ node: SidebarNode) -> Bool {
             var candidate: SidebarNode? = node
@@ -155,6 +168,7 @@ final class SidebarTree {
                 for offset in change.removed {
                     changes.detached.insert(ObjectIdentifier(parent.children[offset]))
                 }
+                changes.detached.formUnion(change.moved)
                 changes.children.append(change)
             }
             parent.children = children
@@ -256,21 +270,40 @@ final class SidebarTree {
         return changes
     }
 
-    /// The removals and insertions that turn `old` into `new`, compared by
-    /// identity; `nil` when they are the same list.
+    /// The removals, moves and insertions that turn `old` into `new`,
+    /// compared by identity; `nil` when they are the same list.
+    ///
+    /// The children both lists hold are moved, never removed and reinserted,
+    /// into `new`'s order before anything is inserted, so each insertion's
+    /// offset is final. The children that move are the fewest the reorder
+    /// needs — those off the lists' longest common subsequence — and each
+    /// lands just after the child `new` lists before it.
     private static func change(
         from old: [SidebarNode], to new: [SidebarNode], in parent: SidebarNode?
     ) -> Changes.Children? {
-        let difference = new.map(ObjectIdentifier.init).difference(from: old.map(ObjectIdentifier.init))
-        guard !difference.isEmpty else { return nil }
-        var removed = IndexSet()
-        var inserted = IndexSet()
-        for step in difference {
-            switch step {
-            case .remove(let offset, _, _): removed.insert(offset)
-            case .insert(let offset, _, _): inserted.insert(offset)
-            }
+        let oldIDs = old.map(ObjectIdentifier.init)
+        let newIDs = new.map(ObjectIdentifier.init)
+        guard oldIDs != newIDs else { return nil }
+        let kept = Set(oldIDs).intersection(newIDs)
+        let removed = IndexSet(oldIDs.indices.filter { !kept.contains(oldIDs[$0]) })
+        let inserted = IndexSet(newIDs.indices.filter { !kept.contains(newIDs[$0]) })
+        var current = oldIDs.filter(kept.contains)
+        let target = newIDs.filter(kept.contains)
+        let moving = Set(
+            target.difference(from: current).compactMap { step -> ObjectIdentifier? in
+                guard case .insert(_, let id, _) = step else { return nil }
+                return id
+            })
+        var moves: [Changes.Children.Move] = []
+        for (offset, id) in target.enumerated() where moving.contains(id) {
+            guard let from = current.firstIndex(of: id) else { continue }
+            current.remove(at: from)
+            let to = offset == 0 ? 0 : (current.firstIndex(of: target[offset - 1]).map { $0 + 1 } ?? 0)
+            current.insert(id, at: to)
+            moves.append(Changes.Children.Move(from: from, to: to))
         }
-        return Changes.Children(parent: parent, removed: removed, inserted: inserted)
+        return Changes.Children(
+            parent: parent, removed: removed, moves: moves, inserted: inserted,
+            moved: target.filter(moving.contains))
     }
 }

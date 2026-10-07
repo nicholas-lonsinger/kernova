@@ -150,22 +150,36 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var selection: SidebarRowKey? {
         didSet {
             let entryID = selection?.entryID
-            if entryID != retainedEntryID {
-                retainedEntryID = entryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
+            if selectedLibraryEntryID != retainedEntryID {
+                retainedEntryID = selectedLibraryEntryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
             }
             guard entryID != oldValue?.entryID else { return }
             preferences.lastSelectedVMID = entryID
         }
     }
 
-    /// The selected entry the sidebar keeps listing once a change to its own
-    /// values — a status, a network — stops the filter admitting it, as Mail
-    /// keeps a selected message the filter no longer matches.
+    /// The entry selected in the library section that the section keeps
+    /// listing once a change to its own values — a status, a network — stops
+    /// the filter admitting it, as Mail keeps a selected message the filter no
+    /// longer matches.
     ///
-    /// Follows the selection onto any entry the filter admits, so it lapses as
-    /// soon as the selection moves off; a filter edit drops it before it
-    /// re-applies, so an edit still hides the VM and clears the selection.
+    /// Follows the selection onto any library row the filter admits, so it
+    /// lapses as soon as the selection moves off the row — into a smart group
+    /// included; a filter edit drops it before it re-applies, so an edit still
+    /// hides the VM and clears the selection.
     private(set) var retainedEntryID: UUID?
+
+    /// The selected entry when its row is in the library section, the one
+    /// section that retains.
+    private var selectedLibraryEntryID: UUID? {
+        selection?.section == .library ? selection?.entryID : nil
+    }
+
+    /// How many selections were made to be revealed — by
+    /// ``selectRevealing(_:)`` or an arrival's registration — which the
+    /// sidebar answers by opening the collapsed sections hiding the selected
+    /// row. A restored or clicked selection is not one, so it opens nothing.
+    private(set) var revealCount = 0
 
     private func sidebarFilterAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
@@ -199,7 +213,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             }
             retainedEntryID = nil
             reconcileSelection()
-            retainedEntryID = selection?.entryID
+            retainedEntryID = selectedLibraryEntryID
         }
     }
 
@@ -252,6 +266,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
         }
         selectedID = id
+        revealCount += 1
     }
 
     /// Selects what a library read lands on when nothing listed is selected:
@@ -543,6 +558,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         persistOrder()
         if selectedEntry?.arrival == nil, sidebarShows(arrival.id) {
             selectedID = arrival.id
+            revealCount += 1
         }
     }
 

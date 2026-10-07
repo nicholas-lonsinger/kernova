@@ -89,6 +89,8 @@ final class VMLibraryViewModel {
 
     func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
+    var revealCount: Int { library.revealCount }
+
     var smartGroups: [VMSmartGroup] { library.smartGroups }
 
     /// `base`, or the first numbered variant of it no smart group is named.

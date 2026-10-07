@@ -11,26 +11,31 @@ enum SmartGroupNameSheet {
         suggestedName: String, conditions: [String], create: @escaping (String) -> Void
     ) -> AlertConfiguration {
         let field = nameField(suggestedName)
-        let box = NSBox()
-        box.title = "Shows VMs where"
-        box.titleFont = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
-        let lines = NSStackView(views: conditions.map { NSTextField(wrappingLabelWithString: $0) })
-        lines.orientation = .vertical
-        lines.alignment = .leading
-        lines.spacing = Spacing.tight
-        lines.edgeInsets = NSEdgeInsets(
-            top: Spacing.tight, left: Spacing.tight, bottom: Spacing.tight, right: Spacing.tight)
-        box.contentView = lines
-        let stack = NSStackView(views: [nameRow(field), box])
+        let caption = NSTextField(labelWithString: "Shows VMs where")
+        caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        caption.textColor = .secondaryLabelColor
+        let lines = conditions.map { condition in
+            let line = NSTextField(wrappingLabelWithString: condition)
+            line.preferredMaxLayoutWidth = Self.contentWidth
+            return line
+        }
+        let conditionStack = NSStackView(views: [caption] + lines)
+        conditionStack.orientation = .vertical
+        conditionStack.alignment = .leading
+        conditionStack.spacing = Spacing.tight
+        let stack = NSStackView(views: [nameRow(field), conditionStack])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Spacing.standard
-        box.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // `NSAlert` lays its accessory view out at the frame it is handed,
+        // so the frame has to hold everything the stack's constraints place.
+        stack.layoutSubtreeIfNeeded()
         stack.setFrameSize(stack.fittingSize)
         return AlertConfiguration(
             title: "New Smart Group",
             message:
-                "The group stays up to date as VMs change. Edit its conditions from the filter button on its header.",
+                "The group stays up to date as VMs change. Edit its conditions from the "
+                + "\(SidebarViewMenu.smartGroupAccessibilityLabel) button on its header.",
             buttons: [
                 AlertButton("Create", role: .default) { create(field.stringValue) },
                 AlertButton("Cancel", role: .cancel),
@@ -54,11 +59,14 @@ enum SmartGroupNameSheet {
             accessoryView: row, initialFirstResponder: field)
     }
 
+    /// How wide the name field is, and how wide a condition wraps at.
+    private static let contentWidth: CGFloat = 240
+
     private static func nameField(_ name: String) -> NSTextField {
         let field = NSTextField(string: name)
         field.placeholderString = "Name"
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        field.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         return field
     }
 

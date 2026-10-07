@@ -36,19 +36,51 @@ struct VMOrganizationDirectoryTests {
         #expect(VMOrganizationDirectory(fileURL: fileURL).smartGroups.map(\.id) == [macs.id, everything.id])
     }
 
-    @Test("The file is JSON keyed by smartGroups, each group its id, name and filter")
-    func fileFormat() throws {
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-        let group = try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter(guestOSes: [.linux]))
+    /// The file as it stands on disk, named `name`.
+    private func fixture(named name: String) -> String {
+        """
+        {
+          "smartGroups" : [
+            {
+              "filter" : {
+                "ephemeralOnly" : true,
+                "guestAgents" : [ "upToDate" ],
+                "guestOSes" : [ "macOS" ],
+                "networks" : [ "shared:common", "unlisted" ],
+                "states" : [ "running" ],
+                "withSnapshotsOnly" : false
+              },
+              "id" : "6F1D7E2C-0000-4000-8000-000000000001",
+              "name" : "\(name)"
+            }
+          ]
+        }
+        """
+    }
 
-        let json = try #require(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any])
-        let groups = try #require(json["smartGroups"] as? [[String: Any]])
-        #expect(groups.count == 1)
-        #expect(groups[0]["id"] as? String == group.id.uuidString)
-        #expect(groups[0]["name"] as? String == "Linux")
-        let filter = try #require(groups[0]["filter"] as? [String: Any])
-        #expect(filter["guestOSes"] as? [String] == ["linux"])
+    private func parsed(_ data: Data) throws -> NSDictionary {
+        try #require(try JSONSerialization.jsonObject(with: data) as? NSDictionary)
+    }
+
+    @Test("The file reads and writes exactly the fixture's shape")
+    func fileMatchesFixture() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        try Data(fixture(named: "Old").utf8).write(to: fileURL)
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let id = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))
+        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        #expect(
+            directory.smartGroups == [
+                VMSmartGroup(
+                    id: id, name: "Old",
+                    filter: VMLibraryFilter(
+                        guestOSes: [.macOS], states: [.running], networks: [shared, .unlisted],
+                        guestAgents: [.upToDate], ephemeralOnly: true))
+            ])
+
+        try directory.renameSmartGroup(id, to: "Lab Macs")
+
+        #expect(try parsed(Data(contentsOf: fileURL)) == parsed(Data(fixture(named: "Lab Macs").utf8)))
     }
 
     @Test("A name has to be non-empty and unique ignoring case")

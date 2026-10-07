@@ -25,6 +25,10 @@ final class SidebarViewController: NSViewController {
 
     private var modelObservation: ObservationLoop?
 
+    /// The library's ``VMLibrary/revealCount`` the last sync applied; a sync
+    /// finding it moved opens what hides the selected row.
+    private var appliedRevealCount = 0
+
     /// The row currently hosting an inline-rename field editor, so the rename
     /// loop doesn't restart an in-flight edit.
     private var editingRow: SidebarRow?
@@ -126,6 +130,7 @@ final class SidebarViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        appliedRevealCount = viewModel.revealCount
         let changes = tree.update(to: viewModel.sidebarLayout)
         outlineView.reloadData()
         expandCreated(changes.created)
@@ -151,6 +156,7 @@ final class SidebarViewController: NSViewController {
                     // grouping read of every VM.
                     _ = self.viewModel.sidebarLayout
                     _ = self.viewModel.selection
+                    _ = self.viewModel.revealCount
                     _ = self.viewModel.activeRename
                 },
                 apply: { [weak self] in self?.sync() }
@@ -180,7 +186,10 @@ final class SidebarViewController: NSViewController {
     /// middle of another changes nothing the outer pass then undoes.
     private func sync() {
         applyProjection()
-        applySelectionFromModel()
+        let reveals = viewModel.revealCount
+        let revealing = reveals != appliedRevealCount
+        appliedRevealCount = reveals
+        applySelectionFromModel(revealing: revealing)
         applyRenameState()
     }
 
@@ -210,12 +219,16 @@ final class SidebarViewController: NSViewController {
             self.editingRow = nil
         }
         outlineView.beginUpdates()
-        // Each parent's removals index its previous children and its
-        // insertions its current ones, which is the order NSOutlineView takes
-        // them in; parents' offsets are independent of each other.
+        // Each parent's removals index its previous children, its moves the
+        // children as each finds them, and its insertions its current ones,
+        // which is the order NSOutlineView takes them in; parents' offsets are
+        // independent of each other.
         for change in changes.children {
             if !change.removed.isEmpty {
                 outlineView.removeItems(at: change.removed, inParent: change.parent, withAnimation: [])
+            }
+            for move in change.moves {
+                outlineView.moveItem(at: move.from, inParent: change.parent, to: move.to, inParent: change.parent)
             }
             if !change.inserted.isEmpty {
                 outlineView.insertItems(at: change.inserted, inParent: change.parent, withAnimation: [])
@@ -228,10 +241,18 @@ final class SidebarViewController: NSViewController {
 
     /// Selects the row the model's selection lands on, and moves the model's
     /// selection onto that row when it landed by fallback.
-    private func applySelectionFromModel() {
-        guard let selection = viewModel.selection, let node = tree.row(resolving: selection),
-            let row = revealedRow(of: node)
-        else {
+    ///
+    /// Only a reveal (`revealing`) opens the collapsed sections hiding the
+    /// row. Any other selection — a restored one included — leaves the
+    /// user's collapsed sections as they are, and the outline shows no
+    /// selected row while the model keeps the selection.
+    private func applySelectionFromModel(revealing: Bool) {
+        guard let selection = viewModel.selection, let node = tree.row(resolving: selection) else {
+            if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
+            return
+        }
+        if node.key != selection { viewModel.selection = node.key }
+        guard let row = revealing ? revealedRow(of: node) : shownRow(of: node) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
@@ -241,7 +262,12 @@ final class SidebarViewController: NSViewController {
         // NSOutlineView doesn't auto-scroll programmatic selection into view, so a
         // created/cloned/imported VM's row could land off-screen.
         outlineView.scrollRowToVisible(row)
-        if node.key != selection { viewModel.selection = node.key }
+    }
+
+    /// `node`'s outline row, `nil` while a collapsed ancestor hides it.
+    private func shownRow(of node: SidebarNode) -> Int? {
+        let row = outlineView.row(forItem: node)
+        return row >= 0 ? row : nil
     }
 
     /// `node`'s outline row, expanding its collapsed ancestors first; `nil` when
@@ -929,46 +955,54 @@ extension SidebarViewController {
         }
     }
 
-    /// Asks for a name to save the library's filter under as a smart group.
-    private func presentSaveAsSmartGroup() {
+    /// Asks for a name to save the library's filter under as a smart group,
+    /// starting from `name` — a suggestion from the filter when `nil`. A name
+    /// the library refuses brings the sheet back with that name in it.
+    private func presentSaveAsSmartGroup(name: String? = nil) {
         guard let window = view.window else { return }
         let filter = viewModel.sidebarOptions.filter
         let values = viewMenuValues()
         presentSheetAlert(
             SmartGroupNameSheet.newSmartGroup(
-                suggestedName: viewModel.unusedSmartGroupName(
-                    from: viewMenu.suggestedName(for: filter, values: values)),
+                suggestedName: name
+                    ?? viewModel.unusedSmartGroupName(from: viewMenu.suggestedName(for: filter, values: values)),
                 conditions: viewMenu.conditions(of: filter, values: values)
-            ) { [weak self] name in
-                self?.attempt("Couldn\u{2019}t Create the Smart Group") {
-                    try self?.viewModel.saveSidebarFilterAsSmartGroup(named: name)
-                }
+            ) { [weak self] typed in
+                self?.attempt(
+                    "Couldn\u{2019}t Create the Smart Group",
+                    retry: { [weak self] in self?.presentSaveAsSmartGroup(name: typed) }
+                ) { try self?.viewModel.saveSidebarFilterAsSmartGroup(named: typed) }
             },
             in: window)
     }
 
-    private func presentRenameSmartGroup(_ id: UUID) {
+    /// Asks for a new name for the smart group `id` identifies, starting from
+    /// `name` — its current one when `nil`. A name the library refuses brings
+    /// the sheet back with that name in it.
+    private func presentRenameSmartGroup(_ id: UUID, name: String? = nil) {
         guard let window = view.window, let group = viewModel.smartGroups.first(where: { $0.id == id }) else {
             return
         }
         presentSheetAlert(
-            SmartGroupNameSheet.rename(currentName: group.name) { [weak self] name in
-                self?.attempt("Couldn\u{2019}t Rename the Smart Group") {
-                    try self?.viewModel.renameSmartGroup(id, to: name)
-                }
+            SmartGroupNameSheet.rename(currentName: name ?? group.name) { [weak self] typed in
+                self?.attempt(
+                    "Couldn\u{2019}t Rename the Smart Group",
+                    retry: { [weak self] in self?.presentRenameSmartGroup(id, name: typed) }
+                ) { try self?.viewModel.renameSmartGroup(id, to: typed) }
             },
             in: window)
     }
 
-    /// Runs `change`, showing what it was refused with under `title`.
-    private func attempt(_ title: String, _ change: () throws -> Void) {
+    /// Runs `change`, showing what it was refused with under `title`, then
+    /// `retry` once that alert is dismissed.
+    private func attempt(_ title: String, retry: (() -> Void)? = nil, _ change: () throws -> Void) {
         do {
             try change()
         } catch {
             let message = error.localizedDescription
             #log(Self.logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
             guard let window = view.window else { return }
-            presentSheetAlert(.acknowledgement(title: title, message: message), in: window)
+            presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
         }
     }
 }
