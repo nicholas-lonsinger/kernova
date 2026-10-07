@@ -17,7 +17,7 @@ import Virtualization
 @MainActor
 @Observable
 final class VMLibraryViewModel {
-    nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibraryViewModel")
+    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibraryViewModel")
 
     // MARK: - Services
 
@@ -1667,7 +1667,7 @@ final class VMLibraryViewModel {
 
     /// Routes an error message to the presenter, buffering it if none is
     /// attached yet.
-    private func surfaceError(_ message: String, title: String = "Error") {
+    func surfaceError(_ message: String, title: String = "Error") {
         if let presenter {
             presenter.presentError(message, title: title)
         } else {

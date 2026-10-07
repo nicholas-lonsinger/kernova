@@ -394,6 +394,37 @@ final class VMIntentGateway {
         NetworkEntity(network, members: network.members.compactMap { entity(for: $0.id) })
     }
 
+    // MARK: - Groups
+
+    /// The library's smart groups, then its folders, each with the VMs in it
+    /// read in full — read the same way as ``vms()``.
+    func groups() async throws -> [VMGroupEntity] {
+        try await perform(.groups, on: nil) {
+            try self.commands.groups().map { group in
+                VMGroupEntity(group, members: group.members.compactMap { self.entity(for: $0.id) })
+            }
+        }
+    }
+
+    /// Takes `action` on every VM in `group`, answering the VMs it was done to.
+    ///
+    /// A VM the action concerned and left undone fails the intent, with one
+    /// line per such VM — what the `kernova` tool's exit 10 and the app's
+    /// summary alert report.
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> [VMEntity] {
+        try await perform(action.verb, on: nil) {
+            let report = try await self.commands.groupAction(action, on: group)
+            guard report.undone.isEmpty else {
+                throw CommandError.operationFailed(
+                    verb: action.verb, title: report.undoneTitle, message: report.undoneMessage)
+            }
+            return report.results.compactMap { result in
+                guard case .done = result.outcome else { return nil }
+                return self.entity(for: result.vm.id)
+            }
+        }
+    }
+
     // MARK: - Arguments
 
     /// `name` with its surrounding whitespace gone, refusing one that carries

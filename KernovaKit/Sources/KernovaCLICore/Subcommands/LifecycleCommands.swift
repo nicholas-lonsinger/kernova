@@ -49,11 +49,21 @@ extension KernovaCommand {
                 + "to start duplicate machine IDs anyway on in Kernova\u{2019}s Settings, --yes "
                 + "starts it anyway.\n\nA virtual machine whose MAC address another active one "
                 + "uses on the same network is refused; --resolve-mac-conflict changes its "
-                + "network first and starts it.")
+                + "network first and starts it.\n\nWith --smart-group or --folder, starts each "
+                + "virtual machine in the group that can be started or resumed, one after another, "
+                + "and prints a line for each. One whose start would ask something — a "
+                + "confirmation, its account's password, a change to its network — or would begin "
+                + "its guest setup is skipped, and a group start exits 10 when it leaves any it "
+                + "could act on undone.")
 
-        /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        var vm: String
+        /// Which virtual machine, by name or identifier; `nil` for a group.
+        @Argument(
+            help: "The virtual machine's name or identifier, unless a group is named instead.",
+            completion: CompletionSource.vm)
+        var vm: String?
+
+        /// The group whose virtual machines the verb acts on instead.
+        @OptionGroup var groups: GroupTargetOptions
 
         /// Cold-boot a stopped macOS guest into macOS Recovery.
         @Flag(name: .long, help: "Cold-boot a macOS guest into Recovery.")
@@ -65,17 +75,29 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
+        /// Refuses a line naming both a virtual machine and a group, or
+        /// neither, and a group start given a flag for one virtual machine.
+        func validate() throws {
+            try groups.validateTarget(
+                vm: vm,
+                singleVMFlags: [
+                    recovery ? "--recovery" : nil, macConflict.spelling != nil ? "--resolve-mac-conflict" : nil,
+                    options.yes ? "--yes" : nil,
+                ].compactMap(\.self))
+        }
+
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .start(
-                try SelectorParsing.selector(from: vm, forcingID: options.id),
+            if let group = groups.target { return .groupAction(.start, group: group) }
+            return .start(
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
                 recovery: recovery, consent: options.consent,
                 macAddressRemedy: macConflict.remedy)
         }
 
-        /// Starts the VM.
+        /// Starts the VM, or every one in the group.
         func run() throws {
-            try perform()
+            if groups.target != nil { try performGroupAction() } else { try perform() }
         }
     }
 
@@ -87,11 +109,20 @@ extension KernovaCommand {
             abstract: "Stop a virtual machine.",
             discussion: "Returns as soon as the guest has been asked to shut down. --timeout "
                 + "waits for it to power off instead, and exits 7 leaving the virtual machine "
-                + "as it is when the guest is still up; --force is the escalation from there.")
+                + "as it is when the guest is still up; --force is the escalation from there."
+                + "\n\nWith --smart-group or --folder, asks each running guest in the group to shut "
+                + "down, one after another, and prints a line for each. A paused or suspended "
+                + "virtual machine is skipped, since stopping it would resume it or discard its "
+                + "saved state, and a group stop exits 10 when it leaves any it could act on undone.")
 
-        /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        var vm: String
+        /// Which virtual machine, by name or identifier; `nil` for a group.
+        @Argument(
+            help: "The virtual machine's name or identifier, unless a group is named instead.",
+            completion: CompletionSource.vm)
+        var vm: String?
+
+        /// The group whose virtual machines the verb acts on instead.
+        @OptionGroup var groups: GroupTargetOptions
 
         /// How the stop should reach the guest.
         @Flag(exclusivity: .exclusive)
@@ -105,21 +136,30 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// Refuses a deadline that names no wait.
+        /// Refuses a deadline that names no wait, a line naming both a
+        /// virtual machine and a group or neither, and a group stop given a
+        /// flag for one virtual machine.
         func validate() throws {
             try TimeoutOption.validate(timeout)
+            try groups.validateTarget(
+                vm: vm,
+                singleVMFlags: [
+                    method == .graceful ? nil : "--\(method == .force ? "force" : "resume-first")",
+                    timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
+                ].compactMap(\.self))
         }
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .stop(
-                try SelectorParsing.selector(from: vm, forcingID: options.id),
+            if let group = groups.target { return .groupAction(.stop, group: group) }
+            return .stop(
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
                 disposition: method.disposition, consent: options.consent, timeout: timeout)
         }
 
-        /// Stops the VM.
+        /// Stops the VM, or every running one in the group.
         func run() throws {
-            try perform()
+            if groups.target != nil { try performGroupAction() } else { try perform() }
         }
     }
 
@@ -128,23 +168,38 @@ extension KernovaCommand {
         /// What `kernova suspend --help` says.
         static let configuration = CommandConfiguration(
             commandName: "suspend",
-            abstract: "Save a running guest's session and stop it.")
+            abstract: "Save a running guest's session and stop it.",
+            discussion: "With --smart-group or --folder, suspends each running or paused guest in the "
+                + "group, one after another, and prints a line for each; a group suspend exits 10 "
+                + "when it leaves any it could act on undone.")
 
-        /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        var vm: String
+        /// Which virtual machine, by name or identifier; `nil` for a group.
+        @Argument(
+            help: "The virtual machine's name or identifier, unless a group is named instead.",
+            completion: CompletionSource.vm)
+        var vm: String?
+
+        /// The group whose virtual machines the verb acts on instead.
+        @OptionGroup var groups: GroupTargetOptions
 
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// The request this command line stands for.
-        func verb() throws -> VMCommandRequest.Verb {
-            .suspend(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        /// Refuses a line naming both a virtual machine and a group, or
+        /// neither.
+        func validate() throws {
+            try groups.validateTarget(vm: vm, singleVMFlags: options.yes ? ["--yes"] : [])
         }
 
-        /// Suspends the VM.
+        /// The request this command line stands for.
+        func verb() throws -> VMCommandRequest.Verb {
+            if let group = groups.target { return .groupAction(.suspend, group: group) }
+            return .suspend(try SelectorParsing.selector(from: vm ?? "", forcingID: options.id))
+        }
+
+        /// Suspends the VM, or every running one in the group.
         func run() throws {
-            try perform()
+            if groups.target != nil { try performGroupAction() } else { try perform() }
         }
     }
 

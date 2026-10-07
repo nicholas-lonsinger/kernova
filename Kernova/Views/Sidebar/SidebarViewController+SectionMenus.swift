@@ -26,10 +26,15 @@ extension SidebarViewController {
             return viewMenu.menu(options: viewModel.sidebarOptions, values: viewMenuValues())
         }
         if let id = section.smartGroupID, let group = organization.smartGroup(withID: id) {
-            return viewMenu.menu(smartGroup: group, values: viewMenuValues())
+            return viewMenu.menu(
+                smartGroup: group, values: viewMenuValues(),
+                actionCounts: viewModel.groupActionCounts(
+                    for: VMGroupReference(.smartGroup, named: id.uuidString)))
         }
         if let id = section.folderID, let folder = organization.folder(withID: id) {
-            return viewMenu.menu(folder: folder)
+            return viewMenu.menu(
+                folder: folder,
+                actionCounts: viewModel.groupActionCounts(for: VMGroupReference(.folder, named: id.uuidString)))
         }
         return nil
     }
@@ -117,6 +122,9 @@ extension SidebarViewController {
             attempt("Couldn\u{2019}t Add to the Folder") { try library.add([entry], toFolder: folder) }
         case .setMembership(let entry, let folder, false):
             attempt("Couldn\u{2019}t Remove from the Folder") { try library.remove(entry, fromFolder: folder) }
+        case .groupAction(let action, let group):
+            let viewModel = viewModel
+            Task { await viewModel.performGroupAction(action, on: group) }
         }
     }
 

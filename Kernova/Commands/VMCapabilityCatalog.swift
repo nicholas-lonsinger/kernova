@@ -443,6 +443,90 @@ struct VMCapabilityCatalog {
         return instance.ephemeralBaselineSnapshot == nil ? .discardSavedState : .revertToBaseline
     }
 
+    /// What a group's action does to one VM, by the capabilities its state
+    /// offers now — the derivation a group's menu counts and every door's
+    /// group action acts by.
+    enum GroupActionStanding: Equatable {
+        /// The action takes the VM, by this step.
+        case acts(GroupActionStep)
+        /// The VM's state is not one the action acts on.
+        case passedOverByState
+        /// Admission refuses the step for something other than the VM's state.
+        case refused(VMAdmission.Refusal)
+        /// The start would begin the guest setup the VM still owes, which never
+        /// begins unattended (``VMHostState/startsAutomaticallyOnLaunch``).
+        case owesGuestSetup
+    }
+
+    /// The single-VM verb a group action takes one VM by.
+    enum GroupActionStep: Equatable, CaseIterable {
+        case start
+        case resume
+        case suspend
+        case stop
+
+        /// The capability whose availability offers this step.
+        var capability: VMCapability {
+            switch self {
+            case .start: .start
+            case .resume: .resume
+            case .suspend: .suspend
+            case .stop: .stop
+            }
+        }
+
+        /// The verb the step performs.
+        var verb: VMVerb {
+            switch self {
+            case .start: .start
+            case .resume: .resume
+            case .suspend: .suspend
+            case .stop: .stop
+            }
+        }
+
+        /// The steps `action` takes a VM by, in the order they are tried.
+        ///
+        /// Resume before Start: a suspended VM takes both and they restore it
+        /// alike, and Resume is what its own control is called.
+        static func steps(of action: VMGroupAction) -> [GroupActionStep] {
+            switch action {
+            case .start: [.resume, .start]
+            case .suspend: [.suspend]
+            case .stop: [.stop]
+            }
+        }
+    }
+
+    /// What `action` does to `instance` now.
+    ///
+    /// Read at the offer posture, as a menu item's enablement is: a VM held by
+    /// work in flight is refused rather than joined or waited for. Two rules
+    /// narrow the capabilities. A start that would begin a guest setup is
+    /// passed over, as the launch's auto-start passes one over. And Stop takes
+    /// running guests only: a paused guest's stop resumes it first, and a
+    /// suspended VM's discards its saved state (``discardSavedState``).
+    func groupAction(_ action: VMGroupAction, on instance: VMInstance) -> GroupActionStanding {
+        var refusal: VMAdmission.Refusal?
+        for step in GroupActionStep.steps(of: action) {
+            switch decision(step.capability, on: instance, posture: .offer) {
+            case .admit:
+                if step == .start,
+                    case .setup = VMAdmission.startWork(recovery: false, facts: instance.admissionFacts)
+                {
+                    return .owesGuestSetup
+                }
+                if step == .stop, instance.isLivePaused { return .passedOverByState }
+                return .acts(step)
+            case .refuse(.invalidState), .refuse(.heldByAnotherCopy), .join, nil:
+                continue
+            case .refuse(let reason):
+                refusal = refusal ?? reason
+            }
+        }
+        return refusal.map { .refused($0) } ?? .passedOverByState
+    }
+
     /// Where a VM stands on the macOS account it was set up with.
     enum GuestAccountState: Equatable {
         /// Nothing to create: the VM names no account, or this host's

@@ -130,9 +130,9 @@ Four surfaces, one library, the same verbs.
 
 | Surface | What it offers |
 |---|---|
-| **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, cancel guest setup), the library (search, import, clone, cancel a copy, rename, delete), snapshots (take, find, revert, rename, notes, delete), reading state or IP, and quitting Kernova — each VM a typed entity you pick by name. |
+| **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, open, cancel guest setup), the library (search, import, clone, cancel a copy, rename, delete), snapshots (take, find, revert, rename, notes, delete), starting, suspending or stopping every VM in a smart group or folder, reading state or IP, and quitting Kernova — each VM and group a typed entity you pick by name. |
 | **AppleScript** | A scripting dictionary with the lifecycle verbs and each VM's state, configuration, and IP address, for Script Editor and Automator. |
-| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle, the library (list, info, clone, import, rename, delete, reveal), settings read/write, snapshots, shared folders, USB accessories, `wait`, and `--format json` for scripts. Shell completions for zsh, bash, and fish. |
+| **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle — for one VM, or every VM in a smart group or folder — the library (list, info, clone, import, rename, delete, reveal), settings read/write, snapshots, shared folders, USB accessories, `wait`, and `--format json` for scripts. Shell completions for zsh, bash, and fish. |
 | **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
 
 ```bash

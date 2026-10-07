@@ -148,10 +148,52 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 9)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 8, expected: VMCommandRequest.currentProtocolVersion)))
+    }
+
+    @Test("A group action written in the vocabulary before group actions is refused as another version")
+    func groupActionOfThePreviousVocabularyIsRefused() async throws {
+        let harness = makeHarness()
+        let request = Data(
+            #"{"protocolVersion":9,"verb":{"groupAction":{"_0":"start","group":{"kind":"folder","name":"Lab"}}}}"#
+                .utf8)
+
+        let response = try await harness.transport.sendRaw(request)
+
+        #expect(VMCommandRequest.currentProtocolVersion == 10)
+        #expect(
+            response.result
+                == .refused(.unsupportedProtocolVersion(peer: 9, expected: VMCommandRequest.currentProtocolVersion)))
+    }
+
+    @Test("A group action crosses the wire as one request answered by one report, and an unknown group is refused")
+    func groupActionCrossesTheWire() async throws {
+        let harness = makeHarness()
+        let stopped = makeInstance(in: harness, name: "Stopped")
+        let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
+        let lab = try harness.library.organization.createFolder(named: "Lab", members: [running.id, stopped.id])
+
+        let response = try await harness.transport.send(
+            .groupAction(.start, group: VMGroupReference(.folder, named: "lab")))
+
+        guard case .groupAction(let report) = response.result else {
+            Issue.record("expected a group action report, got \(response.result)")
+            return
+        }
+        #expect(report.action == .start)
+        #expect(report.groupID == lab.id)
+        #expect(report.groupName == "Lab")
+        #expect(report.groupKind == .folder)
+        #expect(report.results.map(\.vm.name) == ["Running", "Stopped"])
+        #expect(report.results.map(\.outcome) == [.passedOver(reason: .state), .done(verb: .start)])
+        #expect(report.results.map(\.vm.status) == ["running", "running"])
+
+        let unknown = try await harness.transport.send(
+            .groupAction(.stop, group: VMGroupReference(.smartGroup, named: "Nope")))
+        #expect(unknown.failure == .itemNotFoundOnHost(item: "smart group named \u{201C}Nope\u{201D}"))
+        #expect(harness.virtualization.stopCallCount == 0)
     }
 
     @Test("An info read crosses the wire whole")

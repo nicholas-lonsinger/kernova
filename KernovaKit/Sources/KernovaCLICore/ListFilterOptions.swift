@@ -51,13 +51,13 @@ struct ListFilterOptions: ParsableArguments {
 struct GroupTargetOptions: ParsableArguments {
     @Option(
         name: .customLong("smart-group"),
-        help: ArgumentHelp("Only the VMs in this smart group, by name or identifier.", valueName: "name"),
+        help: ArgumentHelp("The VMs in this smart group, by name or identifier.", valueName: "name"),
         completion: CompletionSource.smartGroup)
     var smartGroups: [String] = []
 
     @Option(
         name: .customLong("folder"),
-        help: ArgumentHelp("Only the VMs in this folder, by name or identifier.", valueName: "name"),
+        help: ArgumentHelp("The VMs in this folder, by name or identifier.", valueName: "name"),
         completion: CompletionSource.folder)
     var folders: [String] = []
 

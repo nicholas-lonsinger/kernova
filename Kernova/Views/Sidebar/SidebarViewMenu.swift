@@ -42,6 +42,8 @@ final class SidebarViewMenu: NSObject {
         case deleteFolder(UUID)
         /// Puts the entry `entry` in the folder `folder`, or takes it out.
         case setMembership(entry: UUID, folder: UUID, isMember: Bool)
+        /// Takes `action` on every VM in `group`.
+        case groupAction(VMGroupAction, VMGroupReference)
     }
 
     /// An item's command, as its represented object.
@@ -129,9 +131,10 @@ final class SidebarViewMenu: NSObject {
         return menu
     }
 
-    /// `group`'s menu over a library of `values`: its filter's rows, then
-    /// Rename and Delete.
-    func menu(smartGroup group: VMSmartGroup, values: [Value]) -> NSMenu {
+    /// `group`'s menu over a library of `values`: its filter's rows, the
+    /// group actions with `actionCounts` VMs each acts on, then Rename and
+    /// Delete.
+    func menu(smartGroup group: VMSmartGroup, values: [Value], actionCounts: [VMGroupAction: Int]?) -> NSMenu {
         let menu = NSMenu(title: Self.smartGroupAccessibilityLabel)
         menu.autoenablesItems = false
         menu.addItem(.sectionHeader(title: "Show VMs in \u{201C}\(group.name)\u{201D} where"))
@@ -139,20 +142,47 @@ final class SidebarViewMenu: NSObject {
             to: menu, filter: group.filter, values: values,
             picking: { .setSmartGroupFilter(group.id, $0) })
         menu.addItem(.separator())
+        addGroupActions(
+            to: menu, group: VMGroupReference(.smartGroup, named: group.id.uuidString), counts: actionCounts)
+        menu.addItem(.separator())
         menu.addItem(pickItem("Rename Smart Group\u{2026}", state: .off, command: .renameSmartGroup(group.id)))
         menu.addItem(pickItem("Delete Smart Group", state: .off, command: .deleteSmartGroup(group.id)))
         return menu
     }
 
-    /// `folder`'s menu: what its section takes, then Rename and Delete.
-    func menu(folder: VMFolder) -> NSMenu {
+    /// `folder`'s menu: what its section takes, the group actions with
+    /// `actionCounts` VMs each acts on, then Rename and Delete.
+    func menu(folder: VMFolder, actionCounts: [VMGroupAction: Int]?) -> NSMenu {
         let menu = NSMenu(title: Self.folderAccessibilityLabel)
         menu.autoenablesItems = false
         menu.addItem(.sectionHeader(title: "\u{201C}\(folder.name)\u{201D} \u{2014} drag VMs here to add them"))
+        addGroupActions(to: menu, group: VMGroupReference(.folder, named: folder.id.uuidString), counts: actionCounts)
         menu.addItem(.separator())
         menu.addItem(pickItem("Rename Folder\u{2026}", state: .off, command: .renameFolder(folder.id)))
         menu.addItem(pickItem("Delete Folder", state: .off, command: .deleteFolder(folder.id)))
         return menu
+    }
+
+    /// Start All, Suspend All and Stop All for `group`, each counting the VMs
+    /// it acts on in `counts` and enabled while that is not zero — every one
+    /// disabled when the counts could not be read.
+    private func addGroupActions(to menu: NSMenu, group: VMGroupReference, counts: [VMGroupAction: Int]?) {
+        for action in VMGroupAction.allCases {
+            let count = counts?[action] ?? 0
+            let item = pickItem(Self.groupActionTitle(action), state: .off, command: .groupAction(action, group))
+            item.isEnabled = count > 0
+            if count > 0 { item.badge = NSMenuItemBadge(count: count) }
+            menu.addItem(item)
+        }
+    }
+
+    /// What a group action's menu item is called.
+    static func groupActionTitle(_ action: VMGroupAction) -> String {
+        switch action {
+        case .start: "Start All"
+        case .suspend: "Suspend All"
+        case .stop: "Stop All"
+        }
     }
 
     // MARK: - VM row items

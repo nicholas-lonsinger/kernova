@@ -190,6 +190,8 @@ struct VMCommandEnvelopeRouter {
             try await commands.restart(
                 selector, timeout: timeout, consent: consent, macAddressRemedy: remedy)
             return .ok
+        case .groupAction(let action, let group):
+            return .groupAction(try await commands.groupAction(action, on: group))
         case .open(let selector):
             try commands.open(selector)
             return .ok

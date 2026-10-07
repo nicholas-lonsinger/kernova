@@ -98,6 +98,8 @@ struct VMCommandEnvelopeTests {
             .suspend(selector),
             .restart(selector, timeout: nil, consent: .none, macAddressRemedy: nil),
             .restart(selector, timeout: 120, consent: .none, macAddressRemedy: .noNetwork),
+            .groupAction(.start, group: VMGroupReference(.folder, named: "Client Project")),
+            .groupAction(.stop, group: VMGroupReference(.smartGroup, named: "Linux Lab")),
             .open(selector),
             .reveal(selector),
             .showInFinder(selector),
@@ -278,6 +280,22 @@ struct VMCommandEnvelopeTests {
                 GroupSummary(id: diskID, name: "Client Project", kind: .folder, members: []),
             ]),
             .groups([]),
+            .groupAction(
+                VMGroupActionReport(
+                    action: .suspend, groupKind: .folder, groupID: diskID, groupName: "Client Project",
+                    results: [
+                        VMGroupActionResult(vm: summary, outcome: .done(verb: .suspend)),
+                        VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .state)),
+                        VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .guestSetup)),
+                        VMGroupActionResult(
+                            vm: summary, outcome: .passedOver(reason: .refused(error: .terminating))),
+                        VMGroupActionResult(
+                            vm: summary, outcome: .needsAnswer(question: .invalidArgument(message: "Which?"))),
+                        VMGroupActionResult(
+                            vm: summary,
+                            outcome: .failed(
+                                error: .operationFailed(verb: .suspend, title: nil, message: "No.", recovery: nil))),
+                    ])),
             .refused(.authorizationRefused(reason: "not this team")),
             .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
             .refused(.undecodableRequest("the bytes are not JSON")),

@@ -319,7 +319,7 @@ struct SidebarSmartGroupTests {
         #expect(
             menu.items.map(\.title) == [
                 "Show VMs in \u{201C}Picked\u{201D} where", "Guest OS", "State", "Network", "Guest Agent", "Other", "",
-                "Rename Smart Group\u{2026}", "Delete Smart Group",
+                "Start All", "Suspend All", "Stop All", "", "Rename Smart Group\u{2026}", "Delete Smart Group",
             ])
         #expect(menu.items[0].isSectionHeader)
         #expect(menu.items[1].badge?.stringValue == "Linux")
