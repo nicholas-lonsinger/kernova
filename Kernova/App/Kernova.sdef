@@ -36,7 +36,7 @@
 		</enumeration>
 
 		<enumeration name="network kind" code="KvNK" description="The mode every virtual machine on a named network runs in.">
-			<enumerator name="shared network" code="KnSh" description="The guests reach the internet through this Mac."/>
+			<enumerator name="shared network" code="KnSh" description="NAT: the guests reach the internet through this Mac."/>
 			<enumerator name="host only" code="KnHo" description="The guests reach this Mac and each other, nothing else."/>
 		</enumeration>
 

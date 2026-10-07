@@ -864,6 +864,55 @@ struct VMSettingsNetworkPanelTests {
         #expect(item(.bridged(nil), in: popUp)?.isEnabled == false)
     }
 
+    @Test("An unentitled build names a VM bridged on an interface the same way in the picker and on the card")
+    func unentitledBridgedInterfaceReadsTheSameOnPickerAndCard() throws {
+        let (vc, _) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en0",
+            interfaces: MockBridgedInterfaceProvider(available: [Self.wiFi], primary: "en0"),
+            entitled: false)
+
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let title = try #require(closedTitle(popUp))
+        #expect(title == "Bridged \u{2013} Wi-Fi (en0) (unavailable)")
+        vc.showOverview()
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(findLabel(withText: title, in: card) != nil)
+    }
+
+    @Test("The closed picker is at least as wide as its group-and-entry title, whatever its menu's entries")
+    func closedPickerFitsItsCompoundTitle() throws {
+        // The narrowest menu: an unentitled NAT VM's, every entry shorter than
+        // the title the closed picker shows.
+        let (vc, _) = makeNetworkController(entitled: false)
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        let title = try #require(closedTitle(popUp))
+        #expect(title == "NAT \u{2013} Common")
+
+        // AppKit's own chrome: a plain picker whose one item is that title.
+        let reference = NSPopUpButton()
+        reference.controlSize = popUp.controlSize
+        reference.font = popUp.font
+        reference.addItem(withTitle: title)
+        #expect(popUp.intrinsicContentSize.width >= reference.intrinsicContentSize.width)
+    }
+
+    @Test("VoiceOver reads the closed picker's group-and-entry title")
+    func closedPickerAccessibilityValueIsTheCompoundTitle() throws {
+        let (vc, _) = makeNetworkController(mode: .hostOnly)
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(closedTitle(popUp) == "Host Only \u{2013} Common")
+        #expect(spokenValue(of: popUp) == "Host Only \u{2013} Common")
+
+        try choose(.shared, in: popUp)
+        #expect(spokenValue(of: popUp) == "NAT \u{2013} Common")
+    }
+
+    /// The value of the element VoiceOver reads for `popUp` — the control
+    /// itself is ignored in favor of its cell.
+    private func spokenValue(of popUp: NSPopUpButton) -> String? {
+        (NSAccessibility.unignoredDescendant(of: popUp) as? NSAccessibilityProtocol)?.accessibilityValue() as? String
+    }
+
     @Test("Turning networking on gives a VM without a MAC address a stable one")
     func enablingNetworkingMintsAMACAddress() throws {
         // NAT, from a VM created with networking off.

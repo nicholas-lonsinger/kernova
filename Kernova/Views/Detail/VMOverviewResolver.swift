@@ -288,7 +288,7 @@ final class VMOverviewResolver {
         resolved.warnings[.system] =
             resolved.micWarning == .denied ? Self.micPermissionDeniedWarning : nil
         resolved.canTakeSnapshot = viewModel.capabilities.isAvailable(.takeSnapshot, on: instance)
-        refreshNetwork(config)
+        refreshNetwork()
         refreshBootDisk()
         refreshSnapshotSizes()
     }
@@ -322,17 +322,29 @@ final class VMOverviewResolver {
         return "Same machine ID as \(DataFormatters.quotedList(holders))."
     }
 
-    private func refreshNetwork(_ config: VMConfiguration) {
+    private func refreshNetwork() {
+        _ = networkModeLabel()
+        resolved.ipAddress = viewModel.guestAddress(for: instance)
+    }
+
+    /// How the VM's network names itself under its configuration now — the
+    /// one naming every surface reads, named again here whenever the
+    /// configuration has moved since ``resolved`` last stored it, so a reader
+    /// never gets a name from before a write.
+    func networkModeLabel() -> NetworkChoiceLabel {
+        let config = instance.configuration
         let choice = NetworkModeChoice(config)
         // Only an interface's title costs an enumeration; every other one is
         // named again each pass, so a renamed network re-titles.
-        if choice != titledNetworkChoice || !choice.namesAHostInterface {
-            titledNetworkChoice = choice
-            resolved.networkModeLabel = NetworkModeChoice.label(
-                of: config, entitlements: viewModel.entitlements,
-                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state)
+        if let label = resolved.networkModeLabel, choice == titledNetworkChoice, choice.namesAHostInterface {
+            return label
         }
-        resolved.ipAddress = viewModel.guestAddress(for: instance)
+        let label = NetworkModeChoice.label(
+            of: config, entitlements: viewModel.entitlements,
+            interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state)
+        titledNetworkChoice = choice
+        resolved.networkModeLabel = label
+        return label
     }
 
     /// Reads the boot disk's capacity off the main thread. The key tags the
