@@ -30,6 +30,21 @@ struct VMGroupMembership {
     let order: [UUID]?
 }
 
+/// One group of the library's, resolved from what a caller named it by.
+@MainActor
+struct VMResolvedGroup {
+    let kind: VMGroupKind
+    let id: UUID
+    let name: String
+    let membership: VMGroupMembership
+
+    /// The entries this group holds, in its order: the folder's own, else the
+    /// library's.
+    var selection: VMLibrarySelection {
+        VMLibrarySelection(filter: VMLibraryFilter(), groups: [membership], sort: .manual)
+    }
+}
+
 /// The listing and the library's groups: which VMs a filter, a network or a
 /// group admits, by the same subjects and the same filter the sidebar lists
 /// them by.
@@ -109,8 +124,8 @@ extension VMCommandCore {
         }
     }
 
-    /// The entries the group `reference` names holds.
-    private func membership(of reference: VMGroupReference, verb: VMVerb) throws -> VMGroupMembership {
+    /// The group `reference` names, as the library holds it now.
+    func group(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
         try readOrganization(verb: verb)
         let organization = library.organization
         let notFound = CommandError.itemNotFoundOnHost(
@@ -118,12 +133,22 @@ extension VMCommandCore {
         switch reference.kind {
         case .smartGroup:
             guard let group = organization.smartGroup(named: reference.name) else { throw notFound }
-            return VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil)
+            return VMResolvedGroup(
+                kind: .smartGroup, id: group.id, name: group.name,
+                membership: VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil))
         case .folder:
             guard let folder = organization.folder(named: reference.name) else { throw notFound }
             let members = Set(folder.members)
-            return VMGroupMembership(contains: { entry, _ in members.contains(entry.id) }, order: folder.members)
+            return VMResolvedGroup(
+                kind: .folder, id: folder.id, name: folder.name,
+                membership: VMGroupMembership(
+                    contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
         }
+    }
+
+    /// The entries the group `reference` names holds.
+    private func membership(of reference: VMGroupReference, verb: VMVerb) throws -> VMGroupMembership {
+        try group(reference, verb: verb).membership
     }
 
     /// Reads the library's smart groups and folders as their file holds them

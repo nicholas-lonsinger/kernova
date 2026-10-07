@@ -4767,9 +4767,13 @@ struct VMLibraryViewModelTests {
         try VMInstanceFixture.writeSaveFile(for: saved)
         viewModel.selectRevealing(inline.id)
         var readied: [UUID] = []
+        var presences: [VMBringUpPresence] = []
         var displayWindows = 0
         var libraryRequests = 0
-        viewModel.onReadyDisplay = { readied.append($0.id) }
+        viewModel.onReadyDisplay = {
+            readied.append($0.id)
+            presences.append($1)
+        }
         viewModel.onOpenDisplayWindow = { _ in displayWindows += 1 }
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
@@ -4782,6 +4786,8 @@ struct VMLibraryViewModelTests {
         #expect(inline.status == .running)
         #expect(saved.status == .running)
         #expect(readied == [popOut.id, inline.id, saved.id])
+        // Nobody asked for any of them, so none is readied in front.
+        #expect(presences == [.unattended, .unattended, .unattended])
         #expect(displayWindows == 0)
         #expect(libraryRequests == 0)
         // The pass leaves the library showing whatever the user left it on.

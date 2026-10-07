@@ -2,6 +2,17 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
+/// Whether somebody asked for one VM's bring-up in particular.
+enum VMBringUpPresence: Sendable, Equatable {
+    /// Someone asked for this VM: its start runs the guest setup it still
+    /// owes, and its display is readied as the app's posture allows.
+    case attended
+    /// Nobody asked for this VM in particular — a standing preference at
+    /// launch, or an action on a whole group: its start begins no guest setup,
+    /// and its display never takes key or the screen.
+    case unattended
+}
+
 /// The headless implementation of every VM verb, beneath the AppKit UI and
 /// every automation surface.
 ///
@@ -45,14 +56,15 @@ final class VMCommandCore: VMCommanding {
     /// question, and the core answers none.
     var surfaceDisplay: ((VMInstance) -> Void)?
 
-    /// Reports that a VM is coming up, so its display can be readied to receive
-    /// the guest.
+    /// Reports that a VM is coming up, and whether anyone asked for this VM's
+    /// bring-up in particular, so its display can be readied to receive the
+    /// guest.
     ///
-    /// Asked on every bring-up, whoever asked for it. Whether anything is put
-    /// on screen is the adapter's decision, taken from the app's own posture —
+    /// Asked on every bring-up. Whether anything is put on screen is the
+    /// adapter's decision, taken from the app's own posture and that presence —
     /// a bring-up is not a request to look at the guest, which is what
     /// ``surfaceDisplay`` carries.
-    var readyDisplay: ((VMInstance) -> Void)?
+    var readyDisplay: ((VMInstance, VMBringUpPresence) -> Void)?
 
     /// Puts a library row with no display to surface in front of the user —
     /// a VM's or an arrival's, by identifier — with the library itself brought

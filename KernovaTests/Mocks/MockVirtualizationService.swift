@@ -50,6 +50,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
+    /// Thrown by one VM's `start`, by its identifier, ahead of ``startError`` —
+    /// so one VM in a batch can fail while the rest come up.
+    var startErrors: [UUID: any Error] = [:]
     /// Thrown by a `start` that restores a saved state, ahead of
     /// ``startError`` — so one VM's restore can fail while another boots.
     var restoreError: (any Error)?
@@ -97,7 +100,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         let route = startRoute ?? derived
         lastStartRoute = route
         if derived == .restoredSavedState, let error = restoreError { throw error }
-        if let error = startError { throw error }
+        if let error = startErrors[instance.id] ?? startError { throw error }
         // A restore consumes the slot it loaded, as the real one does.
         if route == .restoredSavedState { context.bringUp.operation.bundle.removeSaveFile() }
         context.bringUp.bindSessionForTesting(UUID())

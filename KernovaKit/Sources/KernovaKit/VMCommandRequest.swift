@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 9
+    public static let currentProtocolVersion = 10
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -74,6 +74,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// when it expires is not started again.
         case restart(
             VMSelector, timeout: TimeInterval?, consent: Consent, macAddressRemedy: MACAddressRemedy?)
+        /// `action` on every VM in `group`, one after another, asking nothing:
+        /// a VM whose own verb would ask a question is passed by and reported.
+        case groupAction(VMGroupAction, group: VMGroupReference)
         case open(VMSelector)
         case reveal(VMSelector)
         /// Selects the VM's bundle in the Finder, which is what comes forward.
@@ -153,6 +156,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .resume: .resume
             case .suspend: .suspend
             case .restart: .restart
+            case .groupAction(let action, _): action.verb
             case .open: .open
             case .reveal: .reveal
             case .showInFinder: .showInFinder

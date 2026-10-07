@@ -107,6 +107,13 @@ final class MockVMCommanding: VMCommanding {
     /// Consulted by `importVM(atPath:)` for the grant, as the core consults its
     /// own; unset, the named path is read as given.
     var sourceAuthority: (any SandboxSourceAuthorizing)?
+    /// What `groupAction(_:on:)` answers with, built empty from its arguments
+    /// when unset.
+    var groupActionReport: VMGroupActionReport?
+    /// Thrown by `groupAction(_:on:)` in place of a report.
+    var groupActionError: (any Error)?
+    /// What `concernedCounts(in:)` answers.
+    var concernedCountsToReturn: [VMGroupAction: Int] = [:]
 
     // MARK: - Recorded calls
 
@@ -488,6 +495,22 @@ final class MockVMCommanding: VMCommanding {
     func suspend(_ selector: VMSelector) async throws {
         suspendSelectors.append(selector)
         if let suspendError { throw suspendError }
+    }
+
+    /// Every group action asked for, in call order.
+    private(set) var groupActionCalls: [(action: VMGroupAction, group: VMGroupReference)] = []
+
+    func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int] {
+        if let groupActionError { throw groupActionError }
+        return concernedCountsToReturn
+    }
+
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
+        groupActionCalls.append((action, group))
+        if let groupActionError { throw groupActionError }
+        return groupActionReport
+            ?? VMGroupActionReport(
+                action: action, groupKind: group.kind, groupID: UUID(), groupName: group.name, results: [])
     }
 
     func restart(

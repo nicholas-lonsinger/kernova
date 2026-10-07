@@ -298,7 +298,7 @@ extension VMCommandCore {
             })
         // The window the VM comes back up in is chosen before the teardown
         // the revert's task begins with.
-        if resumesAfter { readyDisplay?(instance) }
+        if resumesAfter { readyDisplay?(instance, .attended) }
         return outcome
     }
 

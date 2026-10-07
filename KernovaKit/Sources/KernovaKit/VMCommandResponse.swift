@@ -51,6 +51,8 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case network(NetworkSummary)
         /// The library's groups.
         case groups([GroupSummary])
+        /// What a group action did to each VM in the group.
+        case groupAction(VMGroupActionReport)
         /// One library change, for a transport streaming them.
         case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.

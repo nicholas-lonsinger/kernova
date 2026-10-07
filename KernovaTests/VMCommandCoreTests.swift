@@ -335,18 +335,23 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         var readied: [UUID] = []
+        var presences: [VMBringUpPresence] = []
         var surfaced: [UUID] = []
-        harness.core.readyDisplay = { readied.append($0.id) }
+        harness.core.readyDisplay = {
+            readied.append($0.id)
+            presences.append($1)
+        }
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
 
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
 
         #expect(readied == [instance.id])
+        #expect(presences == [.attended])
         #expect(surfaced.isEmpty)
     }
 
-    /// The core asks on every bring-up and knows nothing about who asked: what
-    /// a readying costs on screen is the adapter's decision.
+    /// The core asks on every bring-up, saying only whether someone asked for
+    /// this VM: what a readying costs on screen is the adapter's decision.
     @Test("resume and restart ready the display too")
     func everyBringUpReadiesTheDisplay() async throws {
         let harness = makeHarness()
@@ -355,14 +360,19 @@ struct VMCommandCoreTests {
         let running = makeInstance(
             in: harness, name: "Running", phase: .running(sessionID: UUID()))
         var readied: [UUID] = []
+        var presences: [VMBringUpPresence] = []
         var surfaced: [UUID] = []
-        harness.core.readyDisplay = { readied.append($0.id) }
+        harness.core.readyDisplay = {
+            readied.append($0.id)
+            presences.append($1)
+        }
         harness.core.surfaceDisplay = { surfaced.append($0.id) }
 
         try await harness.core.resume(.id(suspended.id), consent: .none)
         try await harness.core.restart(.id(running.id), timeout: nil, consent: .none)
 
         #expect(readied == [suspended.id, running.id])
+        #expect(presences == [.attended, .attended])
         #expect(surfaced.isEmpty)
     }
 

@@ -18,6 +18,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
     case timedOut = 7
     case authorizationRefused = 8
     case unavailable = 9
+    case groupIncomplete = 10
 
     /// What this code means, in the words `kernova --help` prints.
     ///
@@ -35,6 +36,7 @@ enum CLIExitCode: Int32, Sendable, Hashable, CaseIterable {
         case .timedOut: "A deadline expired before the state arrived."
         case .authorizationRefused: "The app would not accept this process as a peer."
         case .unavailable: "The app is not running, is quitting, or cannot talk to this build."
+        case .groupIncomplete: "A group verb left some of its VMs undone; each one's line says why."
         }
     }
 

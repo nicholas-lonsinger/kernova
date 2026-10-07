@@ -185,6 +185,29 @@ protocol VMCommanding: AnyObject {
     /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws
 
+    /// Takes `action` on each VM in `group`, one after another, answering what
+    /// it did to each.
+    ///
+    /// Asks nothing and moves nothing on screen: a VM whose own verb would
+    /// raise a question — a confirmation, its account's password, a change to
+    /// its network — is passed by and reported, as is every failure, so the
+    /// whole of the outcome is the report. Which VMs the action acts on is
+    /// ``VMCapabilityCatalog/groupAction(_:on:)``'s rule. Cancelling the
+    /// calling task stops it between VMs, reporting the rest untouched.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
+    ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``
+    ///   when the library's groups cannot be read — both before any VM is
+    ///   acted on.
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws
+        -> VMGroupActionReport
+
+    /// How many of the VMs in `group` each action acts on now — the counts the
+    /// actions' menu items show, by the rule the actions themselves act by.
+    ///
+    /// - Throws: what ``groupAction(_:on:)`` throws before acting on any VM.
+    func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int]
+
     /// Shuts the guest down and starts it again once it has powered off,
     /// bringing it back up the way ``start(_:recovery:consent:macAddressRemedy:)``
     /// would.

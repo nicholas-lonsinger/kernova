@@ -149,8 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onOpenDisplayWindow = { [weak self] instance in
             self?.windows.displayPlacement.showDisplayWindow(for: instance)
         }
-        viewModel.onReadyDisplay = { [weak self] instance in
-            self?.windows.displayPlacement.readyDisplay(for: instance)
+        viewModel.onReadyDisplay = { [weak self] instance, presence in
+            self?.windows.displayPlacement.readyDisplay(for: instance, presence: presence)
         }
         viewModel.onRevealInFinder = { instance in
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
