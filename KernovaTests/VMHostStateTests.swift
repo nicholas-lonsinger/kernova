@@ -60,8 +60,8 @@ struct VMHostStateTests {
         #expect(VMHostState.newMachine(cloning: source) == VMHostState(tags: source.tags))
     }
 
-    @Test("A copy arrives never run and not starting at launch, keeping everything else")
-    func copyArrivesNeverRun() {
+    @Test("A copy arrives with no run recorded and not starting at launch, keeping everything else")
+    func copyArrivesWithNoRunRecorded() {
         var copied = everyFieldSet()
         var expected = copied
         expected.startsAutomaticallyOnLaunch = false
@@ -72,8 +72,8 @@ struct VMHostStateTests {
         #expect(copied == expected)
     }
 
-    @Test("A host state with no last run decodes as never run")
-    func absentLastRunIsNeverRun() throws {
+    @Test("A host state with no last run decodes as nil, which means no run is recorded")
+    func absentLastRunIsNoRunRecorded() throws {
         let data = Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8)
 
         #expect(try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data).lastRunAt == nil)

@@ -330,10 +330,9 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         let tags = tags()
         for tag in tags {
             let isAssigned = assigned.contains(tag.id)
-            let tagItem = pickItem(
-                tag.name, state: isAssigned ? .on : .off,
+            let tagItem = self.tagItem(
+                tag, state: isAssigned ? .on : .off,
                 command: .setTag(entry: entry, tag: tag.id, isAssigned: !isAssigned))
-            tagItem.image = tag.color.dotImage()
             tagItem.isEnabled = isEnabled
             submenu.addItem(tagItem)
         }
@@ -393,15 +392,25 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     command: picking(attribute.cleared)))
             submenu.addItem(.separator())
             for choice in attribute.choices {
-                let choiceItem = pickItem(
-                    choice.title, state: choice.isOn ? .on : .off, command: picking(choice.picked))
+                let state: NSControl.StateValue = choice.isOn ? .on : .off
+                let command = picking(choice.picked)
+                let choiceItem =
+                    choice.tag.map { tagItem($0, state: state, command: command) }
+                    ?? pickItem(choice.title, state: state, command: command)
                 choiceItem.badge = NSMenuItemBadge(count: choice.count)
-                choiceItem.image = choice.image
                 submenu.addItem(choiceItem)
             }
             item.submenu = submenu
             return item
         }
+    }
+
+    /// An item naming `tag` after its color swatch — how every menu lists a
+    /// tag, so the VM menu's Tags and the filter's Tags rows read alike.
+    private func tagItem(_ tag: VMTag, state: NSControl.StateValue, command: Command) -> NSMenuItem {
+        let item = pickItem(tag.name, state: state, command: command)
+        item.image = tag.color.dotImage()
+        return item
     }
 
     private func pickItem(_ title: String, state: NSControl.StateValue, command: Command) -> NSMenuItem {
@@ -449,8 +458,8 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
             let count: Int
             let isOn: Bool
             let picked: VMLibraryFilter
-            /// What the item shows before its title: a tag's color.
-            var image: NSImage? = nil
+            /// The tag the choice is, which lists it by ``tagItem(_:state:command:)``.
+            var tag: VMTag? = nil
         }
 
         let title: String
@@ -523,7 +532,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     title: tag.name, count: values.count { $0.subject.tags.contains(tag.id) },
                     isOn: filter.tags.contains(tag.id),
                     picked: with { $0.tags = toggled($0.tags, tag.id) },
-                    image: tag.color.dotImage())
+                    tag: tag)
             }
                 + deleted.map { id in
                     Attribute.Choice(
