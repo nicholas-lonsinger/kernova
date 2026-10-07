@@ -116,7 +116,9 @@ struct SidebarFolderTests {
 
     // MARK: - Projection
 
-    @Test("Folder sections sit between the smart groups and the library, each listing its members in its own order")
+    @Test(
+        "Folder sections sit among the smart groups in the order given, above the library, each listing its members in its own order"
+    )
     func projectsFolderSections() {
         let entries = [vm("Alpha"), vm("Bravo"), vm("Charlie", guestOS: .macOS)]
         let alpha = entries[0].id
@@ -129,29 +131,31 @@ struct SidebarFolderTests {
         let empty = VMFolder(id: UUID(), name: "Empty", members: [])
 
         let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(), smartGroups: [macs], folders: [clients, demo, empty],
+            entries: entries, options: SidebarViewOptions(),
+            sections: [.folder(clients), .smartGroup(macs), .folder(demo), .folder(empty), .library],
             context: .testing())
 
         #expect(
             layout.sections.map(\.id) == [
-                .smartGroup(macs.id), .folder(clients.id), .folder(demo.id), .folder(empty.id), .library,
+                .folder(clients.id), .smartGroup(macs.id), .folder(demo.id), .folder(empty.id), .library,
             ])
-        #expect(layout.sections.map(\.title) == ["Macs", "Clients", "Demo", "Empty", "Virtual Machines"])
+        #expect(layout.sections.map(\.title) == ["Clients", "Macs", "Demo", "Empty", "Virtual Machines"])
         // The folder's own order under the manual sort; a member the library
         // does not list is not listed.
-        #expect(names(in: layout.sections[1]) == ["Charlie", "Alpha"])
-        #expect(layout.sections[1].filterCounts == SidebarLayout.FilterCounts(shown: 2, total: 3))
+        #expect(names(in: layout.sections[0]) == ["Charlie", "Alpha"])
+        #expect(layout.sections[0].filterCounts == SidebarLayout.FilterCounts(shown: 2, total: 3))
         #expect(names(in: layout.sections[3]).isEmpty)
         #expect(layout.sections[3].emptyText == SidebarLayout.emptyFolderText)
         // Charlie is listed in four sections, once in each.
         #expect(
             layout.rowKeys.filter { $0.entryID == charlie }.map(\.section) == [
-                .smartGroup(macs.id), .folder(clients.id), .folder(demo.id), .library,
+                .folder(clients.id), .smartGroup(macs.id), .folder(demo.id), .library,
             ])
         #expect(!layout.rowKeys.contains { $0.entryID == bravo && $0.section.folderID != nil })
 
         let byName = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .name), folders: [clients], context: .testing())
+            entries: entries, options: SidebarViewOptions(sort: .name), sections: [.folder(clients), .library],
+            context: .testing())
         #expect(names(in: byName.sections[0]) == ["Alpha", "Charlie"])
 
         let tree = SidebarTree()
@@ -184,7 +188,7 @@ struct SidebarFolderTests {
         #expect(try submenu().items.prefix(2).map(\.state) == [.on, .on])
         #expect(
             viewModel.sidebarLayout.rowKeys.filter { $0.entryID == a.id }.map(\.section) == [
-                .folder(clients.id), .folder(demo.id), .library,
+                .library, .folder(clients.id), .folder(demo.id),
             ])
 
         try submenu().performActionForItem(at: 0)
@@ -295,7 +299,80 @@ struct SidebarFolderTests {
 
         try await waitUntil { viewModel.library.folders.map(\.name) == ["Clients"] }
         #expect(viewModel.library.folders.first?.members == [])
-        try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.title == "Clients" }
+        try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.id == .library }
+        #expect(
+            (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.title } == [
+                "Virtual Machines", "Clients",
+            ])
+    }
+
+    @Test("A new folder goes after every section, the library included, and scrolls into view past a selected VM")
+    func newFolderScrollsIntoView() async throws {
+        let viewModel = makeViewModel()
+        let a = viewModel.library.admitFixture(name: "A")
+        for index in 1...60 { viewModel.library.admitFixture(name: "VM \(index)") }
+        let clients = try viewModel.library.createFolder(named: "Clients")
+        try viewModel.library.moveSection(.folder(clients.id), before: .library)
+        viewModel.selection = .library(a.id)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
+        #expect(outline.selectedRow == self.row(.library(a.id), in: outline))
+        outline.scrollRowToVisible(0)
+        #expect(!outline.visibleRect.contains(outline.rect(ofRow: outline.numberOfRows - 1)))
+        let submenu = try #require(
+            controller.buildContextMenu(for: a).items.first { $0.title == "Add to Folder" }?.submenu)
+
+        submenu.performActionForItem(at: try #require(submenu.items.firstIndex { $0.title == "New Folder\u{2026}" }))
+        window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
+
+        try await waitUntil { viewModel.library.folders.count == 2 }
+        let made = try #require(viewModel.library.folders.last)
+        #expect(
+            viewModel.library.organization.sections.map(\.id) == [.folder(clients.id), .library, .folder(made.id)])
+        // The sync the organization change queued, and any later one, keeps
+        // the view where the new section put it.
+        controller.viewDidAppear()
+        controller.viewDidAppear()
+        #expect(viewModel.selection == .library(a.id))
+        let header = row(of: .folder(made.id), in: outline)
+        #expect(header > 0)
+        #expect(outline.visibleRect.contains(outline.rect(ofRow: header)))
+    }
+
+    @Test("Upper half of the first section's header puts a dragged header before it; the lower half, after it")
+    func headerDropHalves() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "A")
+        let x = try viewModel.library.createFolder(named: "X")
+        let y = try viewModel.library.createFolder(named: "Y")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func shown() -> [SidebarSectionID] {
+            controller.viewDidAppear()
+            return (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.id }
+        }
+        func header(_ section: SidebarSectionID) throws -> NSPasteboardWriting {
+            try writer(ofRow: row(of: section, in: outline), in: outline, controller: controller)
+        }
+        #expect(shown() == [.library, .folder(x.id), .folder(y.id)])
+        #expect(row(of: .library, in: outline) == 0)
+        let first = outline.rect(ofRow: 0)
+
+        #expect(drag([try header(.folder(y.id))], to: NSPoint(x: 100, y: first.midY - 1), in: outline) == .move)
+        #expect(shown() == [.folder(y.id), .library, .folder(x.id)])
+
+        let library = outline.rect(ofRow: row(of: .library, in: outline))
+        #expect(drag([try header(.folder(y.id))], to: NSPoint(x: 100, y: library.midY + 1), in: outline) == .move)
+        #expect(shown() == [.library, .folder(y.id), .folder(x.id)])
+
+        // Above the first row, in the outline's top inset, is before the first
+        // section too — not after the last, as below every row is.
+        let aboveFirst = NSPoint(x: 100, y: outline.rect(ofRow: 0).minY - 2)
+        #expect(aboveFirst.y > 0)
+        #expect(outline.row(at: aboveFirst) == -1)
+        #expect(drag([try header(.folder(x.id))], to: aboveFirst, in: outline) == .move)
+        #expect(shown() == [.folder(x.id), .library, .folder(y.id)])
     }
 
     @Test("New Folder… under Add to Folder makes a folder holding that VM")
@@ -332,7 +409,9 @@ struct SidebarFolderTests {
         let window = try #require(outline.window)
 
         try viewModel.library.renameFolder(folder.id, to: "New")
-        try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.title == "New" }
+        try await waitUntil {
+            (outline.item(atRow: row(of: .folder(folder.id), in: outline)) as? SidebarSection)?.title == "New"
+        }
         #expect(viewModel.selection == inFolder(folder, a.id))
 
         func pickDelete() throws -> NSWindow {
@@ -538,27 +617,76 @@ struct SidebarFolderTests {
         #expect(members(of: first, in: viewModel) == [a.id, y.id])
     }
 
-    @Test("Dragging a folder's header reorders the folders, among the folders only")
-    func dragReordersFolders() throws {
+    @Test("Any header drags above or below any other — smart group, folder or the library")
+    func dragReordersEverySection() throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "A")
+        let a = viewModel.library.admitFixture(name: "A")
         let group = try viewModel.library.organization.createSmartGroup(named: "Everything", filter: VMLibraryFilter())
-        for name in ["X", "Y", "Z"] { try viewModel.library.createFolder(named: name) }
+        let x = try viewModel.library.createFolder(named: "X")
+        let y = try viewModel.library.createFolder(named: "Y")
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
-        let z = try #require(viewModel.library.folders.last)
-        let dragged = try writer(ofRow: row(of: .folder(z.id), in: outline), in: outline, controller: controller)
+        func move(_ section: SidebarSectionID, to point: NSPoint) throws {
+            let header = try writer(ofRow: row(of: section, in: outline), in: outline, controller: controller)
+            #expect(drag([header], to: point, in: outline) == .move)
+            // Appearing runs the sidebar's sync pass synchronously.
+            controller.viewDidAppear()
+        }
+        func lowerHalf(of section: SidebarSectionID) -> NSPoint {
+            NSPoint(x: 100, y: outline.rect(ofRow: row(of: section, in: outline)).maxY - 2)
+        }
+        func upperHalf(of section: SidebarSectionID) -> NSPoint {
+            top(of: row(of: section, in: outline), in: outline)
+        }
+        func shown() -> [String] {
+            (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.title }
+        }
+        #expect(shown() == ["Virtual Machines", "Everything", "X", "Y"])
 
-        // Above the smart group, it lands at the top of the folders.
+        // A folder above a smart group, and a smart group below a folder.
+        try move(.folder(y.id), to: upperHalf(of: .smartGroup(group.id)))
+        #expect(shown() == ["Virtual Machines", "Y", "Everything", "X"])
+        try move(.smartGroup(group.id), to: lowerHalf(of: .folder(x.id)))
+        #expect(shown() == ["Virtual Machines", "Y", "X", "Everything"])
+
+        // The library to the end, then above a folder.
+        try move(.library, to: lowerHalf(of: .smartGroup(group.id)))
+        #expect(shown() == ["Y", "X", "Everything", "Virtual Machines"])
+        try move(.library, to: upperHalf(of: .folder(x.id)))
+        #expect(shown() == ["Y", "Virtual Machines", "X", "Everything"])
+
+        // A smart group below the library: over the lower half of its header,
+        // or over its rows.
+        try move(.smartGroup(group.id), to: lowerHalf(of: .library))
+        #expect(shown() == ["Y", "Virtual Machines", "Everything", "X"])
+        try move(.folder(y.id), to: middle(of: row(.library(a.id), in: outline), in: outline))
+        #expect(shown() == ["Virtual Machines", "Y", "Everything", "X"])
+
+        // Below every row, a header goes after every section.
+        let belowEveryRow = NSPoint(x: 100, y: outline.rect(ofRow: outline.numberOfRows - 1).maxY + 20)
+        #expect(outline.row(at: belowEveryRow) == -1)
+        try move(.library, to: belowEveryRow)
+        #expect(shown() == ["Y", "Everything", "X", "Virtual Machines"])
         #expect(
-            drag([dragged], to: top(of: row(of: .smartGroup(group.id), in: outline), in: outline), in: outline) == .move
-        )
+            viewModel.library.organization.sections.map(\.id) == [
+                .folder(y.id), .smartGroup(group.id), .folder(x.id), .library,
+            ])
 
-        #expect(viewModel.library.folders.map(\.name) == ["Z", "X", "Y"])
-        #expect(viewModel.library.smartGroups.map(\.id) == [group.id])
+        // A VM row keeps its rules wherever the sections sit: it joins a
+        // folder, and a smart group refuses it.
+        func rowOfA() throws -> NSPasteboardWriting {
+            try writer(ofRow: row(.library(a.id), in: outline), in: outline, controller: controller)
+        }
+        #expect(
+            drag([try rowOfA()], to: middle(of: row(of: .smartGroup(group.id), in: outline), in: outline), in: outline)
+                == [])
+        #expect(
+            drag([try rowOfA()], to: middle(of: row(of: .folder(x.id), in: outline), in: outline), in: outline) == .copy
+        )
+        #expect(members(of: x, in: viewModel) == [a.id])
+        #expect(members(of: y, in: viewModel) == [])
         controller.viewDidAppear()
-        let sections = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SidebarSection }
-        #expect(sections.map(\.title) == ["Everything", "Z", "X", "Y", "Virtual Machines"])
+        #expect(shown() == ["Y", "Everything", "X", "Virtual Machines"])
     }
 
     @Test("A Finder bundle dropped on a folder is imported, then joins it; dropped elsewhere it joins none")
@@ -613,14 +741,14 @@ struct SidebarFolderTests {
         let putBack = UUID()
         let clients = try viewModel.library.organization.createFolder(
             named: "Clients", members: [imported.config.id, putBack])
-        #expect(names(in: try #require(viewModel.sidebarLayout.sections.first)).isEmpty)
+        #expect(
+            names(in: try #require(viewModel.sidebarLayout.sections.first { $0.id == .folder(clients.id) })).isEmpty)
 
         _ = viewModel.importVMs(fromDroppedURLs: [imported.url])
         await viewModel.awaitArrivalsForTesting()
         viewModel.library.admitFixture(name: "Put Back") { $0.id = putBack }
 
-        let folder = try #require(viewModel.sidebarLayout.sections.first)
-        #expect(folder.id == .folder(clients.id))
+        let folder = try #require(viewModel.sidebarLayout.sections.first { $0.id == .folder(clients.id) })
         #expect(names(in: folder) == ["Imported", "Put Back"])
         #expect(members(of: clients, in: viewModel) == [imported.config.id, putBack])
     }

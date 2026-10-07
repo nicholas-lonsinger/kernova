@@ -63,9 +63,13 @@ struct SidebarSmartGroupTests {
         (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarRow)?.key == key } ?? -1
     }
 
+    private func row(of section: SidebarSectionID, in outline: NSOutlineView) -> Int {
+        (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarSection)?.id == section } ?? -1
+    }
+
     // MARK: - Projection
 
-    @Test("Each smart group is a section above the library, listing what its filter admits in the sort's order")
+    @Test("Each smart group is a section of its own, listing what its filter admits in the sort's order")
     func projectsSmartGroupSections() {
         let entries = [
             vm("Zed", guestOS: .macOS, phase: .running(sessionID: UUID())),
@@ -75,7 +79,8 @@ struct SidebarSmartGroupTests {
         let running = group("Running", VMLibraryFilter(states: [.running]))
         let macs = group("Macs", VMLibraryFilter(guestOSes: [.macOS]))
         let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .name), smartGroups: [running, macs],
+            entries: entries, options: SidebarViewOptions(sort: .name),
+            sections: [.smartGroup(running), .smartGroup(macs), .library],
             context: .testing())
 
         #expect(layout.sections.map(\.id) == [.smartGroup(running.id), .smartGroup(macs.id), .library])
@@ -100,7 +105,8 @@ struct SidebarSmartGroupTests {
         let everything = group("Everything", VMLibraryFilter())
         let none = group("Windows-free", VMLibraryFilter(states: [.suspended]))
         let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(), smartGroups: [everything, none], context: .testing())
+            entries: entries, options: SidebarViewOptions(),
+            sections: [.smartGroup(everything), .smartGroup(none), .library], context: .testing())
 
         #expect(names(in: layout.sections[0]) == ["A", "B"])
         #expect(names(in: layout.sections[1]).isEmpty)
@@ -118,7 +124,7 @@ struct SidebarSmartGroupTests {
         let layout = SidebarLayout.project(
             entries: entries,
             options: SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), grouping: .guestOS),
-            smartGroups: [everything], context: .testing())
+            sections: [.smartGroup(everything), .library], context: .testing())
 
         #expect(names(in: layout.sections[0]) == ["Linux", "Mac"])
         guard case .groups = layout.sections[1].content else {
@@ -147,9 +153,10 @@ struct SidebarSmartGroupTests {
         #expect(viewModel.sidebarOptions == SidebarViewOptions(sort: .name))
         #expect(viewModel.selection == .library(mac.id))
         let layout = viewModel.sidebarLayout
-        #expect(layout.sections.map(\.id) == [.smartGroup(saved.id), .library])
-        #expect(names(in: layout.sections[0]) == ["Mac"])
-        #expect(names(in: layout.sections[1]) == ["Linux", "Mac"])
+        // A new group goes after every section, the library included.
+        #expect(layout.sections.map(\.id) == [.library, .smartGroup(saved.id)])
+        #expect(names(in: layout.sections[1]) == ["Mac"])
+        #expect(names(in: layout.sections[0]) == ["Linux", "Mac"])
     }
 
     @Test("A name another group has is refused, and the library's filter stays")
@@ -281,6 +288,40 @@ struct SidebarSmartGroupTests {
         if let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .alertSecondButtonReturn) }
     }
 
+    @Test("A new smart group goes after every section, the library included, and scrolls into view past a selected VM")
+    func newSmartGroupScrollsIntoView() async throws {
+        let viewModel = makeViewModel()
+        let first = viewModel.library.admitFixture(name: "Mac 0", guestOS: .macOS)
+        for index in 1...60 { viewModel.library.admitFixture(name: "Mac \(index)", guestOS: .macOS) }
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
+        viewModel.selection = .library(first.id)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
+        #expect(outline.selectedRow == self.row(.library(first.id), in: outline))
+        outline.scrollRowToVisible(0)
+        #expect(!outline.visibleRect.contains(outline.rect(ofRow: outline.numberOfRows - 1)))
+        let menu = try #require(controller.viewMenu(for: .library))
+
+        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Save as Smart Group\u{2026}" }))
+        window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
+
+        try await waitUntil { viewModel.library.smartGroups.count == 1 }
+        let group = try #require(viewModel.library.smartGroups.first)
+        #expect(viewModel.library.organization.sections.map(\.id) == [.library, .smartGroup(group.id)])
+        // The sync the organization change queued, and any later one, keeps
+        // the view where the new section put it.
+        controller.viewDidAppear()
+        controller.viewDidAppear()
+        #expect(viewModel.selection == .library(first.id))
+        let header =
+            (0..<outline.numberOfRows).first {
+                (outline.item(atRow: $0) as? SidebarSection)?.id == .smartGroup(group.id)
+            }
+        let row = try #require(header)
+        #expect(outline.visibleRect.contains(outline.rect(ofRow: row)))
+    }
+
     // MARK: - Header and menu
 
     @Test("A smart group's header shows its name, its match count and its options button")
@@ -290,11 +331,12 @@ struct SidebarSmartGroupTests {
         viewModel.library.admitFixture(name: "B")
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-        try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
+        let linux = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
+        let headerRow = row(of: .smartGroup(linux.id), in: outline)
         let header = try #require(
-            outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
+            outline.view(atColumn: 0, row: headerRow, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
 
         let labels = allSubviews(NSTextField.self, in: header).filter { !$0.isHidden }.map(\.stringValue)
         #expect(labels.contains("Linux"))
@@ -302,7 +344,8 @@ struct SidebarSmartGroupTests {
         let button = try #require(header.filterButton)
         #expect(button.accessibilityLabel() == "Smart Group Options")
         #expect(button.accessibilityValue() as? String == "Guest OS: Linux")
-        #expect(controller.contextMenu(forRow: 0)?.items.first?.title == "Show VMs in \u{201C}Linux\u{201D} where")
+        #expect(
+            controller.contextMenu(forRow: headerRow)?.items.first?.title == "Show VMs in \u{201C}Linux\u{201D} where")
     }
 
     @Test("The header menu edits the group's filter, and the section and its count follow live")
@@ -332,14 +375,15 @@ struct SidebarSmartGroupTests {
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
         try await waitUntil { outline.numberOfRows == 6 }
         let header = try #require(
-            outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
+            outline.view(atColumn: 0, row: row(of: .smartGroup(saved.id), in: outline), makeIfNecessary: true)
+                as? SidebarGroupHeaderCellView)
         #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("2"))
 
         // Edited back to empty, the group lists every VM.
         let all = try #require(controller.viewMenu(for: .smartGroup(saved.id))?.items[1].submenu)
         all.performActionForItem(at: 0)
         #expect(viewModel.library.smartGroups.first?.filter == VMLibraryFilter())
-        #expect(names(in: viewModel.sidebarLayout.sections[0]) == ["Linux", "Mac"])
+        #expect(names(in: viewModel.sidebarLayout.sections[1]) == ["Linux", "Mac"])
     }
 
     @Test("Rename retitles the section; Delete removes it")
@@ -353,7 +397,9 @@ struct SidebarSmartGroupTests {
         let outline = try shownOutline(of: controller)
 
         try viewModel.library.renameSmartGroup(id, to: "New")
-        try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.title == "New" }
+        try await waitUntil {
+            (outline.item(atRow: row(of: .smartGroup(id), in: outline)) as? SidebarSection)?.title == "New"
+        }
         #expect(throws: VMOrganizationDirectory.ChangeError.nameRequired(.smartGroup)) {
             try viewModel.library.renameSmartGroup(id, to: " ")
         }
@@ -389,7 +435,7 @@ struct SidebarSmartGroupTests {
             ])
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(networks: [shared]))
         // Its only condition gone, "Lab" lists every VM.
-        #expect(names(in: viewModel.sidebarLayout.sections[0]) == ["A", "B"])
+        #expect(names(in: viewModel.sidebarLayout.sections[1]) == ["A", "B"])
     }
 
     @Test("A network whose prune the smart groups' file refuses is not deleted")
@@ -450,7 +496,7 @@ struct SidebarSmartGroupTests {
 
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
 
-        let library = try #require(viewModel.sidebarLayout.sections.last)
+        let library = try #require(viewModel.sidebarLayout.sections.first { $0.id == .library })
         #expect(names(in: library) == ["Linux"])
         #expect(library.filterCounts == SidebarLayout.FilterCounts(shown: 1, total: 2))
         #expect(viewModel.selection == inGroup)
@@ -506,12 +552,12 @@ struct SidebarSmartGroupTests {
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
 
-        #expect(outline.isItemExpanded(outline.item(atRow: 0)))
-        #expect(outline.numberOfRows == 3)
-        #expect(!outline.isItemExpanded(outline.item(atRow: 2)))
-
-        outline.collapseItem(outline.item(atRow: 0))
         let id = try #require(viewModel.library.smartGroups.first?.id)
+        #expect(outline.numberOfRows == 3)
+        #expect(!outline.isItemExpanded(outline.item(atRow: row(of: .library, in: outline))))
+        #expect(outline.isItemExpanded(outline.item(atRow: row(of: .smartGroup(id), in: outline))))
+
+        outline.collapseItem(outline.item(atRow: row(of: .smartGroup(id), in: outline)))
         #expect(
             Set(preferences.collapsedSidebarSections) == [
                 SidebarSectionID.library.rawValue, SidebarSectionID.smartGroup(id).rawValue,
@@ -531,8 +577,7 @@ struct SidebarSmartGroupTests {
         preferences.lastSelectedVMID = mac.id
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
-        let library = try #require(outline.item(atRow: 2) as? SidebarSection)
-        #expect(library.id == .library)
+        let library = try #require(outline.item(atRow: row(of: .library, in: outline)) as? SidebarSection)
 
         // The library read lands after the sidebar is on screen.
         viewModel.library.restoreSelection()
@@ -587,7 +632,7 @@ struct SidebarSmartGroupTests {
         #expect(viewModel.selection == .library(a.id))
     }
 
-    @Test("Dragging a smart group's header reorders the smart groups; the library header does not drag")
+    @Test("Dragging a smart group's header above the library's moves it there, and keeps it open")
     func dragReordersSmartGroups() throws {
         let viewModel = makeViewModel()
         for name in ["A", "B", "C"] {
@@ -596,9 +641,10 @@ struct SidebarSmartGroupTests {
         }
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
-        #expect(controller.outlineView(outline, pasteboardWriterForItem: try #require(outline.item(atRow: 6))) == nil)
-        let c = try #require(outline.item(atRow: 4) as? SidebarSection)
-        #expect(c.title == "C")
+        #expect((outline.item(atRow: 0) as? SidebarSection)?.id == .library)
+        let c = try #require(
+            (0..<outline.numberOfRows).lazy.compactMap { outline.item(atRow: $0) as? SidebarSection }
+                .first { $0.title == "C" })
         let writer = try #require(controller.outlineView(outline, pasteboardWriterForItem: c) as? NSPasteboardItem)
 
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("sidebar-group-drop-\(UUID())"))
@@ -620,7 +666,7 @@ struct SidebarSmartGroupTests {
         // Appearing runs the sidebar's sync pass synchronously.
         controller.viewDidAppear()
         let sections = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SidebarSection }
-        #expect(sections.map(\.title) == ["C", "A", "B", "Virtual Machines"])
+        #expect(sections.map(\.title) == ["C", "Virtual Machines", "A", "B"])
         // The moved section moved rather than being reinserted, so it is
         // still open — on screen, not only in the saved state.
         #expect(sections.allSatisfy { outline.isItemExpanded($0) })
@@ -633,12 +679,17 @@ struct SidebarSmartGroupTests {
         let groups = ["A", "B", "C"].map { group($0, VMLibraryFilter()) }
         let tree = SidebarTree()
         _ = tree.update(
-            to: .project(entries: entries, options: SidebarViewOptions(), smartGroups: groups, context: .testing()))
+            to: .project(
+                entries: entries, options: SidebarViewOptions(),
+                sections: groups.map(VMOrganizationDirectory.Section.smartGroup) + [.library], context: .testing()))
         let before = tree.sections
 
         let changes = tree.update(
             to: .project(
-                entries: entries, options: SidebarViewOptions(), smartGroups: [groups[2], groups[0], groups[1]],
+                entries: entries, options: SidebarViewOptions(),
+                sections: [groups[2], groups[0], groups[1]].map(VMOrganizationDirectory.Section.smartGroup) + [
+                    .library
+                ],
                 context: .testing()))
 
         let root = try #require(changes.children.first { $0.parent == nil })
@@ -661,7 +712,7 @@ struct SidebarSmartGroupTests {
         viewModel.selection = inGroup
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
-        let group = try #require(outline.item(atRow: 0) as? SidebarSection)
+        let group = try #require(outline.item(atRow: row(of: .smartGroup(id), in: outline)) as? SidebarSection)
 
         outline.collapseItem(group)
         viewModel.library.admitFixture(name: "Other Mac", guestOS: .macOS)
