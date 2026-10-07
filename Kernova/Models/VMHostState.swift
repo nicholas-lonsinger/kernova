@@ -51,13 +51,20 @@ struct VMHostState: Codable, Sendable, Equatable {
     /// `.unresponsive`, and `.expectedMissing` still surface.
     var agentInstallNudgeDismissed: Bool
 
+    // MARK: - History
+
+    /// The last moment this VM was running — written as a session first runs
+    /// and again as it ends — `nil` for a VM that has never run.
+    var lastRunAt: Date?
+
     init(
         startsAutomaticallyOnLaunch: Bool = false,
         ephemeralModeEnabled: Bool = false,
         ephemeralBaselineSnapshotID: UUID? = nil,
         displayPreference: VMDisplayPreference = .inline,
         lastFullscreenDisplayID: UInt32? = nil,
-        agentInstallNudgeDismissed: Bool = false
+        agentInstallNudgeDismissed: Bool = false,
+        lastRunAt: Date? = nil
     ) {
         self.startsAutomaticallyOnLaunch = startsAutomaticallyOnLaunch
         self.ephemeralModeEnabled = ephemeralModeEnabled
@@ -65,6 +72,7 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.displayPreference = displayPreference
         self.lastFullscreenDisplayID = lastFullscreenDisplayID
         self.agentInstallNudgeDismissed = agentInstallNudgeDismissed
+        self.lastRunAt = lastRunAt
     }
 
     // Custom `init(from:)` so a key absent from the file takes the value a new
@@ -89,6 +97,7 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.agentInstallNudgeDismissed =
             try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed)
             ?? defaults.agentInstallNudgeDismissed
+        self.lastRunAt = try c.decodeIfPresent(Date.self, forKey: .lastRunAt)
     }
 
     // MARK: - Arrival
@@ -100,8 +109,11 @@ struct VMHostState: Codable, Sendable, Equatable {
     /// action, so it is local intent rather than something a copy carries in:
     /// a VM arriving pre-marked would boot on the next launch without ever
     /// being asked for, and an Exact Copy would start beside its source.
+    /// The last run is the source's history, not the copy's: a copy arrives
+    /// never run.
     mutating func arriveAsCopy() {
         startsAutomaticallyOnLaunch = false
+        lastRunAt = nil
     }
 
     // MARK: - Ephemeral mode
