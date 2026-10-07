@@ -439,47 +439,63 @@ struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Codable
 
-    // Custom `init(from:)` for the non-optional fields with defaults
-    // (`clipboardPassthroughEnabled ?? false`, `audioOutputEnabled ?? true`, …):
-    // synthesized `Codable` would `decode` them and fail the whole decode when
-    // the key is absent from a config. (Optionals are not the reason —
-    // synthesis already gives those `decodeIfPresent`.)
+    // Custom `init(from:)` so a key absent from the file takes the value a new
+    // VM gets, where synthesized `Codable` would fail the whole decode on any
+    // missing non-optional field.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(UUID.self, forKey: .id)
-        self.name = try c.decode(String.self, forKey: .name)
-        self.guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
-        self.bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
+        let id = try c.decode(UUID.self, forKey: .id)
+        let name = try c.decode(String.self, forKey: .name)
+        let guestOS = try c.decode(VMGuestOS.self, forKey: .guestOS)
+        let bootMode = try c.decode(VMBootMode.self, forKey: .bootMode)
+        let defaults = VMConfiguration(id: id, name: name, guestOS: guestOS, bootMode: bootMode)
+        self.id = id
+        self.name = name
+        self.guestOS = guestOS
+        self.bootMode = bootMode
         self.cpuCount = try c.decode(Int.self, forKey: .cpuCount)
         self.memorySizeInGB = try c.decode(VMMemorySize.self, forKey: .memorySizeInGB)
         self.diskSizeInGB = try c.decode(Int.self, forKey: .diskSizeInGB)
         self.displayWidth = try c.decode(Int.self, forKey: .displayWidth)
         self.displayHeight = try c.decode(Int.self, forKey: .displayHeight)
         self.displayPPI = try c.decode(Int.self, forKey: .displayPPI)
-        self.displaySizesToWindow = try c.decodeIfPresent(Bool.self, forKey: .displaySizesToWindow) ?? true
-        self.displayHiDPI = try c.decodeIfPresent(Bool.self, forKey: .displayHiDPI) ?? true
-        self.displayAutoResizes = try c.decodeIfPresent(Bool.self, forKey: .displayAutoResizes) ?? true
+        self.displaySizesToWindow = try c.decode(
+            Bool.self, forKey: .displaySizesToWindow, default: defaults.displaySizesToWindow, in: decoder)
+        self.displayHiDPI = try c.decode(
+            Bool.self, forKey: .displayHiDPI, default: defaults.displayHiDPI, in: decoder)
+        self.displayAutoResizes = try c.decode(
+            Bool.self, forKey: .displayAutoResizes, default: defaults.displayAutoResizes, in: decoder)
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
-        self.networkMode = try c.decodeIfPresent(VMNetworkMode.self, forKey: .networkMode) ?? .shared
+        self.networkMode = try c.decode(
+            VMNetworkMode.self, forKey: .networkMode, default: defaults.networkMode, in: decoder)
         self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
             String.self, forKey: .bridgedInterfaceIdentifier)
-        self.networkMembership =
-            try c.decodeIfPresent(VMNetworkMembership.self, forKey: .networkMembership) ?? .common
+        self.networkMembership = try c.decode(
+            VMNetworkMembership.self, forKey: .networkMembership, default: defaults.networkMembership,
+            in: decoder)
         self.macAddress = try c.decodeIfPresent(String.self, forKey: .macAddress)
         self.clipboardSharingEnabled = try c.decode(Bool.self, forKey: .clipboardSharingEnabled)
-        self.clipboardPassthroughEnabled =
-            try c.decodeIfPresent(Bool.self, forKey: .clipboardPassthroughEnabled) ?? false
-        self.dropFilesEnabled = try c.decodeIfPresent(Bool.self, forKey: .dropFilesEnabled) ?? true
-        self.serialSocketRelayEnabled =
-            try c.decodeIfPresent(Bool.self, forKey: .serialSocketRelayEnabled) ?? false
-        self.audioInputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioInputEnabled) ?? false
-        self.audioOutputEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioOutputEnabled) ?? true
-        self.inputDeviceMode =
-            try c.decodeIfPresent(VMInputDeviceMode.self, forKey: .inputDeviceMode) ?? .automatic
-        self.systemKeyForwarding =
-            try c.decodeIfPresent(VMSystemKeyForwarding.self, forKey: .systemKeyForwarding)
-            ?? .always
-        self.agentLogForwardingEnabled = try c.decodeIfPresent(Bool.self, forKey: .agentLogForwardingEnabled) ?? false
+        self.clipboardPassthroughEnabled = try c.decode(
+            Bool.self, forKey: .clipboardPassthroughEnabled,
+            default: defaults.clipboardPassthroughEnabled, in: decoder)
+        self.dropFilesEnabled = try c.decode(
+            Bool.self, forKey: .dropFilesEnabled, default: defaults.dropFilesEnabled, in: decoder)
+        self.serialSocketRelayEnabled = try c.decode(
+            Bool.self, forKey: .serialSocketRelayEnabled, default: defaults.serialSocketRelayEnabled,
+            in: decoder)
+        self.audioInputEnabled = try c.decode(
+            Bool.self, forKey: .audioInputEnabled, default: defaults.audioInputEnabled, in: decoder)
+        self.audioOutputEnabled = try c.decode(
+            Bool.self, forKey: .audioOutputEnabled, default: defaults.audioOutputEnabled, in: decoder)
+        self.inputDeviceMode = try c.decode(
+            VMInputDeviceMode.self, forKey: .inputDeviceMode, default: defaults.inputDeviceMode,
+            in: decoder)
+        self.systemKeyForwarding = try c.decode(
+            VMSystemKeyForwarding.self, forKey: .systemKeyForwarding,
+            default: defaults.systemKeyForwarding, in: decoder)
+        self.agentLogForwardingEnabled = try c.decode(
+            Bool.self, forKey: .agentLogForwardingEnabled,
+            default: defaults.agentLogForwardingEnabled, in: decoder)
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)

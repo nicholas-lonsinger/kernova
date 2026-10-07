@@ -233,7 +233,7 @@ struct VMBundleTests {
             try corrupt.write(to: pairingsURL)
             let bundle = makeBundle(try onDisk(url))
 
-            #expect(throws: UnreadableBundleFile.self) {
+            #expect(throws: UnreadableConfigFile.self) {
                 try bundle.commitUSBPairings { $0.upsert(pairing("new")) }
             }
 
@@ -298,7 +298,7 @@ struct VMBundleTests {
         try withBundle { url in
             try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: url).configURL)
 
-            #expect(throws: UnreadableBundleFile.self) { try onDisk(url) }
+            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
         }
     }
 
@@ -319,7 +319,7 @@ struct VMBundleTests {
         try withBundle { url in
             try Data("{ not json".utf8).write(to: VMBundleLayout(bundleURL: url).hostStateURL)
 
-            #expect(throws: UnreadableBundleFile.self) { try onDisk(url) }
+            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
         }
     }
 
@@ -337,7 +337,7 @@ struct VMBundleTests {
                     [.posixPermissions: 0o644], ofItemAtPath: hostStateURL.path(percentEncoded: false))
             }
 
-            #expect(throws: UnreadableBundleFile.self) { try onDisk(url) }
+            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
         }
     }
 
@@ -349,7 +349,7 @@ struct VMBundleTests {
                 at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
             try Data("not json".utf8).write(to: layout.snapshotManifestURL)
 
-            #expect(throws: UnreadableBundleFile.self) { try onDisk(url) }
+            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
         }
     }
 

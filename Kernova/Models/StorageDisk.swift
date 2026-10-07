@@ -72,7 +72,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
         self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
         self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.notes = try c.decode(String.self, forKey: .notes, default: "", in: decoder)
     }
 
     /// Picks the bus class implied by the file extension.
@@ -174,7 +174,7 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
         self.label = try c.decode(String.self, forKey: .label)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        self.notes = try c.decode(String.self, forKey: .notes, default: "", in: decoder)
     }
 }
 

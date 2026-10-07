@@ -79,7 +79,7 @@ struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
         self.name = try c.decode(String.self, forKey: .name)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.notes = try c.decode(String.self, forKey: .notes)
-        self.kind = try c.decodeIfPresent(VMSnapshotKind.self, forKey: .kind) ?? .warm
+        self.kind = try c.decode(VMSnapshotKind.self, forKey: .kind, default: .warm, in: decoder)
     }
 }
 

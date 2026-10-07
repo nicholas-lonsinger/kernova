@@ -90,23 +90,23 @@ struct VMHostState: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let defaults = VMHostState()
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.startsAutomaticallyOnLaunch =
-            try c.decodeIfPresent(Bool.self, forKey: .startsAutomaticallyOnLaunch)
-            ?? defaults.startsAutomaticallyOnLaunch
-        self.ephemeralModeEnabled =
-            try c.decodeIfPresent(Bool.self, forKey: .ephemeralModeEnabled)
-            ?? defaults.ephemeralModeEnabled
+        self.startsAutomaticallyOnLaunch = try c.decode(
+            Bool.self, forKey: .startsAutomaticallyOnLaunch,
+            default: defaults.startsAutomaticallyOnLaunch, in: decoder)
+        self.ephemeralModeEnabled = try c.decode(
+            Bool.self, forKey: .ephemeralModeEnabled, default: defaults.ephemeralModeEnabled,
+            in: decoder)
         self.ephemeralBaselineSnapshotID =
             try c.decodeIfPresent(UUID.self, forKey: .ephemeralBaselineSnapshotID)
-        self.displayPreference =
-            try c.decodeIfPresent(VMDisplayPreference.self, forKey: .displayPreference)
-            ?? defaults.displayPreference
+        self.displayPreference = try c.decode(
+            VMDisplayPreference.self, forKey: .displayPreference,
+            default: defaults.displayPreference, in: decoder)
         self.lastFullscreenDisplayID =
             try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
-        self.agentInstallNudgeDismissed =
-            try c.decodeIfPresent(Bool.self, forKey: .agentInstallNudgeDismissed)
-            ?? defaults.agentInstallNudgeDismissed
-        self.tags = try c.decodeIfPresent(Set<UUID>.self, forKey: .tags) ?? defaults.tags
+        self.agentInstallNudgeDismissed = try c.decode(
+            Bool.self, forKey: .agentInstallNudgeDismissed,
+            default: defaults.agentInstallNudgeDismissed, in: decoder)
+        self.tags = try c.decode(Set<UUID>.self, forKey: .tags, default: defaults.tags, in: decoder)
         self.lastRunAt = try c.decodeIfPresent(Date.self, forKey: .lastRunAt)
     }
 

@@ -232,7 +232,7 @@ struct VMRunLockTests {
         // A re-read that fails after the lock is taken lets it go.
         let config = VMBundleLayout.configRelativePath
         store.setUnreadable(true, relativePath: config, at: instance.bundleURL)
-        await #expect(throws: UnreadableBundleFile.self) {
+        await #expect(throws: UnreadableConfigFile.self) {
             try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
         }
         store.setUnreadable(false, relativePath: config, at: instance.bundleURL)
@@ -448,7 +448,7 @@ struct VMRunLockTests {
         store.setUnreadable(true, relativePath: VMBundleLayout.configRelativePath, at: instance.bundleURL)
         let recorder = Recorder()
 
-        await #expect(throws: UnreadableBundleFile.self) {
+        await #expect(throws: UnreadableConfigFile.self) {
             try await instance.activity.perform(.deletingSnapshot) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())

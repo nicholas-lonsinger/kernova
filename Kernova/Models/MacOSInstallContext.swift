@@ -108,8 +108,8 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
             String.self, forKey: .downloadDestinationPath)
         self.localIPSWPath = try c.decodeIfPresent(String.self, forKey: .localIPSWPath)
         self.localIPSWBookmark = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmark)
-        self.requestedFreshDownload =
-            try c.decodeIfPresent(Bool.self, forKey: .requestedFreshDownload) ?? false
+        self.requestedFreshDownload = try c.decode(
+            Bool.self, forKey: .requestedFreshDownload, default: false, in: decoder)
         self.remoteURL = try c.decodeIfPresent(URL.self, forKey: .remoteURL)
         self.version = try c.decodeIfPresent(String.self, forKey: .version)
         self.build = try c.decodeIfPresent(String.self, forKey: .build)

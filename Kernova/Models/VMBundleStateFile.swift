@@ -1,86 +1,151 @@
 import Foundation
 
+/// Which of a bundle's state files one is, by the write path that repairs it.
+enum VMBundleStateFileID: Sendable, Hashable {
+    case configuration
+    case hostState
+    case snapshotManifest
+    case usbPairings
+    /// The `config.json` the snapshot with this identifier was taken under.
+    case snapshotConfiguration(UUID)
+
+    var relativePath: String {
+        switch self {
+        case .configuration: VMBundleLayout.configRelativePath
+        case .hostState: VMBundleLayout.hostStateRelativePath
+        case .snapshotManifest: VMBundleLayout.snapshotManifestRelativePath
+        case .usbPairings: VMBundleLayout.usbPairingsRelativePath
+        case .snapshotConfiguration(let id): VMBundleLayout.snapshotConfigRelativePath(id: id)
+        }
+    }
+}
+
 /// A state file a VM bundle holds, which only ``VMBundleFiles`` reads and
 /// replaces: where it lives in the bundle and how its bytes map to a value.
 ///
-/// Absence reads as the default for every file but `config.json`, whose absence
-/// means there is no VM to read. A file that is present but cannot be read or
-/// decoded throws ``UnreadableBundleFile``, so nothing can mistake it for the
-/// default a later write would put over it.
+/// Absence reads as the default for every file but a `config.json`, whose
+/// absence means there is no configuration to read. A file that is present
+/// but cannot be read or decoded throws ``UnreadableConfigFile``, so nothing
+/// can mistake it for the default a later write would put over it.
 struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
-    let relativePath: String
+    let id: VMBundleStateFileID
     /// Decodes the file's bytes, `nil` when the bundle holds no such file.
     /// `files` is the same coordinated access, for a value assembled from
     /// more than one file.
     private let decode: @Sendable (_ data: Data?, _ files: any VMBundleFileReading) throws -> Value
     fileprivate let encode: @Sendable (Value) throws -> Data
+    /// Decodes bytes the strict decode refused again, recording every problem.
+    fileprivate let diagnose: @Sendable (Data) -> ConfigFileDiagnosis
 
     private init(
-        relativePath: String,
+        id: VMBundleStateFileID,
         decode: @escaping @Sendable (Data?, any VMBundleFileReading) throws -> Value,
-        encode: @escaping @Sendable (Value) throws -> Data
+        encode: @escaping @Sendable (Value) throws -> Data,
+        diagnose: @escaping @Sendable (Data) -> ConfigFileDiagnosis
     ) {
-        self.relativePath = relativePath
+        self.id = id
         self.decode = decode
         self.encode = encode
+        self.diagnose = diagnose
     }
+
+    var relativePath: String { id.relativePath }
 
     var fileName: String { (relativePath as NSString).lastPathComponent }
 
-    /// The file's value as `files` holds it.
-    fileprivate func read(from files: any VMBundleFileReading) throws -> Value {
-        try value(of: try files.data(atRelativePath: relativePath), in: files)
+    /// The file's value as `files`, the bundle at `bundleURL`, holds it.
+    /// `owner` names the file should it be unreadable; `nil` takes the VM its
+    /// own `$.name` names.
+    fileprivate func read(
+        from files: any VMBundleFileReading, in bundleURL: URL,
+        owner: UnreadableConfigFile.Owner? = nil
+    ) throws(UnreadableConfigFile) -> Value {
+        let data: Data?
+        do {
+            data = try files.data(atRelativePath: relativePath)
+        } catch {
+            throw unreadable(
+                in: bundleURL, owner: owner, .fileUnreadable(reason: error.localizedDescription))
+        }
+        return try value(of: data, in: files, bundleURL: bundleURL, owner: owner)
     }
 
-    /// The value `data` decodes to, as the file at ``relativePath`` in `files`.
-    fileprivate func value(of data: @autoclosure () throws -> Data?, in files: any VMBundleFileReading)
-        throws -> Value
-    {
+    /// The value `data` decodes to, as this file of the bundle at `bundleURL`.
+    ///
+    /// A refusal decodes the same bytes again to say why.
+    fileprivate func value(
+        of data: Data?, in files: any VMBundleFileReading, bundleURL: URL,
+        owner: UnreadableConfigFile.Owner? = nil
+    ) throws(UnreadableConfigFile) -> Value {
         do {
-            return try decode(try data(), files)
-        } catch let unreadable as UnreadableBundleFile {
-            throw unreadable
+            return try decode(data, files)
         } catch {
-            throw UnreadableBundleFile(fileName: fileName, underlying: error)
+            guard let data else { throw unreadable(in: bundleURL, owner: owner, .fileMissing) }
+            throw UnreadableConfigFile(
+                location: .bundle(bundleURL, id), owner: owner,
+                fallbackName: bundleURL.lastPathComponent, diagnosis: diagnose(data),
+                strictFailure: error)
         }
     }
 
-    /// A sidecar in the `config.json` coding whose absence reads as `empty`.
-    private static func sidecar(
-        at relativePath: String, empty: @escaping @Sendable () -> Value
-    ) -> Self where Value: Codable {
+    private func unreadable(
+        in bundleURL: URL, owner: UnreadableConfigFile.Owner?, _ issue: ConfigProblem.Issue
+    ) -> UnreadableConfigFile {
+        UnreadableConfigFile(
+            location: .bundle(bundleURL, id),
+            owner: owner ?? .virtualMachine(bundleURL.lastPathComponent),
+            problems: [ConfigProblem(path: nil, issue: issue)])
+    }
+
+    /// A file in the `config.json` coding whose bytes decode as `Record`,
+    /// which `assemble` turns into the value; absence reads as `empty()`, or
+    /// as no file at all when `empty` is `nil`.
+    private static func coded<Record: Codable>(
+        _ id: VMBundleStateFileID, as record: Record.Type, empty: (@Sendable () -> Value)?,
+        assemble: @escaping @Sendable (Record, any VMBundleFileReading) -> Value,
+        encode: @escaping @Sendable (Value) -> Record
+    ) -> Self {
         Self(
-            relativePath: relativePath,
-            decode: { data, _ in
-                guard let data else { return empty() }
-                return try VMConfiguration.makeJSONDecoder().decode(Value.self, from: data)
+            id: id,
+            decode: { data, files in
+                guard let data else {
+                    guard let empty else { throw CocoaError(.fileReadNoSuchFile) }
+                    return empty()
+                }
+                return assemble(
+                    try VMConfiguration.makeJSONDecoder().decode(Record.self, from: data), files)
             },
-            encode: { try VMConfiguration.makeJSONEncoder().encode($0) })
+            encode: { try VMConfiguration.makeJSONEncoder().encode(encode($0)) },
+            diagnose: {
+                ConfigFileDiagnosis(
+                    decoding: Record.self, from: $0, decoder: VMConfiguration.makeJSONDecoder(),
+                    encoder: VMConfiguration.makeJSONEncoder())
+            })
+    }
+
+    /// A file whose bytes decode as the value itself.
+    private static func coded(
+        _ id: VMBundleStateFileID, empty: (@Sendable () -> Value)?
+    ) -> Self where Value: Codable {
+        coded(id, as: Value.self, empty: empty, assemble: { record, _ in record }, encode: { $0 })
     }
 }
 
 extension VMBundleStateFile where Value == VMConfiguration {
-    static var configuration: Self {
-        Self(
-            relativePath: VMBundleLayout.configRelativePath,
-            decode: { data, _ in
-                guard let data else { throw CocoaError(.fileReadNoSuchFile) }
-                return try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-            },
-            encode: { try VMConfiguration.makeJSONEncoder().encode($0) })
+    static var configuration: Self { coded(.configuration, empty: nil) }
+
+    /// The configuration snapshot `id` was taken under.
+    static func snapshotConfiguration(id: UUID) -> Self {
+        coded(.snapshotConfiguration(id), empty: nil)
     }
 }
 
 extension VMBundleStateFile where Value == VMHostState {
-    static var hostState: Self {
-        sidecar(at: VMBundleLayout.hostStateRelativePath) { VMHostState() }
-    }
+    static var hostState: Self { coded(.hostState) { VMHostState() } }
 }
 
 extension VMBundleStateFile where Value == USBAccessoryPairingSet {
-    static var usbPairings: Self {
-        sidecar(at: VMBundleLayout.usbPairingsRelativePath) { USBAccessoryPairingSet() }
-    }
+    static var usbPairings: Self { coded(.usbPairings) { USBAccessoryPairingSet() } }
 }
 
 extension VMBundleStateFile where Value == VMSnapshotManifest {
@@ -88,19 +153,16 @@ extension VMBundleStateFile where Value == VMSnapshotManifest {
     /// `config.json` records — read through the same access, since the
     /// manifest does not repeat it.
     static var snapshotManifest: Self {
-        Self(
-            relativePath: VMBundleLayout.snapshotManifestRelativePath,
-            decode: { data, files in
-                guard let data else { return VMSnapshotManifest() }
-                let record = try VMConfiguration.makeJSONDecoder().decode(
-                    VMSnapshotManifestRecord.self, from: data)
-                return VMSnapshotManifest(
+        coded(
+            .snapshotManifest, as: VMSnapshotManifestRecord.self, empty: { VMSnapshotManifest() },
+            assemble: { record, files in
+                VMSnapshotManifest(
                     snapshots: record.snapshots.map {
                         VMSnapshot($0, network: capturedNetwork(of: $0.id, in: files))
                     },
                     currentID: record.currentID)
             },
-            encode: { try VMConfiguration.makeJSONEncoder().encode($0.record) })
+            encode: { $0.record })
     }
 
     /// The network device of the configuration snapshot `id` holds, or `nil`
@@ -119,23 +181,13 @@ extension VMBundleStateFile where Value == VMSnapshotManifest {
     }
 }
 
-/// A bundle state file that is present but could not be read or decoded — or,
-/// for `config.json`, absent.
-struct UnreadableBundleFile: LocalizedError {
-    let fileName: String
-    let underlying: any Error
-
-    var errorDescription: String? {
-        "\u{201C}\(fileName)\u{201D} could not be read: \(underlying.localizedDescription)"
-    }
-}
-
 /// One bundle's state files, read and written through a
 /// ``VMBundleFileAccessing``.
 ///
 /// Any bundle can be read. A write takes ``VMBundle/CommitKey``, so only a
 /// ``VMBundle`` writes a bundle it holds; a bundle still being staged is
-/// written through ``VMStagedBundle``.
+/// written through ``VMStagedBundle``, and a file no read can take is
+/// rewritten only by ``repair(_:trashingOriginalWith:)``.
 ///
 /// Every write reads the file, applies a change to what the file holds, and
 /// replaces it, all under one coordinated write — so a field another process
@@ -163,22 +215,93 @@ struct VMBundleFiles: Sendable {
     /// ``VMBundleRead/pairingsUnreadable``, with no pairings; every pairings
     /// write reads it first, so each one fails for as long as it stays that
     /// way.
-    func read() throws -> VMBundleRead {
-        try access.reading(url) { files in
+    func read() throws(UnreadableConfigFile) -> VMBundleRead {
+        try reading { files throws(UnreadableConfigFile) in
+            let configuration = try VMBundleStateFile.configuration.read(from: files, in: url)
+            let owner = UnreadableConfigFile.Owner.virtualMachine(configuration.name)
             var pairings = USBAccessoryPairingSet()
-            var pairingsUnreadable: UnreadableBundleFile?
-            do {
-                pairings = try VMBundleStateFile.usbPairings.read(from: files)
-            } catch let unreadable as UnreadableBundleFile {
-                pairingsUnreadable = unreadable
+            var pairingsUnreadable: UnreadableConfigFile?
+            do throws(UnreadableConfigFile) {
+                pairings = try VMBundleStateFile.usbPairings.read(from: files, in: url, owner: owner)
+            } catch {
+                pairingsUnreadable = error
             }
             return VMBundleRead(
                 files: self,
-                configuration: try VMBundleStateFile.configuration.read(from: files),
-                hostState: try VMBundleStateFile.hostState.read(from: files),
-                snapshotManifest: try VMBundleStateFile.snapshotManifest.read(from: files),
+                configuration: configuration,
+                hostState: try VMBundleStateFile.hostState.read(from: files, in: url, owner: owner),
+                snapshotManifest: try VMBundleStateFile.snapshotManifest.read(
+                    from: files, in: url, owner: owner),
                 usbPairings: pairings,
                 pairingsUnreadable: pairingsUnreadable)
+        }
+    }
+
+    /// Reads `config.json` alone.
+    func readConfiguration() throws(UnreadableConfigFile) -> VMConfiguration {
+        try reading { files throws(UnreadableConfigFile) in
+            try VMBundleStateFile.configuration.read(from: files, in: url)
+        }
+    }
+
+    /// Every one of the bundle's state files, and every `config.json` a
+    /// snapshot its manifest lists was taken under, that a read refuses —
+    /// read fresh, each through the decode the library's own read takes.
+    func unreadableFiles() -> [UnreadableConfigFile] {
+        do throws(UnreadableConfigFile) {
+            return try reading { files throws(UnreadableConfigFile) in
+                var found: [UnreadableConfigFile] = []
+                func attempt<Value>(
+                    _ file: VMBundleStateFile<Value>, owner: UnreadableConfigFile.Owner?
+                ) -> Value? {
+                    do throws(UnreadableConfigFile) {
+                        return try file.read(from: files, in: url, owner: owner)
+                    } catch {
+                        found.append(error)
+                        return nil
+                    }
+                }
+                let configuration = attempt(.configuration, owner: nil)
+                let vmName = configuration?.name ?? found.first?.owner.title ?? url.lastPathComponent
+                let owner = UnreadableConfigFile.Owner.virtualMachine(vmName)
+                _ = attempt(.hostState, owner: owner)
+                _ = attempt(.usbPairings, owner: owner)
+                let manifest = attempt(.snapshotManifest, owner: owner)
+                for snapshot in manifest?.snapshots ?? [] {
+                    _ = attempt(
+                        .snapshotConfiguration(id: snapshot.id),
+                        owner: .snapshot(vm: vmName, snapshot: snapshot.name))
+                }
+                return found
+            }
+        } catch {
+            return [error]
+        }
+    }
+
+    /// `body` under a coordinated read, a read that cannot be coordinated
+    /// thrown as an unreadable `config.json`.
+    private func reading<T>(
+        _ body: (any VMBundleFileReading) throws(UnreadableConfigFile) -> T
+    ) throws(UnreadableConfigFile) -> T {
+        do {
+            let outcome = try access.reading(url) { files -> Result<T, UnreadableConfigFile> in
+                do throws(UnreadableConfigFile) {
+                    return .success(try body(files))
+                } catch {
+                    return .failure(error)
+                }
+            }
+            return try outcome.get()
+        } catch let unreadable as UnreadableConfigFile {
+            throw unreadable
+        } catch {
+            throw UnreadableConfigFile(
+                location: .bundle(url, .configuration),
+                owner: .virtualMachine(url.lastPathComponent),
+                problems: [
+                    ConfigProblem(path: nil, issue: .fileUnreadable(reason: error.localizedDescription))
+                ])
         }
     }
 
@@ -192,11 +315,6 @@ struct VMBundleFiles: Sendable {
     /// (``VMBundleFileAccessing/isBundleLockedElsewhere(at:)``).
     func isRunLockedElsewhere() throws -> Bool {
         try access.isBundleLockedElsewhere(at: url)
-    }
-
-    /// Reads `config.json` alone.
-    func readConfiguration() throws -> VMConfiguration {
-        try access.reading(url) { try VMBundleStateFile.configuration.read(from: $0) }
     }
 
     // periphery:ignore:parameters key - an access token: its type admits the caller
@@ -226,7 +344,7 @@ struct VMBundleFiles: Sendable {
         _ change: (inout Value) throws -> Void
     ) throws -> Value {
         try access.writing(url, VMBundleFileWriteKey()) { files in
-            let current = try file.read(from: files)
+            let current = try file.read(from: files, in: url)
             var new = current
             try change(&new)
             guard new != current else { return current }
@@ -241,7 +359,51 @@ struct VMBundleFiles: Sendable {
             try files.replace(atRelativePath: file.relativePath, with: encoded)
             // What the file holds, not `new`: the encoding keeps dates to the
             // second, so the two can differ.
-            return try file.value(of: encoded, in: files)
+            return try file.value(of: encoded, in: files, bundleURL: url)
+        }
+    }
+
+    /// Puts each problem's default in place in the state file `id` names,
+    /// moving what the file held to the Trash first.
+    ///
+    /// Decides on what the file holds inside the coordinated write, not on
+    /// the check that listed it, and refuses while any copy of Kernova holds
+    /// the bundle's run lock — the VM is in use. A copy of the bytes goes to
+    /// the Trash under the file's own name before the file is replaced, in
+    /// one atomic step, so at no point is the file absent or half-written,
+    /// and a failure anywhere leaves it as it was.
+    func repair(
+        _ id: VMBundleStateFileID, trashingOriginalWith fileSystem: any FileSystemOperating
+    ) throws -> ConfigFileRepair {
+        switch id {
+        case .configuration: try repair(VMBundleStateFile.configuration, fileSystem)
+        case .hostState: try repair(VMBundleStateFile.hostState, fileSystem)
+        case .snapshotManifest: try repair(VMBundleStateFile.snapshotManifest, fileSystem)
+        case .usbPairings: try repair(VMBundleStateFile.usbPairings, fileSystem)
+        case .snapshotConfiguration(let snapshot):
+            try repair(VMBundleStateFile.snapshotConfiguration(id: snapshot), fileSystem)
+        }
+    }
+
+    private func repair<Value>(
+        _ file: VMBundleStateFile<Value>, _ fileSystem: any FileSystemOperating
+    ) throws -> ConfigFileRepair {
+        try access.writing(url, VMBundleFileWriteKey()) { files in
+            guard let data = try files.data(atRelativePath: file.relativePath) else {
+                throw ConfigFileRepairRefusal.notRepairable
+            }
+            if (try? file.value(of: data, in: files, bundleURL: url)) != nil {
+                return .alreadyReadable
+            }
+            guard let repaired = file.diagnose(data).repaired else {
+                throw ConfigFileRepairRefusal.notRepairable
+            }
+            if try access.isBundleLockedElsewhere(at: url) {
+                throw ConfigFileRepairRefusal.inUse
+            }
+            try ConfigFileRepair.moveOriginalToTrash(data, named: file.fileName, using: fileSystem)
+            try files.replace(atRelativePath: file.relativePath, with: repaired)
+            return .repaired
         }
     }
 }
@@ -296,10 +458,10 @@ struct VMStagedBundle: Sendable {
 }
 
 /// What ``VMBundleFileAccessing/writing(_:_:_:)`` asks for, so only this
-/// file — a ``VMBundle``'s commits through ``VMBundleFiles/update(_:_:holdingRunLock:_:)``
-/// and a ``VMStagedBundle``'s writes — replaces a bundle's state file: the
-/// initializer is `fileprivate`, which `@testable import` does not open, and
-/// the key is passed `borrowing`, so no conformer can keep one.
+/// file — a ``VMBundle``'s commits through ``VMBundleFiles/update(_:_:holdingRunLock:_:)``,
+/// a repair, and a ``VMStagedBundle``'s writes — replaces a bundle's state
+/// file: the initializer is `fileprivate`, which `@testable import` does not
+/// open, and the key is passed `borrowing`, so no conformer can keep one.
 struct VMBundleFileWriteKey: ~Copyable {
     fileprivate init() {}
 }
@@ -314,12 +476,12 @@ struct VMBundleRead: Sendable {
     let usbPairings: USBAccessoryPairingSet
     /// Why the pairings read as none, when their file is present but could not
     /// be read.
-    let pairingsUnreadable: UnreadableBundleFile?
+    let pairingsUnreadable: UnreadableConfigFile?
 
     fileprivate init(
         files: VMBundleFiles, configuration: VMConfiguration, hostState: VMHostState,
         snapshotManifest: VMSnapshotManifest, usbPairings: USBAccessoryPairingSet,
-        pairingsUnreadable: UnreadableBundleFile?
+        pairingsUnreadable: UnreadableConfigFile?
     ) {
         self.files = files
         self.configuration = configuration
