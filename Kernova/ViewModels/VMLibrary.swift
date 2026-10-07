@@ -141,9 +141,28 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// The selected sidebar row, whose entry is ``selectedID``.
     var selection: SidebarRowKey? {
         didSet {
-            guard selection?.entryID != oldValue?.entryID else { return }
-            preferences.lastSelectedVMID = selection?.entryID
+            let entryID = selection?.entryID
+            if entryID != retainedEntryID {
+                retainedEntryID = entryID.flatMap { sidebarFilterAdmits($0) ? $0 : nil }
+            }
+            guard entryID != oldValue?.entryID else { return }
+            preferences.lastSelectedVMID = entryID
         }
+    }
+
+    /// The selected entry the sidebar keeps listing once a change to its own
+    /// values — a status, a network — stops the filter admitting it, as Mail
+    /// keeps a selected message the filter no longer matches.
+    ///
+    /// Follows the selection onto any entry the filter admits, so it lapses as
+    /// soon as the selection moves off; an options edit drops it before it
+    /// re-applies, so an edit still hides the VM and clears the selection.
+    private(set) var retainedEntryID: UUID?
+
+    private func sidebarFilterAdmits(_ id: UUID) -> Bool {
+        guard let entry = entries.first(where: { $0.id == id }) else { return false }
+        return sidebarOptions.filter.admits(
+            entry.filterSubject(bundledAgentVersion: sidebarContext.bundledAgentVersion))
     }
 
     /// The selected entry's identifier.
@@ -166,7 +185,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarOptions = SidebarViewOptions() {
         didSet {
             guard sidebarOptions != oldValue else { return }
+            retainedEntryID = nil
             reconcileSelection()
+            retainedEntryID = selection?.entryID
         }
     }
 
@@ -175,7 +196,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// Reads every value ``sidebarOptions`` filters, orders or groups by, so
     /// an observation computing it tracks exactly those.
     var sidebarLayout: SidebarLayout {
-        .project(entries: entries, options: sidebarOptions, context: sidebarContext)
+        .project(
+            entries: entries, options: sidebarOptions, retaining: retainedEntryID, context: sidebarContext)
     }
 
     /// What the sidebar's projection and its filter menu read besides the

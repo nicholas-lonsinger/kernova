@@ -128,14 +128,6 @@ final class SidebarTree {
         rowsByKey[key]
     }
 
-    /// Every row `section` lists, under any header.
-    func rows(in section: SidebarSection) -> [SidebarRow] {
-        section.children.flatMap { child -> [SidebarRow] in
-            if let row = child as? SidebarRow { return [row] }
-            return child.children.compactMap { $0 as? SidebarRow }
-        }
-    }
-
     /// The row `selection` lands on, by ``SidebarLayout/resolve(_:)``.
     func row(resolving selection: SidebarRowKey) -> SidebarRow? {
         layout.resolve(selection).flatMap { rowsByKey[$0] }

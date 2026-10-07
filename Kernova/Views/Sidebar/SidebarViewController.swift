@@ -754,11 +754,14 @@ extension SidebarViewController {
         guard filter.isActive else {
             return SidebarGroupHeaderCellView.Filtering(countText: nil, isActive: false, activeDescription: nil)
         }
-        let shown = Set(tree.rows(in: section).map(\.key.entryID)).count
+        // The VMs the filter matches: a selected VM the sidebar retains
+        // after it stopped matching is listed but not counted.
+        let values = viewMenuValues()
+        let matching = values.count { filter.admits($0.subject) }
         return SidebarGroupHeaderCellView.Filtering(
-            countText: "\(shown) of \(viewModel.entries.count)", isActive: true,
+            countText: "\(matching) of \(values.count)", isActive: true,
             activeDescription: viewMenu.activeFilterDescription(
-                options: viewModel.sidebarOptions, values: viewMenuValues()))
+                options: viewModel.sidebarOptions, values: values))
     }
 
     /// Re-renders each section header the outline view has a view for.

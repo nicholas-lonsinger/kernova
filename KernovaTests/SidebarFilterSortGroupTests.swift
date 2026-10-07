@@ -515,25 +515,59 @@ struct SidebarFilterSortGroupTests {
         #expect(built?.items.first?.title == "Guest OS")
     }
 
-    @Test("A VM whose state leaves the filter leaves the list, and its selection clears")
-    func liveStateChangeUnderFilter() async throws {
+    @Test("A selected VM that stops matching stays listed and selected until the selection moves off it")
+    func selectedVMStaysUntilSelectionMoves() async throws {
         let viewModel = makeViewModel()
-        let stopping = viewModel.library.admitFixture(name: "Stopping", phase: .running(sessionID: UUID()))
-        viewModel.library.admitFixture(name: "Other", phase: .running(sessionID: UUID()))
-        viewModel.selectedID = stopping.id
-        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.running])
+        let started = viewModel.library.admitFixture(name: "Started")
+        let other = viewModel.library.admitFixture(name: "Other")
+        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
+        viewModel.selectedID = started.id
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()
+        controller.view.layoutSubtreeIfNeeded()
         let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
         #expect(outline.numberOfRows == 3)
 
-        stopping.activity.placeForTesting(.stopped)
+        started.activity.placeForTesting(.running(sessionID: UUID()))
+        // Appearing runs the sidebar's sync pass synchronously.
+        controller.viewDidAppear()
 
-        try await waitForChange { viewModel.selection == nil }
+        #expect(outline.numberOfRows == 3)
+        #expect(viewModel.selectedID == started.id)
+        #expect((outline.item(atRow: outline.selectedRow) as? SidebarRow)?.entry.vm === started)
+        // The header counts only the VMs the filter matches.
+        let header = try #require(
+            outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
+        #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("1 of 2"))
+
+        viewModel.selectedID = other.id
+
         // The projection's own observation loop offers no test-facing signal.
         try await waitUntil { outline.numberOfRows == 2 }
-        #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.name == "Other")
+        #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.vm === other)
+        #expect(viewModel.selectedID == other.id)
+    }
+
+    @Test("An options edit while the selected VM no longer matches hides it and clears the selection")
+    func optionsEditDropsRetainedVM() {
+        for edit: (inout SidebarViewOptions) -> Void in [
+            { $0.filter.states = [.stopped, .suspended] },
+            { $0.sort = .name },
+        ] {
+            let viewModel = makeViewModel()
+            let started = viewModel.library.admitFixture(name: "Started")
+            viewModel.library.admitFixture(name: "Other")
+            viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
+            viewModel.selectedID = started.id
+            started.activity.placeForTesting(.running(sessionID: UUID()))
+            #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+
+            edit(&viewModel.sidebarOptions)
+
+            #expect(viewModel.selection == nil)
+            #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
+        }
     }
 
     @Test("Show Details adds the sort key's value under each name")

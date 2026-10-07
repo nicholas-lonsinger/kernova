@@ -90,12 +90,18 @@ struct SidebarLayout {
 
     /// The layout the sidebar shows for `entries`: the library section, listing
     /// the entries `options` admits, in its order, under its groups.
+    ///
+    /// The entry `retaining` names is listed whether or not the filter admits
+    /// it: the selected VM a change to its own values took out of the filter,
+    /// which stays until the selection moves off it.
     static func project(
-        entries: [LibraryEntry], options: SidebarViewOptions, context: Context
+        entries: [LibraryEntry], options: SidebarViewOptions, retaining: UUID? = nil,
+        context: Context
     ) -> SidebarLayout {
         let shown = options.sort.ordered(
             entries.filter {
-                options.filter.admits($0.filterSubject(bundledAgentVersion: context.bundledAgentVersion))
+                $0.id == retaining
+                    || options.filter.admits($0.filterSubject(bundledAgentVersion: context.bundledAgentVersion))
             })
         let content: Content =
             switch options.grouping {
