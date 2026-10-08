@@ -397,30 +397,18 @@ struct SidebarLayout {
         }
     }
 
-    /// The row `selection` lands on: that row itself, else the first row of
-    /// the same entry in the same section, else the entry's first row in the
-    /// library section; `nil` when neither section lists the entry.
-    func resolve(_ selection: SidebarRowKey) -> SidebarRowKey? {
-        let keys = rowKeys
-        if keys.contains(selection) { return selection }
-        let sameEntry = keys.filter { $0.entryID == selection.entryID }
-        return sameEntry.first { $0.section == selection.section }
-            ?? sameEntry.first { $0.section == .library }
-    }
-
-    /// The row a reveal of the entry `id` lands on, `nil` when no section
-    /// lists the entry: its first row in `section`, else `selected` when that
-    /// is one of its rows, else its first row in `selected`'s section, in the
-    /// library section, or in any section, in that order.
-    func row(revealing id: UUID, in section: SidebarSectionID?, keeping selected: SidebarRowKey?) -> SidebarRowKey? {
-        let rows = rowKeys.filter { $0.entryID == id }
-        if let section, let row = rows.first(where: { $0.section == section }) { return row }
-        if let selected, rows.contains(selected) { return selected }
-        let preferred = [selected?.entryID == id ? selected?.section : nil, .library].compactMap { $0 }
-        for section in preferred {
-            if let row = rows.first(where: { $0.section == section }) { return row }
-        }
-        return rows.first
+    /// The row `preferred`'s entry lands on: `preferred` itself, else the
+    /// entry's first row in `preferred`'s section, in the library section, or
+    /// in any section, in that order; `nil` when no section lists the entry.
+    ///
+    /// The one answer to which row holds an entry — for a selection the
+    /// layout moved, a reveal and a rename alike.
+    func resolve(_ preferred: SidebarRowKey) -> SidebarRowKey? {
+        let rows = rowKeys.filter { $0.entryID == preferred.entryID }
+        if rows.contains(preferred) { return preferred }
+        return rows.first { $0.section == preferred.section }
+            ?? rows.first { $0.section == .library }
+            ?? rows.first
     }
 
     /// Where `selection` stands once this layout is shown: on the row it

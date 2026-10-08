@@ -4946,7 +4946,8 @@ struct VMLibraryViewModelTests {
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
         #expect(importedIDs == [existing.configuration.id, first.config.id, third.config.id])
         #expect(presenter.showError == false)
-        #expect(viewModel.selectedID == third.config.id)
+        // A batch makes one selection: its first entry.
+        #expect(viewModel.selectedID == first.config.id)
     }
 
     @Test("importVM removes the arrival and surfaces an error when the copy fails")

@@ -378,28 +378,19 @@ final class SidebarViewController: NSViewController {
     // MARK: - Inline rename
 
     /// The row a sidebar rename of the entry `id` is open in: the row already
-    /// editing it while the tree still lists that row, else the selected row
-    /// when it shows that entry, else the entry's library row.
+    /// editing it while the tree still lists that row, else the row a reveal
+    /// of the entry lands on (``VMLibrary/preferredRow(of:in:)``).
     private func renameRow(for id: UUID) -> SidebarRow? {
         if let editingRow, editingRow.key.entryID == id, tree.row(for: editingRow.key) === editingRow {
             return editingRow
         }
-        let selected = viewModel.selection.flatMap { tree.row(resolving: $0) }
-        let row = selected?.key.entryID == id ? selected : tree.row(resolving: .library(id))
+        let row = tree.row(resolving: viewModel.library.preferredRow(of: id))
         return row?.entry.vm == nil ? nil : row
     }
 
-    /// Opens the sidebar rename the model asks for in its row, and ends one
-    /// with no row to open in: the request lapses rather than waiting for a
-    /// row to appear later and open a rename nobody is asking for any more.
     private func applyRenameState() {
-        guard case .sidebar(let id)? = viewModel.activeRename else {
+        guard case .sidebar(let id)? = viewModel.activeRename, let node = renameRow(for: id) else {
             endActiveEditingIfNeeded()
-            return
-        }
-        guard let node = renameRow(for: id) else {
-            endActiveEditingIfNeeded()
-            viewModel.endSidebarRename(of: id)
             return
         }
         guard editingRow !== node else { return }

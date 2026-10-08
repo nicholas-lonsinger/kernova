@@ -35,8 +35,7 @@ extension VMInstance {
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: lastSeenAgentVersion, state: stateBucket,
-            isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: !snapshotManifest.isEmpty,
-            tags: Set(tags.assigned(hostState.tags).map(\.id)),
+            hostState: hostState, hasSnapshots: !snapshotManifest.isEmpty, tags: tags,
             bundledAgentVersion: bundledAgentVersion, networks: networks)
     }
 }
@@ -51,9 +50,8 @@ extension VMArrival {
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
-            isEphemeral: starting.hostState.ephemeralModeEnabled, hasSnapshots: starting.hasSnapshots,
-            tags: Set(tags.assigned(starting.hostState.tags).map(\.id)), bundledAgentVersion: bundledAgentVersion,
-            networks: networks)
+            hostState: starting.hostState, hasSnapshots: starting.hasSnapshots, tags: tags,
+            bundledAgentVersion: bundledAgentVersion, networks: networks)
     }
 }
 
@@ -75,9 +73,11 @@ extension LibraryEntry {
 }
 
 extension VMLibraryFilter.Subject {
+    /// The subject of a VM configured as `configuration` whose host state is
+    /// `hostState`, carrying the tags of `tags` — the library's — it assigns.
     fileprivate init(
         _ configuration: VMConfiguration, lastSeenAgentVersion: String?, state: VMStateBucket,
-        isEphemeral: Bool, hasSnapshots: Bool, tags: Set<UUID>, bundledAgentVersion: String?,
+        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledAgentVersion: String?,
         networks: VMNetworkDirectory.State
     ) {
         self.init(
@@ -90,6 +90,7 @@ extension VMLibraryFilter.Subject {
             guestAgent: configuration.guestOS == .macOS
                 ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)
                 : nil,
-            isEphemeral: isEphemeral, hasSnapshots: hasSnapshots, tags: tags)
+            isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: hasSnapshots,
+            tags: Set(tags.assigned(hostState.tags).map(\.id)))
     }
 }

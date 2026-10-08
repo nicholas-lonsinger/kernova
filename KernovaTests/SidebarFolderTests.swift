@@ -16,7 +16,10 @@ struct SidebarFolderTests {
 
     private let scratch = TestScratchDirectory(prefix: "SidebarFolderTests")
 
-    private func makeViewModel(storage: MockVMStorageService = MockVMStorageService()) -> VMLibraryViewModel {
+    private func makeViewModel(
+        storage: MockVMStorageService = MockVMStorageService(),
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+    ) -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
@@ -28,7 +31,7 @@ struct SidebarFolderTests {
             downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            organization: VMOrganizationDirectory(fileURL: nil)
+            organization: organization
         )
     }
 
@@ -858,6 +861,44 @@ struct SidebarFolderTests {
         #expect(members(of: clients, in: viewModel) == [mac.id])
         #expect(viewModel.selection == inFolder(clients, mac.id))
         #expect(viewModel.sidebarOptions.filter == linuxOnly)
+    }
+
+    @Test("A drop the folder can't take still imports every bundle, and says so once, as no import's failure")
+    func membershipFailureFailsNoImport() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        try Data("not json".utf8).write(to: organizationURL)
+        let viewModel = makeViewModel(organization: VMOrganizationDirectory(fileURL: organizationURL))
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let first = try scratch.importSource(name: "First")
+        let second = try scratch.importSource(name: "Second")
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [first.url, second.url], intoFolder: UUID()))
+
+        #expect(viewModel.library.arrivals.count == 2)
+        #expect(presenter.errorTitles == ["Couldn\u{2019}t Add to the Folder"])
+        await viewModel.awaitArrivalsForTesting()
+        #expect(Set(viewModel.instances.map(\.id)) == [first.config.id, second.config.id])
+    }
+
+    /// One answer to which row holds an entry: a selection the layout moves
+    /// off its row lands where a reveal of the entry would.
+    @Test("A selection whose section and the library stop listing its VM moves to the row another section lists")
+    func selectionFallsBackToAnotherSection() throws {
+        let viewModel = makeViewModel()
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let clients = try viewModel.library.createFolder(named: "Clients", members: [mac.id])
+        let macs = try viewModel.library.organization.createSmartGroup(
+            named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+        viewModel.selection = SidebarRowKey(section: .smartGroup(macs.id), group: nil, entryID: mac.id)
+
+        try viewModel.library.setFilter(linuxOnly, ofSmartGroup: macs.id)
+
+        #expect(viewModel.selection == inFolder(clients, mac.id))
     }
 
     /// The sections a sidebar's first load makes open one after another; a

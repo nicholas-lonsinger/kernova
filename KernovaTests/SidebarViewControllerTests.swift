@@ -498,27 +498,33 @@ struct SidebarViewControllerTests {
         #expect(viewModel.activeRename == .sidebar(mac.id))
     }
 
-    @Test("A sidebar rename left with no row to open in lapses, and opens nothing when a row appears later")
-    func renameWithNoRowLapses() throws {
+    /// A rename is asked for only once a row lists the VM, so no request is
+    /// left waiting for a row that may appear later.
+    @Test("A sidebar rename of a VM no row can list asks for no rename")
+    func renameWithNoRowAsksForNone() throws {
         let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        let controller = SidebarViewController(viewModel: viewModel)
-        let outline = try shownOutline(of: controller)
+        viewModel.library.admitFixture(name: "Listed")
+        let unlisted = VMInstanceFixture.make(name: "Unlisted")
 
-        viewModel.renameVMInSidebar(mac)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-        controller.viewDidAppear()
-        #expect(viewModel.activeRename == nil)
+        viewModel.renameVMInSidebar(unlisted)
 
-        viewModel.sidebarOptions.filter = VMLibraryFilter()
-        controller.viewDidAppear()
         #expect(viewModel.activeRename == nil)
-        #expect(
-            (0..<outline.numberOfRows).allSatisfy {
-                (outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView)?.isRenaming
-                    != true
-            })
+    }
+
+    @Test("A reveal answers the row it selected; one with no row to land on changes nothing")
+    func revealAnswersItsRow() {
+        let viewModel = makeViewModel()
+        let listed = viewModel.library.admitFixture(name: "Listed")
+        let macOnly = VMLibraryFilter(guestOSes: [.macOS])
+        viewModel.sidebarOptions.filter = macOnly
+
+        #expect(viewModel.library.selectRevealing(UUID()) == nil)
+        #expect(viewModel.sidebarOptions.filter == macOnly)
+        #expect(viewModel.selection == nil)
+
+        #expect(viewModel.library.selectRevealing(listed.id) == .library(listed.id))
+        #expect(viewModel.selection == .library(listed.id))
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
     }
 
     // MARK: - Outline updates

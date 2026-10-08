@@ -9,13 +9,14 @@ extension VMLibrary {
     var smartGroups: [VMSmartGroup]? { organization.smartGroups }
 
     /// Saves `filter` — the library section's filter as the user was shown
-    /// it, which may since have changed — as a smart group named `name`,
-    /// then clears the library section's filter: the group lists what the
-    /// filter did, and the library every VM.
+    /// it — as a smart group named `name`, then clears the library section's
+    /// filter while it is still that one: the group lists what the filter
+    /// did, and the library every VM. A filter changed since is the user's
+    /// newer choice, and stays.
     @discardableResult
     func saveSidebarFilter(_ filter: VMLibraryFilter, asSmartGroupNamed name: String) throws -> VMSmartGroup {
         let group = try organization.createSmartGroup(named: name, filter: filter)
-        sidebarOptions.filter = VMLibraryFilter()
+        if sidebarOptions.filter == filter { sidebarOptions.filter = VMLibraryFilter() }
         return group
     }
 

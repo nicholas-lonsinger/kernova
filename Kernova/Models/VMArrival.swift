@@ -160,12 +160,13 @@ final class VMArrival {
     let source: Source?
 
     /// What the VM this arrival becomes starts with besides its
-    /// configuration, as far as anything is known before its bundle is read.
+    /// configuration, as far as it is known before the write.
     let starting: Starting
 
-    /// A clone's host state and whether it carries snapshots — the values its
-    /// copy writes into the clone. A create's and an import's are a new VM's:
-    /// nothing more is known before the bundle is read.
+    /// The host state the VM arrives with and whether it carries snapshots: a
+    /// clone's, the values its copy writes; an import's, its source's as read
+    /// when the import registered, as the copy will leave them; a create's,
+    /// and an import's whose source's state files don't read, a new VM's.
     struct Starting: Sendable, Equatable {
         var hostState = VMHostState()
         var hasSnapshots = false

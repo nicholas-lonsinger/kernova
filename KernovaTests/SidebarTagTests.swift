@@ -192,6 +192,29 @@ struct SidebarTagTests {
         }
     }
 
+    @Test("An import's arrival reads as its source does: its tags and Ephemeral Mode")
+    func importArrivalReadsAsItsSource() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storage: storage)
+        let work = try viewModel.library.createTag(named: "Work", color: .blue)
+        let source = try scratch.importSource(name: "Arriving")
+        var hostState = VMHostState(tags: [work.id])
+        hostState.applyEphemeralMode(enabled: true, baseline: nil)
+        try VMConfiguration.makeJSONEncoder().encode(hostState)
+            .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
+        viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [source.url]))
+
+        let arrival = try #require(viewModel.library.arrivals.first)
+        let subject = try #require(viewModel.library.sidebarContext.subject(of: .arriving(arrival)))
+        #expect(subject.tags == [work.id])
+        #expect(subject.isEphemeral)
+        // The tag filter lists it, so the import selects it.
+        #expect(viewModel.selectedID == arrival.id)
+        await viewModel.awaitArrivalsForTesting()
+    }
+
     @Test("An import keeps every assignment, one this library does not define inert")
     func importKeepsAssignments() async throws {
         let storage = MockVMStorageService()

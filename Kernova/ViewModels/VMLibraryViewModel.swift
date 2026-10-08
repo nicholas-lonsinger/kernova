@@ -1237,14 +1237,14 @@ final class VMLibraryViewModel {
     // MARK: - Import
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
-    /// each put in the folder `folder` identifies, if any.
+    /// into the folder `folder` identifies, if any
+    /// (``VMCommanding/beginImports(from:intoFolder:)``).
     ///
     /// Every import reserves its destination and registers its arrival before
-    /// this returns (``VMCommanding/beginImport(from:intoFolder:)``), so two
-    /// overlapping triggers never collide on a destination name and never wait
-    /// behind each other's copies. The folder takes each arrival as it
-    /// registers, so its row shows the import there. A bundle the library
-    /// already holds puts that VM in the folder.
+    /// this returns, so two overlapping triggers never collide on a
+    /// destination name and never wait behind each other's copies. Each
+    /// refused import is presented; a folder that couldn't take the batch is
+    /// presented once, apart from the imports, which run on.
     ///
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
@@ -1253,8 +1253,10 @@ final class VMLibraryViewModel {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
-        for url in bundles {
-            runSync(on: nil) { try commands.beginImport(from: url, intoFolder: folder) }
+        let batch = commands.beginImports(from: bundles, intoFolder: folder)
+        for case .failure(let error) in batch.imports { present(error, for: nil) }
+        if let failure = batch.membershipFailure {
+            surfaceError(failure.localizedDescription, title: "Couldn\u{2019}t Add to the Folder")
         }
         return true
     }
@@ -1355,17 +1357,15 @@ final class VMLibraryViewModel {
     }
 
     /// Opens a rename of `instance` in its sidebar row, revealing the row
-    /// first (``VMLibrary/selectRevealing(_:in:)``) so there is one to open in.
+    /// first (``VMLibrary/selectRevealing(_:in:)``); a VM no row can list is
+    /// asked for no rename.
     func renameVMInSidebar(_ instance: VMInstance) {
+        guard library.selectRevealing(instance.id) != nil else {
+            #log(Self.logger, .notice, "No sidebar row lists '\(instance.name, privacy: .public)' — no rename opened")
+            return
+        }
         #log(Self.logger, .debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
-        library.selectRevealing(instance.id)
         activeRename = .sidebar(instance.id)
-    }
-
-    /// Ends the sidebar rename of the entry `id`, which the sidebar no longer
-    /// lists a row for; a rename since moved elsewhere is left alone.
-    func endSidebarRename(of id: UUID) {
-        clearRename(ifOwnedBy: .sidebar(id))
     }
 
     func renameVMInDetail(_ instance: VMInstance) {

@@ -803,12 +803,16 @@ struct SidebarSmartGroupTests {
         menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Save as Smart Group\u{2026}" }))
         let sheet = try #require(window.attachedSheet)
 
-        // As View ▸ Clear Filters does, which stays enabled under the sheet.
-        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        // As the View menu's filter items do, which stay enabled under the
+        // sheet.
+        let linux = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linux
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
 
         try await waitUntil { viewModel.library.smartGroups?.count == 1 }
         #expect(viewModel.library.smartGroups?.first?.filter == macs)
+        // The filter the user changed to is not the one saved, so it stays.
+        #expect(viewModel.sidebarOptions.filter == linux)
     }
 
     @Test("Dragging a smart group's header above the library's moves it there, and keeps it open")

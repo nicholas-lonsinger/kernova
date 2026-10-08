@@ -159,6 +159,7 @@ extension VMCommandCore {
                     at: staged.layout.diskImageURL, sizeInGB: diskSizeInGB)
             },
             whenAdopted: startAfterCreate ? autoStart : nil)
+        library.selectArrival(arrival.id)
         followUnwaited(arrival) { instance in
             #log(
                 Self.logger, .notice,
@@ -319,7 +320,7 @@ extension VMCommandCore {
         }
 
         let config = clonedConfig
-        return library.beginArrival(
+        let arrival = library.beginArrival(
             kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
             source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name),
             starting: VMArrival.Starting(
@@ -329,6 +330,8 @@ extension VMCommandCore {
             try await copied.value()
             try await Task.detached { try staged.writeInitial(config) }.value
         }
+        library.selectArrival(arrival.id)
+        return arrival
     }
 
     /// What a clone copies out of its source's bundle, read from the source's
@@ -462,27 +465,29 @@ extension VMCommandCore {
     /// the arrival already importing it when one is.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
-        guard waitForOutcome else { return try beginImport(from: sourceURL, intoFolder: nil) }
-        let start = try registerImport(from: sourceURL)
-        try select(start, inFolder: nil)
+        let start = try registerImports(from: [sourceURL], intoFolder: nil).starts[0].get()
         switch start {
         case .existing(let instance):
             return summary(instance)
-        case .joined(let arrival), .started(let arrival):
+        case .joined(let arrival):
+            // Its own initiating call already routes an unwaited outcome.
+            return waitForOutcome ? summary(try await awaitOutcome(of: arrival)) : summary(arrival)
+        case .started(let arrival):
+            guard waitForOutcome else {
+                followUnwaited(arrival)
+                return summary(arrival)
+            }
             return summary(try await awaitOutcome(of: arrival))
         }
     }
 
-    @discardableResult
-    func beginImport(from sourceURL: URL, intoFolder folder: UUID?) throws -> VMSummary {
-        let start = try registerImport(from: sourceURL)
-        // Its own initiating call already routes a joined import's outcome.
-        if case .started(let arrival) = start { followUnwaited(arrival) }
-        try select(start, inFolder: folder)
-        switch start {
-        case .existing(let instance): return summary(instance)
-        case .joined(let arrival), .started(let arrival): return summary(arrival)
-        }
+    func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
+        let registered = registerImports(from: urls, intoFolder: folder)
+        // A joined import's own initiating call already routes its outcome.
+        for case .success(.started(let arrival)) in registered.starts { followUnwaited(arrival) }
+        return VMImportBatch(
+            imports: registered.starts.map { $0.map(summary(of:)) },
+            membershipFailure: registered.membershipFailure)
     }
 
     /// Where an import's source already stands in the library, or the arrival
@@ -491,29 +496,58 @@ extension VMCommandCore {
         case existing(VMInstance)
         case joined(VMArrival)
         case started(VMArrival)
+
+        var id: UUID {
+            switch self {
+            case .existing(let instance): instance.id
+            case .joined(let arrival), .started(let arrival): arrival.id
+            }
+        }
     }
 
-    /// Puts what `start` names in the folder `folder` identifies, if any,
-    /// then selects it — in that folder when there is one: the VM already in
-    /// the library, or the import already copying it, by a reveal; an
-    /// arrival just started on its registration's terms.
-    ///
-    /// The folder takes it before the reveal looks for its row, so a VM the
-    /// library's filter hides is revealed in the folder, relaxing nothing.
-    private func select(_ start: ImportStart, inFolder folder: UUID?) throws {
-        let section = folder.map(SidebarSectionID.folder)
+    private func summary(of start: ImportStart) -> VMSummary {
         switch start {
-        case .existing(let instance):
-            if let folder { try library.add([instance.id], toFolder: folder) }
-            library.selectRevealing(instance.id, in: section)
-        case .joined(let arrival):
-            if let folder { try library.add([arrival.id], toFolder: folder) }
-            library.selectRevealing(arrival.id, in: section)
-        case .started(let arrival):
-            guard let folder else { return }
-            try library.add([arrival.id], toFolder: folder)
-            library.selectArrival(arrival.id, in: section)
+        case .existing(let instance): summary(instance)
+        case .joined(let arrival), .started(let arrival): summary(arrival)
         }
+    }
+
+    /// Registers the import of each bundle at `urls`, puts every entry they
+    /// name in the folder `folder` identifies, if any, in one write, then
+    /// makes the batch's one selection: its first entry, in that folder when
+    /// the folder took them — a VM already in the library, or an import
+    /// already copying it, revealed; an arrival just started selected on an
+    /// arrival's terms (``VMLibrary/selectArrival(_:in:)``).
+    ///
+    /// The folder takes the entries before the selection looks for a row, so
+    /// a VM the library's filter hides is revealed in the folder, relaxing
+    /// nothing. A folder write that fails fails no import: the imports run
+    /// on, and the failure is answered beside them.
+    private func registerImports(
+        from urls: [URL], intoFolder folder: UUID?
+    ) -> (starts: [Result<ImportStart, any Error>], membershipFailure: (any Error)?) {
+        let starts = urls.map { url in Result<ImportStart, any Error> { try registerImport(from: url) } }
+        let registered = starts.compactMap { try? $0.get() }
+        var section: SidebarSectionID?
+        var membershipFailure: (any Error)?
+        if let folder, !registered.isEmpty {
+            do {
+                try library.add(registered.map(\.id), toFolder: folder)
+                section = .folder(folder)
+            } catch {
+                #log(
+                    Self.logger, .error,
+                    "Couldn't put \(registered.count, privacy: .public) import(s) in a folder: \(error.localizedDescription, privacy: .public)"
+                )
+                membershipFailure = error
+            }
+        }
+        switch registered.first {
+        case .started(let arrival)?: library.selectArrival(arrival.id, in: section)
+        case let first?: library.selectRevealing(first.id, in: section)
+        case nil: break
+        }
+        return (starts, membershipFailure)
     }
 
     /// Reserves a collision-free destination for one `.kernova` bundle,
@@ -526,8 +560,12 @@ extension VMCommandCore {
     private func registerImport(from sourceURL: URL) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
-            let config = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
-                .readConfiguration()
+            let files = VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
+            // A host state or manifest that doesn't read is the library's to
+            // report once it reads the copy; the import starts from the
+            // configuration alone.
+            let read = try? files.read()
+            let config = try read?.configuration ?? files.readConfiguration()
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — answered with it rather than re-imported.
@@ -544,12 +582,16 @@ extension VMCommandCore {
                 break
             }
 
+            var hostState = read?.hostState ?? VMHostState()
+            hostState.arriveAsCopy()
             return .started(
                 library.beginArrival(
                     kind: .importing, configuration: config,
                     destination: library.reserveDestination(for: sourceURL, in: vmsDir),
                     staged: try VMStagedBundle.mint(in: storageService),
                     source: .importing(sourceURL),
+                    starting: VMArrival.Starting(
+                        hostState: hostState, hasSnapshots: !(read?.snapshotManifest.isEmpty ?? true)),
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)
