@@ -1,5 +1,4 @@
 import Foundation
-import KernovaTestSupport
 @testable import Kernova
 
 /// No-op mock for `DiskImageProviding` that tracks calls without creating real disk images.

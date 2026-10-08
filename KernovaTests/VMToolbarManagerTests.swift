@@ -1,6 +1,5 @@
 import Cocoa
 import KernovaKit
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova

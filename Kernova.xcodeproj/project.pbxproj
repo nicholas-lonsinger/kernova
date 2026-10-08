@@ -14,7 +14,6 @@
 		A2000004 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000005 /* KernovaKit */; };
 		A2000006 /* KernovaKit in Frameworks */ = {isa = PBXBuildFile; productRef = A2000007 /* KernovaKit */; };
 		A200000A /* KernovaCLICore in Frameworks */ = {isa = PBXBuildFile; productRef = A2000008 /* KernovaCLICore */; };
-		A200000C /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000D /* KernovaTestSupport */; };
 		A200000E /* KernovaTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = A200000F /* KernovaTestSupport */; };
 		A2000010 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000011 /* KernovaAppRegistry */; };
 		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
@@ -151,6 +150,11 @@
 			path = KernovaTests;
 			sourceTree = "<group>";
 		};
+		A1000008 /* KernovaTestSupport */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = KernovaKit/Sources/KernovaTestSupport;
+			sourceTree = "<group>";
+		};
 		A1000101 /* KernovaRelaunchHelper */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = KernovaRelaunchHelper;
@@ -192,7 +196,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A200000C /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -250,6 +253,7 @@
 				28934EC9D674276AC8786B9B /* Config */,
 				A1000006 /* Kernova */,
 				A1000007 /* KernovaTests */,
+				A1000008 /* KernovaTestSupport */,
 				A1000101 /* KernovaRelaunchHelper */,
 				A1000401 /* KernovaCLI */,
 				A1000201 /* KernovaMacOSAgent */,
@@ -336,10 +340,10 @@
 			);
 			fileSystemSynchronizedGroups = (
 				A1000007 /* KernovaTests */,
+				A1000008 /* KernovaTestSupport */,
 			);
 			name = KernovaTests;
 			packageProductDependencies = (
-				A200000D /* KernovaTestSupport */,
 			);
 			productName = KernovaTests;
 			productReference = A1000005 /* KernovaTests.xctest */;
@@ -858,10 +862,6 @@
 		A2000008 /* KernovaCLICore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaCLICore;
-		};
-		A200000D /* KernovaTestSupport */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = KernovaTestSupport;
 		};
 		A200000F /* KernovaTestSupport */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,7 +1,6 @@
 import Testing
 import Foundation
 import Virtualization
-import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VirtualizationService Tests", .caseScoped)
