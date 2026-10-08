@@ -543,8 +543,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc func renameVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        // Reveal the sidebar first so the inline rename always lands on a visible
-        // row.
         windows.showLibrary(bringToFront: true)
         windows.revealLibrarySidebar()
         viewModel.renameVMInSidebar(instance)

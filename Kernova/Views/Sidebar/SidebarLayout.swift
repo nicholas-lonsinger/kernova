@@ -95,7 +95,7 @@ struct SidebarLayout {
         }
 
         func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
         }
     }
 
@@ -406,6 +406,21 @@ struct SidebarLayout {
         let sameEntry = keys.filter { $0.entryID == selection.entryID }
         return sameEntry.first { $0.section == selection.section }
             ?? sameEntry.first { $0.section == .library }
+    }
+
+    /// The row a reveal of the entry `id` lands on, `nil` when no section
+    /// lists the entry: its first row in `section`, else `selected` when that
+    /// is one of its rows, else its first row in `selected`'s section, in the
+    /// library section, or in any section, in that order.
+    func row(revealing id: UUID, in section: SidebarSectionID?, keeping selected: SidebarRowKey?) -> SidebarRowKey? {
+        let rows = rowKeys.filter { $0.entryID == id }
+        if let section, let row = rows.first(where: { $0.section == section }) { return row }
+        if let selected, rows.contains(selected) { return selected }
+        let preferred = [selected?.entryID == id ? selected?.section : nil, .library].compactMap { $0 }
+        for section in preferred {
+            if let row = rows.first(where: { $0.section == section }) { return row }
+        }
+        return rows.first
     }
 
     /// Where `selection` stands once this layout is shown: on the row it

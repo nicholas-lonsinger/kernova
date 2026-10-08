@@ -335,10 +335,11 @@ protocol VMCommanding: AnyObject {
 
     /// The import nobody waits on, which never suspends — so a batch's
     /// destinations, and two overlapping triggers', are reserved against each
-    /// other's arrivals. ``importVM(from:waitForOutcome:)`` without
-    /// `waitForOutcome` is this.
+    /// other's arrivals — put in the folder `folder` identifies, if any, and
+    /// selected there. ``importVM(from:waitForOutcome:)`` without
+    /// `waitForOutcome` is this with no folder.
     @discardableResult
-    func beginImport(from url: URL) throws -> VMSummary
+    func beginImport(from url: URL, intoFolder folder: UUID?) throws -> VMSummary
 
     /// The same import, named the way a caller holding no grant for the file
     /// names it: the implementation obtains one for `path` first.

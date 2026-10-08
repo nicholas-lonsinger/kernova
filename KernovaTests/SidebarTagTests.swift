@@ -160,6 +160,38 @@ struct SidebarTagTests {
         }
     }
 
+    @Test(
+        "A clone's arrival reads as the clone it becomes, tags, Ephemeral Mode and snapshots"
+    )
+    func cloneArrivalReadsAsTheClone() async throws {
+        for outcome in [CloneOutcome.newMachine, .exactCopy] {
+            let storage = MockVMStorageService()
+            let viewModel = makeViewModel(storage: storage)
+            let library = viewModel.library
+            let work = try library.createTag(named: "Work", color: .blue)
+            let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
+            let original = library.admitFixture(
+                name: "Original",
+                hostState: VMHostState(
+                    ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id, tags: [work.id]),
+                snapshots: VMSnapshotManifest(snapshots: [baseline]))
+            storage.bundles[original.bundleURL] = original.configuration
+            storage.hostStates[original.bundleURL] = original.hostState
+            viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
+
+            viewModel.cloneVM(original, as: outcome)
+
+            let arrival = try #require(library.arrivals.first, "\(outcome)")
+            let subject = try #require(library.sidebarContext.subject(of: .arriving(arrival)), "\(outcome)")
+            #expect(subject.tags == [work.id], "\(outcome)")
+            #expect(subject.isEphemeral == (outcome == .exactCopy), "\(outcome)")
+            #expect(subject.hasSnapshots == (outcome == .exactCopy), "\(outcome)")
+            // The tag filter lists it, so registering it selects it.
+            #expect(viewModel.selectedID == arrival.id, "\(outcome)")
+            await viewModel.awaitArrivalsForTesting()
+        }
+    }
+
     @Test("An import keeps every assignment, one this library does not define inert")
     func importKeepsAssignments() async throws {
         let storage = MockVMStorageService()

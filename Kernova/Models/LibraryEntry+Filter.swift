@@ -43,11 +43,16 @@ extension VMInstance {
 
 extension VMArrival {
     /// What a ``VMLibraryFilter`` reads of this arrival: preparing, with no
-    /// session, no Ephemeral Mode, no snapshots and no tags.
-    func filterSubject(bundledAgentVersion: String?, networks: VMNetworkDirectory.State) -> VMLibraryFilter.Subject {
+    /// session, and with the Ephemeral Mode, snapshots and tags of the VM it
+    /// becomes as far as ``starting`` knows them; `networks` is the library's
+    /// named networks and `tags` its tags.
+    func filterSubject(
+        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
+    ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
-            isEphemeral: false, hasSnapshots: false, tags: [], bundledAgentVersion: bundledAgentVersion,
+            isEphemeral: starting.hostState.ephemeralModeEnabled, hasSnapshots: starting.hasSnapshots,
+            tags: Set(tags.assigned(starting.hostState.tags).map(\.id)), bundledAgentVersion: bundledAgentVersion,
             networks: networks)
     }
 }
@@ -63,7 +68,7 @@ extension LibraryEntry {
         case .vm(let instance):
             instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
         case .arriving(let arrival):
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
         case .unreadable: nil
         }
     }

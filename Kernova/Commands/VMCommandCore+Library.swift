@@ -274,12 +274,11 @@ extension VMCommandCore {
         // Run directly rather than on the bounded `copyQueue`: the source is
         // held for as long as the copy takes, and an APFS clone takes
         // milliseconds where a queued import copy can take minutes.
+        let copy = CloneCopy(
+            of: instance.bundle, outcome: resolved, mode: mode, machineIdentifier: machineIdentifier)
         let copied: VMOutcome
         do {
             copied = try instance.activity.launchCopyOut(mode) { context in
-                let copy = CloneCopy(
-                    of: context.operation.instance.bundle, outcome: resolved, mode: context.mode,
-                    machineIdentifier: machineIdentifier)
                 let source = context.operation.bundle.url
                 guard context.mode == .live else {
                     try await Task.detached {
@@ -322,7 +321,9 @@ extension VMCommandCore {
         let config = clonedConfig
         return library.beginArrival(
             kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
-            source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name)
+            source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name),
+            starting: VMArrival.Starting(
+                hostState: copy.hostState, hasSnapshots: !copy.snapshotManifest.isEmpty)
         ) { staged in
             // The copy's failure is the clone's.
             try await copied.value()
@@ -331,7 +332,8 @@ extension VMCommandCore {
     }
 
     /// What a clone copies out of its source's bundle, read from the source's
-    /// committed state while the clone holds it.
+    /// committed state in the step that admits the clone's hold on it — the
+    /// same values the clone's arrival is filtered by.
     private struct CloneCopy: Sendable {
         let outcome: CloneOutcome
         /// How the copy is taken, which says where the source's saved state
@@ -460,8 +462,10 @@ extension VMCommandCore {
     /// the arrival already importing it when one is.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
-        guard waitForOutcome else { return try beginImport(from: sourceURL) }
-        switch try registerImport(from: sourceURL) {
+        guard waitForOutcome else { return try beginImport(from: sourceURL, intoFolder: nil) }
+        let start = try registerImport(from: sourceURL)
+        try select(start, inFolder: nil)
+        switch start {
         case .existing(let instance):
             return summary(instance)
         case .joined(let arrival), .started(let arrival):
@@ -470,16 +474,14 @@ extension VMCommandCore {
     }
 
     @discardableResult
-    func beginImport(from sourceURL: URL) throws -> VMSummary {
-        switch try registerImport(from: sourceURL) {
-        case .existing(let instance):
-            return summary(instance)
-        case .joined(let arrival):
-            // Its own initiating call already routes an unwaited outcome.
-            return summary(arrival)
-        case .started(let arrival):
-            followUnwaited(arrival)
-            return summary(arrival)
+    func beginImport(from sourceURL: URL, intoFolder folder: UUID?) throws -> VMSummary {
+        let start = try registerImport(from: sourceURL)
+        // Its own initiating call already routes a joined import's outcome.
+        if case .started(let arrival) = start { followUnwaited(arrival) }
+        try select(start, inFolder: folder)
+        switch start {
+        case .existing(let instance): return summary(instance)
+        case .joined(let arrival), .started(let arrival): return summary(arrival)
         }
     }
 
@@ -489,6 +491,29 @@ extension VMCommandCore {
         case existing(VMInstance)
         case joined(VMArrival)
         case started(VMArrival)
+    }
+
+    /// Puts what `start` names in the folder `folder` identifies, if any,
+    /// then selects it — in that folder when there is one: the VM already in
+    /// the library, or the import already copying it, by a reveal; an
+    /// arrival just started on its registration's terms.
+    ///
+    /// The folder takes it before the reveal looks for its row, so a VM the
+    /// library's filter hides is revealed in the folder, relaxing nothing.
+    private func select(_ start: ImportStart, inFolder folder: UUID?) throws {
+        let section = folder.map(SidebarSectionID.folder)
+        switch start {
+        case .existing(let instance):
+            if let folder { try library.add([instance.id], toFolder: folder) }
+            library.selectRevealing(instance.id, in: section)
+        case .joined(let arrival):
+            if let folder { try library.add([arrival.id], toFolder: folder) }
+            library.selectRevealing(arrival.id, in: section)
+        case .started(let arrival):
+            guard let folder else { return }
+            try library.add([arrival.id], toFolder: folder)
+            library.selectArrival(arrival.id, in: section)
+        }
     }
 
     /// Reserves a collision-free destination for one `.kernova` bundle,
@@ -505,17 +530,15 @@ extension VMCommandCore {
                 .readConfiguration()
 
             // Already in the library by UUID (including a source already inside the VMs
-            // directory) — select it rather than re-importing.
+            // directory) — answered with it rather than re-imported.
             switch library.entries.first(where: { $0.id == config.id })?.addressable {
             case .vm(let existing):
-                library.selectRevealing(existing.id)
                 #log(
                     Self.logger, .info,
-                    "VM '\(config.name, privacy: .public)' already in library — selected existing instance"
+                    "VM '\(config.name, privacy: .public)' already in library — answering the existing instance"
                 )
                 return .existing(existing)
             case .arriving(let arrival):
-                library.selectRevealing(arrival.id)
                 return .joined(arrival)
             case nil:
                 break

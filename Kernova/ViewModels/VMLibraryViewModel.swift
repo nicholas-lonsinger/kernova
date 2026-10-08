@@ -89,9 +89,9 @@ final class VMLibraryViewModel {
 
     func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
-    var pendingReveal: SidebarRowKey? { library.pendingReveal }
+    var isRevealPending: Bool { library.isRevealPending }
 
-    func takePendingReveal() -> SidebarRowKey? { library.takePendingReveal() }
+    func takePendingReveal() -> Bool { library.takePendingReveal() }
 
     var selectedInstance: VMInstance? { library.selectedInstance }
 
@@ -1237,14 +1237,14 @@ final class VMLibraryViewModel {
     // MARK: - Import
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
-    /// then puts each in the folder `folder` identifies, if any.
+    /// each put in the folder `folder` identifies, if any.
     ///
     /// Every import reserves its destination and registers its arrival before
-    /// this returns (``VMCommanding/beginImport(from:)``), so two overlapping
-    /// triggers never collide on a destination name and never wait behind each
-    /// other's copies. The folder takes each arrival as it registers, so its
-    /// row shows the import there; one that becomes no VM leaves it. A bundle
-    /// the library already holds puts that VM in the folder.
+    /// this returns (``VMCommanding/beginImport(from:intoFolder:)``), so two
+    /// overlapping triggers never collide on a destination name and never wait
+    /// behind each other's copies. The folder takes each arrival as it
+    /// registers, so its row shows the import there. A bundle the library
+    /// already holds puts that VM in the folder.
     ///
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
@@ -1253,12 +1253,8 @@ final class VMLibraryViewModel {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
-        var imported: [UUID] = []
         for url in bundles {
-            runSync(on: nil) { imported.append(try commands.beginImport(from: url).id) }
-        }
-        if let folder, !imported.isEmpty {
-            runSync(on: nil) { try library.add(imported, toFolder: folder) }
+            runSync(on: nil) { try commands.beginImport(from: url, intoFolder: folder) }
         }
         return true
     }
@@ -1358,9 +1354,18 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Opens a rename of `instance` in its sidebar row, revealing the row
+    /// first (``VMLibrary/selectRevealing(_:in:)``) so there is one to open in.
     func renameVMInSidebar(_ instance: VMInstance) {
         #log(Self.logger, .debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
+        library.selectRevealing(instance.id)
         activeRename = .sidebar(instance.id)
+    }
+
+    /// Ends the sidebar rename of the entry `id`, which the sidebar no longer
+    /// lists a row for; a rename since moved elsewhere is left alone.
+    func endSidebarRename(of id: UUID) {
+        clearRename(ifOwnedBy: .sidebar(id))
     }
 
     func renameVMInDetail(_ instance: VMInstance) {

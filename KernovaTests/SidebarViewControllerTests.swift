@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -471,6 +472,53 @@ struct SidebarViewControllerTests {
         let moved = try #require(
             outline.view(atColumn: 0, row: 2, makeIfNecessary: true) as? SidebarVMRowCellView)
         #expect(!moved.isRenaming)
+    }
+
+    /// VM ▸ Rename names the VM of the key window, which can be one the
+    /// sidebar's filter hides.
+    @Test("A sidebar rename of a VM the filter hides reveals its row and opens there")
+    func renameRevealsAHiddenRow() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        #expect(rowNames(in: outline) == ["Linux"])
+
+        viewModel.renameVMInSidebar(mac)
+        controller.viewDidAppear()
+
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
+        #expect(viewModel.selection == .library(mac.id))
+        let node = try #require(controller.tree.row(for: .library(mac.id)))
+        let row = outline.row(forItem: node)
+        let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
+        #expect(cell.isRenaming)
+        #expect(viewModel.activeRename == .sidebar(mac.id))
+    }
+
+    @Test("A sidebar rename left with no row to open in lapses, and opens nothing when a row appears later")
+    func renameWithNoRowLapses() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        viewModel.renameVMInSidebar(mac)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+        #expect(
+            (0..<outline.numberOfRows).allSatisfy {
+                (outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView)?.isRenaming
+                    != true
+            })
     }
 
     // MARK: - Outline updates
