@@ -1544,8 +1544,8 @@ struct VMLibraryViewModelTests {
         to viewModel: VMLibraryViewModel,
         mac: String = "aa:bb:cc:dd:ee:01",
         otherMAC: String = "aa:bb:cc:dd:ee:01",
-        mode: VMNetworkMode = .shared,
-        otherMode: VMNetworkMode = .shared,
+        mode: VMNetworkMode = .nat,
+        otherMode: VMNetworkMode = .nat,
         mutateStarting: (inout VMConfiguration) -> Void = { _ in },
         mutateOther: (inout VMConfiguration) -> Void = { _ in }
     ) -> (starting: VMInstance, other: VMInstance) {
@@ -1645,7 +1645,7 @@ struct VMLibraryViewModelTests {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMACAddressPair(
-            to: viewModel, mode: .shared, otherMode: .hostOnly)
+            to: viewModel, mode: .nat, otherMode: .hostOnly)
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
         await viewModel.start(starting)
@@ -1790,13 +1790,13 @@ struct VMLibraryViewModelTests {
     func liveModeSwitchOntoAMACAddressTwinIsRefused() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
-            to: viewModel, mode: .hostOnly, otherMode: .shared)
+            to: viewModel, mode: .hostOnly, otherMode: .nat)
         // Both run: the start guard allowed it, the modes being different.
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
         let outcome = viewModel.setConfiguration(
-            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.shared.rawValue)],
+            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.nat.rawValue)],
             on: switching)
 
         #expect(outcome == .refused)
@@ -1811,16 +1811,16 @@ struct VMLibraryViewModelTests {
     func liveModeSwitchJoinsItsOwnNetworkWhenChosen() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
-            to: viewModel, mode: .hostOnly, otherMode: .shared)
+            to: viewModel, mode: .hostOnly, otherMode: .nat)
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
         presenter.macAddressRemedyAnswer = .answered(.ownNetwork)
 
         viewModel.setConfiguration(
-            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.shared.rawValue)],
+            [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.nat.rawValue)],
             on: switching)
 
-        try await waitForChange { switching.configuration.networkMode == .shared }
+        try await waitForChange { switching.configuration.networkMode == .nat }
         let request = try #require(presenter.macAddressRemedyRequests.first)
         #expect(request.prompt.verb == .setConfiguration)
         #expect(request.prompt.offers.map(\.title) == ["Join a Network of Its Own"])
@@ -1832,16 +1832,16 @@ struct VMLibraryViewModelTests {
     func stoppedVMMayTakeALiveMACAddressTwinsMode() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let (switching, other) = appendMACAddressPair(
-            to: viewModel, mode: .hostOnly, otherMode: .shared)
+            to: viewModel, mode: .hostOnly, otherMode: .nat)
         switching.activity.placeForTesting(.stopped)
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
         let accepted = try viewModel.library.updateConfiguration(of: switching, as: .machineKeys) {
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
 
         #expect(accepted.landed)
-        #expect(switching.configuration.networkMode == .shared)
+        #expect(switching.configuration.networkMode == .nat)
         #expect(presenter.showError == false)
     }
 
@@ -3132,7 +3132,7 @@ struct VMLibraryViewModelTests {
     /// A VM in the library on `mac` in `mode` — the state a load leaves
     /// behind, without going through a scan.
     private func makeNetworkedInstance(
-        in viewModel: VMLibraryViewModel, mac: String, mode: VMNetworkMode = .shared, name: String = "Test VM"
+        in viewModel: VMLibraryViewModel, mac: String, mode: VMNetworkMode = .nat, name: String = "Test VM"
     ) -> VMInstance {
         let instance = viewModel.library.admitFixture(name: name) {
             $0.networkEnabled = true
@@ -3145,7 +3145,7 @@ struct VMLibraryViewModelTests {
     // MARK: - MAC Address Uniqueness
 
     /// A library holding one VM on `held` and one on `editing`, both on the
-    /// shared network — the starting point for every uniqueness assertion.
+    /// NAT network — the starting point for every uniqueness assertion.
     private func makeLibrarySharingNoAddress(
         using vmnet: MockVmnetNetworkProvider, held: String, editing: String,
         storage: MockVMStorageService = MockVMStorageService()
@@ -4946,7 +4946,8 @@ struct VMLibraryViewModelTests {
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
         #expect(importedIDs == [existing.configuration.id, first.config.id, third.config.id])
         #expect(presenter.showError == false)
-        #expect(viewModel.selectedID == third.config.id)
+        // A batch makes one selection: its first entry.
+        #expect(viewModel.selectedID == first.config.id)
     }
 
     @Test("importVM removes the arrival and surfaces an error when the copy fails")

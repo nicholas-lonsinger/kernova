@@ -43,7 +43,7 @@ struct VMCommandCoreMACAddressRemedyTests {
     /// VM in `phase` carrying the same address on the same network.
     @discardableResult
     private func makePair(
-        in harness: Harness, mode: VMNetworkMode = .shared,
+        in harness: Harness, mode: VMNetworkMode = .nat,
         phase: VMLifecyclePhase = .stopped, savedState: Bool = false,
         identity: Data? = nil
     ) throws -> (vm: VMInstance, other: VMInstance) {
@@ -83,8 +83,8 @@ struct VMCommandCoreMACAddressRemedyTests {
 
     // MARK: - Offers
 
-    @Test("A stopped Shared VM is offered all three changes, none discarding anything")
-    func stoppedSharedVMIsOfferedEveryRemedy() async throws {
+    @Test("A stopped NAT VM is offered all three changes, none discarding anything")
+    func stoppedNATVMIsOfferedEveryRemedy() async throws {
         let harness = makeHarness()
         let (vm, other) = try makePair(in: harness)
 
@@ -118,8 +118,8 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(harness.virtualization.startCallCount == 0)
     }
 
-    @Test("A suspended Shared VM keeps its saved state only on a network of its own, and is told so")
-    func suspendedSharedVMIsToldWhatDiscards() async throws {
+    @Test("A suspended NAT VM keeps its saved state only on a network of its own, and is told so")
+    func suspendedNATVMIsToldWhatDiscards() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
 
@@ -256,7 +256,7 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
-    @Test("A suspended Shared VM moved to a network of its own restores its saved state there")
+    @Test("A suspended NAT VM moved to a network of its own restores its saved state there")
     func ownNetworkKeepsTheSavedState() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness, phase: .suspended, savedState: true)
@@ -325,7 +325,7 @@ struct VMCommandCoreMACAddressRemedyTests {
             preferences: preferences
         ) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
             $0.macAddress = Self.sharedMAC
         }
 
@@ -418,13 +418,13 @@ struct VMCommandCoreMACAddressRemedyTests {
     @Test("A revert is judged on the network its snapshot lands the VM on, not the one it is on now")
     func revertIsJudgedOnTheSnapshotsNetwork() async throws {
         let harness = makeHarness()
-        // B, an Exact Copy on Shared's common network.
+        // B, an Exact Copy on NAT's common network.
         RegisteredVMInstanceFixture.register(
             name: "B", phase: .running(sessionID: UUID()), guestOS: .linux,
             library: harness.library, preferences: preferences
         ) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
             $0.macAddress = Self.sharedMAC
         }
         // A, running on its own network after the remedy, with a snapshot
@@ -434,7 +434,7 @@ struct VMCommandCoreMACAddressRemedyTests {
             library: harness.library, preferences: preferences
         ) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
             $0.networkMembership = .isolated
             $0.macAddress = Self.sharedMAC
         }
@@ -474,7 +474,7 @@ struct VMCommandCoreMACAddressRemedyTests {
             library: harness.library, preferences: preferences
         ) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
             $0.macAddress = Self.sharedMAC
         }
         // Taken on Host Only, whose saved state is not known to restore on a
@@ -497,7 +497,7 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(error.macAddressRemedyPrompt == nil)
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
         #expect(reverting.status == .running)
-        #expect(reverting.configuration.networkMode == .shared)
+        #expect(reverting.configuration.networkMode == .nat)
     }
 
     @Test("A warm revert that would resume onto a used address lands at rest, takes the remedy, then resumes")

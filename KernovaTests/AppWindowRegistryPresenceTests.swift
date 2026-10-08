@@ -31,12 +31,18 @@ struct AppWindowRegistryPresenceTests {
         func syncActivationPolicy() { syncCount += 1 }
     }
 
-    private func makeRegistry() -> AppWindowRegistry {
+    /// Counts the registry's asks to bring Kernova forward.
+    private final class ActivationCounter {
+        var count = 0
+    }
+
+    private func makeRegistry(activations: ActivationCounter = ActivationCounter()) -> AppWindowRegistry {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         return AppWindowRegistry(
             viewModel: viewModel,
             displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-            autosaveScope: autosave)
+            autosaveScope: autosave,
+            activateApp: { activations.count += 1 })
     }
 
     /// A VM the clipboard window opens for: sharing on, and a live session, which
@@ -90,10 +96,26 @@ struct AppWindowRegistryPresenceTests {
     @Test("The Settings window counts on its own")
     func settingsShown() throws {
         let registry = makeRegistry()
-        registry.showSettings(nil)
+        registry.showSettings()
         adoptAppWindow(try #require(registry.settingsWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))
+    }
+
+    @Test("An automatic config check shows its window without bringing Kernova forward; the user's does both")
+    func configCheckActivatesOnlyForTheUser() throws {
+        let activations = ActivationCounter()
+        let registry = makeRegistry(activations: activations)
+
+        registry.showConfigCheck(.automatic)
+        let window = try #require(registry.configCheckWindow)
+        adoptAppWindow(window)
+        #expect(window.isVisible)
+        #expect(activations.count == 0)
+
+        registry.showConfigCheck(.user)
+        #expect(window.isVisible)
+        #expect(activations.count == 1)
     }
 
     @Test("Closing a clipboard window deregisters it")

@@ -3,21 +3,30 @@ import KernovaKit
 
 /// How an enabled network device attaches to the world.
 enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
-    case shared
+    case nat
     case bridged
     case hostOnly
+
+    /// How every surface the user reads names this mode.
+    var title: String {
+        switch self {
+        case .nat: "NAT"
+        case .bridged: "Bridged"
+        case .hostOnly: "Host Only"
+        }
+    }
 
     /// Whether a saved state taken on one network of this mode restores on
     /// another network of the same mode — what lets a VM holding one move
     /// between its mode's common network and a network of its own.
     var savedStateRestoresOnAnotherNetworkOfThisMode: Bool {
         switch self {
-        // Measured Shared to Shared, onto a new network on another subnet
+        // Measured NAT to NAT, onto a new network on another subnet
         // (docs/research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md);
         // the same note lists a restore onto another Host Only network as not
         // measured, and Bridged has one network per interface, not a network
         // of its own.
-        case .shared: true
+        case .nat: true
         case .hostOnly, .bridged: false
         }
     }
@@ -74,7 +83,7 @@ enum VMJoinedNetwork: Hashable, Sendable {
         switch id.scope {
         case .vm: return "isolating a virtual machine from other virtual machines"
         case .named: return "named networks"
-        case .common: return id.kind == .hostOnly ? "host-only networking" : "Shared Network"
+        case .common: return id.kind == .hostOnly ? "host-only networking" : "\(VMNetworkMode.nat.title) networking"
         }
     }
 }
@@ -139,7 +148,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
     /// `nil` for Automatic — resolved against the host's default route at start.
     var bridgedInterfaceIdentifier: String?
 
-    /// Which network of its mode a Shared or Host Only VM joins. Bridged
+    /// Which network of its mode a NAT or Host Only VM joins. Bridged
     /// ignores it. A named network's kind is the mode a VM on it has
     /// (``VMNamedNetwork/kind``).
     var networkMembership: VMNetworkMembership
@@ -358,7 +367,7 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         displayHiDPI: Bool = true,
         displayAutoResizes: Bool = true,
         networkEnabled: Bool = true,
-        networkMode: VMNetworkMode = .shared,
+        networkMode: VMNetworkMode = .nat,
         bridgedInterfaceIdentifier: String? = nil,
         networkMembership: VMNetworkMembership = .common,
         macAddress: String? = nil,
@@ -468,8 +477,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.networkMode = try c.decode(
             VMNetworkMode.self, forKey: .networkMode, default: defaults.networkMode, in: decoder)
-        self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
-            String.self, forKey: .bridgedInterfaceIdentifier)
+        self.bridgedInterfaceIdentifier = try c.decode(
+            String?.self, forKey: .bridgedInterfaceIdentifier, default: defaults.bridgedInterfaceIdentifier,
+            in: decoder)
         self.networkMembership = try c.decode(
             VMNetworkMembership.self, forKey: .networkMembership, default: defaults.networkMembership,
             in: decoder)
@@ -503,7 +513,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
-        self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        self.kernelCommandLine = try c.decode(
+            String?.self, forKey: .kernelCommandLine, default: defaults.kernelCommandLine, in: decoder)
         self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
         self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)

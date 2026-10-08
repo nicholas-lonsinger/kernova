@@ -510,6 +510,15 @@ enum VMBringUpKind: Sendable, Equatable {
         case .reverting(_, let resumesAfter): resumesAfter
         }
     }
+
+    /// Whether this bring-up begins a guest session on a VM at rest — a
+    /// session whose power-off returns an Ephemeral Mode VM to its baseline.
+    var beginsSessionFromRest: Bool {
+        switch self {
+        case .guestStart, .settingUp: true
+        case .reverting: false
+        }
+    }
 }
 
 /// A bring-up that starts the guest from what the bundle holds — its disks,

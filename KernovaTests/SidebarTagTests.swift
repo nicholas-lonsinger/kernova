@@ -160,6 +160,70 @@ struct SidebarTagTests {
         }
     }
 
+    @Test(
+        "A clone's arrival reads as the clone it becomes, tags, Ephemeral Mode and snapshots"
+    )
+    func cloneArrivalReadsAsTheClone() async throws {
+        for outcome in [CloneOutcome.newMachine, .exactCopy] {
+            let storage = MockVMStorageService()
+            let viewModel = makeViewModel(storage: storage)
+            let library = viewModel.library
+            let work = try library.createTag(named: "Work", color: .blue)
+            let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
+            let original = library.admitFixture(
+                name: "Original",
+                hostState: VMHostState(
+                    ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id, tags: [work.id]),
+                snapshots: VMSnapshotManifest(snapshots: [baseline]))
+            storage.bundles[original.bundleURL] = original.configuration
+            storage.hostStates[original.bundleURL] = original.hostState
+            viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
+
+            viewModel.cloneVM(original, as: outcome)
+
+            let arrival = try #require(library.arrivals.first, "\(outcome)")
+            let subject = try #require(library.sidebarContext.subject(of: .arriving(arrival)), "\(outcome)")
+            #expect(subject.tags == [work.id], "\(outcome)")
+            #expect(subject.isEphemeral == (outcome == .exactCopy), "\(outcome)")
+            #expect(subject.hasSnapshots == (outcome == .exactCopy), "\(outcome)")
+            // The tag filter lists it, so registering it selects it.
+            #expect(viewModel.selectedID == arrival.id, "\(outcome)")
+            await viewModel.awaitArrivalsForTesting()
+        }
+    }
+
+    /// The manifest lists a snapshot whose own files were never written: an
+    /// import reads the manifest, not each snapshot.
+    @Test("An import's arrival reads as its source does: its tags, Ephemeral Mode and snapshots")
+    func importArrivalReadsAsItsSource() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storage: storage)
+        let work = try viewModel.library.createTag(named: "Work", color: .blue)
+        let source = try scratch.importSource(name: "Arriving")
+        var hostState = VMHostState(tags: [work.id])
+        hostState.applyEphemeralMode(enabled: true, baseline: nil)
+        let encoder = VMConfiguration.makeJSONEncoder()
+        try encoder.encode(hostState)
+            .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
+        let manifestURL = source.url.appendingPathComponent(VMBundleLayout.snapshotManifestRelativePath)
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Kept", macAddress: nil)]).record)
+            .write(to: manifestURL)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [source.url]))
+
+        let arrival = try #require(viewModel.library.arrivals.first)
+        let subject = try #require(viewModel.library.sidebarContext.subject(of: .arriving(arrival)))
+        #expect(subject.tags == [work.id])
+        #expect(subject.isEphemeral)
+        #expect(subject.hasSnapshots)
+        // The tag filter lists it, so the import selects it.
+        #expect(viewModel.selectedID == arrival.id)
+        await viewModel.awaitArrivalsForTesting()
+    }
+
     @Test("An import keeps every assignment, one this library does not define inert")
     func importKeepsAssignments() async throws {
         let storage = MockVMStorageService()
@@ -505,12 +569,21 @@ struct SidebarTagTests {
         #expect(pane.tags == [lab])
     }
 
-    @Test("Edit Tags… opens Settings on the Tags pane")
+    @Test("Edit Tags… asks for Settings on the Tags pane, which shows the tags")
     func settingsOpensOnTags() throws {
-        let tabs = SettingsTabViewController(viewModel: makeViewModel())
+        let viewModel = makeViewModel()
+        var requested: [SettingsDestination] = []
+        viewModel.onShowSettings = { requested.append($0) }
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+
+        controller.perform(.editTags)
+
+        #expect(requested == [.pane(.tags)])
+        let tabs = SettingsTabViewController(viewModel: viewModel)
         tabs.loadViewIfNeeded()
 
-        tabs.select(.tags)
+        tabs.show(.pane(.tags))
 
         #expect(tabs.tabViewItems[tabs.selectedTabViewItemIndex].viewController is TagsSettingsViewController)
     }

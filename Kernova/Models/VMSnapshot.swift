@@ -165,7 +165,7 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
     }
 
     /// Each field a fact about what the snapshot had: an absent value reads
-    /// as no network device on the common Shared network, with no bridged
+    /// as no network device on the common NAT network, with no bridged
     /// interface or address, and an unrecognized one is a problem no default
     /// repairs.
     ///
@@ -179,7 +179,7 @@ struct VMCapturedNetwork: Sendable, Equatable, Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled, absentMeans: false, in: decoder)
-        networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, absentMeans: .shared, in: decoder)
+        networkMode = try c.decode(VMNetworkMode.self, forKey: .networkMode, absentMeans: .nat, in: decoder)
         networkMembership = try c.decode(
             VMNetworkMembership.self, forKey: .networkMembership, absentMeans: .common, in: decoder)
         bridgedInterfaceIdentifier = try c.decode(

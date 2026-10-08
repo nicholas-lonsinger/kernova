@@ -11,7 +11,9 @@ final class SidebarUnreadableRowCellView: NSTableCellView {
     private static let rowLeadingInset: CGFloat = 4
     private static let rowTrailingInset: CGFloat = 8
     private static let iconSlotWidth: CGFloat = 20
-    private static let warningWidth: CGFloat = 16
+    /// The warning glyph's slot, which a readable VM's row holding an
+    /// unreadable file shows too (``SidebarVMRowCellView``).
+    static let warningWidth: CGFloat = 16
 
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
@@ -72,9 +74,16 @@ final class SidebarUnreadableRowCellView: NSTableCellView {
         iconView.image = Self.symbol(
             "desktopcomputer", pointSize: 18, color: .tertiaryLabelColor,
             description: "Virtual machine")
-        warningView.image = Self.symbol(
-            "exclamationmark.triangle.fill", pointSize: 13, color: .systemYellow,
+        warningView.image = Self.warningSymbol(
             description: "Kernova can\u{2019}t read this virtual machine\u{2019}s settings")
+    }
+
+    /// The yellow warning glyph, colored and non-template as
+    /// ``applySymbols()`` bakes it — re-made at each appearance change.
+    static func warningSymbol(description: String) -> NSImage {
+        symbol(
+            "exclamationmark.triangle.fill", pointSize: 13, color: .systemYellow,
+            description: description)
     }
 
     private static func symbol(
@@ -103,7 +112,7 @@ final class SidebarUnreadableRowCellView: NSTableCellView {
     /// outline view's indentation.
     static func contentWidth(forName name: String) -> CGFloat {
         SidebarVMRowCellView.contentWidth(
-            forName: name, showsAgentAccessory: false, showsEphemeralAccessory: false)
-            + Spacing.small + warningWidth
+            forName: name, showsAgentAccessory: false, showsEphemeralAccessory: false,
+            showsUnreadableWarning: true)
     }
 }

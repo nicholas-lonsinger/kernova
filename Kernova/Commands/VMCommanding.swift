@@ -334,12 +334,13 @@ protocol VMCommanding: AnyObject {
     @discardableResult
     func importVM(from url: URL, waitForOutcome: Bool) async throws -> VMSummary
 
-    /// The import nobody waits on, which never suspends — so a batch's
-    /// destinations, and two overlapping triggers', are reserved against each
-    /// other's arrivals. ``importVM(from:waitForOutcome:)`` without
-    /// `waitForOutcome` is this.
-    @discardableResult
-    func beginImport(from url: URL) throws -> VMSummary
+    /// The imports nobody waits on, of each bundle at `urls`, which never
+    /// suspend — so a batch's destinations, and two overlapping triggers', are
+    /// reserved against each other's arrivals — put in the folder `folder`
+    /// identifies, if any, in one write, the batch's first entry selected
+    /// there. ``importVM(from:waitForOutcome:)`` without `waitForOutcome` is
+    /// this for one bundle and no folder.
+    func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch
 
     /// The same import, named the way a caller holding no grant for the file
     /// names it: the implementation obtains one for `path` first.
@@ -596,4 +597,14 @@ extension VMCommanding {
     {
         try await takeSnapshot(selector, name: name, notes: notes, asEphemeralBaseline: false)
     }
+}
+
+/// What ``VMCommanding/beginImports(from:intoFolder:)`` answered.
+struct VMImportBatch {
+    /// Each bundle's import, in the order given: the VM or arrival it
+    /// answers, or why it was refused.
+    let imports: [Result<VMSummary, any Error>]
+    /// Why the folder couldn't take the batch, when it couldn't — no import's
+    /// failure: every import it names runs on outside the folder.
+    let membershipFailure: (any Error)?
 }

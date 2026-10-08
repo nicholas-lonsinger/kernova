@@ -58,6 +58,9 @@ final class SidebarVMRowCellView: NSTableCellView {
     private let tagDots = SidebarTagDotsView()
     private let ephemeralBadge = SidebarEphemeralBadgeView()
     private let agentButton = SidebarAgentStatusButtonView()
+    /// The glyph an unreadable row shows, here for a file of the bundle the
+    /// last read refused; its tooltip names the file.
+    private let unreadableWarning = NSImageView()
     private let spinner = NSProgressIndicator()
     /// A flexible filler trailing the name so the name label can hug its text
     /// while renaming; inert in the display state.
@@ -111,12 +114,15 @@ final class SidebarVMRowCellView: NSTableCellView {
 
         // Keep the trailing accessories rigid so the name field is the sole
         // flexible element, truncating only when genuinely out of room.
-        for accessory in [tagDots, ephemeralBadge, agentButton] as [NSView] {
+        for accessory in [tagDots, ephemeralBadge, agentButton, unreadableWarning] as [NSView] {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
         tagDots.isHidden = true
         ephemeralBadge.isHidden = true
+        unreadableWarning.imageScaling = .scaleProportionallyDown
+        unreadableWarning.isHidden = true
+        applyWarningSymbol()
 
         // The icon and spinner share the leading slot: exactly one is visible at a
         // time, and both are pinned to the same width so the name field doesn't
@@ -142,7 +148,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         nameColumn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let row = NSStackView(views: [
-            iconView, spinner, nameColumn, tagDots, ephemeralBadge, agentButton,
+            iconView, spinner, nameColumn, tagDots, ephemeralBadge, agentButton, unreadableWarning,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -169,6 +175,8 @@ final class SidebarVMRowCellView: NSTableCellView {
             // at the column's leading edge under it.
             nameLine.widthAnchor.constraint(equalTo: nameColumn.widthAnchor),
             spinner.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
+            unreadableWarning.widthAnchor.constraint(
+                equalToConstant: SidebarUnreadableRowCellView.warningWidth),
         ])
     }
 
@@ -234,6 +242,7 @@ final class SidebarVMRowCellView: NSTableCellView {
                 _ = instance.hostState.agentInstallNudgeDismissed
                 _ = instance.lastSeenAgentVersion
                 _ = instance.hostState.ephemeralModeEnabled
+                _ = instance.unreadableFiles
                 _ = self.installPromptDisabled?()
                 _ = self.detail?()
                 _ = self.tags?()
@@ -274,6 +283,10 @@ final class SidebarVMRowCellView: NSTableCellView {
         let showsEphemeral = instance.hostState.ephemeralModeEnabled
         if !showsEphemeral { ephemeralBadge.reset() }
         ephemeralBadge.isHidden = !showsEphemeral
+
+        let unreadableNotice = UnreadableConfigFile.notice(for: instance.unreadableFiles)
+        unreadableWarning.toolTip = unreadableNotice
+        unreadableWarning.isHidden = unreadableNotice == nil
 
         if let agentStatus = Self.visibleAgentStatus(
             for: instance, installPromptDisabled: installPromptDisabled?() ?? false)
@@ -317,9 +330,23 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// light/dark appearance.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        applyWarningSymbol()
         guard instance != nil, !iconView.isHidden else { return }
         applyIconStateColor()
     }
+
+    /// Bakes the unreadable warning's yellow in for the current appearance.
+    private func applyWarningSymbol() {
+        unreadableWarning.image = SidebarUnreadableRowCellView.warningSymbol(
+            description: "Kernova can\u{2019}t read a file of this virtual machine")
+    }
+
+    #if DEBUG
+    /// The unreadable warning's tooltip, `nil` while it is hidden.
+    var unreadableWarningToolTipForTesting: String? {
+        unreadableWarning.isHidden ? nil : unreadableWarning.toolTip
+    }
+    #endif
 
     /// Passes a selected row's emphasized background on to the tag dots,
     /// which ring themselves against it; `NSTableCellView` passes it only to
@@ -377,6 +404,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         agentButton.isHidden = true
         ephemeralBadge.reset()
         ephemeralBadge.isHidden = true
+        unreadableWarning.toolTip = nil
+        unreadableWarning.isHidden = true
     }
 
     // MARK: - Intrinsic width
@@ -390,7 +419,7 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// the row shows.
     static func contentWidth(
         forName name: String, detail: String? = nil, showsAgentAccessory: Bool,
-        showsEphemeralAccessory: Bool, tagCount: Int = 0
+        showsEphemeralAccessory: Bool, showsUnreadableWarning: Bool = false, tagCount: Int = 0
     ) -> CGFloat {
         let nameWidth = max(ceil(measuredNameWidth(for: name)), detail.map { ceil(measuredDetailWidth(for: $0)) } ?? 0)
         var width =
@@ -404,6 +433,9 @@ final class SidebarVMRowCellView: NSTableCellView {
         }
         if showsAgentAccessory {
             width += Spacing.small + SidebarAgentStatusButtonView.width
+        }
+        if showsUnreadableWarning {
+            width += Spacing.small + SidebarUnreadableRowCellView.warningWidth
         }
         return width
     }

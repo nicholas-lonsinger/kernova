@@ -6,7 +6,7 @@ extension VMSnapshot {
     ///
     /// `macAddress` has no default, as in production: it is the address the
     /// snapshot keeps reserved, and a test that means "none" says so. The rest
-    /// of the captured network device is a Shared Network one on its common
+    /// of the captured network device is a NAT one on its common
     /// network unless `network` names another, which then carries the address
     /// too.
     init(
@@ -17,7 +17,7 @@ extension VMSnapshot {
             VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: kind),
             network: network
                 ?? VMCapturedNetwork(
-                    networkEnabled: true, networkMode: .shared, networkMembership: .common,
+                    networkEnabled: true, networkMode: .nat, networkMembership: .common,
                     bridgedInterfaceIdentifier: nil, macAddress: macAddress))
     }
 }

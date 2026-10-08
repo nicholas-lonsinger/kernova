@@ -64,6 +64,11 @@ final class VMInstance {
     /// `usb-accessories.json`.
     var usbPairings: USBAccessoryPairingSet { bundle.usbPairings }
 
+    /// The files of this VM's bundle that its last read refused — a
+    /// snapshot's `config.json`, the pairings, or a state file a re-read met
+    /// unreadable after the VM loaded.
+    var unreadableFiles: [UnreadableConfigFile] { bundle.unreadableFiles }
+
     /// Where this VM's display currently lives.
     ///
     /// ``VMDisplayPlacementController`` owns every transition; the model writes
@@ -600,6 +605,15 @@ final class VMInstance {
             let id = hostState.ephemeralBaselineSnapshotID
         else { return nil }
         return snapshotManifest.snapshot(id: id)
+    }
+
+    /// Whether the last read of the bundle refused the `config.json` of the
+    /// snapshot a power-off returns this VM to — a revert to it fails before
+    /// it changes anything, so a power-off would leave the session's changes
+    /// on the disks.
+    var ephemeralBaselineIsUnreadable: Bool {
+        guard let baseline = ephemeralBaselineSnapshot else { return false }
+        return unreadableFiles.contains { $0.snapshotID == baseline.id }
     }
 
     /// `true` while a session this VM's baseline will discard is in memory —

@@ -151,13 +151,15 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// The selected sidebar row, whose entry is ``selectedID``.
     ///
     /// The sidebar writes the row the user picks. Everything else selects
-    /// through ``selectRevealing(_:)``, which first makes the entry listed.
+    /// through ``selectRevealing(_:in:)``, which first makes the entry listed.
     var selection: SidebarRowKey? {
         didSet {
             if selectedLibraryEntryID != retainedEntryID {
                 retainedEntryID = selectedLibraryEntryID.flatMap { sidebarNarrowingAdmits($0) ? $0 : nil }
             }
-            if pendingReveal != selection { pendingReveal = nil }
+            if selection?.section != oldValue?.section || selection?.entryID != oldValue?.entryID {
+                isRevealPending = false
+            }
             if selection != oldValue { preferences.sidebarSelection = selection }
         }
     }
@@ -179,20 +181,23 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         selection?.section == .library ? selection?.entryID : nil
     }
 
-    /// The selected row, while the sidebar still owes it a reveal: opening
-    /// the collapsed sections that hide it.
+    /// Whether the sidebar still owes the selected row a reveal: opening the
+    /// collapsed sections that hide it.
     ///
-    /// Set by ``selectRevealing(_:)`` and an arrival's registration, and held
+    /// Set by ``selectRevealing(_:in:)`` and ``selectArrival(_:in:)``, and held
     /// until the sidebar takes it (``takePendingReveal()``) — however long
-    /// before the sidebar exists that is. Any other selection drops it, so a
-    /// reveal never outlives the selection it was made for, and a restored or
-    /// clicked selection opens nothing.
-    private(set) var pendingReveal: SidebarRowKey?
+    /// before the sidebar exists that is. It belongs to the selected entry in
+    /// its section: a grouping moving that row under another header keeps it,
+    /// and a selection of any other entry or section drops it, so a reveal
+    /// never outlives the selection it was made for, and a restored or clicked
+    /// selection opens nothing.
+    private(set) var isRevealPending = false
 
-    /// The row owed a reveal, which is then no longer owed.
-    func takePendingReveal() -> SidebarRowKey? {
-        defer { pendingReveal = nil }
-        return pendingReveal
+    /// Whether the selected row was owed a reveal, which is then no longer
+    /// owed.
+    func takePendingReveal() -> Bool {
+        defer { isRevealPending = false }
+        return isRevealPending
     }
 
     private func sidebarNarrowingAdmits(_ id: UUID) -> Bool {
@@ -280,9 +285,13 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     ///
     /// Reads every value ``sidebarOptions`` filters, orders or groups by, so
     /// an observation computing it tracks exactly those.
-    var sidebarLayout: SidebarLayout {
+    var sidebarLayout: SidebarLayout { sidebarLayout(options: sidebarOptions, search: sidebarSearch) }
+
+    /// The rows the sidebar would show for the library under `options` and
+    /// `search`.
+    private func sidebarLayout(options: SidebarViewOptions, search: SidebarNameSearch) -> SidebarLayout {
         .project(
-            entries: entries, options: sidebarOptions, search: sidebarSearch, retaining: retainedEntryID,
+            entries: entries, options: options, search: search, retaining: retainedEntryID,
             organization: organization.state.map(\.sections), context: sidebarContext)
     }
 
@@ -307,36 +316,87 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
             tags: organization.tags,
             networkTitle: { config in
-                NetworkModeChoice.title(
+                NetworkModeChoice.label(
                     of: config, entitlements: entitlements, interfaces: interfaces.interfaces,
-                    networks: named)
+                    networks: named
+                ).text
             })
     }
 
     /// Moves ``selection`` onto what `layout` — by default the current
-    /// ``sidebarLayout`` — shows, by ``SidebarLayout/reconciled(_:libraryHolds:)``.
+    /// ``sidebarLayout`` — shows, by ``SidebarLayout/reconciled(_:libraryHolds:)``,
+    /// and ends a ``sidebarRenameID`` request no row of it lists.
     func reconcileSelection(with layout: SidebarLayout? = nil) {
         let layout = layout ?? sidebarLayout
         let reconciled = layout.reconciled(selection) { id in entries.contains { $0.id == id } }
         if reconciled != selection { selection = reconciled }
+        if let id = sidebarRenameID, layout.resolve(preferredRow(of: id)) == nil { sidebarRenameID = nil }
     }
 
-    /// Selects the entry `id`, first dropping each sidebar filter attribute
-    /// that hides it, and the search when it does — what every reveal, and
-    /// every selection made other than by clicking a row, lands on.
+    /// The entry a rename in its sidebar row is asked for on.
     ///
-    /// A VM the sidebar already lists — a retained one included — relaxes
-    /// nothing.
-    func selectRevealing(_ id: UUID) {
-        guard let entry = entries.first(where: { $0.id == id }) else { return }
-        if !sidebarShows(id) {
-            if let subject = sidebarContext.subject(of: entry) {
-                sidebarOptions.filter = sidebarOptions.filter.admitting(subject)
-            }
-            if !sidebarSearch.admits(entry.name) { sidebarSearch = SidebarNameSearch() }
+    /// Reconciled with the selection: a layout listing no row for it ends the
+    /// request, so it never waits for a row to come back and opens a rename
+    /// nobody is asking for any more. The text typed into a row a change takes
+    /// down is committed, as the row's edit ending commits it.
+    var sidebarRenameID: UUID?
+
+    /// The row the entry `id` is looked for from: its row in `section` when
+    /// one is named, else the selected row when it is the entry's, else its
+    /// library row — where a reveal starts (``SidebarLayout/revealTarget(_:)``)
+    /// and what a sidebar rename resolves (``SidebarLayout/resolve(_:)``).
+    func preferredRow(of id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey {
+        if let section { return SidebarRowKey(section: section, group: nil, entryID: id) }
+        if let selection, selection.entryID == id { return selection }
+        return .library(id)
+    }
+
+    /// Selects and reveals the entry `id`'s row from
+    /// ``preferredRow(of:in:)`` — what every reveal, and every selection made
+    /// other than by clicking a row, lands on — answering that row, or `nil`
+    /// when nothing would list the entry, which changes nothing.
+    ///
+    /// An entry any section lists — a retained one included — relaxes
+    /// nothing. One listed nowhere is revealed once the filter attributes
+    /// hiding it, and the search when it does, are dropped — and only when
+    /// dropping them lists it, decided before either changes.
+    @discardableResult
+    func selectRevealing(_ id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey? {
+        guard let entry = entries.first(where: { $0.id == id }) else { return nil }
+        let preferred = preferredRow(of: id, in: section)
+        if let row = sidebarLayout.revealTarget(preferred) {
+            select(row)
+            return row
         }
-        selectedID = id
-        pendingReveal = selection
+        var options = sidebarOptions
+        if let subject = sidebarContext.subject(of: entry) { options.filter = options.filter.admitting(subject) }
+        let search = sidebarSearch.admits(entry.name) ? sidebarSearch : SidebarNameSearch()
+        guard let row = sidebarLayout(options: options, search: search).revealTarget(preferred) else { return nil }
+        sidebarOptions = options
+        sidebarSearch = search
+        select(row)
+        return row
+    }
+
+    /// Selects and reveals the arrival `id`'s row from
+    /// ``preferredRow(of:in:)`` unless another arrival holds the selection, so
+    /// one starting mid-operation can't take the sidebar's focus from the one
+    /// the user is already watching. A filter hiding it everywhere relaxes
+    /// nothing: the selection stays where the user can see it.
+    func selectArrival(_ id: UUID, in section: SidebarSectionID? = nil) {
+        guard !isWatchingArrival, let row = sidebarLayout.revealTarget(preferredRow(of: id, in: section))
+        else { return }
+        select(row)
+    }
+
+    /// Whether the selection is an arrival, which a selection made for
+    /// anything starting leaves where it is.
+    var isWatchingArrival: Bool { selectedEntry?.arrival != nil }
+
+    /// Selects `row`, owing it a reveal.
+    private func select(_ row: SidebarRowKey) {
+        selection = row
+        isRevealPending = true
     }
 
     /// Selects what a library read lands on when nothing listed is selected:
@@ -351,11 +411,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         } else {
             selection = firstShownRow
         }
-    }
-
-    /// Whether the sidebar lists the entry `id`.
-    func sidebarShows(_ id: UUID) -> Bool {
-        sidebarLayout.resolve(.library(id)) != nil
     }
 
     /// The first row the sidebar lists.
@@ -658,20 +713,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     // MARK: - Arrival Rows
 
-    /// Adds `arrival`'s row and selects it.
-    ///
-    /// Selection moves only when no other arrival holds it, so a second arrival
-    /// registering mid-operation can't steal the sidebar's focus from the one the
-    /// user is already watching, and only when the sidebar shows the arrival,
-    /// so a filter hiding it leaves the selection where the user can see it.
+    /// Adds `arrival`'s row. Selecting it is the caller's
+    /// (``selectArrival(_:in:)``), once whatever lists it is in place.
     func register(_ arrival: VMArrival) {
         entries.append(.arriving(arrival))
         sortEntries()
         persistOrder()
-        if selectedEntry?.arrival == nil, sidebarShows(arrival.id) {
-            selectedID = arrival.id
-            pendingReveal = selection
-        }
     }
 
     /// Removes `arrival`'s row — matched by the object, since adoption may
@@ -679,21 +726,19 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// stays.
     ///
     /// Only an arrival that became no VM leaves here, so the account answer
-    /// held for it, and any folder it was dropped into, go with it.
+    /// held for it goes with it.
     func removeArrival(_ arrival: VMArrival) {
         guard let index = entries.firstIndex(where: { $0.arrival === arrival }) else { return }
         entries.remove(at: index)
         persistOrder()
-        leaveEveryFolder(arrival.id)
         reconcileSelection()
         guestAccountPasswords.remove(for: arrival.id)
     }
 
-    /// Drops `instance` from the library and its folders, moving the
-    /// selection off it onto the first row the sidebar shows.
+    /// Drops `instance` from the library, moving the selection off it onto
+    /// the first row the sidebar shows.
     func evict(_ instance: VMInstance) {
         entries.removeAll { $0.vm === instance }
-        leaveEveryFolder(instance.id)
         reconcileSelection()
         // Nothing left can ask for the account, so nothing may still hold the
         // answer — whichever way the VM left, and whether or not its bundle
@@ -805,6 +850,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         instance.activity.onPoweredOff = { [weak self, weak instance] in
             guard let self, let instance else { return [] }
             return self.onPoweredOff?(instance) ?? []
+        }
+        // The bundle a hold kept from every read is read again as it ends.
+        instance.activity.onRunLockReleased = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.recordUnreadableFiles(of: instance)
+            self.reportNewlyUnreadable()
         }
         // A guest that has just become attachable takes back the accessories
         // paired with it, and is a running guest whose address can be watched.

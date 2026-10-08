@@ -29,6 +29,23 @@ final class VMNetworkDirectory {
     /// The file's payload.
     struct File: Codable, Equatable, Sendable {
         var networks: [VMNamedNetwork]
+
+        /// No networks.
+        init(networks: [VMNamedNetwork] = []) {
+            self.networks = networks
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case networks
+        }
+
+        /// A list: a network that doesn't decode is removed alone, and the
+        /// rest are kept.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            networks = try container.decode(
+                [VMNamedNetwork].self, forKey: .networks, default: File().networks, in: decoder)
+        }
     }
 
     /// What the file held the last time it was read: every named network,
@@ -50,8 +67,10 @@ final class VMNetworkDirectory {
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        state = file.state { Self.ordered($0.networks) }
-        if let unreadable = state.unreadable {
+        let read = file.state { Self.ordered($0.networks) }
+        guard read != state else { return }
+        state = read
+        if let unreadable = read.unreadable {
             #log(
                 Self.logger, .error,
                 "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
@@ -79,18 +98,18 @@ final class VMNetworkDirectory {
     /// library does not list in the VM's mode.
     func network(joinedBy configuration: VMConfiguration) -> VMNamedNetwork? {
         guard let joined = configuration.joinedNetwork, case .vmnet(let id) = joined,
-            case .named(let networkID) = id.scope, let network = network(withID: networkID),
-            network.kind == id.kind
+            case .named(let networkID) = id.scope
         else { return nil }
-        return network
+        return state.network(networkID, of: id.kind)
     }
 
     /// The named network a VM under `configuration` names, as this
     /// directory lists it — `nil` where its membership names none.
     func networkName(of configuration: VMConfiguration) -> VMNetworkName? {
-        guard let id = configuration.effectiveNetworkMembership?.namedNetwork else { return nil }
-        guard case .listed = state else { return .unreadable }
-        return network(joinedBy: configuration).map { .named($0.name) } ?? .unlisted(id)
+        guard let id = configuration.effectiveNetworkMembership?.namedNetwork,
+            let kind = VmnetNetworkKind(mode: configuration.networkMode)
+        else { return nil }
+        return VMNetworkName(id, kind: kind, in: state)
     }
 
     /// The network `text` names — by identifier, or by name ignoring case —
@@ -207,10 +226,31 @@ final class VMNetworkDirectory {
     /// The network list at `url`, as the library's own reads and writes take
     /// it.
     nonisolated static func file(at url: URL) -> CoordinatedJSONFile<File> {
-        CoordinatedJSONFile(location: .networkList(url), owner: .networkList, empty: File(networks: []))
+        CoordinatedJSONFile(location: .networkList(url), owner: .networkList, empty: File())
     }
 
     nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
         networks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+extension ConfigFileState where Listed == [VMNamedNetwork] {
+    /// The network `id` identifies when it is listed in `kind`'s mode, `nil`
+    /// otherwise — a network listed only in the other mode is one the library
+    /// does not list — and while the list can't be read.
+    func network(_ id: UUID, of kind: VmnetNetworkKind) -> VMNamedNetwork? {
+        listed?.first { $0.id == id && $0.kind == kind }
+    }
+}
+
+extension VMNetworkName {
+    /// The named network `id` of `kind` as `networks` lists it
+    /// (``ConfigFileState/network(_:of:)``).
+    init(_ id: UUID, kind: VmnetNetworkKind, in networks: VMNetworkDirectory.State) {
+        if networks.unreadable != nil {
+            self = .unreadable
+        } else {
+            self = networks.network(id, of: kind).map { .named($0.name) } ?? .unlisted(id)
+        }
     }
 }

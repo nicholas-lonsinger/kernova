@@ -1,18 +1,12 @@
 import AppKit
-import KernovaLogging
 
 /// The Check Config Files window's content: a count, a plain-text report of
 /// every config file Kernova can't read, and Use Defaults for the ones it can
-/// repair.
-///
-/// Every check reads the files fresh from disk; a later check's result
-/// replaces an earlier one's, whichever finishes first.
+/// repair — what its ``ConfigCheckSession`` holds.
 @MainActor
 final class ConfigCheckViewController: NSViewController {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova", category: "ConfigCheckViewController")
-
-    private let viewModel: VMLibraryViewModel
+    let session: ConfigCheckSession
+    private var sessionObservation: ObservationLoop?
 
     private let headerLabel = NSTextField(labelWithString: "")
     private let reportView = NSTextView()
@@ -22,16 +16,18 @@ final class ConfigCheckViewController: NSViewController {
     private let closeButton = NSButton()
     private let useDefaultsButton = NSButton()
 
-    /// What the window shows, `nil` while no check has finished.
-    private(set) var report: ConfigCheckReport?
-    /// Counts the checks started, so only the latest one's result lands.
-    private var checkGeneration = 0
-    private var isWorking = false
-
-    init(viewModel: VMLibraryViewModel) {
-        self.viewModel = viewModel
+    init(source: any ConfigCheckSource) {
+        self.session = ConfigCheckSession(source: source)
         super.init(nibName: nil, bundle: nil)
         title = "Check Config Files"
+        session.onRepairFailures = { [weak self] lines in
+            guard let window = self?.view.window else { return }
+            presentSheetAlert(
+                .acknowledgement(
+                    title: "Some Files Weren\u{2019}t Rewritten",
+                    message: lines.joined(separator: "\n")),
+                in: window)
+        }
     }
 
     @available(*, unavailable)
@@ -97,6 +93,13 @@ final class ConfigCheckViewController: NSViewController {
             buttons.widthAnchor.constraint(equalTo: content.widthAnchor),
         ])
         view = root
+        sessionObservation = observeRecurring(
+            track: { [session] in
+                _ = session.work
+                _ = session.report
+                _ = session.failure
+            },
+            apply: { [weak self] in self?.apply() })
         apply()
     }
 
@@ -111,41 +114,15 @@ final class ConfigCheckViewController: NSViewController {
 
     /// Reads every config file again and shows what it found.
     func runCheck() {
-        checkGeneration += 1
-        let generation = checkGeneration
-        isWorking = true
-        apply()
-        Task { [weak self] in
-            guard let self else { return }
-            let outcome: Result<[UnreadableConfigFile], any Error>
-            do {
-                outcome = .success(try await self.viewModel.checkConfigFiles())
-            } catch {
-                outcome = .failure(error)
-            }
-            guard generation == self.checkGeneration else { return }
-            self.isWorking = false
-            switch outcome {
-            case .success(let files):
-                self.report = ConfigCheckReport(
-                    files: files, libraryDirectory: self.viewModel.libraryDirectory)
-                self.apply()
-            case .failure(let error):
-                #log(
-                    Self.logger, .error,
-                    "The config check couldn't list the VMs folder: \(error.localizedDescription, privacy: .public)"
-                )
-                self.report = nil
-                self.apply(failure: error.localizedDescription)
-            }
-        }
+        session.check()
     }
 
-    /// Lays out what ``report`` holds — or the failure, or that a check is
-    /// under way.
-    private func apply(failure: String? = nil) {
+    /// Lays out what the session holds: its report — or the failure, or that
+    /// a check is under way.
+    private func apply() {
         guard isViewLoaded else { return }
-        if let failure {
+        let report = session.report
+        if let failure = session.failure {
             headerLabel.stringValue = "Kernova couldn\u{2019}t check the config files: \(failure)"
         } else if let report {
             headerLabel.stringValue = report.header
@@ -158,16 +135,16 @@ final class ConfigCheckViewController: NSViewController {
         footerLabel.stringValue = report?.footer ?? ""
         footerLabel.isHidden = report?.footer == nil
         showInFinderButton.isHidden = files.isEmpty
-        let offersUseDefaults = (report?.repairableCount ?? 0) > 0
-        useDefaultsButton.isHidden = !offersUseDefaults
-        useDefaultsButton.isEnabled = !isWorking
-        showInFinderButton.isEnabled = !isWorking
+        useDefaultsButton.isHidden = (report?.repairableCount ?? 0) == 0
+        let isIdle = session.work == .idle
+        useDefaultsButton.isEnabled = isIdle
+        showInFinderButton.isEnabled = isIdle
     }
 
     // MARK: - Actions
 
     @objc private func showInFinder() {
-        guard let report else { return }
+        guard let report = session.report else { return }
         NSWorkspace.shared.activateFileViewerSelecting(report.revealedURLs)
     }
 
@@ -176,23 +153,6 @@ final class ConfigCheckViewController: NSViewController {
     }
 
     @objc private func useDefaults() {
-        guard let report, report.repairableCount > 0, !isWorking else { return }
-        isWorking = true
-        apply()
-        Task { [weak self] in
-            guard let self else { return }
-            let failures = await self.viewModel.useDefaults(in: report.files)
-            self.isWorking = false
-            self.runCheck()
-            guard !failures.isEmpty, let window = self.view.window else { return }
-            let lines = failures.map {
-                "\(report.relativePath(of: $0.file.url)): \($0.reason)"
-            }
-            presentSheetAlert(
-                .acknowledgement(
-                    title: "Some Files Weren\u{2019}t Rewritten",
-                    message: lines.joined(separator: "\n")),
-                in: window)
-        }
+        session.useDefaults()
     }
 }

@@ -187,7 +187,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         let secondID = library.instances.last?.id
-        secondID.map(library.selectRevealing)
+        if let secondID { library.selectRevealing(secondID) }
 
         await library.loadVMs()
 
@@ -525,10 +525,10 @@ struct VMLibraryTests {
 
     // MARK: - Guest Addresses
 
-    @Test("A running VM switched live onto Shared is watched until its address is seen")
-    func liveSwitchOntoSharedWatchesTheGuest() async throws {
+    @Test("A running VM switched live onto NAT is watched until its address is seen")
+    func liveSwitchOntoNATWatchesTheGuest() async throws {
         let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
+        vmnet.scriptedSubnets = [.common(.nat): .scripted("192.168.64.0")]
         let table = ScriptedARPTable([
             .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
         ])
@@ -543,7 +543,7 @@ struct VMLibraryTests {
         #expect(library.guestAddresses.readTaskForTesting == nil)
 
         try library.updateConfiguration(of: instance, as: .networkAttachment) {
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
 
         let loop = try #require(library.guestAddresses.readTaskForTesting)

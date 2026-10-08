@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -471,6 +472,119 @@ struct SidebarViewControllerTests {
         let moved = try #require(
             outline.view(atColumn: 0, row: 2, makeIfNecessary: true) as? SidebarVMRowCellView)
         #expect(!moved.isRenaming)
+    }
+
+    /// VM ▸ Rename names the VM of the key window, which can be one the
+    /// sidebar's filter hides.
+    @Test("A sidebar rename of a VM the filter hides reveals its row and opens there")
+    func renameRevealsAHiddenRow() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        #expect(rowNames(in: outline) == ["Linux"])
+
+        viewModel.renameVMInSidebar(mac)
+        controller.viewDidAppear()
+
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
+        #expect(viewModel.selection == .library(mac.id))
+        let node = try #require(controller.tree.row(for: .library(mac.id)))
+        let row = outline.row(forItem: node)
+        let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
+        #expect(cell.isRenaming)
+        #expect(viewModel.activeRename == .sidebar(mac.id))
+    }
+
+    /// A rename is asked for only once a row lists the VM, so no request is
+    /// left waiting for a row that may appear later.
+    @Test("A sidebar rename of a VM no row can list asks for no rename")
+    func renameWithNoRowAsksForNone() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Listed")
+        let unlisted = VMInstanceFixture.make(name: "Unlisted")
+
+        viewModel.renameVMInSidebar(unlisted)
+
+        #expect(viewModel.activeRename == nil)
+    }
+
+    @Test("A sidebar rename whose row a filter hides before it opens ends, and opens nothing when the row returns")
+    func renameWithNoRowLapses() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        viewModel.renameVMInSidebar(mac)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        #expect(viewModel.activeRename == nil)
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+        #expect(!isRenamingAnyRow(in: outline))
+    }
+
+    /// The edit ends with its row, committing what was typed, as any row
+    /// an update takes down does.
+    @Test("A sidebar rename whose row a filter hides mid-edit commits its text and ends")
+    func renameWhoseRowLeavesMidEditEnds() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux, files: storage.files)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func macCell() -> SidebarVMRowCellView? {
+            controller.tree.row(for: .library(mac.id)).flatMap { node in
+                outline.view(atColumn: 0, row: outline.row(forItem: node), makeIfNecessary: false)
+                    as? SidebarVMRowCellView
+            }
+        }
+        viewModel.renameVMInSidebar(mac)
+        // The rename reaches the row through the sidebar's own observation
+        // loop, which offers no test-facing signal to await.
+        try await waitUntil { macCell()?.isRenaming == true }
+        let cell = try #require(macCell())
+        let label = try nameLabel(in: cell)
+        let editor = try #require(label.currentEditor())
+        editor.string = "Typed"
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        #expect(viewModel.activeRename == nil)
+        controller.viewDidAppear()
+        #expect(mac.name == "Typed")
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+        #expect(!isRenamingAnyRow(in: outline))
+    }
+
+    private func isRenamingAnyRow(in outline: NSOutlineView) -> Bool {
+        (0..<outline.numberOfRows).contains {
+            (outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView)?.isRenaming == true
+        }
+    }
+
+    @Test("A reveal answers the row it selected; one with no row to land on changes nothing")
+    func revealAnswersItsRow() {
+        let viewModel = makeViewModel()
+        let listed = viewModel.library.admitFixture(name: "Listed")
+        let macOnly = VMLibraryFilter(guestOSes: [.macOS])
+        viewModel.sidebarOptions.filter = macOnly
+
+        #expect(viewModel.library.selectRevealing(UUID()) == nil)
+        #expect(viewModel.sidebarOptions.filter == macOnly)
+        #expect(viewModel.selection == nil)
+
+        #expect(viewModel.library.selectRevealing(listed.id) == .library(listed.id))
+        #expect(viewModel.selection == .library(listed.id))
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
     }
 
     // MARK: - Outline updates
@@ -1016,6 +1130,41 @@ struct SidebarViewControllerTests {
         let menu = controller.buildContextMenu(for: bundle)
         #expect(titles(of: menu) == ["Check Config Files\u{2026}", "Show in Finder", "", "Move to Trash\u{2026}"])
         #expect(menu.items[2].isSeparatorItem)
+    }
+
+    @Test("A readable VM's row warns of a file it can't read and offers the check, until a read finds it readable")
+    func readableRowWarnsOfAnUnreadableFile() async throws {
+        let viewModel = makeViewModel()
+        let files = InMemoryVMBundleFiles()
+        // A snapshot with no `config.json` of its own is one a read refuses.
+        let snapshot = VMSnapshot(
+            name: "Snapshot", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
+        let instance = viewModel.library.admitFixture(
+            name: "Dev", phase: .stopped,
+            snapshots: VMSnapshotManifest(snapshots: [snapshot], currentID: nil), files: files)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let cell = makeRow(instance: instance, isBusy: false)
+        let check = "Check Config Files\u{2026}"
+
+        #expect(
+            cell.unreadableWarningToolTipForTesting
+                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Snapshot\u{201D}. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        #expect(titles(of: controller.buildContextMenu(for: instance)).contains(check))
+        #expect(menuItem("Start", in: controller.buildContextMenu(for: instance))?.isEnabled == true)
+        #expect(
+            SidebarVMRowCellView.contentWidth(
+                forName: "Dev", showsAgentAccessory: false, showsEphemeralAccessory: false,
+                showsUnreadableWarning: true)
+                > SidebarVMRowCellView.contentWidth(
+                    forName: "Dev", showsAgentAccessory: false, showsEphemeralAccessory: false))
+
+        files.setSnapshotConfiguration(instance.configuration, id: snapshot.id, at: instance.bundleURL)
+        viewModel.library.recordUnreadableFiles(of: instance)
+
+        // The cell's observation applies on a later main-actor turn.
+        try await waitUntil { cell.unreadableWarningToolTipForTesting == nil }
+        #expect(!titles(of: controller.buildContextMenu(for: instance)).contains(check))
     }
 
     // MARK: - Content-fit width

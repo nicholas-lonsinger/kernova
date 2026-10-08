@@ -12,7 +12,7 @@ struct CreateNetworkIntent: AppIntent {
     @Parameter(title: "Name")
     var name: String
 
-    @Parameter(title: "Kind", default: .shared)
+    @Parameter(title: "Kind", default: .nat)
     var kind: VMNetworkKind
 
     @Dependency private var gateway: VMIntentGateway

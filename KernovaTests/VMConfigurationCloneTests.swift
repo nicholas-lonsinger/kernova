@@ -130,7 +130,7 @@ struct VMConfigurationCloneTests {
         let clone = original.clonedForNewInstance(existingNames: [])
 
         #expect(clone.networkEnabled == true)
-        #expect(clone.networkMode == .shared)
+        #expect(clone.networkMode == .nat)
         // Copied as-is: the clone's caller decides it with the machine identity.
         #expect(clone.macAddress == "aa:bb:cc:dd:ee:ff")
     }

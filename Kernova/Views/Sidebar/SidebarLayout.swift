@@ -78,8 +78,8 @@ struct SidebarLayout {
         /// The library's tags, in their order: a VM carries only these, so
         /// none while the file defining them can't be read (`nil`).
         let tags: [VMTag]?
-        /// What a VM's network reads as —
-        /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
+        /// What a VM's network reads as — the text of
+        /// ``NetworkModeChoice/label(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
         /// filter menu.
         let networkTitle: (VMConfiguration) -> String
@@ -95,7 +95,7 @@ struct SidebarLayout {
         }
 
         func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
         }
     }
 
@@ -350,12 +350,12 @@ struct SidebarLayout {
     /// filter still holds it, and it admits no VM.
     static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
-            !listed.contains(where: { $0.id == id && $0.kind == kind })
+        if case .vmnet(let kind, .network(let id)) = choice,
+            case .unlisted = VMNetworkName(id, kind: kind, in: networks)
         {
             return heldUnlistedNetworkTitle
         }
-        return choice.title(attachable: true, interfaces: [], networks: networks)
+        return choice.label(attachable: true, interfaces: [], networks: networks).text
     }
 
     /// How a filter names a network it holds that the library no longer lists.
@@ -369,7 +369,7 @@ struct SidebarLayout {
         guard let choice = network.choice else { return 6 }
         switch choice {
         case .vmnet(let kind, let membership):
-            let base = kind == .shared ? 0 : 3
+            let base = kind == .nat ? 0 : 3
             switch membership {
             case .common: return base
             case .isolated: return base + 1
@@ -397,15 +397,22 @@ struct SidebarLayout {
         }
     }
 
-    /// The row `selection` lands on: that row itself, else the first row of
-    /// the same entry in the same section, else the entry's first row in the
-    /// library section; `nil` when neither section lists the entry.
+    /// Where a selection of `selection`'s row stands in this layout: that row
+    /// itself, else the entry's first row in the same section, else its first
+    /// row in the library section; `nil` when neither lists the entry. A
+    /// selection never moves to a section it wasn't made in other than the
+    /// library's.
     func resolve(_ selection: SidebarRowKey) -> SidebarRowKey? {
-        let keys = rowKeys
-        if keys.contains(selection) { return selection }
-        let sameEntry = keys.filter { $0.entryID == selection.entryID }
-        return sameEntry.first { $0.section == selection.section }
-            ?? sameEntry.first { $0.section == .library }
+        let rows = rowKeys.filter { $0.entryID == selection.entryID }
+        if rows.contains(selection) { return selection }
+        return rows.first { $0.section == selection.section } ?? rows.first { $0.section == .library }
+    }
+
+    /// Where a reveal starting from `preferred` goes: the row
+    /// ``resolve(_:)`` lands on, else the entry's first row in whichever
+    /// section lists it; `nil` when no section does.
+    func revealTarget(_ preferred: SidebarRowKey) -> SidebarRowKey? {
+        resolve(preferred) ?? rowKeys.first { $0.entryID == preferred.entryID }
     }
 
     /// Where `selection` stands once this layout is shown: on the row it

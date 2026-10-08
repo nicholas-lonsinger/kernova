@@ -51,13 +51,18 @@ final class VMOrganizationDirectory {
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            // Folders, the section order and tags are lists: an entry that
-            // doesn't decode is removed alone, and the rest are kept.
+            let defaults = File()
+            // Every one is a list: an entry that doesn't decode is removed
+            // alone, and the rest are kept.
             let byDefault =
-                try container.decode([VMSmartGroup].self, forKey: .smartGroups).map(Section.smartGroup)
-                + (try container.decode([VMFolder].self, forKey: .folders, default: [], in: decoder))
+                try container.decode(
+                    [VMSmartGroup].self, forKey: .smartGroups, default: defaults.smartGroups, in: decoder
+                ).map(Section.smartGroup)
+                + (try container.decode([VMFolder].self, forKey: .folders, default: defaults.folders, in: decoder))
                 .map(Section.folder)
                 + [.library]
+            // Not `defaults.sections`' order, which names the library first:
+            // a file stating no order lists the library after every group.
             let order = try container.decode([SidebarSectionID].self, forKey: .sectionOrder, default: [], in: decoder)
             var rank: [SidebarSectionID: Int] = [:]
             for (index, id) in order.enumerated() where rank[id] == nil { rank[id] = index }
@@ -68,7 +73,7 @@ final class VMOrganizationDirectory {
                     )
                 }
                 .map(\.element)
-            tags = try container.decode([VMTag].self, forKey: .tags, default: [], in: decoder)
+            tags = try container.decode([VMTag].self, forKey: .tags, default: defaults.tags, in: decoder)
         }
 
         func encode(to encoder: any Encoder) throws {
@@ -271,7 +276,8 @@ final class VMOrganizationDirectory {
     func reload() {
         guard let file else { return }
         let read = file.state(listing: { $0 })
-        if read != state { state = read }
+        guard read != state else { return }
+        state = read
         if let unreadable = read.unreadable {
             #log(
                 Self.logger, .error,
@@ -308,11 +314,8 @@ final class VMOrganizationDirectory {
             case .folder: listed.folders.map(\.name)
             case .tag: listed.tags.map(\.name)
             }
-        let taken = Set(names.map { $0.lowercased() })
-        guard taken.contains(base.lowercased()) else { return base }
-        var suffix = 2
-        while taken.contains("\(base) \(suffix)".lowercased()) { suffix += 1 }
-        return "\(base) \(suffix)"
+        // Compared as `validatedName` compares, so it accepts the name offered.
+        return UniqueName.firstAvailable(prefix: base, existing: names, caseInsensitive: true)
     }
 
     // MARK: - Smart groups
@@ -404,13 +407,6 @@ final class VMOrganizationDirectory {
     func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
         try commit { file in
             file.editFolders(where: { $0.id == id }) { Self.move(entry, before: successor, in: &$0.members) }
-        }
-    }
-
-    /// Takes each of `entries` out of every folder.
-    func removeFromEveryFolder(_ entries: Set<UUID>) throws {
-        try commit { file in
-            file.editFolders(where: { _ in true }) { $0.members.removeAll(where: entries.contains) }
         }
     }
 

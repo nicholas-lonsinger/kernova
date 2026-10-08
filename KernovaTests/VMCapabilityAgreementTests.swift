@@ -132,7 +132,7 @@ struct VMCapabilityAgreementTests {
                 consent: .all)
         case .switchNetworkMode:
             try core.setConfiguration(
-                vm, assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
+                vm, assignments: [ConfigurationEntry(key: "network.mode", value: "nat")],
                 consent: .all)
         case .switchNetworkMembership:
             try core.setConfiguration(

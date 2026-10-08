@@ -8,13 +8,15 @@ extension VMLibrary {
     /// the file holding them can't be read.
     var smartGroups: [VMSmartGroup]? { organization.smartGroups }
 
-    /// Saves the library section's filter as a smart group named `name`, then
-    /// clears that filter: the group lists what the filter did, and the
-    /// library every VM.
+    /// Saves `filter` — the library section's filter as the user was shown
+    /// it — as a smart group named `name`, then clears the library section's
+    /// filter while it is still that one: the group lists what the filter
+    /// did, and the library every VM. A filter changed since is the user's
+    /// newer choice, and stays.
     @discardableResult
-    func saveSidebarFilterAsSmartGroup(named name: String) throws -> VMSmartGroup {
-        let group = try organization.createSmartGroup(named: name, filter: sidebarOptions.filter)
-        sidebarOptions.filter = VMLibraryFilter()
+    func saveSidebarFilter(_ filter: VMLibraryFilter, asSmartGroupNamed name: String) throws -> VMSmartGroup {
+        let group = try organization.createSmartGroup(named: name, filter: filter)
+        if sidebarOptions.filter == filter { sidebarOptions.filter = VMLibraryFilter() }
         return group
     }
 
