@@ -129,8 +129,9 @@ final class ReviewContentViewController: NSViewController {
             rows: [
                 valueRow(
                     "Mode",
-                    (creationVM.networkEnabled ? NetworkModeChoice.nat : .none).title(
-                        attachable: true, interfaces: [], networks: .listed([])))
+                    creationVM.networkEnabled
+                        ? NetworkModeChoice.nat.label(attachable: true, interfaces: [], networks: .listed([])).text
+                        : NetworkChoiceLabel.noNetwork.text)
             ], to: summary)
 
         if creationVM.selectedOS == .macOS {

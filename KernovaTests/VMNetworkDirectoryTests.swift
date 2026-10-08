@@ -85,4 +85,49 @@ struct VMNetworkDirectoryTests {
         first.reload()
         #expect(first.state.listed?.map(\.name) == ["Bench", "Lab"])
     }
+
+    @Test("A network in the list that doesn't decode is removed alone, and the rest are kept")
+    func aBadNetworkIsRepairedAlone() throws {
+        let kept = UUID()
+        let data = Data(
+            #"""
+            {"networks": [{"id": "\#(kept.uuidString)", "name": "Lab", "kind": "nat"},
+                          {"name": "Nameless", "kind": "hostOnly"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMNetworkDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMNetworkDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.networks[1]"])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry])
+        let repaired = try JSONDecoder().decode(
+            VMNetworkDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.networks.map(\.id) == [kept])
+    }
+
+    @Test("A reload that reads what the last one read changes nothing an observer sees")
+    func anUnchangedReloadIsNoChange() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        for bytes in [Data("not json".utf8), Data(#"{"networks": []}"#.utf8)] {
+            try bytes.write(to: fileURL)
+            let directory = VMNetworkDirectory(fileURL: fileURL)
+            let changed = Flag()
+            withObservationTracking {
+                _ = directory.state
+            } onChange: {
+                changed.set()
+            }
+
+            directory.reload()
+
+            #expect(!changed.isSet)
+        }
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private(set) var isSet = false
+        func set() { isSet = true }
+    }
 }

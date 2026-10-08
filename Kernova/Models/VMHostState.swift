@@ -110,7 +110,7 @@ struct VMHostState: Codable, Sendable, Equatable {
             default: defaults.agentInstallNudgeDismissed, in: decoder)
         // A list, so an identifier that doesn't decode is removed alone and
         // the VM keeps every other tag.
-        self.tags = Set(try c.decode([UUID].self, forKey: .tags, default: Array(defaults.tags), in: decoder))
+        self.tags = try c.decode(Set<UUID>.self, forKey: .tags, default: defaults.tags, in: decoder)
         // A record whose absence states only that no run is recorded — true
         // of a value nobody can read — so it repairs to that.
         self.lastRunAt = try c.decode(Date?.self, forKey: .lastRunAt, default: defaults.lastRunAt, in: decoder)

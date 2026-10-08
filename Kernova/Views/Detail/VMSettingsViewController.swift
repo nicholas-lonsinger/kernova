@@ -82,9 +82,6 @@ final class VMSettingsViewController: NSViewController {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
         systemSettings: SystemSettingsLink = SystemSettingsLink(),
-        showAppSettings: @escaping @MainActor (SettingsDestination) -> Void = {
-            NSApp.sendAction(#selector(AppDelegate.showSettings(_:)), to: nil, from: $0)
-        },
         activationCenter: NotificationCenter = .default
     ) {
         self.instance = instance
@@ -95,7 +92,7 @@ final class VMSettingsViewController: NSViewController {
             instance: instance, viewModel: viewModel, isReadOnly: isReadOnly,
             bridgedInterfaces: bridgedInterfaces,
             micPermissionStatus: micPermissionStatus, systemSettings: systemSettings,
-            showAppSettings: showAppSettings, activationCenter: activationCenter)
+            activationCenter: activationCenter)
         super.init(nibName: nil, bundle: nil)
         panelContext.host = self
         panelContext.overview.onCategoryResolved = { [weak self] category in

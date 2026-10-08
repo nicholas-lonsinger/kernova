@@ -21,14 +21,6 @@ extension NetworkModeChoice {
         }
     }
 
-    /// The text naming this choice wherever one line names it — the Mode
-    /// picker's closed title, and the Network card beside the address.
-    func title(
-        attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
-    ) -> String {
-        label(attachable: attachable, interfaces: interfaces, networks: networks).text
-    }
-
     /// How this choice names itself: its mode's group, and its entry within
     /// that group. `networks` is the library's named networks.
     ///
@@ -57,7 +49,7 @@ extension NetworkModeChoice {
                 }
             }
         case .none:
-            return NetworkChoiceLabel(mode: nil, entry: "None")
+            return .noNetwork
         case .bridged(nil):
             entry = "Automatic"
         case .bridged(.some(let identifier)):
@@ -120,6 +112,9 @@ struct NetworkChoiceLabel: Equatable, Sendable {
         self.entry = entry
     }
 
+    /// The label of the choice that gives the VM no network device.
+    static let noNetwork = NetworkChoiceLabel(mode: nil, entry: "None")
+
     /// The label as one line of plain text: `NAT – Isolated`, or the entry
     /// alone when no group holds it.
     var text: String {
@@ -167,7 +162,22 @@ final class VMOverviewResolver {
     /// refused microphone.
     static let micPermissionDeniedWarning = "Microphone permission is denied."
 
-    private(set) var resolved = VMOverviewResolved()
+    /// Every resolved value, the network's label as the configuration names
+    /// it now among them.
+    var resolved: VMOverviewResolved {
+        var resolved = values
+        resolved.networkModeLabel = networkModeLabel
+        return resolved
+    }
+
+    /// Every resolved value but the network's label.
+    private var values = VMOverviewResolved()
+
+    /// How the VM's network names itself — the one naming every surface reads:
+    /// named again whenever ``refresh()`` follows a configuration or network
+    /// list change, and whenever the Mode picker enumerates the host's
+    /// interfaces (``resolveNetworkModeLabel(enumerated:)``).
+    private(set) var networkModeLabel: NetworkChoiceLabel
 
     /// Fires when an async read lands, naming the category whose value moved.
     var onCategoryResolved: ((VMSettingsCategory) -> Void)?
@@ -182,10 +192,10 @@ final class VMOverviewResolver {
     /// forward, where System Settings may have changed it.
     private var micPermission: AVAuthorizationStatus
 
-    /// The choice the mode title was named for, so naming a bridged
-    /// interface again — which enumerates the host's bridgeable interfaces —
-    /// happens only when the choice moves.
-    private var titledNetworkChoice: NetworkModeChoice?
+    /// The host's bridgeable interfaces as last enumerated, and the choice
+    /// they were enumerated under — so a bridged interface is named from a
+    /// new enumeration only when the choice moves, or the Mode picker opens.
+    private var interfaceEnumeration: InterfaceEnumeration?
 
     /// The VM and disk the capacity was last read for, so a re-resolve re-uses
     /// the figure instead of re-reading the file.
@@ -223,6 +233,9 @@ final class VMOverviewResolver {
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.micPermission = micPermissionStatus()
+        let enumeration = Self.interfaceEnumeration(for: instance, from: bridgedInterfaces, reusing: nil)
+        self.interfaceEnumeration = enumeration
+        self.networkModeLabel = Self.networkModeLabel(of: instance, in: viewModel, interfaces: enumeration)
     }
 
     // MARK: - Binding
@@ -241,8 +254,9 @@ final class VMOverviewResolver {
         snapshotSizeTask = nil
         snapshotMeasureKey = nil
         snapshotMeasureGeneration += 1
-        titledNetworkChoice = nil
-        resolved = VMOverviewResolved()
+        interfaceEnumeration = nil
+        values = VMOverviewResolved()
+        resolveNetworkModeLabel()
     }
 
     /// The pane is going away: drop the reads that would paint it unseen.
@@ -271,19 +285,19 @@ final class VMOverviewResolver {
     /// re-issue only when what they answer for changed.
     func refresh() {
         let config = instance.configuration
-        resolved.warnings[.general] = Self.autoStartCapacityWarning(
+        values.warnings[.general] = Self.autoStartCapacityWarning(
             isMacOSGuest: config.guestOS == .macOS,
             markedMacOSVMCount: viewModel.macOSVMNamesMarkedForAutoStart.count)
-        resolved.warnings[.network] = Self.duplicateMACWarning(
+        values.warnings[.network] = Self.duplicateMACWarning(
             sharingWith: config.networkEnabled && config.macAddress != nil
                 ? viewModel.vmNamesSharingMACAddress(with: instance) : [])
-        resolved.sharedMachineIDNote = Self.sharedMachineIDNote(
+        values.sharedMachineIDNote = Self.sharedMachineIDNote(
             holders: viewModel.vmNamesSharingMachineIdentity(with: instance))
-        resolved.micWarning = micPermissionPresentation(
+        values.micWarning = micPermissionPresentation(
             micPermission, audioInputEnabled: config.audioInputEnabled)
-        resolved.warnings[.system] =
-            resolved.micWarning == .denied ? Self.micPermissionDeniedWarning : nil
-        resolved.canTakeSnapshot = viewModel.capabilities.isAvailable(.takeSnapshot, on: instance)
+        values.warnings[.system] =
+            values.micWarning == .denied ? Self.micPermissionDeniedWarning : nil
+        values.canTakeSnapshot = viewModel.capabilities.isAvailable(.takeSnapshot, on: instance)
         refreshNetwork()
         refreshBootDisk()
         refreshSnapshotSizes()
@@ -319,28 +333,54 @@ final class VMOverviewResolver {
     }
 
     private func refreshNetwork() {
-        _ = networkModeLabel()
-        resolved.ipAddress = viewModel.guestAddress(for: instance)
+        resolveNetworkModeLabel()
+        values.ipAddress = viewModel.guestAddress(for: instance)
     }
 
-    /// How the VM's network names itself under its configuration now — the
-    /// one naming every surface reads, named again here whenever the
-    /// configuration has moved since ``resolved`` last stored it, so a reader
-    /// never gets a name from before a write.
-    func networkModeLabel() -> NetworkChoiceLabel {
-        let config = instance.configuration
-        let choice = NetworkModeChoice(config)
-        // Only an interface's title costs an enumeration; every other one is
-        // named again each pass, so a renamed network re-titles.
-        if let label = resolved.networkModeLabel, choice == titledNetworkChoice, choice.namesAHostInterface {
-            return label
-        }
-        let label = NetworkModeChoice.label(
-            of: config, entitlements: viewModel.entitlements,
-            interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state)
-        titledNetworkChoice = choice
-        resolved.networkModeLabel = label
-        return label
+    /// Names the VM's network again from `interfaces`, the host's bridgeable
+    /// interfaces as an enumeration just found them — the Mode picker's, as
+    /// it opens — so every surface names a bridged interface as the host
+    /// offers it now.
+    func resolveNetworkModeLabel(enumerated interfaces: [BridgedInterface]) {
+        interfaceEnumeration = InterfaceEnumeration(
+            choice: NetworkModeChoice(instance.configuration), interfaces: interfaces)
+        resolveNetworkModeLabel()
+    }
+
+    /// Names the VM's network again under its configuration, enumerating the
+    /// host's interfaces only for a bridged interface the last enumeration
+    /// was not taken under. Every other choice is named again each pass, so a
+    /// renamed network re-titles.
+    private func resolveNetworkModeLabel() {
+        interfaceEnumeration = Self.interfaceEnumeration(
+            for: instance, from: bridgedInterfaces, reusing: interfaceEnumeration)
+        networkModeLabel = Self.networkModeLabel(of: instance, in: viewModel, interfaces: interfaceEnumeration)
+    }
+
+    /// The host's bridgeable interfaces, and the choice they were enumerated
+    /// under.
+    private struct InterfaceEnumeration {
+        let choice: NetworkModeChoice
+        let interfaces: [BridgedInterface]
+    }
+
+    /// The enumeration naming `instance`'s network: `last` while it was taken
+    /// under the current choice or the choice names no interface, else a new
+    /// one.
+    private static func interfaceEnumeration(
+        for instance: VMInstance, from provider: any BridgedInterfaceProviding, reusing last: InterfaceEnumeration?
+    ) -> InterfaceEnumeration? {
+        let choice = NetworkModeChoice(instance.configuration)
+        guard choice.namesAHostInterface, last?.choice != choice else { return last }
+        return InterfaceEnumeration(choice: choice, interfaces: provider.interfaces())
+    }
+
+    private static func networkModeLabel(
+        of instance: VMInstance, in viewModel: VMLibraryViewModel, interfaces: InterfaceEnumeration?
+    ) -> NetworkChoiceLabel {
+        NetworkModeChoice.label(
+            of: instance.configuration, entitlements: viewModel.entitlements,
+            interfaces: { interfaces?.interfaces ?? [] }, networks: viewModel.networks.state)
     }
 
     /// Reads the boot disk's capacity off the main thread. The key tags the
@@ -352,7 +392,7 @@ final class VMOverviewResolver {
         }
         guard key != bootDiskKey else { return }
         bootDiskKey = key
-        resolved.bootDiskBytes = nil
+        values.bootDiskBytes = nil
         bootDiskTask?.cancel()
         bootDiskTask = nil
         guard let key else { return }
@@ -362,7 +402,7 @@ final class VMOverviewResolver {
                 bundleLayout.diskSizes(of: key.image)
             }.value
             guard !Task.isCancelled, let self, self.bootDiskKey == key else { return }
-            self.resolved.bootDiskBytes = sizes.capacityBytes
+            self.values.bootDiskBytes = sizes.capacityBytes
             self.onCategoryResolved?(.storage)
         }
     }
@@ -376,7 +416,7 @@ final class VMOverviewResolver {
         // stay on screen until the new measurement replaces them, rather than
         // blanking every row for the length of the walk.
         let kept = Set(manifest.ordered.map(\.id))
-        resolved.snapshotSizes = resolved.snapshotSizes.filter { kept.contains($0.key) }
+        values.snapshotSizes = values.snapshotSizes.filter { kept.contains($0.key) }
         guard instance.phase.isSettled else { return }
         let key = SnapshotMeasureKey(manifest: manifest, phaseCommits: instance.activity.phaseCommits)
         guard key != snapshotMeasureKey else { return }
@@ -393,7 +433,7 @@ final class VMOverviewResolver {
             // A measurement issued after this one, or a re-bind to another VM,
             // owns what the rows state now.
             guard let self, self.snapshotMeasureGeneration == generation else { return }
-            self.resolved.snapshotSizes = sizes
+            self.values.snapshotSizes = sizes
             self.onCategoryResolved?(.snapshots)
         }
     }

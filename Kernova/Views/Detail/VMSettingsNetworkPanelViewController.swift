@@ -260,7 +260,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     private var networkMenuBasis: NetworkMenuBasis {
         NetworkMenuBasis(
             choice: NetworkModeChoice(instance.configuration),
-            currentLabel: context.overview.networkModeLabel(),
+            currentLabel: context.overview.networkModeLabel,
             reach: networkPickerReach, networks: viewModel.networks.state)
     }
 
@@ -305,7 +305,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
         addNetworkGroup(.bridged, entries: bridgedEntries(basis: basis), to: menu)
         menu.addItem(.separator())
-        menu.addItem(makeNetworkModeItem(choice: .none, label: noneLabel, enabled: isTaken(.none, basis: basis)))
+        menu.addItem(makeNetworkModeItem(choice: .none, label: .noNetwork, enabled: isTaken(.none, basis: basis)))
 
         // The edit entry goes wherever the Settings window has a Networks pane
         // for it to open.
@@ -313,20 +313,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             menu.addItem(.separator())
             let edit = NSMenuItem(title: "Edit Named Networks\u{2026}", action: nil, keyEquivalent: "")
             var listedCurrent: UUID?
-            if case .vmnet(let kind, .network(let id)) = basis.choice,
-                basis.networks.listed?.contains(where: { $0.id == id && $0.kind == kind }) == true
-            {
-                listedCurrent = id
+            if case .vmnet(let kind, .network(let id)) = basis.choice {
+                listedCurrent = basis.networks.network(id, of: kind)?.id
             }
             edit.representedObject = listedCurrent.map(SettingsDestination.network) ?? .pane(.networks)
             menu.addItem(edit)
         }
 
         selectNetworkModeItem()
-    }
-
-    private var noneLabel: NetworkChoiceLabel {
-        NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([]))
     }
 
     /// Appends `mode`'s section header and its entries, or nothing when it has
@@ -372,8 +366,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // A network another library listed — an import, or a revert to a
         // snapshot taken before a delete: the VM still joins it, and no
         // surface here can choose it.
-        guard case .vmnet(kind, .network(let id)) = basis.choice,
-            !networks.contains(where: { $0.id == id && $0.kind == kind })
+        guard case .vmnet(kind, .network(let id)) = basis.choice, basis.networks.network(id, of: kind) == nil
         else { return named }
         return named + [makeNetworkModeItem(choice: basis.choice, label: basis.currentLabel, enabled: false)]
     }
@@ -589,7 +582,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             refreshResolved()
             refreshNetwork()
         case let destination as SettingsDestination:
-            context.showAppSettings(destination)
+            viewModel.showSettings(at: destination)
         default:
             break
         }
@@ -678,10 +671,14 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
 extension VMSettingsNetworkPanelViewController: NSMenuDelegate {
     /// Re-reads the host's bridgeable interfaces each time the Mode picker
-    /// opens — the one place that enumeration runs.
+    /// opens — the one place the panel enumerates them — and has the overview
+    /// name the VM's own interface from what it found, so an interface back
+    /// on the host no longer reads as unavailable.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === networkModePopUp.menu else { return }
-        enumeratedInterfaces = bridgedInterfaces.interfaces()
+        let interfaces = bridgedInterfaces.interfaces()
+        enumeratedInterfaces = interfaces
+        context.overview.resolveNetworkModeLabel(enumerated: interfaces)
         rebuildNetworkModeMenu()
     }
 }

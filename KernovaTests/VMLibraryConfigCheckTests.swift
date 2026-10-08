@@ -473,6 +473,40 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.library.entries.compactMap(\.unreadable).isEmpty)
     }
 
+    @Test("Move to Trash refuses a bundle repaired since its row was read, which reads as a VM again")
+    func moveToTrashRefusesARepairedBundle() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
+
+        // Another copy repairs the file after this one's row was read.
+        let repaired = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) { _ in }
+        harness.storage.files.setData(repaired, atRelativePath: VMBundleLayout.configRelativePath, in: url)
+
+        await #expect(throws: ConfigFileRepairRefusal.readsNow) { try await harness.library.moveToTrash(row) }
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
+        #expect(configBytes(at: url, in: harness.storage) == repaired)
+    }
+
+    @Test("Move to Trash refuses a bundle whose file changed since its row was read, though still unreadable")
+    func moveToTrashRefusesChangedBytes() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
+
+        let changed = try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) {
+            $0["networkMode"] = "another-unrecognized-mode"
+        }
+        harness.storage.files.setData(changed, atRelativePath: VMBundleLayout.configRelativePath, in: url)
+
+        await #expect(throws: ConfigFileRepairRefusal.changedSinceCheck) {
+            try await harness.library.moveToTrash(row)
+        }
+        #expect(harness.storage.deleteVMBundleCallCount == 0)
+    }
+
     // MARK: - Reporting the bundle's other files
 
     @Test("A load asks for the check once for a snapshot config it can't read, the VM loading as it is")
@@ -499,8 +533,8 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.checkRequests.count == 1)
     }
 
-    @Test("A running VM's config that turns unreadable asks for the check once across lists and reconciles")
-    func aRunningVMsUnreadableConfigIsReportedOnce() async throws {
+    @Test("A running VM's bundle is read by no list or reconcile; its unreadable config is reported once it stops")
+    func aRunningVMsUnreadableConfigIsReportedWhenItStops() async throws {
         let harness = makeHarness()
         let (url, _) = try addBundle("Dev", to: harness.storage)
         await harness.library.loadVMs()
@@ -511,7 +545,22 @@ struct VMLibraryConfigCheckTests {
 
         harness.storage.files.setData(
             Data("not json".utf8), atRelativePath: VMBundleLayout.configRelativePath, in: url)
-        harness.library.reconcileWithDisk()
+        let stateFiles = [
+            VMBundleLayout.configRelativePath, VMBundleLayout.hostStateRelativePath,
+            VMBundleLayout.snapshotManifestRelativePath, VMBundleLayout.usbPairingsRelativePath,
+        ]
+        let reads = { stateFiles.map { harness.storage.files.readCount(of: $0) } }
+        let readsBefore = reads()
+        for _ in 0..<2 {
+            _ = harness.core.list(.all)
+            harness.library.reconcileWithDisk()
+        }
+        #expect(reads() == readsBefore)
+        #expect(harness.checkRequests.count == 0)
+        #expect(instance.status == .running)
+
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all, timeout: nil)
+        try await waitForChange { instance.status == .stopped }
         #expect(harness.checkRequests.count == 1)
 
         for _ in 0..<2 {
@@ -519,12 +568,86 @@ struct VMLibraryConfigCheckTests {
             harness.library.reconcileWithDisk()
         }
         #expect(harness.checkRequests.count == 1)
-        #expect(instance.status == .running)
+    }
+
+    /// A source whose every check and Use Defaults waits until the test ends
+    /// it.
+    @MainActor
+    @Observable
+    fileprivate final class GatedConfigCheckSource: ConfigCheckSource {
+        private(set) var checks: [CheckedContinuation<[UnreadableConfigFile], any Error>] = []
+        private(set) var repairs: [CheckedContinuation<[VMLibrary.ConfigFileRepairFailure], Never>] = []
+
+        func checkConfigFiles() async throws -> [UnreadableConfigFile] {
+            try await withCheckedThrowingContinuation { checks.append($0) }
+        }
+
+        func useDefaults(in files: [UnreadableConfigFile]) async -> [VMLibrary.ConfigFileRepairFailure] {
+            await withCheckedContinuation { repairs.append($0) }
+        }
+
+        var libraryDirectory: URL? { nil }
+    }
+
+    @Test("A check asked for during Use Defaults leaves it under way, and the check it ends in lands")
+    func aCheckDuringUseDefaultsWaitsForIt() async throws {
+        let source = GatedConfigCheckSource()
+        let session = ConfigCheckSession(source: source)
+        let repairable = UnreadableConfigFile(
+            location: .bundle(scratch.url.appendingPathComponent("VMs/A.kernova"), .configuration),
+            owner: .virtualMachine("Dev"),
+            problems: [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("networkMode")]),
+                    issue: .unrecognized(found: Self.unrecognized), repair: .useDefault("hostOnly"))
+            ])
+
+        session.check()
+        try await waitForChange { source.checks.count == 1 }
+        source.checks[0].resume(returning: [repairable])
+        try await waitForChange { session.work == .idle }
+        #expect(session.report?.files == [repairable])
+
+        session.useDefaults()
+        #expect(session.work == .repairing)
+        try await waitForChange { source.repairs.count == 1 }
+
+        // Another open of the window checks again while the repair runs.
+        session.check()
+        #expect(session.work == .repairing)
+        #expect(source.checks.count == 1)
+
+        source.repairs[0].resume(returning: [])
+        try await waitForChange { source.checks.count == 2 }
+        #expect(session.work == .checking(token: 2))
+        source.checks[1].resume(returning: [])
+        try await waitForChange { session.work == .idle }
+        #expect(session.report?.files == [])
+    }
+
+    @Test("A check superseded by a later one changes nothing when it ends")
+    func aSupersededCheckLandsNothing() async throws {
+        let source = GatedConfigCheckSource()
+        let session = ConfigCheckSession(source: source)
+
+        session.check()
+        session.check()
+        try await waitForChange { source.checks.count == 2 }
+        source.checks[0].resume(throwing: CocoaError(.fileReadNoPermission))
+        // Queued behind the superseded check's resumption, so it has ended.
+        await Task { @MainActor in }.value
+        #expect(session.work == .checking(token: 2))
+        #expect(session.failure == nil)
+
+        source.checks[1].resume(returning: [])
+        try await waitForChange { session.work == .idle }
+        #expect(session.report?.files == [])
+        #expect(session.failure == nil)
     }
 
     @Test("Return closes the check window; Use Defaults takes a click")
     func returnCloses() throws {
-        let controller = ConfigCheckViewController(viewModel: makeSettingsViewModel(preferences: preferences))
+        let controller = ConfigCheckViewController(source: makeSettingsViewModel(preferences: preferences))
         controller.loadViewIfNeeded()
 
         #expect(try #require(findButton(titled: "Close", in: controller.view)).keyEquivalent == "\r")

@@ -807,6 +807,12 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             guard let self, let instance else { return [] }
             return self.onPoweredOff?(instance) ?? []
         }
+        // The bundle a hold kept from every read is read again as it ends.
+        instance.activity.onRunLockReleased = { [weak self, weak instance] in
+            guard let self, let instance else { return }
+            self.recordUnreadableFiles(of: instance)
+            self.reportNewlyUnreadable()
+        }
         // A guest that has just become attachable takes back the accessories
         // paired with it, and is a running guest whose address can be watched.
         instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in

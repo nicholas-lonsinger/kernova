@@ -285,19 +285,18 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = VMLibraryFilter()
-        func set<Element: Codable & Hashable>(_ key: CodingKeys, default value: Set<Element>) throws -> Set<Element> {
-            Set(try c.decode([Element].self, forKey: key, default: Array(value), in: decoder))
-        }
         self.init(
-            guestOSes: try set(.guestOSes, default: defaults.guestOSes),
-            states: try set(.states, default: defaults.states),
-            networks: try set(.networks, default: defaults.networks),
-            guestAgents: try set(.guestAgents, default: defaults.guestAgents),
+            guestOSes: try c.decode(
+                Set<VMGuestOS>.self, forKey: .guestOSes, default: defaults.guestOSes, in: decoder),
+            states: try c.decode(Set<VMStateBucket>.self, forKey: .states, default: defaults.states, in: decoder),
+            networks: try c.decode(Set<Network>.self, forKey: .networks, default: defaults.networks, in: decoder),
+            guestAgents: try c.decode(
+                Set<VMGuestAgentBucket>.self, forKey: .guestAgents, default: defaults.guestAgents, in: decoder),
             ephemeralOnly: try c.decode(
                 Bool.self, forKey: .ephemeralOnly, default: defaults.ephemeralOnly, in: decoder),
             withSnapshotsOnly: try c.decode(
                 Bool.self, forKey: .withSnapshotsOnly, default: defaults.withSnapshotsOnly, in: decoder),
-            tags: try set(.tags, default: defaults.tags))
+            tags: try c.decode(Set<UUID>.self, forKey: .tags, default: defaults.tags, in: decoder))
     }
 
     /// Sets are written sorted, so under `.sortedKeys` equal filters encode to

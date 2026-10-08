@@ -135,7 +135,7 @@ extension SidebarViewController {
             guard let instance = library.instances.first(where: { $0.id == entry }) else { return }
             attempt("Couldn\u{2019}t Change the Tags") { try library.setTag(tag, assigned: isAssigned, on: instance) }
         case .editTags:
-            NSApp.sendAction(#selector(AppDelegate.showTagsSettings(_:)), to: nil, from: self)
+            viewModel.showSettings(at: .pane(.tags))
         case .setSectionsExpanded(let expanded):
             for section in tree.sections {
                 if expanded { outlineView.expandItem(section) } else { outlineView.collapseItem(section) }

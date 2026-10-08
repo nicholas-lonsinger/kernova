@@ -71,6 +71,24 @@ struct AppPreferencesTests {
                 == SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), sort: .name))
     }
 
+    @Test("A stored filter's network no build spells is removed alone; every other option is kept")
+    func sidebarViewOptionsDropAnUnknownNetworkAlone() throws {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(
+            Data(
+                #"""
+                {"sort":"name","grouping":"state","showsDetails":true,
+                 "filter":{"networks":["bogus:common","none"],"guestOSes":["macOS"]}}
+                """#.utf8), forKey: "KernovaSidebarViewOptions")
+
+        #expect(
+            prefs.sidebarViewOptions
+                == SidebarViewOptions(
+                    filter: VMLibraryFilter(
+                        guestOSes: [.macOS], networks: [try #require(VMLibraryFilter.Network(rawValue: "none"))]),
+                    sort: .name, grouping: .state, showsDetails: true))
+    }
+
     @Test("Stored sidebar state that does not decode reads as the defaults")
     func undecodableSidebarStateReadsAsDefaults() {
         let (prefs, defaults) = makePreferences()
