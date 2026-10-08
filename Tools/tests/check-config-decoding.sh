@@ -13,6 +13,9 @@ fail() { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=../lib/git-isolation.sh
+. "$ROOT/Tools/lib/git-isolation.sh"
+isolate_git "$tmp"
 
 # expect <name> <want> <swift source> — the check, run over a file holding the
 # source, reports exactly the lines in <want> (space-separated, empty for a
