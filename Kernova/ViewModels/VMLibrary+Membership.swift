@@ -29,7 +29,10 @@ extension VMLibrary {
     ///
     /// Run on events, never on a timer: an `flock` raises no file-system event
     /// to watch, so a mark stays what the last of these found.
-    func refreshFromOtherCopies(only ids: Set<UUID>? = nil) {
+    ///
+    /// With `reportingUnreadable` false, a file the read finds unreadable is
+    /// recorded for the next report to name, and nothing comes on screen now.
+    func refreshFromOtherCopies(only ids: Set<UUID>? = nil, reportingUnreadable: Bool = true) {
         networks.reload()
         organization.reload()
         if let file = networks.file {
@@ -38,13 +41,20 @@ extension VMLibrary {
         if let file = organization.file {
             recordUnreadable([organization.state.unreadable].compactMap { $0 }, under: file.url)
         }
+        for instance in instances where ids?.contains(instance.id) ?? true {
+            refreshFromOtherCopies(of: instance)
+        }
+        if reportingUnreadable { reportNewlyUnreadable() }
+    }
+
+    /// Catches `instance` alone up with what another copy of Kernova holds and
+    /// wrote, recording a file it finds unreadable for the next report to name
+    /// and reading no library file.
+    func refreshFromOtherCopies(of instance: VMInstance) {
         // A bundle this copy holds is not re-read, and records nothing until
         // the hold ends (``recordUnreadableFiles(of:)``).
-        for instance in instances where ids?.contains(instance.id) ?? true {
-            guard let unreadable = instance.activity.refreshFromBundle() else { continue }
-            recordUnreadable(unreadable, under: instance.bundleURL)
-        }
-        reportNewlyUnreadable()
+        guard let unreadable = instance.activity.refreshFromBundle() else { return }
+        recordUnreadable(unreadable, under: instance.bundleURL)
     }
 
     /// Records every file of `instance`'s bundle a read refuses, read for

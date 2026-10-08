@@ -87,10 +87,23 @@ final class VMIntentGateway {
         return commands.list(.all).compactMap { entity(for: $0.id) }
     }
 
-    /// One listed VM's whole read, `nil` — asserted — for a row with none.
-    private func entity(for id: UUID) -> VMEntity? {
+    /// When the id a VM is read by was named, against when it is read.
+    private enum Naming {
+        /// In the same synchronous step, so a VM with no read is a programming
+        /// error.
+        case sameStep
+        /// Before a suspension, which the VM may not have outlived.
+        case beforeSuspension
+    }
+
+    /// One VM's whole read, `nil` for a VM with none: quietly for one named
+    /// before a suspension that has since left the library, and otherwise
+    /// asserted.
+    private func entity(for id: UUID, named: Naming = .sameStep) -> VMEntity? {
         do {
             return VMEntity(try commands.info(.id(id)))
+        } catch CommandError.notFound where named == .beforeSuspension {
+            return nil
         } catch {
             #log(
                 Self.logger, .fault,
@@ -392,7 +405,17 @@ final class VMIntentGateway {
         }
     }
 
-    /// Takes `action` on every VM in `group`, answering the VMs it was done to.
+    /// Every group whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
+    func groups(matching text: String) async throws -> [VMGroupEntity] {
+        let search = SidebarNameSearch(text: text)
+        return try await groups().filter { search.admits($0.name) }
+    }
+
+    /// Takes `action` on every VM in `group`, answering the VMs it was done to,
+    /// in the group's order and as they stand once it is done — less any
+    /// deleted since its turn, which has nothing left to read.
     ///
     /// A VM the action concerned and left undone fails the intent, with one
     /// line per such VM — what the `kernova` tool's exit 10 and the app's
@@ -406,7 +429,7 @@ final class VMIntentGateway {
             }
             return report.results.compactMap { result in
                 guard case .done = result.outcome else { return nil }
-                return self.entity(for: result.vm.id)
+                return self.entity(for: result.vm.id, named: .beforeSuspension)
             }
         }
     }

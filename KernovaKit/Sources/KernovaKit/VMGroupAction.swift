@@ -102,6 +102,10 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
             return "Skipped \(name): its first start sets up its guest, which only its own Start begins."
         case .passedOver(.cancelled):
             return "Skipped \(name): the \(action.rawValue) was cancelled before its turn."
+        case .passedOver(.removed):
+            return "Skipped \(name): it left the library before its turn."
+        case .passedOver(.leftGroup):
+            return "Skipped \(name): it was no longer in the group when its turn came."
         case .needsAnswer(let verb, let question):
             // Every other question's own words already say where it is answered.
             let answer =
@@ -146,6 +150,12 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         case guestSetup
         /// The caller cancelled the action before the VM's turn came.
         case cancelled
+        /// The VM left the library after the action began and before its turn
+        /// came; the summary is the last this copy knew of it.
+        case removed
+        /// The VM was no longer in the group when its turn came, though it
+        /// was when the action began.
+        case leftGroup
 
         private enum CodingKeys: String, CodingKey {
             case refused
@@ -162,6 +172,8 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
             case .state: "state"
             case .guestSetup: "guestSetup"
             case .cancelled: "cancelled"
+            case .removed: "removed"
+            case .leftGroup: "leftGroup"
             case .refused: nil
             }
         }
@@ -169,7 +181,9 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         /// Reads the shape ``encode(to:)`` writes.
         public init(from decoder: Decoder) throws {
             if let name = try? decoder.singleValueContainer().decode(String.self) {
-                guard let reason = [Self.state, .guestSetup, .cancelled].first(where: { $0.bareName == name })
+                guard
+                    let reason = [Self.state, .guestSetup, .cancelled, .removed, .leftGroup]
+                        .first(where: { $0.bareName == name })
                 else {
                     throw DecodingError.dataCorrupted(
                         DecodingError.Context(
@@ -184,7 +198,7 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         }
 
         /// Writes a reason carrying nothing as its bare name — `"state"`,
-        /// `"guestSetup"`, `"cancelled"` — and ``refused(error:)`` as
+        /// `"guestSetup"`, `"cancelled"`, `"removed"`, `"leftGroup"` — and ``refused(error:)`` as
         /// `{"refused": {"error": …}}`.
         public func encode(to encoder: Encoder) throws {
             if case .refused(let error) = self {

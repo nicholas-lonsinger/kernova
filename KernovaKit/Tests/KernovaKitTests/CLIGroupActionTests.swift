@@ -143,6 +143,8 @@ struct CLIGroupActionTests {
             (.passedOver(reason: .state), #"{"passedOver":{"reason":"state"}}"#),
             (.passedOver(reason: .guestSetup), #"{"passedOver":{"reason":"guestSetup"}}"#),
             (.passedOver(reason: .cancelled), #"{"passedOver":{"reason":"cancelled"}}"#),
+            (.passedOver(reason: .removed), #"{"passedOver":{"reason":"removed"}}"#),
+            (.passedOver(reason: .leftGroup), #"{"passedOver":{"reason":"leftGroup"}}"#),
             (
                 .passedOver(reason: .refused(error: no)),
                 #"{"passedOver":{"reason":{"refused":{"error":{"invalidArgument":{"message":"No."}}}}}}"#
@@ -192,7 +194,7 @@ struct CLIGroupActionTests {
                 == "Skipped Held: it is in use by another copy of Kernova.")
     }
 
-    @Test("A question is answered by the verb the VM was taken by, and a cancel names the action")
+    @Test("A question names the verb the VM was taken by, a cancel names the action, and a VM gone is no failure")
     func questionAndCancelLines() {
         let vm = summary("Twin", status: "suspended")
         let prompt = ConfirmationPrompt(
@@ -205,6 +207,14 @@ struct CLIGroupActionTests {
             VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .cancelled)).line(for: .stop)
                 == "Skipped Twin: the stop was cancelled before its turn.")
         #expect(!VMGroupActionOutcome.passedOver(reason: .cancelled).isUndone)
+        #expect(
+            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .removed)).line(for: .start)
+                == "Skipped Twin: it left the library before its turn.")
+        #expect(!VMGroupActionOutcome.passedOver(reason: .removed).isUndone)
+        #expect(
+            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .leftGroup)).line(for: .start)
+                == "Skipped Twin: it was no longer in the group when its turn came.")
+        #expect(!VMGroupActionOutcome.passedOver(reason: .leftGroup).isUndone)
     }
 
     // MARK: - Exit
