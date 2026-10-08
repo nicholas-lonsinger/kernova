@@ -3,7 +3,8 @@ import Foundation
 import System
 
 /// An exclusive `flock(2)` lock on one file or directory, held from a
-/// successful acquire until the lock is deinitialized.
+/// successful acquire until the lock is deinitialized, which releases it
+/// before returning.
 ///
 /// `man 2 flock` shares a lock only through `dup(2)` or `fork(2)`, and each
 /// acquire is a separate `open`, so a second acquire of the same path from this
@@ -21,6 +22,13 @@ public final class ExclusiveFileLock: Sendable {
     }
 
     deinit {
+        // `close` alone frees the lock only with the last reference to the
+        // open file description, and a child any thread is spawning holds
+        // one until its exec, close-on-exec notwithstanding; `LOCK_UN` frees
+        // it for every reference
+        // (docs/research/2026-10-07-a-spawning-child-holds-a-cloexec-flock-until-exec.md).
+        let unlocked = flock(descriptor, LOCK_UN)
+        assert(unlocked == 0, "flock(LOCK_UN) failed: errno \(errno)")
         Darwin.close(descriptor)
     }
 
