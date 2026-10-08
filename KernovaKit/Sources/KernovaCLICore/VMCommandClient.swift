@@ -141,6 +141,10 @@ final class VMCommandClient {
 
     /// The next framed answer, or `nil` once the app hangs up.
     ///
+    /// A frame in another vocabulary throws the version mismatch before its
+    /// payload is decoded — whichever side is older, and whatever the payload
+    /// says.
+    ///
     /// An ``VMCommandResponse/Result/activate`` frame is answered here and read
     /// past, so no caller ever sees one.
     private func nextResponse() throws -> VMCommandResponse? {
@@ -154,9 +158,15 @@ final class VMCommandClient {
                 throw CLIFailure(.unavailable, "Kernova sent a frame this tool cannot read.")
             }
             if let frame = pending {
-                guard
-                    let response = try? JSONDecoder().decode(
-                        VMCommandResponse.self, from: Data(frame))
+                let data = Data(frame)
+                guard let version = try? VMCommandVersionHeader.protocolVersion(of: data) else {
+                    throw CLIFailure(.unavailable, "Kernova sent an answer this tool cannot read.")
+                }
+                guard version == VMCommandRequest.currentProtocolVersion else {
+                    throw VMCommandResponse.versionMismatch(
+                        tool: VMCommandRequest.currentProtocolVersion, app: version)
+                }
+                guard let response = try? JSONDecoder().decode(VMCommandResponse.self, from: data)
                 else {
                     throw CLIFailure(.unavailable, "Kernova sent an answer this tool cannot read.")
                 }
@@ -247,14 +257,30 @@ extension VMCommandResponse {
             + discards
     }
 
+    /// The failure for an app speaking command version `app` to a tool
+    /// speaking `tool`.
+    ///
+    /// The remedy is the same whichever side is older: each Kernova copy's
+    /// command socket is keyed by its bundle path and the installed tool is a
+    /// symlink into that bundle, so a mismatch means the app at that path was
+    /// replaced on disk while the old copy kept running.
+    static func versionMismatch(tool: Int, app: Int) -> CLIFailure {
+        CLIFailure(
+            CLIExitCode(VMCommandTransportRefusal.unsupportedProtocolVersion(peer: tool, expected: app)),
+            versionMismatchMessage(tool: tool, app: app))
+    }
+
+    private static func versionMismatchMessage(tool: Int, app: Int) -> String {
+        "This kernova tool uses command version \(tool), which doesn\u{2019}t match the running "
+            + "Kernova app\u{2019}s version \(app). Quit Kernova and open it again."
+    }
+
     private static func message(for refusal: VMCommandTransportRefusal) -> String {
         switch refusal {
         case .authorizationRefused(let reason):
             reason
         case .unsupportedProtocolVersion(let peer, let expected):
-            "This Kernova speaks command version \(peer); the tool speaks \(expected). "
-                + "The app and the tool it installed are different versions — reinstall the tool "
-                + "from Settings \u{2192} Advanced."
+            versionMismatchMessage(tool: peer, app: expected)
         case .undecodableRequest(let detail):
             "Kernova could not read the request: \(detail)"
         }

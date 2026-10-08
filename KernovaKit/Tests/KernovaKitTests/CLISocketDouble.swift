@@ -66,6 +66,14 @@ final class TestCommandSocket: @unchecked Sendable {
     /// A request that cannot be decoded is still answered, so a test never
     /// hangs on the shape of what it sent.
     func serve(_ groups: [[VMCommandResponse]], holdingOpen: Bool = false) {
+        serveFrames(
+            groups.map { $0.map { (try? JSONEncoder().encode($0)) ?? Data() } },
+            holdingOpen: holdingOpen)
+    }
+
+    /// ``serve(_:holdingOpen:)`` with each answer as the raw JSON payload of
+    /// its frame — for an app whose vocabulary this build cannot spell.
+    func serveFrames(_ groups: [[Data]], holdingOpen: Bool = false) {
         queue.async { [self] in
             let connection = accept(descriptor, nil, nil)
             guard connection >= 0 else { return }
@@ -117,10 +125,8 @@ final class TestCommandSocket: @unchecked Sendable {
         }
     }
 
-    private static func write(_ response: VMCommandResponse, to connection: Int32) {
-        guard let payload = try? JSONEncoder().encode(response),
-            let framed = try? StreamFrame.encode(payload)
-        else { return }
+    private static func write(_ payload: Data, to connection: Int32) {
+        guard let framed = try? StreamFrame.encode(payload) else { return }
         framed.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             _ = Darwin.write(connection, base, raw.count)
