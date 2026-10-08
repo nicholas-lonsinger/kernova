@@ -121,7 +121,7 @@ extension VMCommandCore {
                 Self.logger, .error,
                 "Failed to derive bundle URL for new VM '\(configuration.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            throw CommandError.operationFailed(verb: .create, message: error.localizedDescription)
+            throw CommandError.failed(verb: .create, error: error)
         }
 
         // Before the write, so a password macOS turns down refuses a create that
@@ -260,7 +260,7 @@ extension VMCommandCore {
                 Self.logger, .error,
                 "Failed to derive bundle URL for clone of '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            throw CommandError.operationFailed(verb: .clone, message: error.localizedDescription)
+            throw CommandError.failed(verb: .clone, error: error)
         }
 
         let machineIdentifier = clonedConfig.guestOS == .macOS ? clonedConfig.machineIdentifierData : nil
@@ -538,7 +538,7 @@ extension VMCommandCore {
                 Self.logger, .error,
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
-            throw CommandError.operationFailed(verb: .importVM, message: error.localizedDescription)
+            throw CommandError.failed(verb: .importVM, error: error)
         }
     }
 
@@ -636,8 +636,8 @@ extension VMCommandCore {
                         Self.logger, .error,
                         "Failed to delete VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                     )
-                    throw CommandError.operationFailed(
-                        verb: .delete, message: error.localizedDescription)
+                    throw CommandError.failed(
+                        verb: .delete, error: error)
                 }
                 cleanupSetupResumeData(for: instance, permanently: permanently)
                 if permanently {

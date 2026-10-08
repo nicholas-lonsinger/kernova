@@ -1692,7 +1692,8 @@ final class VMLibraryViewModel {
     /// alert headed by the refusal's own title.
     private func present(_ error: Error, for instance: VMInstance?) {
         guard let command = error as? CommandError else {
-            surfaceError(error.localizedDescription)
+            surfaceError(
+                error.localizedDescription, title: (error as? any TitledError)?.alertTitle ?? "Error")
             return
         }
         switch command {

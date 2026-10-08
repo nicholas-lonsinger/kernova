@@ -136,4 +136,34 @@ struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
     var errorDescription: String? {
         "\u{201C}\(fileName)\u{201D} could not be read: \(summary)."
     }
+
+    /// The snapshot whose `config.json` this is, `nil` for any other file.
+    var snapshotID: UUID? {
+        guard case .bundle(_, .snapshotConfiguration(let id)) = location else { return nil }
+        return id
+    }
+
+    /// The file as a sentence about its own VM names it: a snapshot's
+    /// settings by the snapshot's name, any other file by its own.
+    var subject: String {
+        if case .snapshot(_, let snapshot) = owner {
+            return "the settings of snapshot \u{201C}\(snapshot)\u{201D}"
+        }
+        return "\u{201C}\(fileName)\u{201D}"
+    }
+
+    /// What a VM whose bundle holds `files` says about them, `nil` when it
+    /// holds none: the first by name, and how many more.
+    static func notice(for files: [UnreadableConfigFile]) -> String? {
+        guard let first = files.first else { return nil }
+        let more = files.count - 1
+        let named =
+            switch more {
+            case 0: first.subject
+            case 1: "\(first.subject) and 1 more file"
+            default: "\(first.subject) and \(more) more files"
+            }
+        return "Kernova can\u{2019}t read \(named). "
+            + "Choose File > Check Config Files\u{2026} to review \(more == 0 ? "it" : "them")."
+    }
 }

@@ -570,6 +570,147 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.checkRequests.count == 1)
     }
 
+    // MARK: - A readable VM's unreadable files
+
+    /// A readable bundle named "Dev" listing one cold snapshot, "Snapshot",
+    /// whose `config.json` holds `snapshotConfig` — Ephemeral Mode on with
+    /// that snapshot as its baseline when `ephemeral`.
+    private func addBundleWithSnapshot(
+        to storage: MockVMStorageService, ephemeral: Bool = false,
+        snapshotConfig: (inout [String: Any]) -> Void = { $0["displayHiDPI"] = Self.unrecognized }
+    ) throws -> (url: URL, snapshotID: UUID) {
+        let (url, _) = try addBundle("Dev", to: storage)
+        let snapshotID = UUID()
+        let manifest = """
+            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Snapshot",
+              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
+            """
+        storage.files.setData(
+            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
+        storage.files.setData(
+            try Self.json(
+                of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi), edit: snapshotConfig),
+            atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        if ephemeral {
+            var hostState = VMHostState()
+            hostState.applyEphemeralMode(enabled: true, baseline: snapshotID)
+            storage.files.setData(
+                try VMConfiguration.makeJSONEncoder().encode(hostState),
+                atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
+        }
+        return (url, snapshotID)
+    }
+
+    @Test("A readable VM with a snapshot whose settings can't be read notices it until Use Defaults repairs it")
+    func aReadableVMNoticesAnUnreadableSnapshotUntilRepaired() async throws {
+        let harness = makeHarness()
+        let (_, snapshotID) = try addBundleWithSnapshot(to: harness.storage)
+        await harness.library.loadVMs()
+        let instance = try #require(harness.library.instances.first)
+
+        #expect(instance.unreadableFiles.map(\.snapshotID) == [snapshotID])
+        #expect(
+            UnreadableConfigFile.notice(for: instance.unreadableFiles)
+                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Snapshot\u{201D}. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        #expect(
+            VMOverviewSummary.note(for: .snapshots, instance: instance, resolved: VMOverviewResolved())
+                == "The settings of \u{201C}Snapshot\u{201D} can\u{2019}t be read")
+        // The row stays a VM's: every operation the state takes is offered.
+        #expect(harness.library.entries.compactMap(\.vm).map(\.id) == [instance.id])
+
+        let failures = await harness.library.useDefaults(in: try await harness.library.checkConfigFiles())
+
+        #expect(failures.isEmpty)
+        #expect(instance.unreadableFiles.isEmpty)
+        #expect(UnreadableConfigFile.notice(for: instance.unreadableFiles) == nil)
+        #expect(
+            VMOverviewSummary.note(for: .snapshots, instance: instance, resolved: VMOverviewResolved())
+                == nil)
+    }
+
+    @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")
+    func snapshotErrorsAreTitled() {
+        #expect(
+            CommandError.failed(verb: .revertToSnapshot, error: VMSnapshotError.snapshotConfigurationUnreadable)
+                .alertTitle == "Couldn\u{2019}t Revert to the Snapshot")
+        #expect(
+            CommandError.failed(verb: .takeSnapshot, error: VMSnapshotError.captureSourceMissing("Disk.asif"))
+                .alertTitle == "Couldn\u{2019}t Take the Snapshot")
+        #expect(
+            CommandError.failed(verb: .start, error: CocoaError(.fileReadUnknown)).alertTitle == "Error")
+    }
+
+    @Test("The notice names the first file and counts the rest")
+    func theNoticeCountsTheRest() {
+        let bundle = scratch.url.appendingPathComponent("VMs/Dev.kernova")
+        let problem = ConfigProblem(path: nil, issue: .fileMissing)
+        let snapshot = UnreadableConfigFile(
+            location: .bundle(bundle, .snapshotConfiguration(UUID())),
+            owner: .snapshot(vm: "Dev", snapshot: "Clean"), problems: [problem])
+        let pairings = UnreadableConfigFile(
+            location: .bundle(bundle, .usbPairings), owner: .virtualMachine("Dev"), problems: [problem])
+
+        #expect(UnreadableConfigFile.notice(for: []) == nil)
+        #expect(
+            UnreadableConfigFile.notice(for: [pairings])
+                == "Kernova can\u{2019}t read \u{201C}\(pairings.fileName)\u{201D}. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        #expect(
+            UnreadableConfigFile.notice(for: [snapshot, pairings, snapshot])
+                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Clean\u{201D} and 2 more files. "
+                + "Choose File > Check Config Files\u{2026} to review them.")
+    }
+
+    @Test("Starting an Ephemeral VM whose baseline can't be read is refused at every door, and starts once it reads")
+    func anUnreadableEphemeralBaselineRefusesEveryStart() async throws {
+        let harness = makeHarness()
+        let (url, snapshotID) = try addBundleWithSnapshot(to: harness.storage, ephemeral: true) {
+            $0 = ["not": "a configuration"]
+        }
+        await harness.library.loadVMs()
+        let instance = try #require(harness.library.instances.first)
+        #expect(instance.ephemeralBaselineIsUnreadable)
+        let refusal = CommandError.operationFailed(
+            verb: .start, title: "Couldn\u{2019}t Start \u{201C}Dev\u{201D}",
+            message:
+                "Kernova can\u{2019}t read the snapshot Ephemeral Mode returns this virtual machine to, "
+                + "so it can\u{2019}t undo this session\u{2019}s changes. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        // The offer stands, so the click is what explains the refusal.
+        #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
+
+        await #expect(throws: refusal) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        let router = VMCommandEnvelopeRouter(commands: harness.core)
+        let response = await router.respond(
+            to: VMCommandRequest(
+                verb: .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil)))
+        #expect(response.result == .failure(refusal.dto))
+        let intents = VMIntentGateway(
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
+        await #expect(throws: refusal) {
+            try await intents.start(instance.id, recovery: false, consent: .none, macAddressRemedy: nil)
+        }
+        let scripting = VMScriptingGateway(
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}), prepareToSurface: {})
+        await #expect(throws: refusal) {
+            try await scripting.start([.id(instance.id)], recoveryMode: false, confirmation: false)
+        }
+        #expect(instance.status == .stopped)
+
+        // An outside edit that makes the baseline readable is read at the
+        // start's own admission.
+        harness.storage.files.setData(
+            try Self.json(of: VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)) { _ in },
+            atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        try await waitForChange { instance.status == .running }
+        #expect(instance.unreadableFiles.isEmpty)
+    }
+
     /// A source whose every check and Use Defaults waits until the test ends
     /// it.
     @MainActor

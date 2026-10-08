@@ -984,3 +984,10 @@ enum DownloadError: LocalizedError {
         }
     }
 }
+
+extension DownloadError: TitledError {
+    var alertTitle: String? {
+        guard case .checksumMismatch = self else { return nil }
+        return "Download Doesn't Match Its Checksum"
+    }
+}
