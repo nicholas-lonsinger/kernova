@@ -48,11 +48,12 @@ extension VMLibrary {
     }
 
     /// Records every file of `instance`'s bundle a read refuses, read for
-    /// that alone — the same files its re-read from the bundle
-    /// (``VMActivity/refreshFromBundle()``) answers, so a bundle is reported
-    /// from one source whichever read takes it.
+    /// that alone (``VMBundle/rereadUnreadableFiles()``) — the list its
+    /// re-read from the bundle (``VMActivity/refreshFromBundle()``)
+    /// publishes too, so a bundle is reported from one source whichever read
+    /// takes it.
     func recordUnreadableFiles(of instance: VMInstance) {
-        recordUnreadable(instance.bundle.unreadableFiles(), under: instance.bundleURL)
+        recordUnreadable(instance.bundle.rereadUnreadableFiles(), under: instance.bundleURL)
     }
 
     /// Removes the restore staging directory an interrupted revert left in any

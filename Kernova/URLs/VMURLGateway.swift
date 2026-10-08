@@ -92,7 +92,7 @@ final class VMURLGateway {
         } catch let refusal as CommandError {
             surface(refusal)
         } catch {
-            surface(.operationFailed(verb: route.verb, message: error.localizedDescription))
+            surface(.failed(verb: route.verb, error: error))
         }
     }
 

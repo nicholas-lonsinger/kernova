@@ -1019,6 +1019,41 @@ struct SidebarViewControllerTests {
         #expect(menu.items[2].isSeparatorItem)
     }
 
+    @Test("A readable VM's row warns of a file it can't read and offers the check, until a read finds it readable")
+    func readableRowWarnsOfAnUnreadableFile() async throws {
+        let viewModel = makeViewModel()
+        let files = InMemoryVMBundleFiles()
+        // A snapshot with no `config.json` of its own is one a read refuses.
+        let snapshot = VMSnapshot(
+            name: "Snapshot", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
+        let instance = viewModel.library.admitFixture(
+            name: "Dev", phase: .stopped,
+            snapshots: VMSnapshotManifest(snapshots: [snapshot], currentID: nil), files: files)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let cell = makeRow(instance: instance, isBusy: false)
+        let check = "Check Config Files\u{2026}"
+
+        #expect(
+            cell.unreadableWarningToolTipForTesting
+                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Snapshot\u{201D}. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        #expect(titles(of: controller.buildContextMenu(for: instance)).contains(check))
+        #expect(menuItem("Start", in: controller.buildContextMenu(for: instance))?.isEnabled == true)
+        #expect(
+            SidebarVMRowCellView.contentWidth(
+                forName: "Dev", showsAgentAccessory: false, showsEphemeralAccessory: false,
+                showsUnreadableWarning: true)
+                > SidebarVMRowCellView.contentWidth(
+                    forName: "Dev", showsAgentAccessory: false, showsEphemeralAccessory: false))
+
+        files.setSnapshotConfiguration(instance.configuration, id: snapshot.id, at: instance.bundleURL)
+        viewModel.library.recordUnreadableFiles(of: instance)
+
+        // The cell's observation applies on a later main-actor turn.
+        try await waitUntil { cell.unreadableWarningToolTipForTesting == nil }
+        #expect(!titles(of: controller.buildContextMenu(for: instance)).contains(check))
+    }
+
     // MARK: - Content-fit width
 
     @Test("contentWidth grows with name length")

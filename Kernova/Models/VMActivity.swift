@@ -339,10 +339,17 @@ final class VMActivity {
         }
         var facts = owner.admissionFacts
         if posture == .commit,
-            let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts),
-            kind.checksIdentity
+            let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts)
         {
-            facts.identityConflict = owner.identityConflict(for: kind, override: identity)
+            if kind.checksIdentity {
+                facts.identityConflict = owner.identityConflict(for: kind, override: identity)
+            }
+            // Read only by the decision ``admit(_:origin:identity:outcome:)``
+            // makes right after re-reading the bundle, so a file repaired
+            // since the last read refuses nothing.
+            if !probingOtherCopies {
+                facts.ephemeralBaselineUnreadable = owner.ephemeralBaselineIsUnreadable
+            }
         }
         if case .operation(.attachingUSB(let registryID)) = request {
             facts.accessoryHolder = accessoryHolders?.holder(of: registryID)
@@ -709,16 +716,13 @@ final class VMActivity {
         guard phase.isAtRest, !hold.isThisCopy, let owner else { return nil }
         let bundle = owner.bundle
         recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
-        let unreadable: [UnreadableConfigFile]
         do throws(UnreadableConfigFile) {
-            unreadable = try bundle.refresh()
+            try bundle.refresh()
         } catch {
             #log(
                 Self.logger, .warning,
                 "Could not re-read the bundle of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            // The refusal names the first file alone; the report names each.
-            unreadable = bundle.unreadableFiles()
         }
         let before = phase
         reconcileRest()
@@ -728,7 +732,7 @@ final class VMActivity {
                 "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
             )
         }
-        return unreadable
+        return bundle.unreadableFiles
     }
 
     /// The one write of ``hold``, noticed by observers of
