@@ -26,6 +26,19 @@ extension VMCommandCore {
     func start(
         _ instance: VMInstance, recovery: Bool, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
     ) async throws {
+        try await launchStart(
+            instance, recovery: recovery, policy: policy, macAddressRemedy: macAddressRemedy
+        ).value()
+    }
+
+    /// ``start(_:recovery:policy:macAddressRemedy:)`` up to the launch: the
+    /// remedy taken and the bring-up admitted before this returns, its end
+    /// resolving `outcome`.
+    @discardableResult
+    func launchStart(
+        _ instance: VMInstance, recovery: Bool, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?,
+        resolving outcome: VMOutcome = VMOutcome()
+    ) throws -> VMOutcome {
         let identity = policy.identity
         if let remedy = try macAddressRemedyToTake(
             macAddressRemedy,
@@ -36,7 +49,7 @@ extension VMCommandCore {
         {
             try takeMACAddressRemedy(remedy, on: instance, verb: .start)
         }
-        try await startNow(instance, recovery: recovery, policy: policy).value()
+        return try startNow(instance, recovery: recovery, policy: policy, resolving: outcome)
     }
 
     /// What a start may begin beyond the bring-up itself: two independent
@@ -55,14 +68,10 @@ extension VMCommandCore {
             StartPolicy(presence: .attended, identity: identity)
         }
 
-        /// A standing preference asked for it
-        /// (``VMHostState/startsAutomaticallyOnLaunch``), with nobody at the
-        /// machine: nobody can confirm starting beside a VM sharing its machine
-        /// identity either.
-        static let standing = StartPolicy(presence: .unattended, identity: .unavailable)
-
-        /// An action on a whole group asked for it: the caller is there to be
-        /// told what a VM's start would ask, but not to watch each VM come up.
+        /// A start of a whole set of VMs asked for it — a group action, or the
+        /// launch pass over the VMs marked to start automatically
+        /// (``VMHostState/startsAutomaticallyOnLaunch``): whoever asked is told
+        /// what a VM's start would ask, but nobody watches each VM come up.
         static let group = StartPolicy(presence: .unattended, identity: .askable)
     }
 
@@ -141,43 +150,22 @@ extension VMCommandCore {
         return outcome
     }
 
-    /// A start nobody waits on, as a follow-up on `instance` — joining a
-    /// bring-up already in flight or a start already queued, and otherwise
-    /// decided afresh when it drains.
+    /// A start someone asked for that nobody waits on, as a follow-up on
+    /// `instance` — joining a bring-up already in flight or a start already
+    /// queued, and otherwise decided afresh when it drains, under `identity`.
     ///
     /// A failure is reported the way a direct start's is, the
-    /// removable-attachment recovery included; a standing start that passed
-    /// its VM over (``standingStartPassedOver(_:)``) did not fail.
-    func startFollowUp(_ instance: VMInstance, policy: StartPolicy) -> VMFollowUp {
+    /// removable-attachment recovery included.
+    func startFollowUp(_ instance: VMInstance, identity: VMIdentityOverride) -> VMFollowUp {
         VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            try self.startNow(instance, policy: policy, resolving: outcome)
+            try self.startNow(instance, policy: .command(identity), resolving: outcome)
         }
         .reportingFailure { [weak self, weak instance] error in
-            guard let self, let instance,
-                policy.presence == .attended || !Self.standingStartPassedOver(error)
-            else { return }
+            guard let self, let instance else { return }
             self.reportUnattendedFailure(
                 self.bringUpFailure(error, verb: .start, on: instance), on: instance)
-        }
-    }
-
-    /// Whether a standing start that ended with `error` passed its VM over
-    /// rather than failed: the VM's state takes no start — it is running
-    /// already, here or in another copy of Kernova, or gone — or it has a guest
-    /// setup still to run, or its start would ask the account question nobody
-    /// is there to answer.
-    static func standingStartPassedOver(_ error: any Error) -> Bool {
-        if error is UnattendedGuestSetupRefusal { return true }
-        if case .guestAccountPasswordRequired? = error as? CommandError { return true }
-        guard let refused = error as? VMAdmissionRefusal else { return false }
-        switch refused.refusal {
-        case .invalidState, .removed, .heldByAnotherCopy:
-            return true
-        case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating,
-            .takesStoppedVM, .ephemeralBaselineUnreadable:
-            return false
         }
     }
 
@@ -601,7 +589,7 @@ extension VMCommandCore {
                 on: instance)
             return []
         }
-        return [startFollowUp(instance, policy: .command(bootIdentity))]
+        return [startFollowUp(instance, identity: bootIdentity)]
     }
 
     /// Drops the account a VM owes when the guest a finished setup produced
@@ -798,7 +786,7 @@ extension VMCommandCore {
         _ instance: VMInstance, identity: VMIdentityOverride
     ) async throws {
         do {
-            try await resumeOrRestore(instance, policy: .command(identity))
+            try await launchResumeOrRestore(instance, policy: .command(identity)).value()
             try await lifecycle.requestStop(instance)
         } catch {
             #log(
@@ -955,6 +943,17 @@ extension VMCommandCore {
     func resume(
         _ instance: VMInstance, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?
     ) async throws {
+        try await launchResume(instance, policy: policy, macAddressRemedy: macAddressRemedy).value()
+    }
+
+    /// ``resume(_:policy:macAddressRemedy:)`` up to the launch: the remedy
+    /// taken and the bring-up admitted, or joined, before this returns, its
+    /// end resolving `outcome`.
+    @discardableResult
+    func launchResume(
+        _ instance: VMInstance, policy: StartPolicy, macAddressRemedy: MACAddressRemedy?,
+        resolving outcome: VMOutcome = VMOutcome()
+    ) throws -> VMOutcome {
         let identity = policy.identity
         let decision = instance.activity.decide(.resume, posture: .commit, identity: identity)
         if let remedy = try macAddressRemedyToTake(
@@ -962,34 +961,37 @@ extension VMCommandCore {
             holdingSavedState: instance.hasSaveFile, accountFor: false, verb: .resume)
         {
             try takeMACAddressRemedy(remedy, on: instance, verb: .resume)
-            try await startNow(instance, policy: policy).value()
-            return
+            return try startNow(instance, policy: policy, resolving: outcome)
         }
         switch decision {
         case .refuse(let reason):
             throw admissionRefusal(reason, on: instance, verb: .resume)
-        case .join(let outcome):
+        case .join(let running):
             logJoin(instance)
             readyDisplay?(instance, policy.presence)
-            try await outcome.value()
-            return
+            running.forward(to: outcome)
+            return outcome
         case .admit:
             break
         }
         // A restore readies the display as every start does.
         if VMAdmission.resumeWork(phase: instance.phase) == .hot { readyDisplay?(instance, policy.presence) }
-        try await resumeOrRestore(instance, policy: policy)
+        return try launchResumeOrRestore(instance, policy: policy, resolving: outcome)
     }
 
-    /// The Resume `instance`'s state names: the restore of the saved state it
-    /// holds — which is what a start of that VM performs — or a hot resume
-    /// from memory.
-    private func resumeOrRestore(_ instance: VMInstance, policy: StartPolicy) async throws {
+    /// Launches the Resume `instance`'s state names, resolving `outcome`: the
+    /// restore of the saved state it holds — which is what a start of that VM
+    /// performs — or a hot resume from memory.
+    @discardableResult
+    private func launchResumeOrRestore(
+        _ instance: VMInstance, policy: StartPolicy, resolving outcome: VMOutcome = VMOutcome()
+    ) throws -> VMOutcome {
         switch VMAdmission.resumeWork(phase: instance.phase) {
         case .restore:
-            try await startNow(instance, policy: policy).value()
+            return try startNow(instance, policy: policy, resolving: outcome)
         case .hot:
-            try await lifecycle.resume(instance)
+            try lifecycle.launchResume(instance, resolving: outcome)
+            return outcome
         }
     }
 

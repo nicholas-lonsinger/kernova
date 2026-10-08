@@ -1539,97 +1539,22 @@ final class VMLibraryViewModel {
             .map(\.name)
     }
 
-    /// Starts every VM marked to start automatically, one after another.
-    ///
-    /// Sequential: each guest commits its whole memory allocation at start, and
-    /// the duplicate machine-ID and MAC refusal every bring-up is admitted past
-    /// (``VMAdmission/Facts/identityConflict``) counts a VM still coming up as
-    /// live, so a twin checked beside it would be refused by a boot that may
-    /// yet fail. Each start is a follow-up on its VM, awaited before the next:
-    /// one another operation holds — a snapshot a relaunching command is
-    /// taking, say — starts when that operation frees the VM, decided afresh
-    /// then, and the pass waits for it.
-    ///
-    /// Each is a standing start (``VMCommandCore/StartPolicy/standing``), so a
-    /// VM whose state takes none is passed over rather than failed. A failure
-    /// is reported by the start itself, and the pass carries on to the next VM
-    /// either way.
-    ///
-    /// A termination stops it between VMs: from then on admission refuses the
-    /// next start, and the one already inside VZ is left to finish.
+    /// Starts every VM marked to start automatically
+    /// (``VMCommandCore/startVMsMarkedToStartAutomatically()``), then puts one
+    /// account of every VM it left undone on screen — held until a window can
+    /// show it, on a launch that opens none.
     ///
     /// Nobody is at the machine for this, so it selects and focuses nothing: it
     /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch() async {
-        let marked = instances.filter { $0.hostState.startsAutomaticallyOnLaunch }
-        guard !marked.isEmpty else {
-            #log(Self.logger, .debug, "Launch auto-start: no VMs are marked to start automatically")
-            return
-        }
-
-        #log(Self.logger, .notice, "Launch auto-start: \(marked.count, privacy: .public) VM(s) marked")
-
-        var startedCount = 0
-        var skippedCount = 0
-        var failedCount = 0
-        for instance in marked {
-            // Re-read at the moment of acting: the marking is this pass's own
-            // criterion, and the user can clear it while the pass runs. A VM
-            // deleted or evicted meanwhile is refused by its start.
-            guard instance.hostState.startsAutomaticallyOnLaunch else {
-                #log(
-                    Self.logger, .debug,
-                    "Launch auto-start: '\(instance.name, privacy: .public)' lost its marking before its turn"
-                )
-                skippedCount += 1
-                continue
-            }
-            let start = core.startFollowUp(instance, policy: .standing)
-            instance.activity.follow(start)
-            do {
-                try await start.outcome.value()
-            } catch {
-                if VMCommandCore.standingStartPassedOver(error) {
-                    logPassedOver(instance, error)
-                    skippedCount += 1
-                } else {
-                    failedCount += 1
-                }
-                continue
-            }
-            // A start that succeeded can still leave the VM down — a guest that
-            // powered off the moment it came up.
-            if instance.isKeepingAppAlive {
-                startedCount += 1
-            } else {
-                failedCount += 1
-            }
-        }
-
-        #log(
-            Self.logger, .notice,
-            "Launch auto-start finished — \(startedCount, privacy: .public) running, \(failedCount, privacy: .public) failed, \(skippedCount, privacy: .public) skipped"
-        )
+        let results = await core.startVMsMarkedToStartAutomatically()
+        guard !results.undone.isEmpty else { return }
+        surfaceError(results.undoneMessage(for: .start), title: Self.autoStartUndoneTitle)
     }
 
-    /// Records why the launch pass passed `instance` over.
-    private func logPassedOver(_ instance: VMInstance, _ error: any Error) {
-        if case .guestAccountPasswordRequired? = error as? CommandError {
-            // A login launch has no window to ask in and leaves no other
-            // trace, so this is the only place the user can find out why a VM
-            // they marked did not come up.
-            #log(
-                Self.logger, .notice,
-                "Launch auto-start: '\(instance.name, privacy: .public)' was not started — it creates a macOS account on its first boot and the password for it is only ever held in memory. Start it by hand to enter the password, or to skip setting up the account"
-            )
-        } else {
-            #log(
-                Self.logger, .debug,
-                "Launch auto-start: skipped '\(instance.name, privacy: .public)' (\(instance.status.displayName, privacy: .public))"
-            )
-        }
-    }
+    /// What the launch pass heads its account of the VMs it left undone with.
+    static let autoStartUndoneTitle = "Couldn\u{2019}t Start Every VM Set to Start When Kernova Opens"
 
     // MARK: - Error Handling
 

@@ -1316,15 +1316,15 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
-    @Test("A start at launch is refused beside a shared machine ID, with nobody there to confirm")
-    func duplicateMachineIDRefusesAStandingStart() async throws {
+    @Test("A start nobody can confirm is refused beside a shared machine ID")
+    func duplicateMachineIDRefusesAnUnaskableStart() async throws {
         let harness = makeHarness()
         preferences.allowsDuplicateMachineIDOverride = true
         let (live, twin) = machineIdentityTwins(in: harness)
 
         do {
-            try harness.core.startNow(twin, policy: .standing)
-            Issue.record("the standing start was admitted")
+            try harness.core.startNow(twin, policy: .command(.unavailable))
+            Issue.record("the unaskable start was admitted")
         } catch let refused as VMAdmissionRefusal {
             guard case .identityConflict(let conflict) = refused.refusal else {
                 Issue.record("refused as \(refused.refusal)")

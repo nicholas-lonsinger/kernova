@@ -331,10 +331,8 @@ struct VMCommandCoreGroupActionTests {
             try await harness.core.start(fresh, recovery: false, policy: .group, macAddressRemedy: nil)
         }
         #expect(fresh.status == .initialBoot)
-        #expect(VMCommandCore.StartPolicy.group.presence == VMCommandCore.StartPolicy.standing.presence)
+        #expect(VMCommandCore.StartPolicy.group.presence == .unattended)
         #expect(VMCommandCore.StartPolicy.group.identity == .askable)
-        #expect(VMCommandCore.StartPolicy.standing.identity == .unavailable)
-        #expect(VMCommandCore.standingStartPassedOver(VMCommandCore.UnattendedGuestSetupRefusal()))
     }
 
     // MARK: - Order and cancellation

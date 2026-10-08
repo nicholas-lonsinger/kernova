@@ -4539,8 +4539,10 @@ struct VMLibraryViewModelTests {
 
         await viewModel.startAutomaticVMsForLaunch()
 
+        // No guest setup begins unattended, and passing it over is no failure.
         #expect(virtService.startCallCount == 0)
         #expect(fresh.status == .initialBoot)
+        #expect(presenter.errors.isEmpty)
     }
 
     /// The status reads `.error` — an ordinary boot retry — but the surviving
@@ -4558,13 +4560,14 @@ struct VMLibraryViewModelTests {
 
         #expect(virtService.startCallCount == 0)
         #expect(stalled.status == .error)
+        #expect(presenter.errors.isEmpty)
     }
 
-    /// A start that would raise the account sheet is not a bring-up nobody is
-    /// present for, and a login launch has no window to raise it in.
+    /// A start that would raise the account sheet asks nobody at launch: the
+    /// VM is named in the pass's one account, with what to do about it.
     @available(macOS 27.0, *)
-    @Test("startAutomaticVMsForLaunch leaves a marked VM owing a guest account alone")
-    func autoStartSkipsAnOutstandingGuestAccount() async {
+    @Test("startAutomaticVMsForLaunch reports a marked VM owing a guest account, starting it not")
+    func autoStartReportsAnOutstandingGuestAccount() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let owing = makeAutoStartInstance(in: viewModel.library, name: "Unattended", guestOS: .macOS) {
             $0.pendingGuestAccount = GuestAccountIntent(
@@ -4576,12 +4579,40 @@ struct VMLibraryViewModelTests {
         await viewModel.startAutomaticVMsForLaunch()
 
         #expect(virtService.startCallCount == 0)
-        // Passed over, not refused: nothing is alerted about at a login.
-        #expect(presenter.errors.isEmpty)
+        #expect(presenter.guestAccountPasswordRequests.isEmpty)
+        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
+        #expect(
+            presenter.errors == [
+                "Skipped Unattended: \u{201C}Unattended\u{201D} creates the macOS account "
+                    + "\u{201C}Ada Lovelace\u{201D} (ada) on its first boot, and Kernova doesn\u{2019}t "
+                    + "save that account\u{2019}s password. Start it in Kernova to enter the password, "
+                    + "or to skip setting up the account."
+            ])
         #expect(owing.configuration.pendingGuestAccount != nil)
     }
 
-    @Test("startAutomaticVMsForLaunch carries on past a VM that fails to start")
+    @Test("startAutomaticVMsForLaunch reports a marked VM whose start would ask about a shared machine ID")
+    func autoStartReportsASharedMachineIDQuestion() async {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let identity = Data([4, 5, 6])
+        let live = viewModel.library.admitFixture(name: "Live") { $0.genericMachineIdentifierData = identity }
+        live.activity.placeForTesting(.running(sessionID: UUID()))
+        let twin = makeAutoStartInstance(in: viewModel.library, name: "Twin") {
+            $0.genericMachineIdentifierData = identity
+        }
+        for instance in [live, twin] { instance.peers = viewModel.library }
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
+        #expect(presenter.errors.first?.hasPrefix("Skipped Twin: ") == true)
+        #expect(presenter.errors.first?.hasSuffix(" Start it on its own to answer.") == true)
+    }
+
+    @Test("startAutomaticVMsForLaunch carries on past failed starts and reports them in one account")
     func autoStartContinuesAfterFailure() async {
         let virtService = MockVirtualizationService()
         virtService.startError = VirtualizationError.noVirtualMachine
@@ -4590,9 +4621,16 @@ struct VMLibraryViewModelTests {
         makeAutoStartInstance(in: viewModel.library, name: "Following")
 
         await viewModel.startAutomaticVMsForLaunch()
+        // A per-VM report would come from a start's own follow-up, queued
+        // before this barrier.
+        await drainMainQueue()
 
         #expect(virtService.startCallCount == 2)
-        #expect(presenter.showError == true)
+        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
+        let lines = presenter.errors.first?.split(separator: "\n").map(String.init) ?? []
+        #expect(lines.count == 2)
+        #expect(lines.first?.hasPrefix("Couldn\u{2019}t start Failing: ") == true)
+        #expect(lines.last?.hasPrefix("Couldn\u{2019}t start Following: ") == true)
     }
 
     @Test("startAutomaticVMsForLaunch leaves a failed restore suspended and carries on")
@@ -4622,10 +4660,8 @@ struct VMLibraryViewModelTests {
         #expect(virtService.resumeCallCount == 0)
         #expect(suspended.status == .suspended)
         #expect(suspended.errorMessage == nil)
-        #expect(presenter.showError == true)
-        // Exactly one surfacing, not two: the report routes through the same
-        // presenter path the pass would otherwise have used on its own.
-        #expect(presenter.errors.count == 1)
+        // Exactly one surfacing: the pass's own account.
+        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
         // Read up to a rename made after the pass, so a second failure would
         // still be seen.
         let sentinel = "Read past the pass"
@@ -4737,6 +4773,39 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 2)
         #expect(held.status == .running)
         #expect(following.status == .running)
+    }
+
+    @Test("startAutomaticVMsForLaunch leaves a VM unmarked while its turn waited, and starts the next")
+    func autoStartLeavesAVMUnmarkedWhileItWaited() async throws {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let held = makeAutoStartInstance(in: viewModel.library, name: "Held")
+        let following = makeAutoStartInstance(in: viewModel.library, name: "Following")
+        // A clone's copy out of a stopped VM holds it while still taking an
+        // edit of its startup settings.
+        let copy = GatedStep()
+        let copied = try held.activity.launchCopyOut(.stopped) { _ in
+            try await copy.pass()
+            return .rest(.asStarted, ())
+        }
+        try await copy.waitUntilEntered()
+
+        let pass = Task { await viewModel.startAutomaticVMsForLaunch() }
+        await drainMainQueue()
+        #expect(held.activity.queuedFollowUpCountForTesting == 1)
+        // Cleared while the copy still holds the VM: the turn is decided as
+        // the copy ends, against the marking as it stands then.
+        #expect(
+            viewModel.setConfiguration([VMConfigurationKeyRegistry.autoStart.assigning(false)], on: held)
+                == .applied)
+
+        copy.release()
+        try await copied.value()
+        await pass.value
+
+        #expect(virtService.startCallCount == 1)
+        #expect(held.status == .stopped)
+        #expect(following.status == .running)
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("startAutomaticVMsForLaunch does nothing when no VM is marked")

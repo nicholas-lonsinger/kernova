@@ -2,7 +2,9 @@ import Foundation
 
 /// One lifecycle action taken on every virtual machine in a smart group or a
 /// folder — the header menu's Start All, Suspend All and Stop All, the
-/// `kernova` lifecycle verbs given a group, and the Shortcuts group action.
+/// `kernova` lifecycle verbs given a group, and the Shortcuts group action —
+/// and, as ``start``, the app's launch pass over the VMs marked to start
+/// automatically.
 public enum VMGroupAction: String, Codable, Sendable, Hashable, CaseIterable {
     /// Brings up each VM whose state takes it: a start, the restore of a
     /// suspended session, or the resume of a paused guest.
@@ -48,7 +50,7 @@ public struct VMGroupActionReport: Codable, Sendable, Hashable {
     }
 
     /// The VMs the action concerned and left undone, in the group's order.
-    public var undone: [VMGroupActionResult] { results.filter(\.outcome.isUndone) }
+    public var undone: [VMGroupActionResult] { results.undone }
 
     /// What a surface heads its account of ``undone`` with.
     public var undoneTitle: String {
@@ -62,7 +64,15 @@ public struct VMGroupActionReport: Codable, Sendable, Hashable {
     }
 
     /// One line per VM in ``undone``, saying why.
-    public var undoneMessage: String {
+    public var undoneMessage: String { results.undoneMessage(for: action) }
+}
+
+extension Collection<VMGroupActionResult> {
+    /// The VMs the action concerned and left undone, in order.
+    public var undone: [VMGroupActionResult] { filter(\.outcome.isUndone) }
+
+    /// One line per VM in ``undone``, saying why `action` left it undone.
+    public func undoneMessage(for action: VMGroupAction) -> String {
         undone.map { $0.line(for: action) }.joined(separator: "\n")
     }
 }
@@ -154,7 +164,8 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         /// came; the summary is the last this copy knew of it.
         case removed
         /// The VM was no longer in the group when its turn came, though it
-        /// was when the action began.
+        /// was when the action began — or, in the app's launch pass, no longer
+        /// marked to start automatically.
         case leftGroup
 
         private enum CodingKeys: String, CodingKey {
