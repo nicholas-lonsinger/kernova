@@ -335,6 +335,106 @@ struct VMCommandCoreGroupActionTests {
         #expect(VMCommandCore.StartPolicy.group.identity == .askable)
     }
 
+    // MARK: - Failures on the event stream
+
+    /// A restore that fails rests the VM back on its saved state, which moves
+    /// no field the library's diff reports as a failure.
+    @Test("A member's failure the VM's status cannot carry goes on the event stream, once")
+    func memberFailureIsBroadcast() async throws {
+        let harness = makeHarness()
+        harness.virtualization.restoreError = VirtualizationError.restoreFailed(
+            underlying: NSError(domain: "test", code: 1))
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+        try harness.library.organization.createFolder(named: "Lab", members: [suspended.id])
+        let events = harness.core.events()
+
+        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
+
+        guard case .failed = report.results.first?.outcome else {
+            Issue.record("reported \(String(describing: report.results.first?.outcome))")
+            return
+        }
+        #expect(suspended.status == .suspended)
+        // Read up to a rename made after the action, so a second failure would
+        // still be seen.
+        let sentinel = "Read past the action"
+        try harness.core.rename(.id(suspended.id), to: sentinel)
+        var failures: [UUID] = []
+        reading: for await batch in events {
+            for event in batch {
+                switch event {
+                case .renamed(_, _, let to) where to == sentinel: break reading
+                case .failure(let id, _, _): failures.append(id)
+                default: continue
+                }
+            }
+        }
+        #expect(failures == [suspended.instanceID])
+    }
+
+    // MARK: - Launch pass
+
+    /// A VM marked to start automatically.
+    private func makeMarkedInstance(in harness: Harness, name: String) -> VMInstance {
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences,
+            hostState: VMHostState(startsAutomaticallyOnLaunch: true))
+    }
+
+    @Test("The launch pass reports a VM removed while its turn waited as gone")
+    func launchMemberRemovedWhileItsTurnWaitedIsPassedOver() async throws {
+        let harness = makeHarness()
+        let held = makeMarkedInstance(in: harness, name: "Held")
+        let deletion = GatedStep()
+        let deleting = Task { @MainActor in
+            try await held.activity.delete { _ in try await deletion.pass() }
+        }
+        try await deletion.waitUntilEntered()
+
+        let pass = Task { @MainActor in await harness.core.startVMsMarkedToStartAutomatically() }
+        await drainMainQueue()
+        #expect(held.activity.queuedFollowUpCountForTesting == 1)
+        deletion.release()
+        try await deleting.value
+        let results = await pass.value
+
+        #expect(results.map(\.outcome) == [.passedOver(reason: .removed)])
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
+    /// The pass's turn names no request until it decides a start, so a start
+    /// someone asked for behind it is never merged into a turn that passes
+    /// the VM over.
+    @Test("A start queued behind the launch pass's turn is decided on its own when the turn passes over")
+    func startQueuedBehindALaunchTurnIsNotSwallowed() async throws {
+        let harness = makeHarness()
+        let held = makeMarkedInstance(in: harness, name: "Held")
+        let copy = GatedStep()
+        let copied = try held.activity.launchCopyOut(.stopped) { _ in
+            try await copy.pass()
+            return .rest(.asStarted, ())
+        }
+        try await copy.waitUntilEntered()
+
+        let pass = Task { @MainActor in await harness.core.startVMsMarkedToStartAutomatically() }
+        await drainMainQueue()
+        let start = harness.core.startFollowUp(held, identity: .unavailable)
+        held.activity.follow(start)
+        #expect(held.activity.queuedFollowUpCountForTesting == 2)
+        try harness.core.setConfiguration(
+            .id(held.id), assignments: [VMConfigurationKeyRegistry.autoStart.assigning(false)], consent: .none)
+
+        copy.release()
+        try await copied.value()
+        let results = await pass.value
+        try await start.outcome.value()
+
+        #expect(results.map(\.outcome) == [.passedOver(reason: .leftGroup)])
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(held.status == .running)
+    }
+
     // MARK: - Order and cancellation
 
     private struct SuspendingHarness {

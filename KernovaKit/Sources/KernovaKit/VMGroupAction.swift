@@ -163,9 +163,8 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
         /// The VM left the library after the action began and before its turn
         /// came; the summary is the last this copy knew of it.
         case removed
-        /// The VM was no longer in the group when its turn came, though it
-        /// was when the action began — or, in the app's launch pass, no longer
-        /// marked to start automatically.
+        /// The VM had left the set the run acts on when its turn came, though
+        /// it was in it when the run began.
         case leftGroup
 
         private enum CodingKeys: String, CodingKey {

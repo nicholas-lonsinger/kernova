@@ -252,40 +252,34 @@ extension VMCommandCore {
     /// frees it, before anything else can be decided against it — or at once
     /// on a VM nothing holds.
     ///
-    /// Joins a bring-up already in flight, or a start already queued, and
-    /// reports that start's outcome as its own.
+    /// The follow-up names no request, so nothing joins it before its turn has
+    /// decided a start: a start queued behind it is decided on its own once
+    /// this turn has passed the VM over or brought it up. A bring-up holding
+    /// the VM when the turn comes is waited out, not joined — so one that
+    /// fails leaves the turn to decide, and try, the start afresh.
     private func startOnceFree(_ instance: VMInstance, in set: MemberSet) async -> VMGroupActionOutcome {
-        // What the drained turn decided; `nil` while the follow-up has joined
-        // another start or not drained.
-        var decided: Turn?
-        let followUp = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
-            [weak self, weak instance] outcome in
+        // What the drained turn decided: the verb it took the VM by, or why it
+        // passed the VM over.
+        var verb = VMVerb.start
+        var passOver: VMGroupActionOutcome.PassOver?
+        let followUp = VMFollowUp(scope: .vm, rank: .ordinary) { [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            let turn = self.turn(of: .start, on: instance, in: set)
-            decided = turn
-            switch turn {
-            case .passesOver:
+            switch self.turn(of: .start, on: instance, in: set) {
+            case .passesOver(let reason):
+                passOver = reason
                 outcome.resolve(.success(()))
             case .acts(let step):
+                verb = step.verb
                 try self.launchBringUp(on: instance, resuming: step == .resume, resolving: outcome)
             }
         }
         instance.activity.follow(followUp)
-        var verb = VMVerb.start
         do {
             try await followUp.outcome.value()
-            switch decided {
-            case .passesOver(let reason):
-                return .passedOver(reason: reason)
-            case .acts(let step):
-                return .done(verb: step.verb)
-            case nil:
-                return .done(verb: .start)
-            }
         } catch {
-            if case .acts(let step) = decided { verb = step.verb }
             return outcome(of: error, takenBy: verb, on: instance)
         }
+        return passOver.map { .passedOver(reason: $0) } ?? .done(verb: verb)
     }
 
     /// Launches the ``StartPolicy/group`` bring-up a start takes `instance`

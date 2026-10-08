@@ -2287,9 +2287,9 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    /// A launch that came up headless runs its auto-start pass with no window,
-    /// so a failure's recovery has to survive the wait for one instead of
-    /// flattening into a message no alert can act on.
+    /// A start raised before any window exists has its failure's recovery
+    /// survive the wait for one, instead of flattening into a message no alert
+    /// can act on.
     @Test("A start failure raised with no window buffers the failure, not its text")
     func startFailureWithNoWindowBuffersTheRecovery() async {
         let virtService = MockVirtualizationService()
@@ -4631,6 +4631,29 @@ struct VMLibraryViewModelTests {
         #expect(lines.count == 2)
         #expect(lines.first?.hasPrefix("Couldn\u{2019}t start Failing: ") == true)
         #expect(lines.last?.hasPrefix("Couldn\u{2019}t start Following: ") == true)
+    }
+
+    /// A login launch has no window: the status item is what tells the user
+    /// the pass left anything undone.
+    @Test("startAutomaticVMsForLaunch with no window holds its one account, counting each VM left undone")
+    func autoStartWithNoWindowCountsWhatItLeftUndone() async {
+        let virtService = MockVirtualizationService()
+        virtService.startError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        viewModel.presenter = nil
+        makeAutoStartInstance(in: viewModel.library, name: "Failing")
+        makeAutoStartInstance(in: viewModel.library, name: "Following")
+
+        await viewModel.startAutomaticVMsForLaunch()
+        await drainMainQueue()
+
+        #expect(viewModel.bufferedStartFailureCount == 2)
+
+        // Attaching the presenter is what the window does on arrival.
+        viewModel.presenter = presenter
+
+        #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
+        #expect(viewModel.bufferedStartFailureCount == 0)
     }
 
     @Test("startAutomaticVMsForLaunch leaves a failed restore suspended and carries on")

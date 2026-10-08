@@ -1,8 +1,8 @@
 import AppKit
 
 /// Owns the status-item dropdown's failed-start line: the one item reporting
-/// starts that failed with no window to present them in, whose action opens the
-/// library so each failure's alert — and the recovery it offers — is shown.
+/// VMs that did not start with no window to report them in, whose action opens
+/// the library so each alert — and any recovery it offers — is shown.
 ///
 /// `menuNeedsUpdate` re-populates it with ``rebuild(count:)`` while the dropdown
 /// is rebuilt from scratch; a count that changes while it is on screen goes
@@ -14,7 +14,7 @@ final class StatusMenuStartFailureSection {
     private weak var target: AnyObject?
     private let action: Selector
 
-    /// The line while the menu holds it — absent exactly when nothing failed.
+    /// The line while the menu holds it — absent exactly when nothing is waiting.
     private var item: NSMenuItem?
 
     init(menu: NSMenu, target: AnyObject, action: Selector) {
@@ -23,14 +23,15 @@ final class StatusMenuStartFailureSection {
         self.action = action
     }
 
-    /// The line's title for `count` failures, or `nil` when there are none.
+    /// The line's title for `count` VMs that did not start, or `nil` when there
+    /// are none.
     ///
     /// Ellipsis-terminated: the click opens a window that raises an alert.
     static func title(count: Int) -> String? {
         switch count {
         case ..<1: nil
-        case 1: "1 VM Failed to Start…"
-        default: "\(count) VMs Failed to Start…"
+        case 1: "1 VM Didn\u{2019}t Start…"
+        default: "\(count) VMs Didn\u{2019}t Start…"
         }
     }
 

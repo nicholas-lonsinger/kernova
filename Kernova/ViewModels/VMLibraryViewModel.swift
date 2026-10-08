@@ -484,10 +484,17 @@ final class VMLibraryViewModel {
         /// and re-resolved on the drain — one that left the library meanwhile
         /// leaves nothing to act on or report.
         case startFailure(StartFailure, vmID: UUID)
+        /// The launch pass's one account of the VMs it left undone, `undone`
+        /// of them.
+        case startSummary(title: String, message: String, undone: Int)
 
-        var isStartFailure: Bool {
-            if case .startFailure = self { return true }
-            return false
+        /// How many VMs that did not start this presentation reports.
+        var unstartedCount: Int {
+            switch self {
+            case .error: 0
+            case .startFailure: 1
+            case .startSummary(_, _, let undone): undone
+            }
         }
     }
 
@@ -497,9 +504,9 @@ final class VMLibraryViewModel {
     /// The attachment case carries either bring-up, because both assemble the
     /// same configuration — a resume restoring a saved state fails over a
     /// missing disk exactly as a boot does. The message case is the start's:
-    /// every start failure reaches the status item through it, a guest cap or
-    /// a duplicate identity as surely as a missing disk image, and a headless
-    /// launch has no other way to say so.
+    /// every single-VM start failure reaches the status item through
+    /// it, a guest cap or a duplicate identity as surely as a missing disk
+    /// image.
     private enum StartFailure {
         case attachment(StartFailedAttachment)
         case message(title: String, message: String)
@@ -511,13 +518,14 @@ final class VMLibraryViewModel {
     /// renders ``bufferedStartFailureCount`` from it.
     private var bufferedPresentations: [BufferedPresentation] = []
 
-    /// How many failed starts are waiting for a window to present them in.
+    /// How many VMs that did not start are waiting for a window to report
+    /// them in.
     ///
     /// Non-zero only for a launch that came up headless: the status item is the
     /// one surface such a process has, and clicking its line opens the library,
     /// which attaches the presenter and drains these back to zero.
     var bufferedStartFailureCount: Int {
-        bufferedPresentations.lazy.filter(\.isStartFailure).count
+        bufferedPresentations.reduce(0) { $0 + $1.unstartedCount }
     }
 
     /// The VM an inline surface was asked for before any window existed, focused
@@ -1549,8 +1557,10 @@ final class VMLibraryViewModel {
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch() async {
         let results = await core.startVMsMarkedToStartAutomatically()
-        guard !results.undone.isEmpty else { return }
-        surfaceError(results.undoneMessage(for: .start), title: Self.autoStartUndoneTitle)
+        let undone = results.undone.count
+        guard undone > 0 else { return }
+        surfaceStartSummary(
+            title: Self.autoStartUndoneTitle, message: results.undoneMessage(for: .start), undone: undone)
     }
 
     /// What the launch pass heads its account of the VMs it left undone with.
@@ -1704,9 +1714,9 @@ final class VMLibraryViewModel {
     }
 
     /// Routes a start failure to the presenter, buffering the failure itself
-    /// when none is attached yet — a headless launch's auto-start pass runs
-    /// with no window, and the alert it earns is the one carrying whatever the
-    /// failure offered, the detach-and-start-again action included.
+    /// when none is attached yet — so the alert it earns, shown once a window
+    /// arrives, carries whatever the failure offered, the
+    /// detach-and-start-again action included.
     private func surfaceStartFailure(_ failure: StartFailure, for instance: VMInstance) {
         guard let presenter else {
             bufferedPresentations.append(.startFailure(failure, vmID: instance.id))
@@ -1720,6 +1730,17 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Routes the launch pass's account of the `undone` VMs it did not start
+    /// to the presenter, buffering it — counted by the status item — when none
+    /// is attached yet, as on a launch that came up headless.
+    private func surfaceStartSummary(title: String, message: String, undone: Int) {
+        guard let presenter else {
+            bufferedPresentations.append(.startSummary(title: title, message: message, undone: undone))
+            return
+        }
+        presenter.presentError(message, title: title)
+    }
+
     /// Re-dispatches everything raised before the presenter attached, through
     /// the same routing a live presentation takes.
     private func drainBufferedPresentations() {
@@ -1730,6 +1751,8 @@ final class VMLibraryViewModel {
             switch presentation {
             case .error(let title, let message):
                 surfaceError(message, title: title)
+            case .startSummary(let title, let message, let undone):
+                surfaceStartSummary(title: title, message: message, undone: undone)
             case .startFailure(let failure, let vmID):
                 guard let instance = instances.first(where: { $0.id == vmID }) else {
                     #log(

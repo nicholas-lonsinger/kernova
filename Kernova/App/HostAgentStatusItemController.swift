@@ -245,7 +245,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         let symbol = Self.iconSymbol(hasStartFailures: hasStartFailures)
         // The glyph is the whole signal for a sighted user; the description is
         // the whole of it for VoiceOver, so it changes with the glyph.
-        let description = hasStartFailures ? "Kernova, a virtual machine failed to start" : "Kernova"
+        let description = hasStartFailures ? "Kernova, a virtual machine didn\u{2019}t start" : "Kernova"
         // The shared `NSImage.systemSymbol(_:…)` helper's release fallback is a
         // zero-size `NSImage()`, which renders the status-item button invisible,
         // and the status item is the only way to find or quit the headless agent.
@@ -287,8 +287,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
         switch viewModel.bufferedStartFailureCount {
         case ..<1: break
-        case 1: lines.append("1 virtual machine failed to start")
-        case let failures: lines.append("\(failures) virtual machines failed to start")
+        case 1: lines.append("1 virtual machine didn\u{2019}t start")
+        case let failures: lines.append("\(failures) virtual machines didn\u{2019}t start")
         }
         statusItem.button?.toolTip = lines.joined(separator: "\n")
     }
