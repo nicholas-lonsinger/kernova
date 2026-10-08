@@ -259,21 +259,20 @@ extension VMCommandResponse {
 
     /// The failure for an app speaking command version `app` to a tool
     /// speaking `tool`.
+    ///
+    /// The remedy is the same whichever side is older: each Kernova copy's
+    /// command socket is keyed by its bundle path and the installed tool is a
+    /// symlink into that bundle, so a mismatch means the app at that path was
+    /// replaced on disk while the old copy kept running.
     static func versionMismatch(tool: Int, app: Int) -> CLIFailure {
         CLIFailure(
             CLIExitCode(VMCommandTransportRefusal.unsupportedProtocolVersion(peer: tool, expected: app)),
             versionMismatchMessage(tool: tool, app: app))
     }
 
-    /// The mismatch in words, with the remedy for whichever side is older.
-    ///
-    /// The tool is a link into a Kernova bundle, so a newer tool means a newer
-    /// copy of Kernova is on disk than the one running.
     private static func versionMismatchMessage(tool: Int, app: Int) -> String {
-        let versions = "The running Kernova speaks command version \(app); this tool speaks \(tool)."
-        return app < tool
-            ? versions + " Quit Kernova and open the copy this tool belongs to."
-            : versions + " Reinstall the tool from Kernova\u{2019}s Settings \u{2192} Advanced."
+        "This kernova tool uses command version \(tool), which doesn\u{2019}t match the running "
+            + "Kernova app\u{2019}s version \(app). Quit Kernova and open it again."
     }
 
     private static func message(for refusal: VMCommandTransportRefusal) -> String {

@@ -46,11 +46,11 @@ struct CLIVersionMismatchTests {
         #expect(thrown?.code == .unavailable)
         #expect(
             thrown?.message
-                == "The running Kernova speaks command version \(current - 1); this tool speaks \(current). "
-                + "Quit Kernova and open the copy this tool belongs to.")
+                == "This kernova tool uses command version \(current), which doesn\u{2019}t match the running "
+                + "Kernova app\u{2019}s version \(current - 1). Quit Kernova and open it again.")
     }
 
-    @Test("An older app that refuses the version yields the mismatch worded for the app being older")
+    @Test("An older app that refuses the version yields the version mismatch")
     func olderAppThatRefusesTheVersion() throws {
         let thrown = try failure(
             answering: VMCommandResponse(
@@ -60,7 +60,7 @@ struct CLIVersionMismatchTests {
         #expect(thrown == VMCommandResponse.versionMismatch(tool: current, app: current - 1))
     }
 
-    @Test("A newer app's answer this tool cannot spell yields the mismatch worded for the tool being older")
+    @Test("A newer app's answer this tool cannot spell yields the version mismatch")
     func newerAppWithAnUnknownResult() throws {
         let frame = Data(#"{"protocolVersion":\#(current + 1),"result":{"aResultFromTheFuture":{}}}"#.utf8)
 
@@ -70,11 +70,11 @@ struct CLIVersionMismatchTests {
         #expect(thrown?.code == .unavailable)
         #expect(
             thrown?.message
-                == "The running Kernova speaks command version \(current + 1); this tool speaks \(current). "
-                + "Reinstall the tool from Kernova\u{2019}s Settings \u{2192} Advanced.")
+                == "This kernova tool uses command version \(current), which doesn\u{2019}t match the running "
+                + "Kernova app\u{2019}s version \(current + 1). Quit Kernova and open it again.")
     }
 
-    @Test("A newer app's version refusal yields the mismatch worded for the tool being older")
+    @Test("A newer app's version refusal yields the version mismatch")
     func newerAppThatRefusesTheVersion() throws {
         let thrown = try failure(
             answering: VMCommandResponse(
@@ -94,7 +94,7 @@ struct CLIVersionMismatchTests {
         }
         #expect(
             VMCommandResponse.versionMismatch(tool: 4, app: 7).message
-                == "The running Kernova speaks command version 7; this tool speaks 4. "
-                + "Reinstall the tool from Kernova\u{2019}s Settings \u{2192} Advanced.")
+                == "This kernova tool uses command version 4, which doesn\u{2019}t match the running "
+                + "Kernova app\u{2019}s version 7. Quit Kernova and open it again.")
     }
 }
