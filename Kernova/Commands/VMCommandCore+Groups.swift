@@ -167,7 +167,20 @@ extension VMCommandCore {
 
     /// The group `reference` names, as the library's file holds it now.
     func group(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
-        guard let group = VMResolvedGroup(reference, in: try readOrganization(verb: verb)) else {
+        try group(reference, in: try readOrganization(verb: verb))
+    }
+
+    /// The group `reference` names, as this copy holds the library's
+    /// organization in memory — reading no file, for a caller that must not
+    /// wait on the disk.
+    func heldGroup(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
+        try group(reference, in: try heldOrganization(verb: verb))
+    }
+
+    private func group(
+        _ reference: VMGroupReference, in organization: VMOrganizationDirectory.File
+    ) throws -> VMResolvedGroup {
+        guard let group = VMResolvedGroup(reference, in: organization) else {
             throw CommandError.itemNotFoundOnHost(
                 item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
         }
@@ -183,6 +196,13 @@ extension VMCommandCore {
     /// now, refusing when the file cannot be read rather than answering none.
     private func readOrganization(verb: VMVerb) throws -> VMOrganizationDirectory.File {
         library.organization.reload()
+        return try heldOrganization(verb: verb)
+    }
+
+    /// The library's smart groups, folders and tags as this copy holds them in
+    /// memory, reading no file — refusing while the last read found the file
+    /// unreadable.
+    private func heldOrganization(verb: VMVerb) throws -> VMOrganizationDirectory.File {
         switch library.organization.state {
         case .listed(let organization):
             return organization

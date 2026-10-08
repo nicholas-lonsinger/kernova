@@ -20,14 +20,17 @@ struct VMCommandCoreGroupActionTests {
         let storage: MockVMStorageService
     }
 
-    private func makeHarness(networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)) -> Harness {
+    private func makeHarness(
+        networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+    ) -> Harness {
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
         let virtualization = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences, networks: networks)
+            fileSystem: fileSystem, preferences: preferences, networks: networks, organization: organization)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
@@ -509,6 +512,20 @@ struct VMCommandCoreGroupActionTests {
         // No bundle re-read, no library file reloaded, no config check asked for.
         #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
         #expect(checks() == 0)
+    }
+
+    @Test("The counts read the groups as this copy holds them, reloading no file")
+    func countsReloadNoOrganization() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        let harness = makeHarness(organization: VMOrganizationDirectory(fileURL: organizationURL))
+        let stopped = makeInstance(in: harness, name: "Stopped")
+        try harness.library.organization.createFolder(named: "Lab", members: [stopped.id])
+        // What a reload would find, and refuse the counts for.
+        try Data("not json".utf8).write(to: organizationURL)
+
+        #expect(try harness.core.concernedCounts(in: VMGroupReference(.folder, named: "Lab"))[.start] == 1)
+        #expect(harness.library.organization.state.listed != nil)
     }
 
     @Test("Each turn reads another copy's hold and nothing else")

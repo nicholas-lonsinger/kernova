@@ -10,8 +10,12 @@ extension VMCommandCore {
     /// actions' menu items count, by the rule the actions themselves act by
     /// (``VMCapabilityCatalog/groupAction(_:on:)``), against what another copy
     /// of Kernova holds now.
+    ///
+    /// Reads the group as this copy holds it in memory and touches the disk
+    /// only to ask each member's run lock whether another copy holds it — the
+    /// View menu counts these while AppKit matches key equivalents.
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int] {
-        let instances = entries(in: try self.group(group, verb: .groups).selection).compactMap { entry in
+        let instances = entries(in: try heldGroup(group, verb: .groups).selection).compactMap { entry in
             if case .vm(let instance) = entry { instance } else { nil }
         }
         for instance in instances { instance.activity.probeOtherCopyHold() }
