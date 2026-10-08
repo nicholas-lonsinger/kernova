@@ -213,6 +213,20 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil { agent.liveChannelForTesting != nil }
     }
 
+    /// Waits until the agent serves a connection other than `previous`.
+    ///
+    /// Never waits for the disconnect in between: the reconnect loop publishes
+    /// the next channel one retry interval after the last one clears, and a
+    /// poll can sleep past that gap, then wait out its backstop on a channel
+    /// that is already back.
+    private func waitForReconnect(
+        of agent: VsockGuestClipboardAgent, replacing previous: VsockChannel
+    ) async throws {
+        try await waitUntil {
+            DispatchQueue.main.sync { agent.liveChannelForTesting.map { $0 !== previous } ?? false }
+        }
+    }
+
     // MARK: - Outbound (agent is the sender)
 
     @Test("outbound text: a local change is announced as a metadata offer, then streamed on request")
@@ -2103,6 +2117,7 @@ struct VsockGuestClipboardAgentTests {
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
+        let firstChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
 
         // Trigger a poll — agent should offer "persistent text"
         await MainActor.run { agent.checkClipboardChange() }
@@ -2115,12 +2130,10 @@ struct VsockGuestClipboardAgentTests {
 
         // Close first connection to force reconnect
         host0.close()
-        try await waitUntil { agent.liveChannelForTesting == nil }
+        try await waitForReconnect(of: agent, replacing: firstChannel)
 
-        // Wait for second connection
-        try await waitUntil { agent.liveChannelForTesting != nil }
-
-        // After reconnect, lastSeenDigest is cleared — next poll should re-offer
+        // The new connection's endpoint starts with no offer-dedup digest, so the
+        // next poll re-offers the unchanged pasteboard.
         await MainActor.run { agent.checkClipboardChange() }
 
         let offer2Frame = try await nextFrame(from: host1)
@@ -2166,6 +2179,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
+        let firstChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
 
         // The Mac's copy becomes a promise on the guest pasteboard, and a paste
         // inside the guest materializes it — so its bytes are resident, exactly
@@ -2183,8 +2197,7 @@ struct VsockGuestClipboardAgentTests {
         // its providers hold the offer's cache alive — and the change-count gate
         // is unset for the new host.
         host0.close()
-        try await waitUntil { agent.liveChannelForTesting == nil }
-        try await waitUntil { agent.liveChannelForTesting != nil }
+        try await waitForReconnect(of: agent, replacing: firstChannel)
 
         // The first poll of the new connection must leave the standing promise
         // alone: reading it would fire its providers and offer the Mac's own
