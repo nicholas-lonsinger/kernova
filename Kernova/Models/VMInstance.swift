@@ -641,9 +641,8 @@ final class VMInstance {
     }
 
     /// The rule deleting `snapshot` breaks right now, `nil` when it breaks
-    /// none: deleting the Ephemeral baseline turns the mode off, which no VM
-    /// with a guest in memory takes — that session was started on the promise
-    /// of being undone.
+    /// none: the Ephemeral baseline's delete is unavailable while the guest is
+    /// in memory, per #1546.
     ///
     /// Beside admission rather than in it, so the delete reads it again under
     /// its own operation's permit.

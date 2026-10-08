@@ -784,9 +784,8 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     case cloneWritingOutsideBundle
     /// Snapshotting a VM whose guest can write to a disk outside its bundle.
     case snapshotWritingOutsideBundle
-    /// Deleting a VM's Ephemeral Mode baseline, which turns the mode off — taken
-    /// only while no guest runs, so a session started under the mode is undone
-    /// as it promised.
+    /// Deleting a VM's Ephemeral Mode baseline, which turns the mode off —
+    /// unavailable while the guest is in memory, per #1546.
     case ephemeralBaselineDelete
 
     /// The rule, as every surface states it.
