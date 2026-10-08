@@ -349,6 +349,7 @@ struct SidebarLayout {
     /// was saved — reads apart from ``VMLibraryFilter/Network/unlisted``: the
     /// filter still holds it, and it admits no VM.
     static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
+        if network == .anyBridged { return anyBridgedTitle }
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
         if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
             !listed.contains(where: { $0.id == id && $0.kind == kind })
@@ -361,11 +362,15 @@ struct SidebarLayout {
     /// How a filter names a network it holds that the library no longer lists.
     static let heldUnlistedNetworkTitle = "Network No Longer in This Library"
 
+    /// How a filter names ``VMLibraryFilter/Network/anyBridged``.
+    static let anyBridgedTitle = "Any Bridged Interface"
+
     /// Where a network sorts among others: the order the Mode picker lists
     /// its choices in, with ``VMLibraryFilter/Network/unlisted`` after the
     /// vmnet networks. A named network a filter holds sorts with its mode's
     /// named networks, listed or not.
     static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
+        if network == .anyBridged { return 7 }
         guard let choice = network.choice else { return 6 }
         switch choice {
         case .vmnet(let kind, let membership):

@@ -74,9 +74,14 @@ final class SettingsNamedListEditor: NSObject {
     /// Whether the last read found the list unreadable, which the pane shows
     /// in place of the table.
     private(set) var isUnreadable = false
-    /// The name field being edited, while one is.
-    private var editingNameField: NSTextField?
-    private var reloadAfterEditing = false
+    /// The name field the window's field editor is editing, from the moment
+    /// it opens — before anything is typed.
+    private var editingNameField: NSTextField? {
+        guard let editor = tableView.window?.firstResponder as? NSText,
+            let field = editor.delegate as? NSTextField, field.isDescendant(of: tableView)
+        else { return nil }
+        return field
+    }
     private var observation: ObservationLoop?
 
     init(
@@ -199,10 +204,12 @@ final class SettingsNamedListEditor: NSObject {
     /// Re-reads the items and repaints the list, keeping the selection on the
     /// item it was on.
     func reload() {
-        guard editingNameField == nil else {
-            reloadAfterEditing = true
-            return
-        }
+        // A reload would end the edit; the edit's end repaints instead.
+        guard editingNameField == nil else { return }
+        repaint()
+    }
+
+    private func repaint() {
         guard let source else { return }
         let selected = selectedID
         let listed = source.listedIDs()
@@ -358,24 +365,21 @@ extension SettingsNamedListEditor: NSTableViewDelegate {
 // MARK: - NSTextFieldDelegate
 
 extension SettingsNamedListEditor: NSTextFieldDelegate {
-    func controlTextDidBeginEditing(_ obj: Notification) {
-        editingNameField = obj.object as? NSTextField
-    }
-
-    /// Commits a rename typed into a name cell; a name the source refuses
+    /// Commits a rename typed into a name cell, then repaints the list with
+    /// every change that arrived during the edit; a name the source refuses
     /// puts the item's name back.
+    ///
+    /// AppKit sends this whether or not anything was typed, while the field
+    /// editor is still the window's first responder — so ``reload()`` called
+    /// from here still waits, and the repaint is this method's own.
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField, let source else { return }
-        editingNameField = nil
         let row = tableView.row(for: field)
         if ids.indices.contains(row), field.stringValue != source.name(of: ids[row]) {
             let id = ids[row]
             let name = field.stringValue
             attempt("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
         }
-        if reloadAfterEditing || ids.indices.contains(row) {
-            reloadAfterEditing = false
-            reload()
-        }
+        repaint()
     }
 }

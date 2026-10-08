@@ -279,7 +279,9 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         .body(
             "Starts this virtual machine each time Kernova opens. A suspended virtual machine resumes from its saved state; one that has not finished its initial setup is left alone."
         ),
-        .body("Virtual machines start in the order they appear in the sidebar."),
+        .body(
+            "Virtual machines start in the library\u{2019}s manual order: the order the sidebar lists them in when sorted by Manual, ungrouped and unfiltered."
+        ),
         .body("Turn on Open at Login in Settings → General to have it running after you log in."),
     ]
 

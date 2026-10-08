@@ -25,7 +25,7 @@ struct MainMenuViewMenuTests {
 
         /// The View menu as it reads once opened.
         func opened() -> NSMenu {
-            controller.menuNeedsUpdate(viewMenu)
+            viewMenu.delegate?.menuNeedsUpdate?(viewMenu)
             viewMenu.update()
             return viewMenu
         }
@@ -250,6 +250,15 @@ struct MainMenuViewMenuTests {
         }
     }
 
+    /// A key-down as typed on an ANSI keyboard. AppKit populates a menu bar's
+    /// menus while matching such an event, and not while matching one
+    /// `NSEvent.keyEvent` makes (observed on macOS 27.0).
+    private func typedKey(_ keyCode: CGKeyCode, _ flags: CGEventFlags) throws -> NSEvent {
+        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true))
+        event.flags = flags
+        return try #require(NSEvent(cgEvent: event))
+    }
+
     @Test("A Sort By shortcut sets the sort through the menu bar's own key matching")
     func shortcutMatches() throws {
         let fixture = try makeFixture(sidebarAttached: false) { $0.library.admitFixture(name: "A") }
@@ -258,15 +267,33 @@ struct MainMenuViewMenuTests {
         fixture.host.librarySidebar = fixture.sidebar
         fixture.viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
 
-        let event = try #require(
-            NSEvent.keyEvent(
-                with: .keyDown, location: .zero, modifierFlags: [.control, .option, .command], timestamp: 0,
-                windowNumber: 0, context: nil, characters: "1", charactersIgnoringModifiers: "1",
-                isARepeat: false, keyCode: 18))
+        // ⌃⌥⌘1
+        let event = try typedKey(18, [.maskControl, .maskAlternate, .maskCommand])
         #expect(fixture.mainMenu.performKeyEquivalent(with: event))
 
         #expect(fixture.viewModel.sidebarOptions.sort == SidebarViewMenu.sortChoices.first)
         #expect(fixture.viewModel.sidebarOptions.filter == VMLibraryFilter(guestOSes: [.linux]))
+    }
+
+    @Test("Matching a shortcut leaves the sidebar items as built")
+    func matchingDoesNotRebuild() throws {
+        var vm: VMInstance?
+        var folder: VMFolder?
+        let fixture = try makeFixture { viewModel in
+            let admitted = viewModel.library.admitFixture(name: "A")
+            vm = admitted
+            folder = try viewModel.library.createFolder(named: "Lab", members: [admitted.id])
+        }
+        fixture.viewModel.selection = SidebarRowKey(
+            section: .folder(try #require(folder).id), group: nil, entryID: try #require(vm).id)
+        let built = fixture.opened().items
+
+        // ⌘C, which the Edit menu holds.
+        _ = fixture.mainMenu.performKeyEquivalent(with: try typedKey(8, .maskCommand))
+
+        let after = fixture.viewMenu.items
+        #expect(after.count == built.count)
+        #expect(zip(after, built).allSatisfy { $0 === $1 })
     }
 
     // MARK: - Expansion

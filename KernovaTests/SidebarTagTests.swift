@@ -471,6 +471,21 @@ struct SidebarTagTests {
         }
     }
 
+    @Test("Renaming or recoloring a tag deleted since the pane read it is refused, and defines nothing")
+    func settingsPaneRefusesADeletedTag() throws {
+        let viewModel = makeViewModel()
+        let library = viewModel.library
+        let work = try library.createTag(named: "Work", color: .blue)
+        let pane = TagsSettingsViewController(viewModel: viewModel)
+        pane.loadViewIfNeeded()
+        try library.deleteTag(work.id)
+
+        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) { try pane.rename(work.id, to: "Office") }
+        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) { try pane.recolor(work.id, to: .red) }
+        #expect(library.tags == [])
+        #expect(VMOrganizationDirectory.ChangeError.missing(.tag).errorDescription == "The tag no longer exists.")
+    }
+
     @Test("Deleting a tag takes it off every VM and keeps every filter's condition on it, as its question says")
     func settingsPaneDeletes() throws {
         let viewModel = makeViewModel()

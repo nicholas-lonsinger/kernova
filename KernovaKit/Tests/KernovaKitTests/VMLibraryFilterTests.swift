@@ -267,7 +267,38 @@ struct VMLibraryFilterTests {
         }
         #expect(
             VMLibraryFilter.Network.spellings
-                == ["shared", "shared:isolated", "hostOnly", "hostOnly:isolated", "bridged", "none", "unlisted"])
+                == [
+                    "shared", "shared:isolated", "hostOnly", "hostOnly:isolated", "bridged", "bridged:automatic",
+                    "none", "unlisted",
+                ])
+    }
+
+    @Test("bridged spells every bridged network, bridged:automatic Automatic, bridged:<interface> that interface")
+    func bridgedSpellings() throws {
+        #expect(VMLibraryFilter.Network(spelling: "bridged") == .anyBridged)
+        #expect(VMLibraryFilter.Network(spelling: "BRIDGED") == .anyBridged)
+        #expect(VMLibraryFilter.Network(spelling: "bridged:automatic") == Self.network(.bridged(nil)))
+        #expect(VMLibraryFilter.Network(spelling: "Bridged:Automatic") == Self.network(.bridged(nil)))
+        #expect(VMLibraryFilter.Network(spelling: "bridged:en0") == Self.network(.bridged("en0")))
+
+        let automatic = subject(network: .bridged(nil))
+        let en0 = subject(network: .bridged("en0"))
+        let en1 = subject(network: .bridged("en1"))
+        let shared = subject(network: .shared)
+        func admitted(_ spelling: String) throws -> [Bool] {
+            let filter = VMLibraryFilter(networks: [try #require(VMLibraryFilter.Network(spelling: spelling))])
+            return [automatic, en0, en1, shared].map(filter.admits)
+        }
+        #expect(try admitted("bridged") == [true, true, true, false])
+        #expect(try admitted("bridged:automatic") == [true, false, false, false])
+        #expect(try admitted("bridged:en0") == [false, true, false, false])
+
+        #expect(VMLibraryFilter.Network.anyBridged.choice == nil)
+        #expect(VMLibraryFilter.Network(rawValue: VMLibraryFilter.Network.anyBridged.rawValue) == .anyBridged)
+        #expect(
+            try JSONDecoder().decode(
+                VMLibraryFilter.Network.self, from: JSONEncoder().encode(VMLibraryFilter.Network.anyBridged))
+                == .anyBridged)
     }
 
     @Test("A network spelling never names a named network, which only the library resolves")

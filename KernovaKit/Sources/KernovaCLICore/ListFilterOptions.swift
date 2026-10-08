@@ -19,7 +19,9 @@ struct ListFilterOptions: ParsableArguments {
         help: ArgumentHelp(
             "List only VMs on this network, ignoring case: "
                 + VMLibraryFilter.Network.spellings.joined(separator: ", ")
-                + ", bridged:<interface>, or a named network's name or identifier.",
+                + ", bridged:<interface>, or a named network's name or identifier. "
+                + "bridged lists VMs bridged to any interface, Automatic included; "
+                + "bridged:automatic lists only Automatic.",
             valueName: "network"),
         completion: CompletionSource.networkFilter)
     var networks: [String] = []

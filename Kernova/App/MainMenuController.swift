@@ -64,6 +64,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     /// The View menu, retained so its opening can rebuild its sidebar items.
     private var viewMenu: NSMenu?
+    /// The View menu's delegate, held here because a menu holds its delegate
+    /// weakly.
+    private lazy var viewMenuDelegate = ViewMenuDelegate { [weak self] in self?.rebuildViewMenuSidebarSection() }
     /// Builds the View menu's sidebar items from the rows the sidebar's
     /// header menus are built from. A pick that edits the library section's
     /// options sets them on the library, which holds them whether or not a
@@ -186,17 +189,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Menu Updates
 
-    /// Apple documents this as also called while AppKit matches key
-    /// equivalents (`NSMenuDelegate.menuHasKeyEquivalent(_:for:target:action:)`);
-    /// every rebuild here holds whether or not it runs then.
+    /// AppKit also calls this while it matches a key equivalent against the
+    /// menu bar — "If the delegate doesn't define this method, the menu is
+    /// populated to find out if any items have a matching key equivalent"
+    /// (`NSMenuDelegate.menuHasKeyEquivalent(_:for:target:action:)`) — so it
+    /// runs on keystrokes that open no menu, and every rebuild here holds
+    /// whether or not it runs then.
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === windowsMenu {
             clipboardMenuItem?.isEnabled =
                 host?.menuCommandTarget(of: nil).map {
                     viewModel.capabilities.isAvailable(.showClipboard, on: $0)
                 } ?? false
-        } else if menu === viewMenu {
-            rebuildViewMenuSidebarSection()
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
             // the next open.
@@ -554,7 +558,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         viewMenu.addItem(sidebarSectionEnd)
         self.viewMenu = viewMenu
         viewMenuSidebarSectionEnd = sidebarSectionEnd
-        viewMenu.delegate = self
+        viewMenu.delegate = viewMenuDelegate
         rebuildViewMenuSidebarSection()
         let toggleToolbarItem = viewMenu.addItem(
             withTitle: "Show Toolbar",
@@ -729,5 +733,35 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         mainMenu.addItem(helpMenuItem)
 
         return mainMenu
+    }
+}
+
+/// The View menu's delegate, which rebuilds its sidebar items only when the
+/// menu is shown or searched, never while a key equivalent is matched.
+///
+/// The rebuild reads the library's organization file while a smart group or
+/// folder row is selected, and matching would otherwise populate the menu on
+/// every Command keystroke. The items as last built answer a match instead:
+/// each acts the same however stale it is.
+@MainActor
+private final class ViewMenuDelegate: NSObject, NSMenuDelegate {
+    private let rebuild: () -> Void
+
+    init(rebuild: @escaping () -> Void) {
+        self.rebuild = rebuild
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuild()
+    }
+
+    /// Names no target, which skips populating the menu (`NSMenu.h`:
+    /// "bypasses populating the menu for checking for key equivalents") and
+    /// leaves AppKit matching the items the menu holds.
+    func menuHasKeyEquivalent(
+        _ menu: NSMenu, for event: NSEvent, target: AutoreleasingUnsafeMutablePointer<AnyObject?>,
+        action: UnsafeMutablePointer<Selector?>
+    ) -> Bool {
+        false
     }
 }

@@ -194,6 +194,21 @@ struct VMCommandCoreListingTests {
         #expect(item == "network named \u{201C}Nowhere\u{201D}")
     }
 
+    @Test("bridged lists every bridged VM, bridged:automatic only Automatic, bridged:<interface> only that one")
+    func bridgedTextsResolve() throws {
+        let harness = makeHarness()
+        makeInstance(in: harness, name: "Automatic") { $0.applyNetworkMode(.bridged) }
+        makeInstance(in: harness, name: "Wired") {
+            $0.applyNetworkMode(.bridged)
+            $0.bridgedInterfaceIdentifier = "en0"
+        }
+        makeInstance(in: harness, name: "Shared") { $0.applyNetworkMode(.shared) }
+
+        #expect(try listed(harness, VMListQuery(networks: ["bridged"])) == ["Automatic", "Wired"])
+        #expect(try listed(harness, VMListQuery(networks: ["Bridged:Automatic"])) == ["Automatic"])
+        #expect(try listed(harness, VMListQuery(networks: ["bridged:en0"])) == ["Wired"])
+    }
+
     @Test("A text naming both a mode and a named network is refused with the identifier that picks the network")
     func ambiguousNetworkTextIsRefused() throws {
         let harness = makeHarness()

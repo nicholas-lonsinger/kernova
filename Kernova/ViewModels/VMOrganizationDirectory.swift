@@ -210,11 +210,16 @@ final class VMOrganizationDirectory {
         case nameRequired(Element)
         case nameTaken(String, Element)
         case nameIsIdentifier(String, Element)
+        /// The element the change names is not in the file — deleted since
+        /// the caller read it.
+        case missing(Element)
         case unreadable
         case unsaved(String)
 
         var errorDescription: String? {
             switch self {
+            case .missing(let kind):
+                "The \(kind.noun) no longer exists."
             case .nameRequired(let kind):
                 "A \(kind.noun) needs a name."
             case .nameTaken(let name, let kind):
@@ -436,13 +441,13 @@ final class VMOrganizationDirectory {
     func renameTag(_ id: UUID, to name: String) throws {
         try commit { file in
             let name = try Self.validatedName(name, of: .tag, for: id, among: file.tags.map { ($0.id, $0.name) })
-            Self.edit(id, in: &file.tags) { $0.name = name }
+            try Self.edit(id, of: .tag, in: &file.tags) { $0.name = name }
         }
     }
 
     /// Shows the tag `id` identifies in `color`.
     func setColor(_ color: VMTagColor, ofTag id: UUID) throws {
-        try commit { file in Self.edit(id, in: &file.tags) { $0.color = color } }
+        try commit { file in try Self.edit(id, of: .tag, in: &file.tags) { $0.color = color } }
     }
 
     /// Stops defining the tag `id` identifies.
@@ -481,11 +486,12 @@ final class VMOrganizationDirectory {
         return trimmed
     }
 
-    /// Applies `change` to the element of `list` that `id` identifies, if any.
+    /// Applies `change` to the element of `list` that `id` identifies,
+    /// refusing when none does.
     private static func edit<Listed: Identifiable>(
-        _ id: Listed.ID, in list: inout [Listed], _ change: (inout Listed) -> Void
-    ) {
-        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+        _ id: Listed.ID, of kind: Element, in list: inout [Listed], _ change: (inout Listed) -> Void
+    ) throws {
+        guard let index = list.firstIndex(where: { $0.id == id }) else { throw ChangeError.missing(kind) }
         change(&list[index])
     }
 
