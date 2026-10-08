@@ -77,7 +77,7 @@ A new host↔guest feature scopes to macOS guests: its issue or design states th
 
 No compatibility path is written for any shape that is not the current one. A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
 
-**Persisted formats:** adding a field to a persisted `Codable` type is `decodeIfPresent ?? default` with the default a new instance gets, and nothing else. Migration code takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
+**Persisted formats:** a field added to a persisted `Codable` type decodes through a `ConfigFileDecoding.swift` form, so Check Config Files can repair it: `default:`, read from a new instance, for a preference; `absentMeans:` for a fact — what exists on disk or happened — which no repair replaces; `repairingTo:` for a required field. A list's `default:` repairs entry by entry. Migration code takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
 
 **The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and the `MARKETING_VERSION` bump is the whole remedy.
 

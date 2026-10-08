@@ -477,8 +477,9 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.networkEnabled = try c.decode(Bool.self, forKey: .networkEnabled)
         self.networkMode = try c.decode(
             VMNetworkMode.self, forKey: .networkMode, default: defaults.networkMode, in: decoder)
-        self.bridgedInterfaceIdentifier = try c.decodeIfPresent(
-            String.self, forKey: .bridgedInterfaceIdentifier)
+        self.bridgedInterfaceIdentifier = try c.decode(
+            String?.self, forKey: .bridgedInterfaceIdentifier, default: defaults.bridgedInterfaceIdentifier,
+            in: decoder)
         self.networkMembership = try c.decode(
             VMNetworkMembership.self, forKey: .networkMembership, default: defaults.networkMembership,
             in: decoder)
@@ -512,7 +513,8 @@ struct VMConfiguration: Codable, Sendable, Equatable {
         self.genericMachineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .genericMachineIdentifierData)
         self.kernelPath = try c.decodeIfPresent(String.self, forKey: .kernelPath)
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
-        self.kernelCommandLine = try c.decodeIfPresent(String.self, forKey: .kernelCommandLine)
+        self.kernelCommandLine = try c.decode(
+            String?.self, forKey: .kernelCommandLine, default: defaults.kernelCommandLine, in: decoder)
         self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
         self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)

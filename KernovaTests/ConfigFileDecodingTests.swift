@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -496,5 +497,78 @@ struct ConfigFileDecodingTests {
         #expect(repaired.folders.map(\.id) == [folder])
         #expect(repaired.tags.map(\.id) == [tag])
         #expect(repaired.sections.map(\.id) == [.library, .folder(folder)])
+    }
+
+    // MARK: - Preferences repaired to a new instance's value
+
+    @Test("A VM's bridged interface and kernel command line that don't decode repair to a new VM's")
+    func configurationOptionalPreferencesRepair() throws {
+        let data = try configJSON {
+            $0["bridgedInterfaceIdentifier"] = 5
+            $0["kernelCommandLine"] = ["console=hvc0"]
+        }
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        }
+        let diagnosis = diagnose(data)
+        let fresh = VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+
+        #expect(
+            diagnosis.problems.map(\.path?.description) == ["$.bridgedInterfaceIdentifier", "$.kernelCommandLine"])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault("null"), .useDefault("null")])
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.bridgedInterfaceIdentifier == fresh.bridgedInterfaceIdentifier)
+        #expect(repaired.kernelCommandLine == fresh.kernelCommandLine)
+    }
+
+    @Test("A VM's fullscreen display that doesn't decode repairs to a new VM's")
+    func hostStateFullscreenDisplayRepairs() throws {
+        let data = Data(#"{"lastFullscreenDisplayID": "main", "displayPreference": "fullscreen"}"#.utf8)
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMHostState.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.lastFullscreenDisplayID"])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault("null")])
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            VMHostState.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.lastFullscreenDisplayID == VMHostState().lastFullscreenDisplayID)
+        #expect(repaired.displayPreference == .fullscreen)
+    }
+
+    @Test("Sidebar view options that don't decode repair to new options', a filter's bad entry removed alone")
+    func sidebarViewOptionsRepair() throws {
+        let data = Data(
+            #"""
+            {"sort": "byColor", "grouping": "state", "showsDetails": 2,
+             "filter": {"states": ["running", "levitating"], "ephemeralOnly": "yes", "guestOSes": ["linux"]}}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(SidebarViewOptions.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: SidebarViewOptions.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+        let fresh = SidebarViewOptions()
+
+        #expect(
+            diagnosis.problems.map(\.path?.description) == [
+                "$.filter.states[1]", "$.filter.ephemeralOnly", "$.sort", "$.showsDetails",
+            ])
+        #expect(
+            diagnosis.problems.map(\.repair) == [
+                .removeEntry, .useDefault(String(fresh.filter.ephemeralOnly)), .useDefault(fresh.sort.rawValue),
+                .useDefault(String(fresh.showsDetails)),
+            ])
+        let repaired = try JSONDecoder().decode(SidebarViewOptions.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.sort == fresh.sort)
+        #expect(repaired.showsDetails == fresh.showsDetails)
+        #expect(repaired.grouping == .state)
+        #expect(repaired.filter.states == [.running])
+        #expect(repaired.filter.ephemeralOnly == fresh.filter.ephemeralOnly)
+        #expect(repaired.filter.guestOSes == [.linux])
     }
 }

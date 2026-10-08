@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The user's preferred display hosting for a VM on start/resume.
 enum VMDisplayPreference: String, Codable, Sendable, Equatable, CaseIterable {
@@ -101,8 +102,9 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.displayPreference = try c.decode(
             VMDisplayPreference.self, forKey: .displayPreference,
             default: defaults.displayPreference, in: decoder)
-        self.lastFullscreenDisplayID =
-            try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
+        self.lastFullscreenDisplayID = try c.decode(
+            UInt32?.self, forKey: .lastFullscreenDisplayID, default: defaults.lastFullscreenDisplayID,
+            in: decoder)
         self.agentInstallNudgeDismissed = try c.decode(
             Bool.self, forKey: .agentInstallNudgeDismissed,
             default: defaults.agentInstallNudgeDismissed, in: decoder)
