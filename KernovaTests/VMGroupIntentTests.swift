@@ -118,9 +118,17 @@ struct VMGroupIntentTests {
                 VMGroupActionResult(vm: alpha, outcome: .done(verb: .start)),
             ])
 
-        let done = try await makeGateway(commands).groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
+        let index = MockVMEntityIndex()
+        let gateway = VMIntentGateway(
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: index,
+            record: makeTestIndexRecord())
+
+        let done = try await gateway.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
 
         #expect(done.map(\.id) == [beta.id, alpha.id])
+        // Read VM by VM: the one listing is the readiness sync's.
+        try await index.awaitOperations(1)
+        #expect(commands.listCallCount == 1)
     }
 
     @Test("A VM the action left undone fails the intent, naming each such VM")

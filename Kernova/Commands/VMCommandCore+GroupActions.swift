@@ -14,7 +14,7 @@ extension VMCommandCore {
         let instances = entries(in: try self.group(group, verb: .groups).selection).compactMap { entry in
             if case .vm(let instance) = entry { instance } else { nil }
         }
-        library.refreshFromOtherCopies(only: Set(instances.map(\.id)))
+        for instance in instances { instance.activity.probeOtherCopyHold() }
         return Dictionary(
             uniqueKeysWithValues: VMGroupAction.allCases.map { action in
                 let acted = instances.count { instance in
@@ -38,13 +38,15 @@ extension VMCommandCore {
     /// in the result rather than raised — so the caller owes the user one
     /// account of everything left undone.
     ///
-    /// The members are the ones the group holds when the action begins; one
-    /// added later is not acted on, and one taken out of the group is. Each is
-    /// looked up again when its turn comes and decided as it stands then,
-    /// against what another copy of Kernova holds then: an arrival that has
-    /// become a VM is acted on, a VM the action stopped concerning is passed
-    /// over, and one that has left the library is passed over as
-    /// ``VMGroupActionOutcome/PassOver/removed``.
+    /// The members are the ones the group's file holds when the action
+    /// begins; one added later is not acted on. Each is looked up again when
+    /// its turn comes and decided as it stands then — against what another
+    /// copy of Kernova holds then, and the group as this copy holds it then,
+    /// without reading the file again: an arrival that has become a VM is
+    /// acted on, a VM the action stopped concerning is passed over, and one
+    /// that has left the library or the group is passed over as
+    /// ``VMGroupActionOutcome/PassOver/removed`` or
+    /// ``VMGroupActionOutcome/PassOver/leftGroup``.
     ///
     /// Cancelling the calling task — a client hanging up — stops the action
     /// between VMs: the VM in hand finishes, and every later one is reported as
@@ -53,9 +55,8 @@ extension VMCommandCore {
     /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
     ///   library does not list, before any VM is acted on.
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
-        library.refreshFromOtherCopies()
         let resolved = try self.group(group, verb: action.verb)
-        let members = entries(in: resolved.selection).map { (id: $0.id, summary: summary($0)) }
+        let members = entries(in: resolved.selection)
         #log(
             Self.logger, .notice,
             "\(action.rawValue, privacy: .public) on every VM in '\(resolved.name, privacy: .public)': \(members.count, privacy: .public) VM(s)"
@@ -63,10 +64,11 @@ extension VMCommandCore {
         var results: [VMGroupActionResult] = []
         for member in members {
             guard !Task.isCancelled else {
-                results.append(VMGroupActionResult(vm: member.summary, outcome: .passedOver(reason: .cancelled)))
+                let current = library.entries.first { $0.id == member.id }?.addressable ?? member
+                results.append(VMGroupActionResult(vm: summary(current), outcome: .passedOver(reason: .cancelled)))
                 continue
             }
-            results.append(await result(of: action, on: member.id, summarized: member.summary))
+            results.append(await result(of: action, on: member, in: resolved))
         }
         let report = VMGroupActionReport(
             action: action, groupKind: resolved.kind, groupID: resolved.id, groupName: resolved.name,
@@ -79,20 +81,33 @@ extension VMCommandCore {
         return report
     }
 
-    /// What `action` does to the member `id`, looked up and decided now;
-    /// `summary` is how it stood when the action began.
+    /// What `action` does to `member` of `group`, looked up and decided now.
     private func result(
-        of action: VMGroupAction, on id: UUID, summarized summary: VMSummary
+        of action: VMGroupAction, on member: AddressableEntry, in group: VMResolvedGroup
     ) async -> VMGroupActionResult {
-        library.refreshFromOtherCopies(only: [id])
-        guard let entry = library.entries.first(where: { $0.id == id })?.addressable else {
-            return VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .removed))
+        guard let row = library.entries.first(where: { $0.id == member.id }), let entry = row.addressable else {
+            return VMGroupActionResult(vm: summary(member), outcome: .passedOver(reason: .removed))
+        }
+        if case .vm(let instance) = entry { instance.activity.probeOtherCopyHold() }
+        guard isStill(row, in: group) else {
+            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .leftGroup))
         }
         guard case .vm(let instance) = entry else {
-            return VMGroupActionResult(vm: self.summary(entry), outcome: .passedOver(reason: .state))
+            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .state))
         }
         let outcome = await self.outcome(of: action, on: instance)
-        return VMGroupActionResult(vm: self.summary(instance), outcome: outcome)
+        return VMGroupActionResult(vm: summary(instance), outcome: outcome)
+    }
+
+    /// Whether `row` is in `group` as this copy holds the library's
+    /// organization now, without reading its file again — and, while that
+    /// file is unreadable, as it was when the action began.
+    private func isStill(_ row: LibraryEntry, in group: VMResolvedGroup) -> Bool {
+        guard case .listed(let organization) = library.organization.state else { return true }
+        guard let current = VMResolvedGroup(group.reference, in: organization),
+            let subject = library.sidebarContext.subject(of: row)
+        else { return false }
+        return current.membership.contains(row, subject)
     }
 
     /// Where `instance` stands for `action`: the step the action takes it by,
@@ -103,8 +118,7 @@ extension VMCommandCore {
     }
 
     /// Where `instance` stands for `action` now, by
-    /// ``VMCapabilityCatalog/groupAction(_:on:)`` — the one reading of a VM
-    /// another copy of Kernova holds as a pass-over.
+    /// ``VMCapabilityCatalog/groupAction(_:on:)``.
     private func turn(of action: VMGroupAction, on instance: VMInstance) -> Turn {
         switch capabilities.groupAction(action, on: instance) {
         case .acts(let step):
@@ -144,14 +158,7 @@ extension VMCommandCore {
         } catch is UnattendedGuestSetupRefusal {
             return .passedOver(reason: .guestSetup)
         } catch {
-            let refusal = bringUpFailure(error, verb: step.verb, on: instance)
-            // Another copy took the VM after the turn read it free. The
-            // refusing commit recorded the hold, so the standing read again
-            // passes the VM over as one found held at its turn.
-            if case .heldByAnotherCopy = refusal, case .passesOver(let reason) = turn(of: action, on: instance) {
-                return .passedOver(reason: reason)
-            }
-            return Self.outcome(of: refusal, takenBy: step.verb)
+            return Self.outcome(of: bringUpFailure(error, verb: step.verb, on: instance), takenBy: step.verb)
         }
     }
 
@@ -159,11 +166,15 @@ extension VMCommandCore {
     /// failed with `refusal`.
     ///
     /// A question becomes the VM's account of what to answer; the app quitting
-    /// is nobody's failure, so nobody is told about it; anything else failed.
+    /// is nobody's failure, so nobody is told about it; a VM another copy of
+    /// Kernova took after its turn read it free is passed over, as one found
+    /// held at its turn is; anything else failed.
     static func outcome(of refusal: CommandError, takenBy verb: VMVerb) -> VMGroupActionOutcome {
         switch refusal {
         case .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired:
             .needsAnswer(verb: verb, question: refusal.dto)
+        case .heldByAnotherCopy:
+            .passedOver(reason: .state)
         case .terminating:
             .passedOver(reason: .refused(error: refusal.dto))
         default:

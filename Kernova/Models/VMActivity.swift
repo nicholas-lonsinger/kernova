@@ -687,6 +687,16 @@ final class VMActivity {
         setHold(heldElsewhere ? .anotherCopy : .none)
     }
 
+    /// Asks the bundle whether another copy of Kernova holds it and records the
+    /// answer, reading nothing else — for a VM at rest holding no lock,
+    /// answering whether it asked.
+    @discardableResult
+    func probeOtherCopyHold() -> Bool {
+        guard phase.isAtRest, !hold.isThisCopy, let owner else { return false }
+        recordOtherCopyHold(heldElsewhere: owner.bundle.isRunLockedElsewhere())
+        return true
+    }
+
     /// Catches a VM at rest up with what another copy of Kernova may have done
     /// while this copy held no lock: whether that copy holds the bundle now,
     /// the four state files it may have written, and where the VM rests.
@@ -698,9 +708,7 @@ final class VMActivity {
     /// nothing.
     @discardableResult
     func refreshFromBundle() -> [UnreadableConfigFile]? {
-        guard phase.isAtRest, !hold.isThisCopy, let owner else { return nil }
-        let bundle = owner.bundle
-        recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
+        guard probeOtherCopyHold(), let bundle = owner?.bundle else { return nil }
         let unreadable: [UnreadableConfigFile]
         do throws(UnreadableConfigFile) {
             unreadable = try bundle.refresh()

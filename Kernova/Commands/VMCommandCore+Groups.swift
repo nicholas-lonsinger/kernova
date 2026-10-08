@@ -38,11 +38,40 @@ struct VMResolvedGroup {
     let name: String
     let membership: VMGroupMembership
 
+    /// The group `reference` names in `organization`, `nil` for one it does
+    /// not list.
+    init?(_ reference: VMGroupReference, in organization: VMOrganizationDirectory.File) {
+        switch reference.kind {
+        case .smartGroup:
+            guard let group = organization.smartGroup(named: reference.name) else { return nil }
+            self.init(
+                kind: .smartGroup, id: group.id, name: group.name,
+                membership: VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil))
+        case .folder:
+            guard let folder = organization.folder(named: reference.name) else { return nil }
+            let members = Set(folder.members)
+            self.init(
+                kind: .folder, id: folder.id, name: folder.name,
+                membership: VMGroupMembership(
+                    contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
+        }
+    }
+
+    init(kind: VMGroupKind, id: UUID, name: String, membership: VMGroupMembership) {
+        self.kind = kind
+        self.id = id
+        self.name = name
+        self.membership = membership
+    }
+
     /// The entries this group holds, in its order: the folder's own, else the
     /// library's.
     var selection: VMLibrarySelection {
         VMLibrarySelection(filter: VMLibraryFilter(), groups: [membership], sort: .manual)
     }
+
+    /// What names this group by its identifier.
+    var reference: VMGroupReference { VMGroupReference(kind, named: id.uuidString) }
 }
 
 /// The listing and the library's groups: which VMs a filter, a network, a
@@ -136,25 +165,13 @@ extension VMCommandCore {
         }
     }
 
-    /// The group `reference` names, as the library holds it now.
+    /// The group `reference` names, as the library's file holds it now.
     func group(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
-        let organization = try readOrganization(verb: verb)
-        let notFound = CommandError.itemNotFoundOnHost(
-            item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
-        switch reference.kind {
-        case .smartGroup:
-            guard let group = organization.smartGroup(named: reference.name) else { throw notFound }
-            return VMResolvedGroup(
-                kind: .smartGroup, id: group.id, name: group.name,
-                membership: VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil))
-        case .folder:
-            guard let folder = organization.folder(named: reference.name) else { throw notFound }
-            let members = Set(folder.members)
-            return VMResolvedGroup(
-                kind: .folder, id: folder.id, name: folder.name,
-                membership: VMGroupMembership(
-                    contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
+        guard let group = VMResolvedGroup(reference, in: try readOrganization(verb: verb)) else {
+            throw CommandError.itemNotFoundOnHost(
+                item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
         }
+        return group
     }
 
     /// The entries the group `reference` names holds.

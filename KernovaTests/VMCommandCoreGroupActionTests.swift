@@ -11,6 +11,7 @@ import Testing
 @MainActor
 struct VMCommandCoreGroupActionTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "VMCommandCoreGroupActionTests")
 
     private struct Harness {
         let core: VMCommandCore
@@ -19,14 +20,14 @@ struct VMCommandCoreGroupActionTests {
         let storage: MockVMStorageService
     }
 
-    private func makeHarness() -> Harness {
+    private func makeHarness(networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)) -> Harness {
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
         let virtualization = MockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences)
+            fileSystem: fileSystem, preferences: preferences, networks: networks)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
@@ -444,7 +445,7 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.undone.isEmpty)
     }
 
-    @Test("A member deleted before its turn is passed over as gone, named as it stood when the action began")
+    @Test("A member deleted before its turn is passed over as gone, named as this copy last knew it")
     func memberDeletedBeforeItsTurnIsPassedOver() async throws {
         let harness = makeSuspendingHarness()
         let (first, second) = try makePair(in: harness)
@@ -460,18 +461,68 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.undone.isEmpty)
     }
 
+    @Test("A member taken out of the group before its turn is passed over, not acted on")
+    func memberTakenOutOfTheGroupBeforeItsTurnIsPassedOver() async throws {
+        let harness = makeSuspendingHarness()
+        let (first, second) = try makePair(in: harness)
+        let folder = try #require(harness.library.organization.state.listed?.folder(named: "Pair"))
+
+        let report = try await startPair(in: harness) {
+            try harness.library.remove(second.id, fromFolder: folder.id)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .leftGroup)])
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+        #expect(report.undone.isEmpty)
+    }
+
     // MARK: - Another copy's hold
 
-    @Test("The counts read another copy's hold as it stands now")
-    func countsReadTheHoldNow() throws {
-        let harness = makeHarness()
+    /// A harness whose `Networks.json` and one member's host state are
+    /// unreadable — what a refresh of the library or of a bundle would
+    /// report through the config check — and a count of each time it asks for
+    /// the check, with the folder "Pair" of `free` and `held`.
+    private func makeUnreadableHarness() throws -> (Harness, free: VMInstance, held: VMInstance, checks: () -> Int) {
+        let networksURL = scratch.url.appendingPathComponent("Networks.json")
+        let harness = makeHarness(networks: VMNetworkDirectory(fileURL: networksURL))
         let free = makeInstance(in: harness, name: "Free")
         let held = makeInstance(in: harness, name: "Held")
         try harness.library.organization.createFolder(named: "Pair", members: [free.id, held.id])
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: networksURL)
+        harness.storage.files.setUnreadable(
+            true, relativePath: VMBundleLayout.hostStateRelativePath, at: free.bundleURL)
+        var checks = 0
+        harness.library.onUnreadableFilesFound = { checks += 1 }
+        return (harness, free, held, { checks })
+    }
+
+    @Test("The counts read another copy's hold as it stands now, and nothing else")
+    func countsReadTheHoldNow() throws {
+        let (harness, _, held, checks) = try makeUnreadableHarness()
         harness.storage.files.holdElsewhere(held.bundleURL)
+        let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
 
         #expect(try harness.core.concernedCounts(in: VMGroupReference(.folder, named: "Pair"))[.start] == 1)
         #expect(held.heldByAnotherCopy)
+        // No bundle re-read, no library file reloaded, no config check asked for.
+        #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
+        #expect(checks() == 0)
+    }
+
+    @Test("Each turn reads another copy's hold and nothing else")
+    func turnsReadOnlyTheHold() async throws {
+        let (harness, _, held, checks) = try makeUnreadableHarness()
+        harness.storage.files.holdElsewhere(held.bundleURL)
+        let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
+
+        let report = try await harness.core.groupAction(.stop, on: VMGroupReference(.folder, named: "Pair"))
+
+        #expect(report.results.map(\.outcome) == [.passedOver(reason: .state), .passedOver(reason: .state)])
+        #expect(report.results[1].vm.heldByAnotherCopy)
+        #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
+        #expect(checks() == 0)
     }
 
     @Test("A VM another copy starts before its turn is passed over, not failed")
@@ -521,7 +572,7 @@ struct VMCommandCoreGroupActionTests {
 
     // MARK: - Error mapping
 
-    @Test("Every question a VM's verb raises is a VM to answer for, the quit is nobody's failure, the rest fail")
+    @Test("A question is a VM to answer for; the quit and another copy's hold are nobody's failure; the rest fail")
     func refusalsMapToOutcomes() {
         let vm = VMSummary(id: UUID(), name: "VM", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
         let confirmation = CommandError.confirmationRequired(
@@ -549,5 +600,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(
             VMCommandCore.outcome(of: .busy(vm: vm, operation: "saving"), takenBy: .suspend)
                 == .failed(error: .busy(vm: vm, operation: "saving")))
+        #expect(VMCommandCore.outcome(of: .heldByAnotherCopy(vm: vm), takenBy: .start) == .passedOver(reason: .state))
     }
 }

@@ -87,10 +87,23 @@ final class VMIntentGateway {
         return commands.list(.all).compactMap { entity(for: $0.id) }
     }
 
-    /// One listed VM's whole read, `nil` — asserted — for a row with none.
-    private func entity(for id: UUID) -> VMEntity? {
+    /// When the id a VM is read by was named, against when it is read.
+    private enum Naming {
+        /// In the same synchronous step, so a VM with no read is a programming
+        /// error.
+        case sameStep
+        /// Before a suspension, which the VM may not have outlived.
+        case beforeSuspension
+    }
+
+    /// One VM's whole read, `nil` for a VM with none: quietly for one named
+    /// before a suspension that has since left the library, and otherwise
+    /// asserted.
+    private func entity(for id: UUID, named: Naming = .sameStep) -> VMEntity? {
         do {
             return VMEntity(try commands.info(.id(id)))
+        } catch CommandError.notFound where named == .beforeSuspension {
+            return nil
         } catch {
             #log(
                 Self.logger, .fault,
@@ -414,11 +427,10 @@ final class VMIntentGateway {
                 throw CommandError.operationFailed(
                     verb: action.verb, title: report.undoneTitle, message: report.undoneMessage)
             }
-            let done = report.results.compactMap { result in
-                if case .done = result.outcome { result.vm.id } else { nil }
+            return report.results.compactMap { result in
+                guard case .done = result.outcome else { return nil }
+                return self.entity(for: result.vm.id, named: .beforeSuspension)
             }
-            let read = Dictionary(uniqueKeysWithValues: await self.vms(withIDs: done).map { ($0.id, $0) })
-            return done.compactMap { read[$0] }
         }
     }
 

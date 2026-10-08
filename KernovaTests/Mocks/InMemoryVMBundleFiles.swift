@@ -154,10 +154,14 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         lock.withLock { _ = lockedElsewhereUnprobed.insert(Self.key(url)) }
     }
 
-    /// Ends the hold ``holdElsewhere(_:)`` stood for.
+    /// Ends the hold ``holdElsewhere(_:)`` or
+    /// ``holdElsewhereAfterProbes(_:)`` stood for.
     func releaseElsewhere(_ url: URL) {
         if let target { return target.releaseElsewhere(url) }
-        lock.withLock { _ = lockedElsewhere.remove(Self.key(url)) }
+        lock.withLock {
+            _ = lockedElsewhere.remove(Self.key(url))
+            _ = lockedElsewhereUnprobed.remove(Self.key(url))
+        }
     }
 
     /// Thrown by every later lock attempt on the bundle at `url`, as opening a

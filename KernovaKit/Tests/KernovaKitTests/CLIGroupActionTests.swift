@@ -144,6 +144,7 @@ struct CLIGroupActionTests {
             (.passedOver(reason: .guestSetup), #"{"passedOver":{"reason":"guestSetup"}}"#),
             (.passedOver(reason: .cancelled), #"{"passedOver":{"reason":"cancelled"}}"#),
             (.passedOver(reason: .removed), #"{"passedOver":{"reason":"removed"}}"#),
+            (.passedOver(reason: .leftGroup), #"{"passedOver":{"reason":"leftGroup"}}"#),
             (
                 .passedOver(reason: .refused(error: no)),
                 #"{"passedOver":{"reason":{"refused":{"error":{"invalidArgument":{"message":"No."}}}}}}"#
@@ -210,6 +211,10 @@ struct CLIGroupActionTests {
             VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .removed)).line(for: .start)
                 == "Skipped Twin: it left the library before its turn.")
         #expect(!VMGroupActionOutcome.passedOver(reason: .removed).isUndone)
+        #expect(
+            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .leftGroup)).line(for: .start)
+                == "Skipped Twin: it was no longer in the group when its turn came.")
+        #expect(!VMGroupActionOutcome.passedOver(reason: .leftGroup).isUndone)
     }
 
     // MARK: - Exit
