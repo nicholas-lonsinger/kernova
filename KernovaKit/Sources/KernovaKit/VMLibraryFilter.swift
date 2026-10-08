@@ -75,21 +75,56 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     /// to, except that a VM on any named network the library does not list
     /// reads as the one value ``unlisted``. A filter can still hold a named
     /// network the library has stopped listing, as its own value, which no VM
-    /// reads as — so it admits none.
+    /// reads as — so it admits none. A filter can also hold ``anyBridged``,
+    /// which no VM reads as and which admits every bridged VM.
     ///
-    /// Coded as one string: ``unlisted``'s `unlisted`, else the choice's
-    /// ``NetworkModeChoice/rawValue``.
+    /// Coded as one string: ``unlisted``'s `unlisted`, ``anyBridged``'s
+    /// `bridged:*`, else the choice's ``NetworkModeChoice/rawValue``.
     public struct Network: Hashable, Sendable, Codable {
-        /// The choice, `nil` for ``unlisted``.
-        public let choice: NetworkModeChoice?
+        private enum Storage: Hashable, Sendable {
+            case choice(NetworkModeChoice)
+            case unlisted
+            case anyBridged
+        }
+
+        private let storage: Storage
+
+        /// The choice; `nil` for ``unlisted`` and ``anyBridged``.
+        public var choice: NetworkModeChoice? {
+            if case .choice(let choice) = storage { choice } else { nil }
+        }
 
         /// Every named network the library does not list.
-        public static let unlisted = Network(storing: nil)
+        public static let unlisted = Network(storage: .unlisted)
+        /// Every bridged network, Automatic and each interface alike.
+        public static let anyBridged = Network(storage: .anyBridged)
 
         private static let unlistedValue = "unlisted"
+        /// `*` is in no interface's identifier.
+        private static let anyBridgedValue = NetworkModeChoice.bridged("*").rawValue
+        private static let bridgedValue = NetworkModeChoice.bridged(nil).rawValue
+        private static let automaticSpelling = "automatic"
 
-        private init(storing choice: NetworkModeChoice?) {
-            self.choice = choice
+        private init(storage: Storage) {
+            self.storage = storage
+        }
+
+        private init(storing choice: NetworkModeChoice) {
+            self.storage = .choice(choice)
+        }
+
+        /// Whether a filter holding this value admits a VM whose network
+        /// reads as `network`.
+        public func admits(_ network: Network) -> Bool {
+            network.isAdmitted(by: [self])
+        }
+
+        /// Whether a filter holding `held` admits a VM whose network reads as
+        /// this one.
+        public func isAdmitted(by held: Set<Network>) -> Bool {
+            if held.contains(self) { return true }
+            guard case .bridged? = choice else { return false }
+            return held.contains(.anyBridged)
         }
 
         /// `choice` as a filter tells it apart: ``unlisted`` when it names a
@@ -106,6 +141,8 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         public init?(rawValue: String) {
             if rawValue == Self.unlistedValue {
                 self = .unlisted
+            } else if rawValue == Self.anyBridgedValue {
+                self = .anyBridged
             } else if let choice = NetworkModeChoice(rawValue: rawValue) {
                 self.init(storing: choice)
             } else {
@@ -114,17 +151,34 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         }
 
         /// The coded spelling.
-        public var rawValue: String { choice?.rawValue ?? Self.unlistedValue }
+        public var rawValue: String {
+            switch storage {
+            case .choice(let choice): choice.rawValue
+            case .unlisted: Self.unlistedValue
+            case .anyBridged: Self.anyBridgedValue
+            }
+        }
 
         /// The value `text` spells as typed, ignoring case but for a bridged
-        /// interface's identifier: a ``rawValue`` naming no named network, or
-        /// a vmnet mode alone (`nat`, `hostOnly`) for that mode's common
+        /// interface's identifier: `bridged` for ``anyBridged``,
+        /// `bridged:automatic` for Automatic, `bridged:<interface>` for that
+        /// interface, a vmnet mode alone (`nat`, `hostOnly`) for that
+        /// mode's common network, or another ``rawValue`` naming no named
         /// network. `nil` for anything else — a named network is typed by its
         /// name or identifier, which only the library resolves.
         public init?(spelling text: String) {
-            let bridgedPrefix = NetworkModeChoice.bridged(nil).rawValue + ":"
+            let bridgedPrefix = Self.bridgedValue + ":"
+            if text.caseInsensitiveCompare(Self.bridgedValue) == .orderedSame
+                || text.caseInsensitiveCompare(Self.anyBridgedValue) == .orderedSame
+            {
+                self = .anyBridged
+                return
+            }
             if text.count > bridgedPrefix.count, text.lowercased().hasPrefix(bridgedPrefix) {
-                self.init(storing: .bridged(String(text.dropFirst(bridgedPrefix.count))))
+                let interface = String(text.dropFirst(bridgedPrefix.count))
+                self.init(
+                    storing: .bridged(
+                        interface.caseInsensitiveCompare(Self.automaticSpelling) == .orderedSame ? nil : interface))
                 return
             }
             let common = VmnetNetworkKind.allCases.map { NetworkModeChoice.vmnet($0, .common).rawValue }
@@ -145,7 +199,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
             [VmnetNetworkKind.nat, .hostOnly].flatMap { kind in
                 [kind.rawValue, NetworkModeChoice.vmnet(kind, .isolated).rawValue]
             }
-            + [NetworkModeChoice.bridged(nil).rawValue, NetworkModeChoice.none.rawValue, unlistedValue]
+            + [bridgedValue, bridgedValue + ":" + automaticSpelling, NetworkModeChoice.none.rawValue, unlistedValue]
 
         /// Reads the one string ``rawValue`` spells.
         public init(from decoder: Decoder) throws {
@@ -202,7 +256,8 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     public var guestOSes: Set<VMGuestOS>
     /// Admits only the state buckets in the set.
     public var states: Set<VMStateBucket>
-    /// Admits only the networks in the set.
+    /// Admits only the networks some value in the set admits
+    /// (``Network/admits(_:)``).
     public var networks: Set<Network>
     /// Admits only guests with an agent bucket in the set, so a Linux guest
     /// never passes a non-empty one.
@@ -266,7 +321,9 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         var failed: [Attribute] = []
         if !guestOSes.isEmpty, !guestOSes.contains(subject.guestOS) { failed.append(.guestOS) }
         if !states.isEmpty, !states.contains(subject.state) { failed.append(.state) }
-        if !networks.isEmpty, !networks.contains(subject.network) { failed.append(.network) }
+        if !networks.isEmpty, !subject.network.isAdmitted(by: networks) {
+            failed.append(.network)
+        }
         if !guestAgents.isEmpty, !(subject.guestAgent.map(guestAgents.contains) ?? false) {
             failed.append(.guestAgent)
         }

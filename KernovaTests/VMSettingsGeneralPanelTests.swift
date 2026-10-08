@@ -419,7 +419,8 @@ struct VMSettingsGeneralPanelTests {
 
     @Test("The start order is the auto-start row's info, not a caption")
     func startupRowInfoStatesTheStartOrder() {
-        let order = "Virtual machines start in the order they appear in the sidebar."
+        let order =
+            "Virtual machines start in the library\u{2019}s manual order: the order the sidebar lists them in when sorted by Manual, ungrouped and unfiltered."
         #expect(VMSettingsGeneralPanelViewController.autoStartInfo.contains(.body(order)))
 
         let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)

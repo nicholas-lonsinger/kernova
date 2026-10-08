@@ -142,24 +142,38 @@ final class VMOrganizationDirectory {
             sections.insert(moved, at: to)
         }
 
-        /// Applies `change` to each smart group `included` admits.
-        mutating func editSmartGroups(
-            where included: (VMSmartGroup) -> Bool, _ change: (inout VMSmartGroup) -> Void
-        ) {
-            for index in sections.indices {
-                guard case .smartGroup(var group) = sections[index], included(group) else { continue }
-                change(&group)
-                sections[index] = .smartGroup(group)
-            }
+        /// Applies `change` to the smart group `id` identifies, refusing when
+        /// none does before `change` runs.
+        mutating func editSmartGroup(_ id: UUID, _ change: (inout VMSmartGroup) throws -> Void) throws {
+            try editSection(id, .smartGroup, read: \.smartGroup, write: Section.smartGroup, change)
         }
 
-        /// Applies `change` to each folder `included` admits.
-        mutating func editFolders(where included: (VMFolder) -> Bool, _ change: (inout VMFolder) -> Void) {
+        /// Applies `change` to the folder `id` identifies, refusing when none
+        /// does before `change` runs.
+        mutating func editFolder(_ id: UUID, _ change: (inout VMFolder) throws -> Void) throws {
+            try editSection(id, .folder, read: \.folder, write: Section.folder, change)
+        }
+
+        /// Applies `change` to the section `read` finds holding the `kind`
+        /// `id` identifies, writing the result back through `write`.
+        private mutating func editSection<Value: Identifiable<UUID>>(
+            _ id: UUID, _ kind: Element, read: (Section) -> Value?, write: (Value) -> Section,
+            _ change: (inout Value) throws -> Void
+        ) throws {
             for index in sections.indices {
-                guard case .folder(var folder) = sections[index], included(folder) else { continue }
-                change(&folder)
-                sections[index] = .folder(folder)
+                guard var value = read(sections[index]), value.id == id else { continue }
+                try change(&value)
+                sections[index] = write(value)
+                return
             }
+            throw ChangeError.missing(kind)
+        }
+
+        /// Applies `change` to the tag `id` identifies, refusing when none
+        /// does before `change` runs.
+        mutating func editTag(_ id: UUID, _ change: (inout VMTag) throws -> Void) throws {
+            guard let index = tags.firstIndex(where: { $0.id == id }) else { throw ChangeError.missing(.tag) }
+            try change(&tags[index])
         }
     }
 
@@ -215,11 +229,16 @@ final class VMOrganizationDirectory {
         case nameRequired(Element)
         case nameTaken(String, Element)
         case nameIsIdentifier(String, Element)
+        /// The element the change names is not in the file — deleted since
+        /// the caller read it.
+        case missing(Element)
         case unreadable
         case unsaved(String)
 
         var errorDescription: String? {
             switch self {
+            case .missing(let kind):
+                "The \(kind.noun) no longer exists."
             case .nameRequired(let kind):
                 "A \(kind.noun) needs a name."
             case .nameTaken(let name, let kind):
@@ -341,15 +360,16 @@ final class VMOrganizationDirectory {
     /// Renames the smart group `id` identifies.
     func renameSmartGroup(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(
-                name, of: .smartGroup, for: id, among: file.smartGroups.map { ($0.id, $0.name) })
-            file.editSmartGroups(where: { $0.id == id }) { $0.name = name }
+            let named = file.smartGroups.map { ($0.id, $0.name) }
+            try file.editSmartGroup(id) {
+                $0.name = try Self.validatedName(name, of: .smartGroup, for: id, among: named)
+            }
         }
     }
 
     /// Makes the smart group `id` identifies show what `filter` admits.
     func setFilter(_ filter: VMLibraryFilter, ofSmartGroup id: UUID) throws {
-        try commit { file in file.editSmartGroups(where: { $0.id == id }) { $0.filter = filter } }
+        try commit { file in try file.editSmartGroup(id) { $0.filter = filter } }
     }
 
     /// Stops listing the smart group `id` identifies.
@@ -378,8 +398,8 @@ final class VMOrganizationDirectory {
     /// Renames the folder `id` identifies.
     func renameFolder(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(name, of: .folder, for: id, among: file.folders.map { ($0.id, $0.name) })
-            file.editFolders(where: { $0.id == id }) { $0.name = name }
+            let named = file.folders.map { ($0.id, $0.name) }
+            try file.editFolder(id) { $0.name = try Self.validatedName(name, of: .folder, for: id, among: named) }
         }
     }
 
@@ -392,13 +412,13 @@ final class VMOrganizationDirectory {
     /// after its members, in `entries`' order.
     func add(_ entries: [UUID], toFolder id: UUID) throws {
         try commit { file in
-            file.editFolders(where: { $0.id == id }) { $0.members = Self.unique($0.members + entries) }
+            try file.editFolder(id) { $0.members = Self.unique($0.members + entries) }
         }
     }
 
     /// Takes the entry `entry` out of the folder `id` identifies.
     func remove(_ entry: UUID, fromFolder id: UUID) throws {
-        try commit { file in file.editFolders(where: { $0.id == id }) { $0.members.removeAll { $0 == entry } } }
+        try commit { file in try file.editFolder(id) { $0.members.removeAll { $0 == entry } } }
     }
 
     /// Moves the member `entry` of the folder `id` identifies to just before
@@ -406,7 +426,7 @@ final class VMOrganizationDirectory {
     /// or no longer a member.
     func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
         try commit { file in
-            file.editFolders(where: { $0.id == id }) { Self.move(entry, before: successor, in: &$0.members) }
+            try file.editFolder(id) { Self.move(entry, before: successor, in: &$0.members) }
         }
     }
 
@@ -431,14 +451,14 @@ final class VMOrganizationDirectory {
     /// Renames the tag `id` identifies.
     func renameTag(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(name, of: .tag, for: id, among: file.tags.map { ($0.id, $0.name) })
-            Self.edit(id, in: &file.tags) { $0.name = name }
+            let named = file.tags.map { ($0.id, $0.name) }
+            try file.editTag(id) { $0.name = try Self.validatedName(name, of: .tag, for: id, among: named) }
         }
     }
 
     /// Shows the tag `id` identifies in `color`.
     func setColor(_ color: VMTagColor, ofTag id: UUID) throws {
-        try commit { file in Self.edit(id, in: &file.tags) { $0.color = color } }
+        try commit { file in try file.editTag(id) { $0.color = color } }
     }
 
     /// Stops defining the tag `id` identifies.
@@ -475,14 +495,6 @@ final class VMOrganizationDirectory {
             throw ChangeError.nameTaken(other.name, kind)
         }
         return trimmed
-    }
-
-    /// Applies `change` to the element of `list` that `id` identifies, if any.
-    private static func edit<Listed: Identifiable>(
-        _ id: Listed.ID, in list: inout [Listed], _ change: (inout Listed) -> Void
-    ) {
-        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
-        change(&list[index])
     }
 
     /// Moves `entry` to just before `successor`, or to the end when

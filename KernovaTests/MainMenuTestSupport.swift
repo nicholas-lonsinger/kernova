@@ -30,7 +30,8 @@ final class StubMenuHost: MainMenuHosting {
 func makeLibraryViewModel(
     preferences: AppPreferences,
     usbAccessoryService: (any USBAccessoryProviding)? = nil,
-    diskImageService: MockDiskImageService = MockDiskImageService()
+    diskImageService: MockDiskImageService = MockDiskImageService(),
+    organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: MockVMStorageService(),
@@ -43,7 +44,8 @@ func makeLibraryViewModel(
         fileSystem: MockFileSystem(),
         downloadsDirectory: nil,
         preferences: preferences,
-        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled
+        vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+        organization: organization
     )
 }
 

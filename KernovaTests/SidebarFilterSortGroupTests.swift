@@ -483,6 +483,45 @@ struct SidebarFilterSortGroupTests {
         #expect(picked(row)?.filter.networks == [])
     }
 
+    @Test("Any Bridged Interface counts every bridged VM, checks each bridged row, and sorts before Automatic")
+    func anyBridgedRowsReadThroughAdmission() throws {
+        let automatic = net(.bridged(nil))
+        let en0 = net(.bridged("en0"))
+        let en1 = net(.bridged("en1"))
+        let values = [
+            value(network: en1, title: "en1"), value(network: automatic, title: "Automatic"),
+            value(network: en0, title: "en0"), value(network: en0, title: "en0"), value(),
+        ]
+        let built = SidebarViewMenu(
+            networkTitle: { $0 == .anyBridged ? SidebarLayout.anyBridgedTitle : $0.rawValue }, tags: { [] },
+            perform: { _ in }
+        ).menu(options: SidebarViewOptions(filter: VMLibraryFilter(networks: [.anyBridged])), values: values)
+        let network = try #require(built.items[2].submenu)
+
+        #expect(
+            network.items.map(\.title) == [
+                "All Networks", "", "NAT \u{2013} Common", SidebarLayout.anyBridgedTitle, "Automatic", "en0", "en1",
+            ])
+        #expect(network.items[3].badge?.itemCount == 4)
+        #expect(network.items[3...].allSatisfy { $0.state == .on })
+        #expect(network.items[2].state == .off)
+        #expect(SidebarLayout.networkRank(net(.none)) > SidebarLayout.networkRank(en0))
+        #expect(SidebarLayout.networkRank(en0) > SidebarLayout.networkRank(automatic))
+        #expect(SidebarLayout.networkRank(automatic) > SidebarLayout.networkRank(.anyBridged))
+        #expect(SidebarLayout.networkRank(.anyBridged) > SidebarLayout.networkRank(.unlisted))
+    }
+
+    @Test("Unchecking a bridged row Any Bridged Interface checks trades it for the other bridged rows")
+    func uncheckingUnderAnyBridged() {
+        let automatic = net(.bridged(nil))
+        let en0 = net(.bridged("en0"))
+        let listed = [net(.nat), .anyBridged, automatic, en0]
+
+        #expect(SidebarViewMenu.toggled(en0, in: [.anyBridged], listed: listed) == [automatic])
+        #expect(SidebarViewMenu.toggled(.anyBridged, in: [.anyBridged, en0], listed: listed) == [en0])
+        #expect(SidebarViewMenu.toggled(automatic, in: [en0], listed: listed) == [en0, automatic])
+    }
+
     @Test("Show Details and the group and sort rows set their options")
     func viewPicks() throws {
         let built = menu(SidebarViewOptions(), values: [value()])

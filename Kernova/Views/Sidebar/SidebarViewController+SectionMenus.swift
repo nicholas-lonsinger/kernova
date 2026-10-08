@@ -9,13 +9,18 @@ extension SidebarViewController {
     /// open: the library's filter, group and sort menu, a smart group's own,
     /// or a folder's; `nil` for a section with none.
     func viewMenu(for section: SidebarSectionID) -> NSMenu? {
+        viewMenu(for: section, values: SidebarViewMenu.values(of: viewModel))
+    }
+
+    /// ``viewMenu(for:)``, counting `values`.
+    private func viewMenu(for section: SidebarSectionID, values: [SidebarViewMenu.Value]) -> NSMenu? {
         let organization = viewModel.library.organization
         if section == .library {
-            return viewMenu.menu(options: viewModel.sidebarOptions, values: SidebarViewMenu.values(of: viewModel))
+            return viewMenu.menu(options: viewModel.sidebarOptions, values: values)
         }
         if let id = section.smartGroupID, let group = organization.smartGroup(withID: id) {
             return viewMenu.menu(
-                smartGroup: group, values: SidebarViewMenu.values(of: viewModel),
+                smartGroup: group, values: values,
                 actionCounts: viewModel.groupActionCounts(
                     for: VMGroupReference(.smartGroup, named: id.uuidString)))
         }
@@ -33,11 +38,12 @@ extension SidebarViewController {
     }
 
     /// The kind and header menu of the selected row's section, while that
-    /// section is a smart group or a folder.
-    func selectedGroupMenu() -> (kind: VMGroupKind, menu: NSMenu)? {
+    /// section is a smart group or a folder, counting `values` — the
+    /// library's ``SidebarViewMenu/values(of:)``.
+    func selectedGroupMenu(values: [SidebarViewMenu.Value]) -> (kind: VMGroupKind, menu: NSMenu)? {
         guard let section = viewModel.selection?.section else { return nil }
         let kind: VMGroupKind? = section.smartGroupID != nil ? .smartGroup : section.folderID != nil ? .folder : nil
-        guard let kind, let menu = viewMenu(for: section) else { return nil }
+        guard let kind, let menu = viewMenu(for: section, values: values) else { return nil }
         return (kind, menu)
     }
 

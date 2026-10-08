@@ -42,10 +42,12 @@ protocol SettingsNamedListSource: AnyObject {
 /// source and deletes after its confirmation, and an observation loop, live
 /// while the pane is on screen, that repaints the list on any change.
 ///
-/// A refusal is shown as a sheet on the Settings window. A change arriving
-/// while a name is being edited repaints once the edit ends, since a reload
-/// would end the edit. While the list can't be read, a notice pointing to the
-/// config file check stands in for it, and the control offers nothing.
+/// A refusal is shown as a sheet on the Settings window. A change from
+/// elsewhere arriving while a name is being edited repaints once the edit
+/// ends, since a reload would end the edit; the pane's own changes end the
+/// edit, committing it, before they run. While the list can't be read, a
+/// notice pointing to the config file check stands in for it, and the
+/// control offers nothing.
 @MainActor
 final class SettingsNamedListEditor: NSObject {
     /// One table column.
@@ -74,9 +76,14 @@ final class SettingsNamedListEditor: NSObject {
     /// Whether the last read found the list unreadable, which the pane shows
     /// in place of the table.
     private(set) var isUnreadable = false
-    /// The name field being edited, while one is.
-    private var editingNameField: NSTextField?
-    private var reloadAfterEditing = false
+    /// The name field the window's field editor is editing, from the moment
+    /// it opens — before anything is typed.
+    private var editingNameField: NSTextField? {
+        guard let editor = tableView.window?.firstResponder as? NSText,
+            let field = editor.delegate as? NSTextField, field.isDescendant(of: tableView)
+        else { return nil }
+        return field
+    }
     private var observation: ObservationLoop?
 
     init(
@@ -199,10 +206,12 @@ final class SettingsNamedListEditor: NSObject {
     /// Re-reads the items and repaints the list, keeping the selection on the
     /// item it was on.
     func reload() {
-        guard editingNameField == nil else {
-            reloadAfterEditing = true
-            return
-        }
+        // A reload would end the edit; the edit's end repaints instead.
+        guard editingNameField == nil else { return }
+        repaint()
+    }
+
+    private func repaint() {
         guard let source else { return }
         let selected = selectedID
         let listed = source.listedIDs()
@@ -275,16 +284,22 @@ final class SettingsNamedListEditor: NSObject {
         presentSheetAlert(confirmation, in: window)
     }
 
-    /// Runs `change`, then repaints; what it was refused with is shown under
-    /// `title`.
+    /// Runs one of the pane's own changes: ends a name edit in progress,
+    /// committing it, then runs `change` and repaints. What it was refused
+    /// with is shown under `title`.
     func attempt(_ title: String, _ change: () throws -> Void) {
+        if editingNameField != nil { tableView.window?.makeFirstResponder(nil) }
+        run(title, change)
+        reload()
+    }
+
+    /// Runs `change`, showing what it was refused with under `title`.
+    private func run(_ title: String, _ change: () throws -> Void) {
         do {
             try change()
-            reload()
         } catch {
             let message = (error as? CommandError)?.message ?? error.localizedDescription
             #log(logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
-            reload()
             guard let window = tableView.window else { return }
             presentSheetAlert(.acknowledgement(title: title, message: message), in: window)
         }
@@ -358,24 +373,21 @@ extension SettingsNamedListEditor: NSTableViewDelegate {
 // MARK: - NSTextFieldDelegate
 
 extension SettingsNamedListEditor: NSTextFieldDelegate {
-    func controlTextDidBeginEditing(_ obj: Notification) {
-        editingNameField = obj.object as? NSTextField
-    }
-
-    /// Commits a rename typed into a name cell; a name the source refuses
+    /// Commits a rename typed into a name cell, then repaints the list with
+    /// every change that arrived during the edit; a name the source refuses
     /// puts the item's name back.
+    ///
+    /// AppKit sends this whether or not anything was typed, while the field
+    /// editor is still the window's first responder — so ``reload()`` called
+    /// from here still waits, and the repaint is this method's own.
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let field = obj.object as? NSTextField, let source else { return }
-        editingNameField = nil
         let row = tableView.row(for: field)
         if ids.indices.contains(row), field.stringValue != source.name(of: ids[row]) {
             let id = ids[row]
             let name = field.stringValue
-            attempt("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
+            run("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
         }
-        if reloadAfterEditing || ids.indices.contains(row) {
-            reloadAfterEditing = false
-            reload()
-        }
+        repaint()
     }
 }

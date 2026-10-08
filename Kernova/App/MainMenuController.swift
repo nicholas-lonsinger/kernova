@@ -186,9 +186,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     // MARK: - Menu Updates
 
-    /// Apple documents this as also called while AppKit matches key
-    /// equivalents (`NSMenuDelegate.menuHasKeyEquivalent(_:for:target:action:)`);
-    /// every rebuild here holds whether or not it runs then.
+    /// AppKit also calls this while it matches a key equivalent against the
+    /// menu bar — "If the delegate doesn't define this method, the menu is
+    /// populated to find out if any items have a matching key equivalent"
+    /// (`NSMenuDelegate.menuHasKeyEquivalent(_:for:target:action:)`) — so it
+    /// runs on keystrokes that open no menu: every rebuild here holds whether
+    /// or not it runs then, and reads only what the app holds in memory.
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === windowsMenu {
             clipboardMenuItem?.isEnabled =
@@ -226,10 +229,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         for _ in 0..<end { viewMenu.removeItem(at: 0) }
         let sidebar = host?.librarySidebar
         let expansion = sidebar?.sectionExpansion ?? []
+        let values = SidebarViewMenu.values(of: viewModel)
         let items = sidebarMenu.menuBarItems(
-            options: viewModel.sidebarOptions, values: SidebarViewMenu.values(of: viewModel),
+            options: viewModel.sidebarOptions, values: values,
             hasCollapsedSection: expansion.contains(false), hasExpandedSection: expansion.contains(true),
-            selectedGroup: sidebar?.selectedGroupMenu())
+            selectedGroup: sidebar?.selectedGroupMenu(values: values))
         for (index, item) in items.enumerated() { viewMenu.insertItem(item, at: index) }
     }
 
