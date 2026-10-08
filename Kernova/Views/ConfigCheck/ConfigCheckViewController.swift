@@ -71,10 +71,20 @@ final class ConfigCheckViewController: NSViewController {
         let buttons = NSStackView(views: [showInFinderButton, spacer, closeButton, useDefaultsButton])
         buttons.orientation = .horizontal
         buttons.spacing = Spacing.standard
+        // Exactly as tall as its buttons, so the space between gravity areas
+        // takes up the slack rather than the row.
+        buttons.setHuggingPriority(.defaultHigh, for: .vertical)
 
-        let content = NSStackView(views: [headerLabel, reportScrollView, footerLabel, buttons])
+        // The button row has the bottom gravity area to itself, so it stays on
+        // the bottom edge whichever of the views above are hidden.
+        let content = NSStackView()
         content.orientation = .vertical
+        content.distribution = .gravityAreas
         content.alignment = .leading
+        for view in [headerLabel, reportScrollView, footerLabel] {
+            content.addView(view, in: .top)
+        }
+        content.addView(buttons, in: .bottom)
         content.spacing = Spacing.relaxed
         content.translatesAutoresizingMaskIntoConstraints = false
 
