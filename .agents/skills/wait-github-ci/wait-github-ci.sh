@@ -190,11 +190,21 @@ snapshot() {
   SNAP_ROLLUP=$(printf '%s\n' "$_snap" | sed -n '4,$p' | sort -u)
 }
 
+# Display lists from "name<TAB>result" rollup lines. Gating filters the
+# rollup lines themselves, so a name is never parsed back out of these.
+pending_of() { printf '%s\n' "$1" | awk -F'\t' 'NF && $2 == "PENDING" {print $1}'; }
+failed_of() {
+  printf '%s\n' "$1" | awk -F'\t' \
+    'NF && $2 != "PENDING" && $2 != "SUCCESS" && $2 != "SKIPPED" && $2 != "NEUTRAL" {print $1 " (" $2 ")"}'
+}
+
 classify() {
   NAMES=$(printf '%s\n' "$SNAP_ROLLUP" | awk -F'\t' 'NF {print $1}')
-  PENDING_LIST=$(printf '%s\n' "$SNAP_ROLLUP" | awk -F'\t' 'NF && $2 == "PENDING" {print $1}')
-  FAILED_LIST=$(printf '%s\n' "$SNAP_ROLLUP" | awk -F'\t' \
-    'NF && $2 != "PENDING" && $2 != "SUCCESS" && $2 != "SKIPPED" && $2 != "NEUTRAL" {print $1 " (" $2 ")"}')
+  PENDING_LIST=$(pending_of "$SNAP_ROLLUP")
+  FAILED_LIST=$(failed_of "$SNAP_ROLLUP")
+  GATING_ROLLUP=$(printf '%s\n' "$SNAP_ROLLUP" | gating)
+  GATING_PENDING=$(pending_of "$GATING_ROLLUP")
+  GATING_FAILED=$(failed_of "$GATING_ROLLUP")
 }
 
 # Required checks not yet present in the rollup at all.
@@ -208,16 +218,13 @@ $REQUIRED
 EOF
 }
 
-# Filter stdin's "<name>" or "<name> (<state>)" lines to those that gate the
+# Filter stdin's "name<TAB>result" rollup lines to those that gate the
 # verdict: required-only when a required list exists, otherwise every line.
 gating() {
   if [ -z "$REQUIRED" ]; then grep . || true; return 0; fi
-  while IFS= read -r _line; do
-    [ -z "$_line" ] && continue
-    _name=${_line% (*}
-    printf '%s\n' "$REQUIRED" | grep -Fxq -- "$_name" && printf '%s\n' "$_line"
-  done
-  return 0
+  REQ="$REQUIRED" awk -F'\t' '
+    BEGIN { n = split(ENVIRON["REQ"], r, "\n"); for (i = 1; i <= n; i++) if (r[i] != "") req[r[i]] = 1 }
+    NF && ($1 in req)'
 }
 
 deadline_check() { # <what we're still waiting for>
@@ -422,13 +429,11 @@ while :; do
   CONFLICT_SINCE=""
 
   # A required check already failed: no point waiting for the rest.
-  GATING=$(printf '%s\n' "$FAILED_LIST" | gating)
-  if [ -n "$GATING" ]; then
+  if [ -n "$GATING_FAILED" ]; then
     report_table
-    finish 2 failed "not green — failing: $(oneline "$GATING")"
+    finish 2 failed "not green — failing: $(oneline "$GATING_FAILED")"
   fi
 
-  GATING_PENDING=$(printf '%s\n' "$PENDING_LIST" | gating)
   if [ -n "$GATING_PENDING" ]; then
     progress "$(printf '%s\n' "$GATING_PENDING" | grep -c .) check(s) pending (elapsed ${SECONDS}s) — watching…"
     bounded_watch
