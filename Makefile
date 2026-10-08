@@ -50,13 +50,14 @@ XCODEBUILD_FLAGS = -project $(PROJECT) \
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
 
-# The fixture suites for the skill scripts and Tools/lib. Each drives its code
-# through every verdict against recorded fixtures — no Xcode, no network,
-# seconds to run — which is what lets `lint` gate them, and the pre-push hook
-# with it.
+# The fixture suites for the skill scripts, Tools/lib, and the lint checks that
+# have one. Each drives its code through every verdict against recorded
+# fixtures — no Xcode, no network, seconds to run — which is what lets `lint`
+# gate them, and the pre-push hook with it.
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
-                 Tools/tests/worktrees.sh
+                 Tools/tests/worktrees.sh \
+                 Tools/tests/check-config-decoding.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
@@ -203,7 +204,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, the app's Launch Services self-activation, and the KernovaKit package reference
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, config-field decoding, the app's Launch Services self-activation, and the KernovaKit package reference
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -222,6 +223,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-agent-deployment-floor.sh
 	@bash Tools/check-test-plan-allowance.sh
 	@bash Tools/check-test-seams.sh
+	@bash Tools/check-config-decoding.sh
 	@bash Tools/check-self-activation.sh
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
