@@ -15,7 +15,7 @@ struct VMNetworkDirectoryTests {
     @Test("Networks persist, ordered by name, and a rename keeps the identifier")
     func networksPersistAcrossLaunches() throws {
         let directory = VMNetworkDirectory(fileURL: fileURL)
-        let office = try directory.create(name: " Office ", kind: .shared, verb: .createNetwork)
+        let office = try directory.create(name: " Office ", kind: .nat, verb: .createNetwork)
         let lab = try directory.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
         #expect(office.name == "Office")
         #expect(directory.state.listed?.map(\.name) == ["Lab", "Office"])
@@ -33,10 +33,10 @@ struct VMNetworkDirectoryTests {
     @Test("A name has to be new, non-empty, and not spell a membership value")
     func namesAreValidated() throws {
         let directory = VMNetworkDirectory(fileURL: nil)
-        let lab = try directory.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try directory.create(name: "Lab", kind: .nat, verb: .createNetwork)
         for name in ["", "  ", "LAB", "common", "Isolated", UUID().uuidString] {
             #expect(throws: CommandError.self, "\(name)") {
-                try directory.create(name: name, kind: .shared, verb: .createNetwork)
+                try directory.create(name: name, kind: .nat, verb: .createNetwork)
             }
         }
         // Its own name, recased, is a rename.
@@ -52,7 +52,7 @@ struct VMNetworkDirectoryTests {
 
         #expect(directory.state.listed == nil)
         #expect(throws: CommandError.self) {
-            try directory.create(name: "Lab", kind: .shared, verb: .createNetwork)
+            try directory.create(name: "Lab", kind: .nat, verb: .createNetwork)
         }
         #expect(try Data(contentsOf: fileURL) == Data("not json".utf8))
     }
@@ -75,12 +75,12 @@ struct VMNetworkDirectoryTests {
     func twoCopiesKeepEachOthersNetworks() throws {
         let first = VMNetworkDirectory(fileURL: fileURL)
         let second = VMNetworkDirectory(fileURL: fileURL)
-        try first.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        try first.create(name: "Lab", kind: .nat, verb: .createNetwork)
         try second.create(name: "Bench", kind: .hostOnly, verb: .createNetwork)
         #expect(second.state.listed?.map(\.name) == ["Bench", "Lab"])
         // A name the other copy took is refused, though this one never saw it.
         #expect(throws: CommandError.self) {
-            try first.create(name: "bench", kind: .shared, verb: .createNetwork)
+            try first.create(name: "bench", kind: .nat, verb: .createNetwork)
         }
         first.reload()
         #expect(first.state.listed?.map(\.name) == ["Bench", "Lab"])

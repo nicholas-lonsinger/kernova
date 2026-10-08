@@ -136,6 +136,75 @@ struct SettingsTabViewControllerTests {
         #expect(indicator.flashCountForTesting == before)
     }
 
+    // MARK: - Destinations
+
+    private func makeRegistry(_ viewModel: VMLibraryViewModel) -> AppWindowRegistry {
+        let autosave = WindowAutosaveScope.unsaved()
+        return AppWindowRegistry(
+            viewModel: viewModel,
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
+            autosaveScope: autosave)
+    }
+
+    private func tabs(of registry: AppWindowRegistry) throws -> SettingsTabViewController {
+        let window = try #require(registry.settingsWindow)
+        adoptAppWindow(window)
+        return try #require(window.contentViewController as? SettingsTabViewController)
+    }
+
+    private func networksPane(in tabs: SettingsTabViewController) throws -> NetworksSettingsViewController {
+        try #require(tabs.tabViewItems.lazy.compactMap { $0.viewController as? NetworksSettingsViewController }.first)
+    }
+
+    @Test("Settings opened on a network for the first time shows the Networks pane with its row selected")
+    func firstOpenLandsOnTheNetwork() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        _ = try viewModel.networks.create(name: "Other", kind: .nat, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
+        let registry = makeRegistry(viewModel)
+
+        registry.showSettings(at: .network(lab.id))
+
+        let tabs = try tabs(of: registry)
+        #expect(tabs.selectedPane == .networks)
+        #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
+    }
+
+    @Test("Settings already open on another pane switches to the Networks pane and the network")
+    func openWindowSwitchesToTheNetwork() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
+        let registry = makeRegistry(viewModel)
+        registry.showSettings(at: .pane(.clipboard))
+        let tabs = try tabs(of: registry)
+        #expect(tabs.selectedPane == .clipboard)
+
+        registry.showSettings(at: .network(lab.id))
+
+        #expect(tabs.selectedPane == .networks)
+        #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
+
+        // With no destination, the window stays on the pane it was left on.
+        registry.showSettings()
+        #expect(tabs.selectedPane == .networks)
+    }
+
+    @Test("Each pane is a destination, and one the build does not offer leaves the selection")
+    func everyOfferedPaneIsADestination() throws {
+        let tabController = SettingsTabViewController(viewModel: makeSettingsViewModel(preferences: preferences))
+        for pane in SettingsPane.allCases {
+            tabController.show(.pane(pane))
+            #expect(tabController.selectedPane == pane)
+        }
+
+        let unentitled = makeSettingsViewModel(preferences: preferences, entitled: false)
+        let limited = SettingsTabViewController(viewModel: unentitled)
+        limited.show(.pane(.reminders))
+        limited.show(.pane(.networks))
+        #expect(limited.selectedPane == .reminders)
+        #expect(!limited.tabViewItems.contains { $0.viewController is NetworksSettingsViewController })
+    }
+
     @Test("A window sitting mid-screen caps its pane at the room below its top edge")
     func midScreenWindowCapsAtTheRoomBelowIt() {
         // A 1440×875 visible area above a 25-point Dock, the window's top

@@ -78,8 +78,8 @@ struct SidebarLayout {
         /// The library's tags, in their order: a VM carries only these, so
         /// none while the file defining them can't be read (`nil`).
         let tags: [VMTag]?
-        /// What a VM's network reads as —
-        /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
+        /// What a VM's network reads as — the text of
+        /// ``NetworkModeChoice/label(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
         /// filter menu.
         let networkTitle: (VMConfiguration) -> String
@@ -369,7 +369,7 @@ struct SidebarLayout {
         guard let choice = network.choice else { return 6 }
         switch choice {
         case .vmnet(let kind, let membership):
-            let base = kind == .shared ? 0 : 3
+            let base = kind == .nat ? 0 : 3
             switch membership {
             case .common: return base
             case .isolated: return base + 1

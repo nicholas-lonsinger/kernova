@@ -62,8 +62,9 @@ enum VMOverviewAction: String, Sendable {
 /// Produced by ``VMOverviewResolver`` and read by every surface stating one of
 /// them — the overview's cards and the panel rows showing the same figure.
 struct VMOverviewResolved: Sendable {
-    /// The Mode picker's current title, which names the network the VM joins.
-    var networkModeTitle: String?
+    /// How the network the VM joins names itself; the Mode picker's closed
+    /// title and the Network card read its ``NetworkChoiceLabel/text``.
+    var networkModeLabel: NetworkChoiceLabel?
     /// What the guest's address resolves to for the mode it is on.
     var ipAddress: GuestIPAddress = .unavailable
     /// The boot disk's capacity, once its off-main read lands.
@@ -163,7 +164,7 @@ enum VMOverviewSummary {
                 ),
             ]
         case .network:
-            guard config.networkEnabled, let mode = resolved.networkModeTitle else {
+            guard config.networkEnabled, let mode = resolved.networkModeLabel?.text else {
                 return [Row(label: "Mode", value: "None")]
             }
             // The network names the row, so the address it hands the guest is

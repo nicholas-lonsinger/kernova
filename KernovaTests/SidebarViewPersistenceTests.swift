@@ -87,7 +87,7 @@ struct SidebarViewPersistenceTests {
     func staleFilterValuesSurviveRelaunch() throws {
         let first = launch()
         let tag = try first.library.createTag(named: "Work", color: .blue)
-        let deletedNetwork = VMLibraryFilter.Network(.vmnet(.shared, .network(UUID()))) { _, _ in true }
+        let deletedNetwork = VMLibraryFilter.Network(.vmnet(.nat, .network(UUID()))) { _, _ in true }
         let filter = VMLibraryFilter(networks: [deletedNetwork], tags: [tag.id])
         first.library.editSidebarOptions(.filter(filter))
         try first.library.deleteTag(tag.id)

@@ -280,9 +280,9 @@ struct VMCapabilityCatalogTests {
     }
 
     @Test(
-        "Beside a saved state, membership switches for a Shared VM alone",
-        arguments: [VMNetworkMode.shared, .hostOnly, .bridged])
-    func savedStateLeavesMembershipOpenForSharedAlone(mode: VMNetworkMode) throws {
+        "Beside a saved state, membership switches for a NAT VM alone",
+        arguments: [VMNetworkMode.nat, .hostOnly, .bridged])
+    func savedStateLeavesMembershipOpenForNATAlone(mode: VMNetworkMode) throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .suspended) {
             $0.networkEnabled = true
@@ -292,7 +292,7 @@ struct VMCapabilityCatalogTests {
 
         try VMInstanceFixture.writeSaveFile(for: instance)
 
-        #expect(harness.catalog.isApplicable(.switchNetworkMembership, to: instance) == (mode == .shared))
+        #expect(harness.catalog.isApplicable(.switchNetworkMembership, to: instance) == (mode == .nat))
         #expect(!harness.catalog.isApplicable(.switchNetworkMode, to: instance))
     }
 

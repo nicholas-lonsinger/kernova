@@ -7,10 +7,10 @@ import vmnet
 
 /// A realizable network attachment for a live VM, decoupled from VZ for testability.
 enum NetworkAttachmentPlan: Equatable, Sendable {
-    /// The system NAT attachment — Shared Network in an unentitled build.
+    /// The system NAT attachment — the NAT mode in an unentitled build.
     case nat
     case bridged(String)
-    /// An app-managed vmnet network — Host Only, and Shared Network in an
+    /// An app-managed vmnet network — Host Only, and NAT in an
     /// entitled build.
     case vmnet(VmnetNetworkSelection)
 
@@ -266,7 +266,7 @@ private nonisolated func hostLinkObserverCallout(
 ///
 /// Recovery narrows but never escalates: a bridged VM whose interface is gone
 /// falls back within Bridged (to the default-route interface) or runs detached
-/// until one returns — it never silently becomes Shared Network, and no mode
+/// until one returns — it never silently becomes NAT, and no mode
 /// is ever attached that the user didn't choose (docs/NETWORKING.md).
 ///
 /// Created by `VMInstance` alongside the `VZVirtualMachine`. `activate()` is

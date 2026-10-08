@@ -60,7 +60,7 @@ extension KernovaCommand.Network {
 
         /// The mode every VM on it runs in.
         @Option(name: .long, help: "The network.mode every virtual machine on it runs in.")
-        var kind: NetworkKind = .shared
+        var kind: NetworkKind = .nat
 
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions

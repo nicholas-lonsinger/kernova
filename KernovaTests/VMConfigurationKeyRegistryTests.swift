@@ -22,7 +22,7 @@ struct VMConfigurationKeyRegistryTests {
             displayPPI: guestOS == .macOS
                 ? DisplayBootSizing.hiDPIPixelsPerInch : DisplayBootSizing.standardPixelsPerInch,
             displaySizesToWindow: false, displayHiDPI: guestOS == .macOS,
-            networkEnabled: true, networkMode: .shared, macAddress: "aa:bb:cc:dd:ee:ff")
+            networkEnabled: true, networkMode: .nat, macAddress: "aa:bb:cc:dd:ee:ff")
     }
 
     private func makeManifest() -> VMSnapshotManifest {
@@ -235,7 +235,7 @@ struct VMConfigurationKeyRegistryTests {
             ("display.autoResize", "maybe"),
             ("display.preference", "windowed"),
             ("input.systemKeys", "sometimes"),
-            ("network.mode", "nat"),
+            ("network.mode", "wifi"),
             ("network.mac", "aa-bb-cc-dd-ee-ff"),
             ("network.mac", "00:00:00:00:00:00"),
         ]
@@ -376,13 +376,13 @@ struct VMConfigurationKeyRegistryTests {
     func modeKeySpellsNoDeviceAsNone() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
         var config = makeConfiguration()
-        #expect(read(key, config) == "shared")
+        #expect(read(key, config) == "nat")
 
         try write(key, "none", to: &config)
         #expect(!config.networkEnabled)
         #expect(read(key, config) == "none")
         // The mode is remembered, so coming back lands where the VM left.
-        #expect(config.networkMode == .shared)
+        #expect(config.networkMode == .nat)
 
         try write(key, "hostOnly", to: &config)
         #expect(config.networkEnabled)
@@ -396,7 +396,7 @@ struct VMConfigurationKeyRegistryTests {
         config.networkEnabled = false
         config.macAddress = nil
 
-        try write(key, "shared", to: &config)
+        try write(key, "nat", to: &config)
 
         let minted = try #require(config.macAddress)
         #expect(GuestMACAddress.normalized(minted) == minted)
@@ -422,14 +422,14 @@ struct VMConfigurationKeyRegistryTests {
             Issue.record("not a configuration key")
             return
         }
-        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
+        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .nat)
         let listing = context(networks: [lab])
         var config = makeConfiguration()
 
         try field.write("lab", &config, listing)
         #expect(config.networkMembership == .network(lab.id))
         #expect(read(key, config) == lab.id.uuidString)
-        #expect(config.joinedNetwork == .vmnet(VmnetNetworkID(kind: .shared, scope: .named(lab.id))))
+        #expect(config.joinedNetwork == .vmnet(VmnetNetworkID(kind: .nat, scope: .named(lab.id))))
         #expect(field.refusalOnResult(config, listing) == nil)
 
         // What a read answered is taken back.
@@ -452,7 +452,7 @@ struct VMConfigurationKeyRegistryTests {
         let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .hostOnly)
         let listing = context(networks: [lab])
 
-        // Shared VM onto a Host Only network: refused until the mode follows.
+        // NAT VM onto a Host Only network: refused until the mode follows.
         var config = makeConfiguration()
         try membershipField.write("Lab", &config, listing)
         #expect(membershipField.refusalOnResult(config, listing)?.contains("hostOnly") == true)
@@ -490,28 +490,28 @@ struct VMConfigurationKeyRegistryTests {
                 return nil
             }
         }
-        let shared = makeConfiguration()
+        let nat = makeConfiguration()
 
-        #expect(refusal(mode, "hostOnly", on: shared) == .unsupportedByBuild(capability: "host-only networking"))
-        #expect(refusal(mode, "bridged", on: shared) == .unsupportedByBuild(capability: "bridged networking"))
+        #expect(refusal(mode, "hostOnly", on: nat) == .unsupportedByBuild(capability: "host-only networking"))
+        #expect(refusal(mode, "bridged", on: nat) == .unsupportedByBuild(capability: "bridged networking"))
         #expect(
-            refusal(membership, "isolated", on: shared)
+            refusal(membership, "isolated", on: nat)
                 == .unsupportedByBuild(capability: "isolating a virtual machine from other virtual machines"))
-        #expect(refusal(mode, "shared", on: shared) == nil)
-        #expect(refusal(membership, "common", on: shared) == nil)
+        #expect(refusal(mode, "nat", on: nat) == nil)
+        #expect(refusal(membership, "common", on: nat) == nil)
         #expect(
             !mode.accepts(
-                "hostOnly", settings: VMSettings(configuration: shared, hostState: VMHostState()), context: unentitled))
+                "hostOnly", settings: VMSettings(configuration: nat, hostState: VMHostState()), context: unentitled))
 
         // A VM that arrived on such a network can be moved off it, and writing
         // back what it holds is no move at all.
-        var hostOnly = shared
+        var hostOnly = nat
         hostOnly.networkMode = .hostOnly
-        #expect(refusal(mode, "shared", on: hostOnly) == nil)
+        #expect(refusal(mode, "nat", on: hostOnly) == nil)
         #expect(refusal(mode, "hostOnly", on: hostOnly) == nil)
 
         // The same writes land in a build that can attach them.
-        var settings = VMSettings(configuration: shared, hostState: VMHostState())
+        var settings = VMSettings(configuration: nat, hostState: VMHostState())
         try mode.apply("hostOnly", to: &settings, context: context())
         try membership.apply("isolated", to: &settings, context: context())
         #expect(settings.configuration.joinsOwnNetwork)

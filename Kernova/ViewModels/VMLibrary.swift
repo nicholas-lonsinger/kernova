@@ -307,9 +307,10 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
             tags: organization.tags,
             networkTitle: { config in
-                NetworkModeChoice.title(
+                NetworkModeChoice.label(
                     of: config, entitlements: entitlements, interfaces: interfaces.interfaces,
-                    networks: named)
+                    networks: named
+                ).text
             })
     }
 

@@ -54,7 +54,7 @@ struct VMNetworkIntentTests {
         let id = UUID()
         let entity = VMEntity(
             VMIntentFixtures.info(
-                networkMode: "shared", networkMembership: id.uuidString, networkName: .named("Lab")))
+                networkMode: "nat", networkMembership: id.uuidString, networkName: .named("Lab")))
 
         #expect(entity.networkMembership == id.uuidString)
         #expect(entity.networkName == "Lab")
@@ -74,14 +74,14 @@ struct VMNetworkIntentTests {
         let commands = MockVMCommanding()
         let alpha = makeSummary(name: "Alpha")
         commands.library = [alpha, makeSummary(name: "Beta")]
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [alpha])
+        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [alpha])
         let test = NetworkSummary(id: UUID(), name: "Test", kind: .hostOnly, members: [])
         commands.networksToReturn = [lab, test]
 
         let networks = try await makeGateway(commands).networks()
 
         #expect(networks.map(\.id) == [lab.id, test.id])
-        #expect(networks.map(\.kind) == [.shared, .hostOnly])
+        #expect(networks.map(\.kind) == [.nat, .hostOnly])
         #expect(networks[0].members.map(\.id) == [alpha.id])
         #expect(networks[0].members.map(\.name) == ["Alpha"])
         #expect(networks[1].members.isEmpty)
@@ -90,7 +90,7 @@ struct VMNetworkIntentTests {
     @Test("Resolving by identifier, or by a typed name, answers only the networks asked for")
     func lookupFilters() async throws {
         let commands = MockVMCommanding()
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])
+        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])
         let test = NetworkSummary(id: UUID(), name: "Test Lab", kind: .hostOnly, members: [])
         commands.networksToReturn = [lab, test]
         let gateway = makeGateway(commands)
@@ -137,7 +137,7 @@ struct VMNetworkIntentTests {
         let gateway = makeGateway(commands)
 
         await #expect(throws: refusal) {
-            try await gateway.createNetwork(name: " ", kind: .shared)
+            try await gateway.createNetwork(name: " ", kind: .nat)
         }
         await #expect(throws: refusal) {
             try await gateway.deleteNetwork(UUID())

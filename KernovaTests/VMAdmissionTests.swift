@@ -33,12 +33,12 @@ struct VMAdmissionTests {
         var usbSupported = true
         var networkEnabled = true
         var clipboardSharing = true
-        /// The saved state restores after a membership move — a Shared VM's.
+        /// The saved state restores after a membership move — a NAT VM's.
         var survivesMembershipMove = false
         var writesOutsideBundle = false
 
         static let plain = Variant()
-        static let sharedNetwork = Variant(survivesMembershipMove: true)
+        static let natNetwork = Variant(survivesMembershipMove: true)
         static let linux = Variant(guestOS: .linux)
         static let pendingSetup = Variant(pendingSetup: true)
         static let linuxPendingSetup = Variant(guestOS: .linux, pendingSetup: true)
@@ -195,9 +195,9 @@ struct VMAdmissionTests {
         (.noNetwork, .edit(.networkAttachment), "AAAIIIR"),
         (.noNetwork, .edit(.networkMembership), "AAAIIIR"),
         // Only membership is open beside a saved state that survives a move.
-        (.sharedNetwork, .edit(.networkMembership), "AAAAAAR"),
-        (.sharedNetwork, .edit(.networkAttachment), "AAAIAAR"),
-        (.sharedNetwork, .edit(.machineKeys), "AAAIIIR"),
+        (.natNetwork, .edit(.networkMembership), "AAAAAAR"),
+        (.natNetwork, .edit(.networkAttachment), "AAAIAAR"),
+        (.natNetwork, .edit(.machineKeys), "AAAIIIR"),
         // A disk outside the bundle is not copied, so only a stopped VM is
         // cloned or snapshotted while its guest can write one: a capture with
         // memory would resume over the disk as written since.

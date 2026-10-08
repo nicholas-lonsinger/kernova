@@ -118,7 +118,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
 
         /// The value `text` spells as typed, ignoring case but for a bridged
         /// interface's identifier: a ``rawValue`` naming no named network, or
-        /// a vmnet mode alone (`shared`, `hostOnly`) for that mode's common
+        /// a vmnet mode alone (`nat`, `hostOnly`) for that mode's common
         /// network. `nil` for anything else — a named network is typed by its
         /// name or identifier, which only the library resolves.
         public init?(spelling text: String) {
@@ -142,7 +142,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// What ``init(spelling:)`` reads, but for `bridged:<interface>`, in
         /// the order the Mode picker lists them.
         public static let spellings: [String] =
-            [VmnetNetworkKind.shared, .hostOnly].flatMap { kind in
+            [VmnetNetworkKind.nat, .hostOnly].flatMap { kind in
                 [kind.rawValue, NetworkModeChoice.vmnet(kind, .isolated).rawValue]
             }
             + [NetworkModeChoice.bridged(nil).rawValue, NetworkModeChoice.none.rawValue, unlistedValue]

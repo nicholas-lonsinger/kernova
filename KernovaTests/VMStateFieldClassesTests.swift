@@ -67,7 +67,7 @@ struct VMStateFieldClassesTests {
         off.networkEnabled = false
         off.macAddress = nil
         var on = off
-        on.applyNetworkMode(.shared)
+        on.applyNetworkMode(.nat)
         let classes = VMConfiguration.fieldClasses
         // Adding the device mints its address, both part of the swap.
         #expect(classes.refused(from: off, to: on, by: .edit(.networkAttachment)) == [])
@@ -87,7 +87,7 @@ struct VMStateFieldClassesTests {
     @Test("A membership edit writes the membership and no other network field")
     func membershipEditWritesMembershipAlone() {
         var common = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)
-        common.applyNetworkMode(.shared)
+        common.applyNetworkMode(.nat)
         var isolated = common
         isolated.networkMembership = .isolated
         let classes = VMConfiguration.fieldClasses
@@ -150,7 +150,7 @@ struct VMStateFieldClassesTests {
     /// Values some key takes, or refuses, covering every key's spelling.
     private static let candidateValues = [
         "true", "false", "0", "1", "2", "4", "8", "16", "1280", "800",
-        VMConfigurationKeyRegistry.noNetworkValue, "shared", "bridged", "hostOnly", "inline", "popOut",
+        VMConfigurationKeyRegistry.noNetworkValue, "nat", "bridged", "hostOnly", "inline", "popOut",
         "fullscreen", "automatic", "mac", "usb", "never", "fullscreenOnly", "always", "en0", "",
         "02:11:22:33:44:55", "Baseline",
     ]
@@ -161,7 +161,7 @@ struct VMStateFieldClassesTests {
         let context = VMConfigurationWriteContext(
             snapshots: VMSnapshotManifest(snapshots: [snapshot]), entitlements: .entitled, networks: .listed([]))
         var networked = VMConfiguration(name: "VM", guestOS: .macOS, bootMode: .macOS)
-        networked.applyNetworkMode(.shared)
+        networked.applyNetworkMode(.nat)
         var unaddressed = networked
         unaddressed.macAddress = nil
         var offline = VMConfiguration(name: "VM", guestOS: .linux, bootMode: .efi)

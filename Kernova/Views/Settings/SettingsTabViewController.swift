@@ -100,23 +100,72 @@ enum SettingsPaneMetrics {
     }
 }
 
-/// The toolbar-style tab container for the Settings window.
-///
-/// Holds a **General** tab (app-lifecycle toggles), a **Reminders** tab (turning
-/// suppressed reminders back on), a **Clipboard** tab (the maximum paste size),
-/// a **Networks** tab (the library's named networks) in a build that can attach
-/// one, a **Tags** tab (the library's tags), and an **Advanced** tab.
+/// One tab of the Settings window, in toolbar order.
+enum SettingsPane: String, CaseIterable {
+    /// App-lifecycle toggles.
+    case general
+    /// Turning suppressed reminders back on.
+    case reminders
+    /// The maximum paste size.
+    case clipboard
+    /// The library's named networks.
+    case networks
+    /// The library's tags.
+    case tags
+    case advanced
+
+    /// Whether a build with `entitlements` has this pane: the Networks pane
+    /// only where the build can create a named network.
+    @MainActor func isOffered(by entitlements: EntitlementService) -> Bool {
+        self != .networks || !NetworksSettingsViewController.creatableKinds(entitlements).isEmpty
+    }
+
+    fileprivate var label: String {
+        switch self {
+        case .general: "General"
+        case .reminders: "Reminders"
+        case .clipboard: "Clipboard"
+        case .networks: "Networks"
+        case .tags: "Tags"
+        case .advanced: "Advanced"
+        }
+    }
+
+    fileprivate var symbolName: String {
+        switch self {
+        case .general: "gearshape"
+        case .reminders: "bell"
+        case .clipboard: "clipboard"
+        case .networks: "network"
+        case .tags: "tag"
+        case .advanced: "gearshape.2"
+        }
+    }
+}
+
+/// Where a request to show the Settings window lands.
+enum SettingsDestination: Equatable {
+    case pane(SettingsPane)
+    /// The Networks pane, with the row of the network `id` identifies selected
+    /// when the library lists it.
+    case network(UUID)
+
+    var pane: SettingsPane {
+        switch self {
+        case .pane(let pane): pane
+        case .network: .networks
+        }
+    }
+}
+
+/// The toolbar-style tab container for the Settings window: one tab per
+/// ``SettingsPane`` the build offers.
 ///
 /// The Reminders, Clipboard, Networks and Tags panes need the app's
 /// `VMLibraryViewModel`, so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
-
-    /// A pane another window opens the Settings window on.
-    enum Pane: String {
-        case tags
-    }
 
     private let viewModel: VMLibraryViewModel
 
@@ -133,52 +182,42 @@ final class SettingsTabViewController: NSTabViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         tabStyle = .toolbar
-
-        let general = NSTabViewItem(
-            viewController: GeneralSettingsViewController(viewModel: viewModel))
-        general.label = "General"
-        general.image = Self.symbol("gearshape")
-        addTabViewItem(general)
-
-        let reminders = NSTabViewItem(
-            viewController: RemindersSettingsViewController(viewModel: viewModel))
-        reminders.label = "Reminders"
-        reminders.image = Self.symbol("bell")
-        addTabViewItem(reminders)
-
-        let clipboard = NSTabViewItem(
-            viewController: ClipboardSettingsViewController(viewModel: viewModel))
-        clipboard.label = "Clipboard"
-        clipboard.image = Self.symbol("clipboard")
-        addTabViewItem(clipboard)
-
-        if !NetworksSettingsViewController.creatableKinds(viewModel.entitlements).isEmpty {
-            let networks = NSTabViewItem(
-                viewController: NetworksSettingsViewController(viewModel: viewModel))
-            networks.label = "Networks"
-            networks.image = Self.symbol("network")
-            addTabViewItem(networks)
+        for pane in SettingsPane.allCases where pane.isOffered(by: viewModel.entitlements) {
+            let item = NSTabViewItem(viewController: makeController(pane))
+            item.identifier = pane.rawValue
+            item.label = pane.label
+            item.image = Self.symbol(pane.symbolName)
+            addTabViewItem(item)
         }
-
-        let tags = NSTabViewItem(viewController: TagsSettingsViewController(viewModel: viewModel))
-        tags.identifier = Pane.tags.rawValue
-        tags.label = "Tags"
-        tags.image = Self.symbol("tag")
-        addTabViewItem(tags)
-
-        let advanced = NSTabViewItem(
-            viewController: AdvancedSettingsViewController(preferences: viewModel.preferences))
-        advanced.label = "Advanced"
-        advanced.image = Self.symbol("gearshape.2")
-        addTabViewItem(advanced)
     }
 
-    /// Selects `pane`'s tab.
-    func select(_ pane: Pane) {
+    private func makeController(_ pane: SettingsPane) -> NSViewController {
+        switch pane {
+        case .general: GeneralSettingsViewController(viewModel: viewModel)
+        case .reminders: RemindersSettingsViewController(viewModel: viewModel)
+        case .clipboard: ClipboardSettingsViewController(viewModel: viewModel)
+        case .networks: NetworksSettingsViewController(viewModel: viewModel)
+        case .tags: TagsSettingsViewController(viewModel: viewModel)
+        case .advanced: AdvancedSettingsViewController(preferences: viewModel.preferences)
+        }
+    }
+
+    /// The pane on screen, `nil` before the view loads.
+    var selectedPane: SettingsPane? {
+        (tabView.selectedTabViewItem?.identifier as? String).flatMap(SettingsPane.init(rawValue:))
+    }
+
+    /// Selects the pane `destination` names and, for a network, its row.
+    ///
+    /// A pane this build does not offer leaves the selection where it is.
+    func show(_ destination: SettingsDestination) {
         loadViewIfNeeded()
-        let index = tabView.indexOfTabViewItem(withIdentifier: pane.rawValue)
+        let index = tabView.indexOfTabViewItem(withIdentifier: destination.pane.rawValue)
         guard index != NSNotFound else { return }
         selectedTabViewItemIndex = index
+        if case .network(let id) = destination {
+            (tabViewItems[index].viewController as? NetworksSettingsViewController)?.reveal(id)
+        }
     }
 
     /// Resizes the window to fit the newly selected pane, System Settings-style.

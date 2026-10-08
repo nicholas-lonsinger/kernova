@@ -560,11 +560,11 @@ struct VMInstanceTests {
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
         // The wording names what is actually unavailable: the app-managed
-        // network for Shared and Host Only, a host interface for Bridged.
-        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .shared }
+        // network for NAT and Host Only, a host interface for Bridged.
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .nat }
         #expect(
             instance.statusToolTip
-                == "The Shared Network is unavailable. Kernova reconnects automatically.")
+                == "The NAT network is unavailable. Kernova reconnects automatically.")
         library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .hostOnly }
         #expect(
             instance.statusToolTip
@@ -578,9 +578,9 @@ struct VMInstanceTests {
         let library = makeWiredLibrary()
         let instance = library.registerFixture(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
-        let device = MockNetworkDeviceControl(plan: .vmnet(.common(.shared)))
+        let device = MockNetworkDeviceControl(plan: .vmnet(.common(.nat)))
         let coordinator = attachNetworkCoordinator(
             to: instance, device: device,
             provider: MockBridgedInterfaceProvider(
@@ -602,7 +602,7 @@ struct VMInstanceTests {
         let library = makeWiredLibrary()
         let instance = library.registerFixture(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
         let device = MockNetworkDeviceControl()
         let coordinator = attachNetworkCoordinator(to: instance, device: device)
@@ -1098,7 +1098,7 @@ struct VMInstanceTests {
     func networkDisconnectedEventForwardsToCoordinator() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
         let device = MockNetworkDeviceControl(plan: .nat)
         let coordinator = attachNetworkCoordinator(to: instance, device: device)

@@ -51,35 +51,35 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// the picker offers — and per kind of network it offers beyond a mode's
     /// common one, and nothing about one it cannot offer.
     ///
-    /// "UI copy states only what is known": the Shared reach clause points at
-    /// the IP address row only while that row shows a Shared guest's address
-    /// (`sharedAddressShown`), and the Wi-Fi limitation is stated at the
+    /// "UI copy states only what is known": the NAT reach clause points at
+    /// the IP address row only while that row shows a NAT guest's address
+    /// (`natAddressShown`), and the Wi-Fi limitation is stated at the
     /// standard's strength, on the surface the user picks a mode from.
     static func modeInfoParagraphs(
         offered: Set<VMNetworkMode>, isolationOffered: Bool, namedNetworksOffered: Bool,
-        sharedAddressShown: Bool, guestOS: VMGuestOS
+        natAddressShown: Bool, guestOS: VMGuestOS
     ) -> [InfoPopoverParagraph] {
-        let sharedReachClause =
-            sharedAddressShown
+        let natReachClause =
+            natAddressShown
             ? "this Mac reaches it at the address in the IP address row"
             : "this Mac reaches it at its address on that subnet"
         var paragraphs: [InfoPopoverParagraph] = []
-        if offered.contains(.shared) {
+        if offered.contains(.nat) {
             paragraphs.append(
                 .body(
-                    "Shared Network: outbound access through this Mac. The guest gets a DHCP address on a private subnet that other machines on your network can't reach; \(sharedReachClause)."
+                    "\(VMNetworkMode.nat.title): outbound access through this Mac. The guest gets a DHCP address on a private subnet that other machines on your network can't reach; \(natReachClause)."
                 ))
         }
         if offered.contains(.hostOnly) {
             paragraphs.append(
                 .body(
-                    "Host Only: a private network shared with this Mac and other Host Only guests, with no access to your network or the internet."
+                    "\(VMNetworkMode.hostOnly.title): a private network shared with this Mac and other \(VMNetworkMode.hostOnly.title) guests, with no access to your network or the internet."
                 ))
         }
         if isolationOffered {
             paragraphs.append(
                 .body(
-                    "Isolated: a network of the guest's own instead of the one every other virtual machine in its mode joins. It keeps its mode's reach to this Mac — and, for Shared Network, to the internet — while no other virtual machine can reach it."
+                    "\(NetworkModeChoice.isolatedTitle): a network of the guest's own instead of its mode's \(NetworkModeChoice.commonTitle) network. It keeps its mode's reach to this Mac — and, for \(VMNetworkMode.nat.title), to the internet — while no other virtual machine can reach it."
                 ))
         }
         if namedNetworksOffered {
@@ -91,7 +91,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         if offered.contains(.bridged) {
             paragraphs += [
                 .body(
-                    "Bridged: joins your network through the chosen interface and requests its own address, like a separate machine."
+                    "\(VMNetworkMode.bridged.title): joins your network through the chosen interface and requests its own address, like a separate machine."
                 ),
                 .body(
                     "Bridged traffic bypasses a VPN running on this Mac. Bridging over Wi-Fi is best-effort — the Wi-Fi standard does not bridge additional stations — so prefer a wired interface."
@@ -114,7 +114,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         networkModePopUp = makeNetworkModePopUp()
         let modeRow = makeGroupedFormCardRow(
             "Mode", control: networkModePopUp, info: modeInfoParagraphs())
-        // Read on each click: the Shared paragraph names the IP address row
+        // Read on each click: the NAT paragraph names the IP address row
         // only while it shows an address.
         modeRow.infoButton?.configure(label: "Mode") { [weak self] in self?.modeInfoParagraphs() ?? [] }
 
@@ -167,10 +167,8 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             isolationOffered: VmnetNetworkKind.allCases.contains {
                 offers(.vmnet($0, .isolated))
             },
-            namedNetworksOffered: VmnetNetworkKind.allCases.contains {
-                offers(.vmnet($0, .network(UUID())))
-            },
-            sharedAddressShown: instance.configuration.networkMode == .shared
+            namedNetworksOffered: SettingsPane.networks.isOffered(by: entitlements),
+            natAddressShown: instance.configuration.networkMode == .nat
                 && resolved.ipAddress.address != nil,
             guestOS: instance.configuration.guestOS)
     }
@@ -251,8 +249,19 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// whose enumeration rebuilds it on its own.
     private struct NetworkMenuBasis: Equatable {
         let choice: NetworkModeChoice
+        /// How ``choice`` names itself — the overview's one naming of it,
+        /// which every entry standing for the current choice carries.
+        let currentLabel: NetworkChoiceLabel
         let reach: NetworkPickerReach
         let networks: VMNetworkDirectory.State
+    }
+
+    /// The Mode menu's basis under the configuration now.
+    private var networkMenuBasis: NetworkMenuBasis {
+        NetworkMenuBasis(
+            choice: NetworkModeChoice(instance.configuration),
+            currentLabel: context.overview.networkModeLabel(),
+            reach: networkPickerReach, networks: viewModel.networks.state)
     }
 
     private func makeNetworkModePopUp() -> NSPopUpButton {
@@ -261,6 +270,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // Otherwise AppKit re-derives each item's enabled state on every event,
         // undoing the entries disabled below.
         popUp.autoenablesItems = false
+        // The closed picker draws the item ``selectNetworkModeItem()`` hands
+        // the cell, not the selected entry.
+        (popUp.cell as? NSPopUpButtonCell)?.usesItemFromMenu = false
         popUp.target = self
         popUp.action = #selector(networkModeChanged)
         popUp.menu?.delegate = self
@@ -269,135 +281,155 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
 
     /// Rebuilds the Mode menu and selects the entry matching the configuration.
     ///
-    /// Each mode's common network, then the VM's own, for Shared Network and
-    /// Host Only; None; the library's named networks; and Bridged's
-    /// interfaces. An entry this build cannot attach is left off, except the
-    /// one the VM is on, which shows without being offered so it still
-    /// selects.
+    /// One group per mode under its header — NAT and Host Only each with its
+    /// common network, the VM's own, and the library's named networks of that
+    /// mode; Bridged with Automatic and the host's interfaces — then, each
+    /// after a separator, None and the entry that opens the named networks in
+    /// Settings. An entry this build cannot attach is left off, except the one
+    /// the VM is on, which shows without being offered so it still selects; a
+    /// group left with no entry drops its header.
     ///
     /// The bridgeable list comes from ``enumeratedInterfaces``, which only
     /// ``menuNeedsUpdate(_:)`` fills in — an enumeration is host state that goes
     /// stale, so it runs when the picker opens and nowhere else. Before the
     /// first open the menu still carries every fixed entry plus one standing for
-    /// the current choice, which is what the row and the card read the mode's
-    /// title from.
+    /// the current choice, which is what the closed picker selects.
     private func rebuildNetworkModeMenu() {
-        let interfaces = enumeratedInterfaces
         guard let menu = networkModePopUp.menu else { return }
         menu.removeAllItems()
-        let basis = NetworkMenuBasis(
-            choice: NetworkModeChoice(instance.configuration), reach: networkPickerReach,
-            networks: viewModel.networks.state)
+        let basis = networkMenuBasis
         renderedNetworkMenu = basis
-        let current = basis.choice
 
         for kind in VmnetNetworkKind.menuOrder {
-            for membership in [VMNetworkMembership.common, .isolated] {
-                addNetworkEntry(.vmnet(kind, membership), basis: basis, to: menu)
-            }
+            addNetworkGroup(kind.mode, entries: vmnetEntries(kind, basis: basis), to: menu)
         }
-        addNetworkModeItem("None", choice: .none, to: menu, enabled: isTaken(.none, basis: basis))
+        addNetworkGroup(.bridged, entries: bridgedEntries(basis: basis), to: menu)
+        menu.addItem(.separator())
+        menu.addItem(makeNetworkModeItem(choice: .none, label: noneLabel, enabled: isTaken(.none, basis: basis)))
 
-        switch basis.networks {
-        case .listed(let networks):
-            addNamedNetworkEntries(networks, basis: basis, to: menu)
-        case .unreadable:
-            // No named network can be offered, and the one the VM may be on
-            // has no name to show: one entry says why, standing for the VM's
-            // current choice when that is a named network, so it still selects.
-            menu.addItem(.sectionHeader(title: "Named Networks"))
-            if case .vmnet(let kind, .network) = current {
-                addNetworkModeItem(
-                    NetworkModeChoice.unreadableNetworkListTitle, choice: current, to: menu,
-                    enabled: false, subtitle: NetworkModeChoice.kindTitle(kind))
-            } else {
-                addNetworkModePlaceholder(NetworkModeChoice.unreadableNetworkListTitle, to: menu)
-            }
-        }
-
-        if offers(.bridged) {
-            menu.addItem(.sectionHeader(title: "Bridged"))
-            addNetworkModeItem(
-                "Automatic", choice: .bridged(nil), to: menu,
-                enabled: isTaken(.bridged(nil), basis: basis))
-            if let interfaces {
-                if interfaces.isEmpty {
-                    addNetworkModePlaceholder("No Bridgeable Interfaces", to: menu)
-                }
-                for interface in interfaces {
-                    let choice = NetworkModeChoice.bridged(interface.identifier)
-                    addNetworkModeItem(
-                        NetworkModeChoice.interfaceTitle(interface), choice: choice, to: menu,
-                        enabled: isTaken(choice, basis: basis))
-                }
-            }
-            // Keep the interface the VM is bridged over on the list when the
-            // entries above don't already carry it — the whole of the Bridged
-            // list until the picker is first opened, and after that only an
-            // interface the host has stopped offering. An identifier merely
-            // remembered from an earlier bridged choice adds no entry.
-            if case .bridged(.some(let persisted)) = current,
-                !(interfaces ?? []).contains(where: { $0.identifier == persisted })
+        // The edit entry goes wherever the Settings window has a Networks pane
+        // for it to open.
+        if SettingsPane.networks.isOffered(by: entitlements) {
+            menu.addItem(.separator())
+            let edit = NSMenuItem(title: "Edit Named Networks\u{2026}", action: nil, keyEquivalent: "")
+            var listedCurrent: UUID?
+            if case .vmnet(let kind, .network(let id)) = basis.choice,
+                basis.networks.listed?.contains(where: { $0.id == id && $0.kind == kind }) == true
             {
-                addNetworkModeItem(
-                    resolved.networkModeTitle ?? persisted, choice: .bridged(persisted),
-                    to: menu, enabled: false)
+                listedCurrent = id
             }
-        } else if case .bridged = current {
-            // A bridged VM in a build the entitlement doesn't cover: the picker
-            // offers no Bridged entry, so this one shows the mode without
-            // offering it — carrying the current choice so it still selects.
-            addNetworkModeItem("Bridged (unavailable)", choice: current, to: menu, enabled: false)
+            edit.representedObject = listedCurrent.map(SettingsDestination.network) ?? .pane(.networks)
+            menu.addItem(edit)
         }
 
         selectNetworkModeItem()
     }
 
-    /// Appends the Named Networks section over the listed `networks`: each one
-    /// the picker offers or the VM is on, and a disabled entry for a network
-    /// the VM is on that the library does not list.
-    private func addNamedNetworkEntries(
-        _ networks: [VMNamedNetwork], basis: NetworkMenuBasis, to menu: NSMenu
-    ) {
-        let current = basis.choice
-        let named = networks.filter {
-            offers(.vmnet($0.kind, .network($0.id))) || current == .vmnet($0.kind, .network($0.id))
+    private var noneLabel: NetworkChoiceLabel {
+        NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([]))
+    }
+
+    /// Appends `mode`'s section header and its entries, or nothing when it has
+    /// none.
+    private func addNetworkGroup(_ mode: VMNetworkMode, entries: [NSMenuItem], to menu: NSMenu) {
+        guard !entries.isEmpty else { return }
+        menu.addItem(.sectionHeader(title: mode.title))
+        entries.forEach(menu.addItem)
+    }
+
+    /// The entries of `kind`'s group: its common network, the VM's own, and
+    /// the library's named networks of that kind — or, while the list can't be
+    /// read, one entry saying so in their place.
+    private func vmnetEntries(_ kind: VmnetNetworkKind, basis: NetworkMenuBasis) -> [NSMenuItem] {
+        let fixed: [NSMenuItem] = [VMNetworkMembership.common, .isolated].compactMap {
+            networkEntry(.vmnet(kind, $0), basis: basis)
         }
-        let unlisted: Bool
-        if case .vmnet(let kind, .network(let id)) = current {
-            unlisted = !networks.contains { $0.id == id && $0.kind == kind }
-        } else {
-            unlisted = false
-        }
-        guard !named.isEmpty || unlisted else { return }
-        menu.addItem(.sectionHeader(title: "Named Networks"))
-        for network in named {
-            addNetworkEntry(
-                .vmnet(network.kind, .network(network.id)), basis: basis, to: menu,
-                subtitle: NetworkModeChoice.kindTitle(network.kind))
-        }
-        if unlisted, case .vmnet(let kind, _) = current {
-            // A network another library listed — an import, or a revert to a
-            // snapshot taken before a delete: the VM still joins it, and no
-            // surface here can choose it.
-            addNetworkModeItem(
-                NetworkModeChoice.unlistedNetworkTitle, choice: current, to: menu,
-                enabled: false, subtitle: NetworkModeChoice.kindTitle(kind))
+        switch basis.networks {
+        case .listed(let networks):
+            return fixed + namedEntries(kind, listed: networks, basis: basis)
+        case .unreadable:
+            // No named network can be offered, and the one the VM may be on
+            // has no name to show: one entry says why, standing for the VM's
+            // current choice when that is a named network of this kind, so it
+            // still selects.
+            if case .vmnet(kind, .network) = basis.choice {
+                return fixed + [makeNetworkModeItem(choice: basis.choice, label: basis.currentLabel, enabled: false)]
+            }
+            guard NetworksSettingsViewController.creatableKinds(entitlements).contains(kind) else { return fixed }
+            return fixed + [makeNetworkModePlaceholder(NetworkModeChoice.unreadableNetworkListTitle)]
         }
     }
 
-    /// Appends `choice`'s entry when the picker offers it, and otherwise —
-    /// when it is the VM's current network — a disabled one standing for it.
-    private func addNetworkEntry(
-        _ choice: NetworkModeChoice, basis: NetworkMenuBasis, to menu: NSMenu,
-        subtitle: String? = nil
-    ) {
+    /// The entries for the `listed` named networks of `kind`: each one the
+    /// picker offers or the VM is on, and a disabled one for a network of
+    /// `kind` the VM is on that the library does not list.
+    private func namedEntries(
+        _ kind: VmnetNetworkKind, listed networks: [VMNamedNetwork], basis: NetworkMenuBasis
+    ) -> [NSMenuItem] {
+        let named = networks.filter { $0.kind == kind }.compactMap {
+            networkEntry(.vmnet(kind, .network($0.id)), basis: basis)
+        }
+        // A network another library listed — an import, or a revert to a
+        // snapshot taken before a delete: the VM still joins it, and no
+        // surface here can choose it.
+        guard case .vmnet(kind, .network(let id)) = basis.choice,
+            !networks.contains(where: { $0.id == id && $0.kind == kind })
+        else { return named }
+        return named + [makeNetworkModeItem(choice: basis.choice, label: basis.currentLabel, enabled: false)]
+    }
+
+    /// The Bridged group's entries: Automatic and each bridgeable interface
+    /// when the build offers Bridged, and otherwise only the VM's own bridged
+    /// choice, shown without being offered.
+    private func bridgedEntries(basis: NetworkMenuBasis) -> [NSMenuItem] {
+        let current = basis.choice
+        guard offers(.bridged) else {
+            // A bridged VM in a build the entitlement doesn't cover: this
+            // entry shows the mode without offering it, carrying the current
+            // choice so it still selects.
+            guard case .bridged = current else { return [] }
+            return [makeNetworkModeItem(choice: current, label: basis.currentLabel, enabled: false)]
+        }
+        let interfaces = enumeratedInterfaces
+        var entries = ([NetworkModeChoice.bridged(nil)] + (interfaces ?? []).map { .bridged($0.identifier) }).map {
+            makeNetworkModeItem(
+                choice: $0, label: label(of: $0, attachable: true, interfaces: interfaces ?? [], basis: basis),
+                enabled: isTaken($0, basis: basis))
+        }
+        if interfaces?.isEmpty == true {
+            entries.append(makeNetworkModePlaceholder("No Bridgeable Interfaces"))
+        }
+        // Keep the interface the VM is bridged over on the list when the
+        // entries above don't already carry it — the whole of the Bridged
+        // list until the picker is first opened, and after that only an
+        // interface the host has stopped offering. An identifier merely
+        // remembered from an earlier bridged choice adds no entry.
+        if case .bridged(.some(let persisted)) = current,
+            !(interfaces ?? []).contains(where: { $0.identifier == persisted })
+        {
+            entries.append(makeNetworkModeItem(choice: current, label: basis.currentLabel, enabled: false))
+        }
+        return entries
+    }
+
+    /// `choice`'s entry when the picker offers it, and otherwise — when it is
+    /// the VM's current network — a disabled one standing for it.
+    private func networkEntry(_ choice: NetworkModeChoice, basis: NetworkMenuBasis) -> NSMenuItem? {
         let offered = offers(choice)
-        guard offered || choice == basis.choice else { return }
-        addNetworkModeItem(
-            choice.title(attachable: offered, interfaces: [], networks: basis.networks),
-            choice: choice, to: menu, enabled: offered && isTaken(choice, basis: basis),
-            subtitle: subtitle)
+        guard offered || choice == basis.choice else { return nil }
+        return makeNetworkModeItem(
+            choice: choice, label: label(of: choice, attachable: offered, interfaces: [], basis: basis),
+            enabled: offered && isTaken(choice, basis: basis))
+    }
+
+    /// How `choice`'s entry names it: the basis's own label when it is the
+    /// VM's current choice, so the menu and the closed picker state what the
+    /// overview states.
+    private func label(
+        of choice: NetworkModeChoice, attachable: Bool, interfaces: [BridgedInterface], basis: NetworkMenuBasis
+    ) -> NetworkChoiceLabel {
+        guard choice != basis.choice else { return basis.currentLabel }
+        return choice.label(attachable: attachable, interfaces: interfaces, networks: basis.networks)
     }
 
     /// Whether choosing `choice` makes a change the picker takes now.
@@ -413,10 +445,10 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         }
     }
 
-    /// The modes the picker offers: Shared Network always, and each other mode
+    /// The modes the picker offers: NAT always, and each other mode
     /// whose network this build can attach.
     private var offeredModes: Set<VMNetworkMode> {
-        Set(VMNetworkMode.allCases.filter { $0 == .shared || offers($0) })
+        Set(VMNetworkMode.allCases.filter { $0 == .nat || offers($0) })
     }
 
     /// Whether the picker offers `mode`: the network choosing it puts the VM
@@ -450,48 +482,59 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         return candidate.joinedNetwork.map(entitlements.canAttach) ?? false
     }
 
-    /// Appends one Mode entry.
+    /// One Mode entry, titled by its entry alone and indented under its
+    /// group's header when a group holds it.
     ///
     /// `choice` is non-optional: in an optional context Swift reads the
     /// `.none` case as `nil`, which would strip the None entry's identity.
-    private func addNetworkModeItem(
-        _ title: String, choice: NetworkModeChoice, to menu: NSMenu, enabled: Bool = true,
-        subtitle: String? = nil
-    ) {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.representedObject = choice
+    private func makeNetworkModeItem(
+        choice: NetworkModeChoice, label: NetworkChoiceLabel, enabled: Bool
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: label.entry, action: nil, keyEquivalent: "")
+        item.indentationLevel = label.group == nil ? 0 : 1
+        item.representedObject = NetworkModeEntry(choice: choice, label: label)
         item.isEnabled = enabled
-        item.subtitle = subtitle
-        menu.addItem(item)
+        return item
     }
 
-    /// Appends an entry that stands for no mode at all — readable, never chosen.
-    private func addNetworkModePlaceholder(_ title: String, to menu: NSMenu) {
+    /// An entry under a group's header that stands for no mode at all —
+    /// readable, never chosen.
+    private func makeNetworkModePlaceholder(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.indentationLevel = 1
         item.isEnabled = false
-        menu.addItem(item)
+        return item
     }
 
+    /// Selects the entry for the configured network and titles the closed
+    /// picker with that entry's full label — the one place that sets both.
+    ///
+    /// The cell draws its own `menuItem` rather than the selected one
+    /// (`usesItemFromMenu` is off), so the closed picker names the group an
+    /// entry sits under while the entry keeps its short title and checkmark.
+    /// The cell — the element VoiceOver reads — still reports the selected
+    /// entry's short title as its value, so it is told the full label too.
     private func selectNetworkModeItem() {
         let choice = NetworkModeChoice(instance.configuration)
         guard
             let item = networkModePopUp.menu?.items.first(where: {
-                $0.representedObject as? NetworkModeChoice == choice
-            })
+                ($0.representedObject as? NetworkModeEntry)?.choice == choice
+            }),
+            let entry = item.representedObject as? NetworkModeEntry,
+            let cell = networkModePopUp.cell as? NSPopUpButtonCell
         else { return }
         networkModePopUp.select(item)
+        cell.menuItem = NSMenuItem(title: entry.label.text, action: nil, keyEquivalent: "")
+        cell.setAccessibilityValue(entry.label.text)
     }
 
     private func refreshNetwork() {
-        let reach = networkPickerReach
-        let live = reach.mode || reach.membership
+        let basis = networkMenuBasis
+        let live = basis.reach.mode || basis.reach.membership
         applyGroupedFormRowEnabled(live, control: networkModePopUp)
         // `apply()` just showed every lock hint for the read-only pane; a live
         // picker makes this section's hint a false claim, so re-hide it.
         networkLockHint?.isHidden = live
-        let basis = NetworkMenuBasis(
-            choice: NetworkModeChoice(instance.configuration), reach: reach,
-            networks: viewModel.networks.state)
         if basis != renderedNetworkMenu {
             rebuildNetworkModeMenu()
         }
@@ -528,42 +571,56 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         refreshNetwork()
     }
 
+    /// Acts on the entry just chosen, then puts the selection back on the
+    /// configured network.
+    ///
+    /// AppKit has already selected the chosen entry, and a choice can leave
+    /// the configuration where it was — a refused write, or Edit Named
+    /// Networks…, which writes nothing — so the popup's selection is re-read
+    /// from the configuration after every choice rather than left as clicked.
     @objc private func networkModeChanged() {
-        guard let choice = networkModePopUp.selectedItem?.representedObject as? NetworkModeChoice
-        else { return }
+        defer { selectNetworkModeItem() }
+        guard let entry = networkModePopUp.selectedItem?.representedObject else { return }
+        switch entry {
+        case let entry as NetworkModeEntry:
+            apply(entry.choice)
+            // The write flips the card's row visibility; refresh in case the
+            // value was already what the model held.
+            refreshResolved()
+            refreshNetwork()
+        case let destination as SettingsDestination:
+            context.showAppSettings(destination)
+        default:
+            break
+        }
+    }
+
+    /// Writes the configuration keys `choice` moves.
+    private func apply(_ choice: NetworkModeChoice) {
         let config = instance.configuration
         let mode = VMConfigurationKeyRegistry.networkMode
-        let accepted =
-            switch choice {
-            case .vmnet(let kind, let membership):
-                // Both keys in one write, so a move to a named network of the
-                // other mode lands whole; a key whose value stays is left out.
-                write(
-                    contentsOf: [
-                        config.effectiveNetworkMode == kind.mode
-                            ? nil : mode.assigning(kind.mode.rawValue),
-                        config.networkMembership == membership
-                            ? nil
-                            : VMConfigurationKeyRegistry.networkMembership.assigning(
-                                membership.rawValue),
-                    ].compactMap { $0 })
-            case .none:
-                write(mode.assigning(VMConfigurationKeyRegistry.noNetworkValue))
-            case .bridged(let identifier):
-                // The interface before the mode, so a picker choice that only
-                // changes the interface still lands.
-                write(
-                    VMConfigurationKeyRegistry.networkBridgedInterface.assigning(identifier ?? ""),
-                    mode.assigning(VMNetworkMode.bridged.rawValue))
-            }
-        // A refused switch leaves the configuration untouched, so nothing marks
-        // the menu stale and the picker would go on showing a network the VM is
-        // not on. Rebuilding re-selects the configured one.
-        if !accepted { rebuildNetworkModeMenu() }
-        // The write flips the card's row visibility; refresh in case the value was
-        // already what the model held.
-        refreshResolved()
-        refreshNetwork()
+        switch choice {
+        case .vmnet(let kind, let membership):
+            // Both keys in one write, so a move to a named network of the
+            // other mode lands whole; a key whose value stays is left out.
+            write(
+                contentsOf: [
+                    config.effectiveNetworkMode == kind.mode
+                        ? nil : mode.assigning(kind.mode.rawValue),
+                    config.networkMembership == membership
+                        ? nil
+                        : VMConfigurationKeyRegistry.networkMembership.assigning(
+                            membership.rawValue),
+                ].compactMap { $0 })
+        case .none:
+            _ = write(mode.assigning(VMConfigurationKeyRegistry.noNetworkValue))
+        case .bridged(let identifier):
+            // The interface before the mode, so a picker choice that only
+            // changes the interface still lands.
+            _ = write(
+                VMConfigurationKeyRegistry.networkBridgedInterface.assigning(identifier ?? ""),
+                mode.assigning(VMNetworkMode.bridged.rawValue))
+        }
     }
 
     /// Persists the typed MAC in canonical form, then shows the address the VM
@@ -639,7 +696,14 @@ extension VMSettingsNetworkPanelViewController: NSTextFieldDelegate {
     }
 }
 
+/// What a Mode entry selects, and the label the closed picker shows while it
+/// is selected.
+struct NetworkModeEntry {
+    let choice: NetworkModeChoice
+    let label: NetworkChoiceLabel
+}
+
 extension VmnetNetworkKind {
     /// The order the Mode picker lists each kind's networks in.
-    fileprivate static let menuOrder: [VmnetNetworkKind] = [.shared, .hostOnly]
+    fileprivate static let menuOrder: [VmnetNetworkKind] = [.nat, .hostOnly]
 }

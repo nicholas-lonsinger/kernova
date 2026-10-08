@@ -83,14 +83,14 @@ final class VMNetworkScriptObject: NSObject {
 /// its enumerators in `Kernova.sdef`, which `KernovaScriptingDefinitionTests`
 /// checks.
 enum VMScriptNetworkKind: CaseIterable {
-    case sharedNetwork
+    case nat
     case hostOnly
 
     /// The term `kind` is named by. Exhaustive, so a new kind has to be given
     /// a term before it compiles.
     init(_ kind: NetworkKind) {
         switch kind {
-        case .shared: self = .sharedNetwork
+        case .nat: self = .nat
         case .hostOnly: self = .hostOnly
         }
     }
@@ -105,7 +105,7 @@ enum VMScriptNetworkKind: CaseIterable {
     /// The term the dictionary names this kind with.
     var term: String {
         switch self {
-        case .sharedNetwork: "shared network"
+        case .nat: "nat"
         case .hostOnly: "host only"
         }
     }
@@ -113,7 +113,7 @@ enum VMScriptNetworkKind: CaseIterable {
     /// The Apple event code the dictionary gives that term.
     var code: FourCharCode {
         switch self {
-        case .sharedNetwork: FourCharCode(scriptingCode: "KnSh")
+        case .nat: FourCharCode(scriptingCode: "KnSh")
         case .hostOnly: FourCharCode(scriptingCode: "KnHo")
         }
     }
@@ -121,7 +121,7 @@ enum VMScriptNetworkKind: CaseIterable {
     /// The kind this term names.
     var kind: NetworkKind {
         switch self {
-        case .sharedNetwork: .shared
+        case .nat: .nat
         case .hostOnly: .hostOnly
         }
     }
