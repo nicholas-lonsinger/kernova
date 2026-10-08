@@ -51,11 +51,14 @@ final class VMOrganizationDirectory {
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
+            // Folders, the section order and tags are lists: an entry that
+            // doesn't decode is removed alone, and the rest are kept.
             let byDefault =
                 try container.decode([VMSmartGroup].self, forKey: .smartGroups).map(Section.smartGroup)
-                + (try container.decodeIfPresent([VMFolder].self, forKey: .folders) ?? []).map(Section.folder)
+                + (try container.decode([VMFolder].self, forKey: .folders, default: [], in: decoder))
+                .map(Section.folder)
                 + [.library]
-            let order = try container.decodeIfPresent([SidebarSectionID].self, forKey: .sectionOrder) ?? []
+            let order = try container.decode([SidebarSectionID].self, forKey: .sectionOrder, default: [], in: decoder)
             var rank: [SidebarSectionID: Int] = [:]
             for (index, id) in order.enumerated() where rank[id] == nil { rank[id] = index }
             sections = byDefault.enumerated()
@@ -65,7 +68,7 @@ final class VMOrganizationDirectory {
                     )
                 }
                 .map(\.element)
-            tags = try container.decodeIfPresent([VMTag].self, forKey: .tags) ?? []
+            tags = try container.decode([VMTag].self, forKey: .tags, default: [], in: decoder)
         }
 
         func encode(to encoder: any Encoder) throws {

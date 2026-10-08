@@ -64,9 +64,9 @@ struct SidebarTagTests {
             reread.tags == [
                 VMTag(id: work.id, name: "Work", color: .red), VMTag(id: lab.id, name: "Bench", color: .green),
             ])
-        #expect(reread.tag(named: "bench")?.id == lab.id)
-        #expect(reread.tag(named: work.id.uuidString.lowercased())?.id == work.id)
-        #expect(reread.tag(named: "Home") == nil)
+        #expect(reread.state.listed?.tag(named: "bench")?.id == lab.id)
+        #expect(reread.state.listed?.tag(named: work.id.uuidString.lowercased())?.id == work.id)
+        #expect(reread.state.listed?.tag(named: "Home") == nil)
         #expect(reread.unusedName(from: "Work", for: .tag) == "Work 2")
     }
 
@@ -88,7 +88,7 @@ struct SidebarTagTests {
         #expect(throws: VMOrganizationDirectory.ChangeError.nameIsIdentifier(identifier, .tag)) {
             try directory.createTag(named: identifier, color: .red)
         }
-        #expect(directory.tags.map(\.id) == [work.id, lab.id])
+        #expect(directory.tags?.map(\.id) == [work.id, lab.id])
     }
 
     @Test("A library file written before tags reads with none, and keeps its groups as a tag is added")
@@ -96,8 +96,8 @@ struct SidebarTagTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         try Data(#"{"smartGroups":[],"folders":[]}"#.utf8).write(to: fileURL)
         let directory = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(directory.readFailure == nil)
-        #expect(directory.tags.isEmpty)
+        #expect(directory.state.unreadable == nil)
+        #expect(directory.tags == [])
 
         let work = try directory.createTag(named: "Work", color: .blue)
 
@@ -137,7 +137,7 @@ struct SidebarTagTests {
         let vm = library.admitFixture(name: "A", hostState: VMHostState(tags: [work.id, UUID()]))
 
         #expect(library.tags(of: vm) == [work])
-        #expect(library.sidebarContext.subject(of: .vm(vm)).tags == [work.id])
+        #expect(library.sidebarContext.subject(of: .vm(vm))?.tags == [work.id])
     }
 
     @Test("Clones keep their source's tags, both a New Machine and an Exact Copy")
@@ -458,14 +458,14 @@ struct SidebarTagTests {
         #expect(pane.suggestedColor() == .red)
         try pane.create(name: "Work", color: pane.suggestedColor())
         #expect(pane.suggestedColor() == .orange)
-        let work = try #require(library.tags.first)
+        let work = try #require(library.tags?.first)
         try library.setTag(work.id, assigned: true, on: vm)
         try pane.rename(work.id, to: "Office")
         try pane.recolor(work.id, to: .purple)
 
         #expect(library.tags == [VMTag(id: work.id, name: "Office", color: .purple)])
         #expect(pane.tags == library.tags)
-        #expect(TagsSettingsViewController.membersText(pane.members(of: library.tags[0])) == "Desk")
+        #expect(TagsSettingsViewController.membersText(pane.members(of: try #require(library.tags?.first))) == "Desk")
         #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Office", .tag)) {
             try pane.create(name: "office", color: .blue)
         }

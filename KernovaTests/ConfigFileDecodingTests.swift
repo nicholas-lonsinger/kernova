@@ -449,4 +449,52 @@ struct ConfigFileDecodingTests {
             ])
         #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
+
+    // MARK: - Organization fields
+
+    @Test("A VM's tag that doesn't decode is removed alone, and a last run that doesn't repairs to none recorded")
+    func hostStateTagsAndLastRunRepair() throws {
+        let kept = UUID()
+        let data = Data(#"{"tags": ["\#(kept.uuidString)", 7], "lastRunAt": "yesterday"}"#.utf8)
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMHostState.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.tags[1]", "$.lastRunAt"])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry, .useDefault("null")])
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            VMHostState.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.tags == [kept])
+        #expect(repaired.lastRunAt == nil)
+    }
+
+    @Test("A folder, a section or a tag in the organization file that doesn't decode is removed alone")
+    func organizationEntriesRepairOneByOne() throws {
+        let folder = UUID()
+        let tag = UUID()
+        let data = Data(
+            #"""
+            {"smartGroups": [],
+             "folders": [{"id": "\#(folder.uuidString)", "name": "Lab", "members": []}, {"name": 3}],
+             "sectionOrder": ["virtualMachines", 4],
+             "tags": [{"id": "\#(tag.uuidString)", "name": "Work", "color": "red"},
+                      {"id": "\#(UUID().uuidString)", "name": "Home", "color": "plaid"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.folders[1]", "$.sectionOrder[1]", "$.tags[1]"])
+        #expect(diagnosis.problems.allSatisfy { $0.repair == .removeEntry })
+        let repaired = try JSONDecoder().decode(
+            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.folders.map(\.id) == [folder])
+        #expect(repaired.tags.map(\.id) == [tag])
+        #expect(repaired.sections.map(\.id) == [.library, .folder(folder)])
+    }
 }

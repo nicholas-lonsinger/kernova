@@ -4,7 +4,7 @@ import KernovaKit
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:options:search:retaining:sections:context:)`` is the one function from the library
+/// ``project(entries:options:search:retaining:organization:context:)`` is the one function from the library
 /// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
 /// Each list a layout holds — its sections, a section's groups, a list's
 /// entries — keeps the first of any repeated identifier: a repeat would be a
@@ -75,8 +75,9 @@ struct SidebarLayout {
         /// The library's named networks: a VM naming any other is on
         /// ``VMLibraryFilter/Network/unlisted``.
         let networks: VMNetworkDirectory.State
-        /// The library's tags, in their order: a VM carries only these.
-        let tags: [VMTag]
+        /// The library's tags, in their order: a VM carries only these, so
+        /// none while the file defining them can't be read (`nil`).
+        let tags: [VMTag]?
         /// What a VM's network reads as —
         /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
@@ -86,11 +87,11 @@ struct SidebarLayout {
         /// What a filter reads of `entry`, `nil` for a bundle Kernova can't
         /// read.
         func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
-            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
         }
 
         func subject(of instance: VMInstance) -> VMLibraryFilter.Subject {
-            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
         }
 
         func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
@@ -291,8 +292,13 @@ struct SidebarLayout {
     /// The title of the group listing the VMs that carry no tag.
     static let untaggedGroupTitle = "No Tags"
 
+    /// The title of the one group every VM is listed under, by tag, while
+    /// the file defining the tags can't be read.
+    static let unreadableTagsGroupTitle = "Tags Can\u{2019}t Be Read"
+
     /// The groups `subject` is listed under: one per value, but one per tag it
-    /// carries — in the library's order of its tags — or the untagged group.
+    /// carries — in the library's order of its tags — or the untagged group;
+    /// by tag while the tags can't be read, one group saying so.
     private static func groupKeys(
         of subject: VMLibraryFilter.Subject, by grouping: SidebarGrouping, context: Context
     ) -> [GroupKey] {
@@ -316,12 +322,16 @@ struct SidebarLayout {
         case .network:
             [GroupKey(value: subject.network.rawValue, rank: networkRank(subject.network), title: "")]
         case .tag:
-            subject.tags.isEmpty
-                ? [GroupKey(value: "none", rank: context.tags.count, title: untaggedGroupTitle)]
-                : context.tags.enumerated().compactMap { rank, tag in
-                    subject.tags.contains(tag.id)
-                        ? GroupKey(value: tag.id.uuidString, rank: rank, title: tag.name) : nil
-                }
+            if let tags = context.tags {
+                subject.tags.isEmpty
+                    ? [GroupKey(value: "none", rank: tags.count, title: untaggedGroupTitle)]
+                    : tags.enumerated().compactMap { rank, tag in
+                        subject.tags.contains(tag.id)
+                            ? GroupKey(value: tag.id.uuidString, rank: rank, title: tag.name) : nil
+                    }
+            } else {
+                [GroupKey(value: "tagsUnreadable", rank: 0, title: unreadableTagsGroupTitle)]
+            }
         }
     }
 

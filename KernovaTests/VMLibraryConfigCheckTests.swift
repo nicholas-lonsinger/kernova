@@ -34,16 +34,17 @@ struct VMLibraryConfigCheckTests {
         var count = 0
     }
 
-    private func makeHarness(networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil))
-        -> Harness
-    {
+    private func makeHarness(
+        networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+    ) -> Harness {
         let storage = MockVMStorageService()
         let lifecycle = makeTestLifecycle(
             virtualization: MockVirtualizationService(), fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files),
             lifecycle: lifecycle, fileSystem: fileSystem, preferences: preferences,
-            networks: networks)
+            networks: networks, organization: organization)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem,
@@ -117,6 +118,133 @@ struct VMLibraryConfigCheckTests {
         let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
         #expect(row.name == url.lastPathComponent)
         #expect(!row.file.isRepairable)
+    }
+
+    // MARK: - The unreadable row among the library's groups
+
+    /// The identifier `bytes`' configuration gives its VM.
+    private static func id(in bytes: Data) throws -> UUID {
+        let object = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        let text = try #require(object["id"] as? String)
+        return try #require(UUID(uuidString: text))
+    }
+
+    @Test("An unreadable row is in no smart group or folder, and no listing or group action reaches it")
+    func anUnreadableRowIsInNoGroup() async throws {
+        let harness = makeHarness()
+        let (_, readableBytes) = try addBundle("Readable", to: harness.storage)
+        let (_, devBytes) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        let readable = try Self.id(in: readableBytes)
+        let dev = try Self.id(in: devBytes)
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
+        // A folder holding the VM by the identifier its config gives it, from
+        // before the config turned unreadable, and a smart group admitting
+        // every VM.
+        let folder = try harness.library.organization.createFolder(named: "Lab", members: [readable, dev])
+        let group = try harness.library.organization.createSmartGroup(named: "All", filter: VMLibraryFilter())
+
+        let layout = harness.library.sidebarLayout
+        func listed(in section: SidebarSectionID) -> [UUID] {
+            layout.rowKeys.filter { $0.section == section }.map(\.entryID)
+        }
+        #expect(listed(in: .folder(folder.id)) == [readable])
+        #expect(listed(in: .smartGroup(group.id)) == [readable])
+        #expect(Set(listed(in: .library)) == [readable, row.id])
+        // The folder keeps the identifier, so the VM is listed there again
+        // once its config reads.
+        #expect(harness.library.organization.folder(withID: folder.id)?.members == [readable, dev])
+
+        for reference in [VMGroupReference(.folder, named: "Lab"), VMGroupReference(.smartGroup, named: "All")] {
+            let selection = try harness.core.selection(for: VMListQuery(groups: [reference]), verb: .list)
+            #expect(harness.core.list(selection).map(\.id) == [readable], "\(reference)")
+            let report = try await harness.core.groupAction(.stop, on: reference)
+            #expect(report.results.map(\.vm.id) == [readable], "\(reference)")
+            #expect(try harness.core.concernedCounts(in: reference).values.allSatisfy { $0 <= 1 }, "\(reference)")
+        }
+        #expect(try harness.core.groups().map { $0.members.map(\.id) } == [[readable], [readable]])
+    }
+
+    @Test("An unreadable row sorts with no run recorded, matches a search by its name, and restores as the selection")
+    func anUnreadableRowInTheSidebar() async throws {
+        let harness = makeHarness()
+        try addBundle("Readable", to: harness.storage)
+        try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.first { $0.unreadable != nil })
+        let library = harness.library
+
+        #expect(row.lastRun == .unrecorded)
+        #expect(VMLibrarySort.dateCreated.ordered(library.entries).last?.id == row.id)
+
+        // Under every grouping it is listed alone under "Can't Be Read".
+        for grouping in SidebarGrouping.allCases where grouping != .none {
+            library.sidebarOptions = SidebarViewOptions(grouping: grouping)
+            let section = try #require(library.sidebarLayout.sections.first { $0.id == .library })
+            guard case .groups(let groups) = section.content else {
+                Issue.record("\(grouping) lists no groups")
+                continue
+            }
+            let holding = groups.groups.filter { group in group.rows.entries.contains { $0.id == row.id } }
+            #expect(holding.map(\.title) == [UnreadableVM.statusText], "\(grouping)")
+            #expect(holding.first?.rows.entries.count == 1, "\(grouping)")
+        }
+        library.sidebarOptions = SidebarViewOptions()
+
+        library.sidebarSearch = SidebarNameSearch(text: "de")
+        #expect(library.sidebarLayout.rowKeys.map(\.entryID) == [row.id])
+        library.sidebarSearch = SidebarNameSearch(text: "read")
+        #expect(library.sidebarLayout.rowKeys.map(\.entryID) != [row.id])
+        library.sidebarSearch = SidebarNameSearch()
+
+        // A filter on what a config holds keeps the row listed, its way out
+        // in sight.
+        library.sidebarOptions = SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]))
+        #expect(library.sidebarLayout.rowKeys.map(\.entryID) == [row.id])
+        library.sidebarOptions = SidebarViewOptions()
+
+        // The row's identifier is fixed by its bundle, so a remembered
+        // selection of it is restored as the library's selection is.
+        library.selection = .library(row.id)
+        #expect(preferences.sidebarSelection == .library(row.id))
+        library.selection = nil
+        preferences.sidebarSelection = .library(row.id)
+        library.restoreSelection()
+        #expect(library.selection == .library(row.id))
+    }
+
+    @Test("A listing naming a tag, a group or a network refuses while the file listing them can't be read")
+    func listingsRefuseUnreadableLists() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        let networksURL = scratch.url.appendingPathComponent("Networks.json")
+        try Data("not json".utf8).write(to: organizationURL)
+        try Data("not json".utf8).write(to: networksURL)
+        let harness = makeHarness(
+            networks: VMNetworkDirectory(fileURL: networksURL),
+            organization: VMOrganizationDirectory(fileURL: organizationURL))
+        try addBundle("Readable", to: harness.storage)
+        await harness.library.loadVMs()
+
+        let organizationRefusal = CommandError.operationFailed(
+            verb: .list, message: VMOrganizationDirectory.unreadableMessage)
+        #expect(throws: organizationRefusal) {
+            try harness.core.selection(for: VMListQuery(tags: ["Work"]), verb: .list)
+        }
+        #expect(throws: organizationRefusal) {
+            try harness.core.selection(for: VMListQuery(groups: [VMGroupReference(.folder, named: "Lab")]), verb: .list)
+        }
+        #expect(throws: CommandError.operationFailed(verb: .groups, message: VMOrganizationDirectory.unreadableMessage))
+        {
+            try harness.core.groups()
+        }
+        #expect(throws: CommandError.operationFailed(verb: .list, message: VMNetworkDirectory.unreadableMessage)) {
+            try harness.core.selection(for: VMListQuery(networks: ["Lab"]), verb: .list)
+        }
+        // A mode needs no list, and an unfiltered listing none either.
+        #expect(
+            try harness.core.selection(for: VMListQuery(networks: ["shared"]), verb: .list).filter.networks.count == 1)
+        #expect(harness.core.list(.all).map(\.name) == ["Readable"])
     }
 
     // MARK: - Reporting

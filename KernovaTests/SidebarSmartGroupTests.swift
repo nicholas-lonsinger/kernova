@@ -526,6 +526,70 @@ struct SidebarSmartGroupTests {
         #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
     }
 
+    @Test("Tags that can't be read show as such in the Tags pane, a row's Tags item, the grouping and the filter")
+    func unreadableTagsShowAsUnreadable() throws {
+        let (viewModel, organizationURL) = try viewModelWithUnreadableSmartGroups()
+        let tagged = UUID()
+        let vm = viewModel.library.admitFixture(name: "Desk")
+        var checks = 0
+        viewModel.onShowConfigCheck = { checks += 1 }
+
+        #expect(viewModel.library.tags == nil)
+        #expect(viewModel.library.tags(of: vm).isEmpty)
+        #expect(throws: VMOrganizationDirectory.ChangeError.unreadable) {
+            try viewModel.library.createTag(named: "Work", color: .red)
+        }
+
+        // The pane shows the notice in place of the list, and offers no change.
+        let pane = TagsSettingsViewController(viewModel: viewModel)
+        pane.loadViewIfNeeded()
+        pane.viewWillAppear()
+        #expect(pane.isUnreadable)
+        #expect(pane.tags.isEmpty)
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
+        }
+        let addRemove = try #require(find(NSSegmentedControl.self, in: pane.view).first)
+        #expect(!addRemove.isEnabled(forSegment: 0))
+        let check = try #require(
+            find(NSButton.self, in: pane.view).first { $0.title == "Check Config Files\u{2026}" })
+        check.performClick(nil)
+        #expect(checks == 1)
+
+        // A row's Tags item points to the check, as Add to Folder does.
+        let controller = SidebarViewController(viewModel: viewModel)
+        _ = try shownOutline(of: controller)
+        let menu = controller.buildContextMenu(for: vm)
+        for title in ["Tags", "Add to Folder"] {
+            let item = try #require(menu.items.first { $0.title == title })
+            #expect(!item.isEnabled, "\(title)")
+            #expect(item.submenu == nil, "\(title)")
+            #expect(item.toolTip == VMOrganizationDirectory.unreadableMessage, "\(title)")
+        }
+
+        // Grouped by tag, every VM is under one group saying the tags can't be
+        // read — never "No Tags", which would claim it carries none.
+        viewModel.sidebarOptions = SidebarViewOptions(grouping: .tag)
+        let library = try #require(viewModel.sidebarLayout.sections.first { $0.id == .library })
+        guard case .groups(let groups) = library.content else {
+            Issue.record("The library section isn't grouped")
+            return
+        }
+        #expect(groups.groups.map(\.title) == [SidebarLayout.unreadableTagsGroupTitle])
+
+        // A tag the filter holds reads as unreadable, not as deleted, and its
+        // one choice clears every tag condition.
+        viewModel.sidebarOptions = SidebarViewOptions(filter: VMLibraryFilter(tags: [tagged]))
+        let tags = try #require(
+            controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" }?.submenu)
+        let unread = try #require(tags.items.firstIndex { $0.title == SidebarViewMenu.heldUnreadableTagsTitle })
+        #expect(tags.items[unread].state == .on)
+        #expect(!tags.items.contains { $0.title == SidebarViewMenu.heldUndefinedTagTitle })
+        tags.performActionForItem(at: unread)
+        #expect(viewModel.sidebarOptions.filter.tags.isEmpty)
+        #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
+    }
+
     // MARK: - Selection
 
     @Test("A row keeps its own section across reloads, and falls back to the library row when it leaves")
@@ -752,15 +816,17 @@ struct SidebarSmartGroupTests {
         _ = tree.update(
             to: .project(
                 entries: entries, options: SidebarViewOptions(),
-                organization: .listed(groups.map(VMOrganizationDirectory.Section.smartGroup) + [.library]), context: .testing()))
+                organization: .listed(groups.map(VMOrganizationDirectory.Section.smartGroup) + [.library]),
+                context: .testing()))
         let before = tree.sections
 
         let changes = tree.update(
             to: .project(
                 entries: entries, options: SidebarViewOptions(),
-                organization: .listed([groups[2], groups[0], groups[1]].map(VMOrganizationDirectory.Section.smartGroup) + [
-                    .library
-                ]),
+                organization: .listed(
+                    [groups[2], groups[0], groups[1]].map(VMOrganizationDirectory.Section.smartGroup) + [
+                        .library
+                    ]),
                 context: .testing()))
 
         let root = try #require(changes.children.first { $0.parent == nil })

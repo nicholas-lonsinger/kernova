@@ -305,7 +305,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
             bundledAgentVersion: KernovaMacOSAgentInfo.bundledVersion, networks: named,
-            tags: organization.tags ?? [],
+            tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.title(
                     of: config, entitlements: entitlements, interfaces: interfaces.interfaces,

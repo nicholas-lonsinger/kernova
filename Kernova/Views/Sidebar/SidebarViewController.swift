@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Machines", in the order the user arranges them.
 ///
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
-/// ``SidebarLayout/project(entries:options:retaining:sections:context:)``,
+/// ``SidebarLayout/project(entries:options:search:retaining:organization:context:)``,
 /// updated by inserts and removes; per-row live updates are owned by each
 /// ``SidebarVMRowCellView``. Selection is a two-way binding to
 /// `viewModel.selection`, idempotent in both directions.

@@ -154,7 +154,8 @@ struct SidebarFolderTests {
         #expect(!layout.rowKeys.contains { $0.entryID == bravo && $0.section.folderID != nil })
 
         let byName = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .name), organization: .listed([.folder(clients), .library]),
+            entries: entries, options: SidebarViewOptions(sort: .name),
+            organization: .listed([.folder(clients), .library]),
             context: .testing())
         #expect(names(in: byName.sections[0]) == ["Alpha", "Charlie"])
 

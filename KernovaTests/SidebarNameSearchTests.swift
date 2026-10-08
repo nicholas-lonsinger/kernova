@@ -64,7 +64,7 @@ struct SidebarNameSearchTests {
         let folder = VMFolder(id: UUID(), name: "Lab", members: entries.map(\.id))
         let layout = SidebarLayout.project(
             entries: entries, options: SidebarViewOptions(sort: .name), search: search("ubuntu"),
-            sections: [.smartGroup(macs), .folder(folder), .library], context: .testing())
+            organization: .listed([.smartGroup(macs), .folder(folder), .library]), context: .testing())
 
         #expect(names(in: layout.sections[0]) == ["Ubuntu Mac"])
         #expect(names(in: layout.sections[1]) == ["Ubuntu", "Ubuntu Mac"])
@@ -90,7 +90,7 @@ struct SidebarNameSearchTests {
         let project = { (text: String) in
             SidebarLayout.project(
                 entries: entries, options: SidebarViewOptions(), search: search(text),
-                sections: [.smartGroup(macs), .folder(folder), .library], context: .testing())
+                organization: .listed([.smartGroup(macs), .folder(folder), .library]), context: .testing())
         }
 
         let searched = project("ubuntu")
@@ -111,7 +111,7 @@ struct SidebarNameSearchTests {
         let empty = VMFolder(id: UUID(), name: "Empty", members: [])
         let layout = SidebarLayout.project(
             entries: entries, options: SidebarViewOptions(), search: search("sonoma"),
-            sections: [.folder(full), .folder(empty), .library], context: .testing())
+            organization: .listed([.folder(full), .folder(empty), .library]), context: .testing())
 
         #expect(
             layout.sections.map(\.emptyText) == [

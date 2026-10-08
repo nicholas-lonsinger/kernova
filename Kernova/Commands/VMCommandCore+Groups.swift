@@ -97,7 +97,7 @@ extension VMCommandCore {
         var filter = query.filter
         if !query.networks.isEmpty { library.networks.reload() }
         for text in query.networks {
-            filter.networks.insert(try network(spelledBy: text))
+            filter.networks.insert(try network(spelledBy: text, verb: verb))
         }
         let organization = query.tags.isEmpty ? nil : try readOrganization(verb: verb)
         for text in query.tags {
@@ -113,8 +113,10 @@ extension VMCommandCore {
 
     /// The network `text` names as a listing reads it: a mode
     /// (``VMLibraryFilter/Network/init(spelling:)``), or a named network by
-    /// name or identifier — either ignoring case.
-    private func network(spelledBy text: String) throws -> VMLibraryFilter.Network {
+    /// name or identifier — either ignoring case. A name no mode spells is
+    /// refused as unreadable, not as unknown, while the library's list of
+    /// networks can't be read.
+    private func network(spelledBy text: String, verb: VMVerb) throws -> VMLibraryFilter.Network {
         let mode = VMLibraryFilter.Network(spelling: text)
         let named = library.networks.network(named: text)
         switch (mode, named) {
@@ -127,6 +129,9 @@ extension VMCommandCore {
                 "\u{201C}\(text)\u{201D} names both a network mode and the network \u{201C}\(named.name)\u{201D}. "
                     + "Name that network by its identifier, \(named.id.uuidString).")
         case (nil, nil):
+            if library.networks.state.unreadable != nil {
+                throw CommandError.operationFailed(verb: verb, message: VMNetworkDirectory.unreadableMessage)
+            }
             throw CommandError.itemNotFoundOnHost(item: "network named \u{201C}\(text)\u{201D}")
         }
     }
