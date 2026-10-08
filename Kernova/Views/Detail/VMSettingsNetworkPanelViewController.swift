@@ -582,7 +582,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             refreshResolved()
             refreshNetwork()
         case let destination as SettingsDestination:
-            context.showAppSettings(destination)
+            viewModel.showSettings(at: destination)
         default:
             break
         }

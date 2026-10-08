@@ -158,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onShowConfigCheck = { [weak self] request in
             self?.windows.showConfigCheck(request)
         }
+        viewModel.onShowSettings = { [weak self] destination in
+            self?.windows.showSettings(at: destination)
+        }
         viewModel.displayBootGeometryProvider = self
     }
 
@@ -458,15 +461,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         #endif
     }
 
-    /// Shows Settings on the ``SettingsDestination`` a sender passes as itself,
-    /// and otherwise on the pane it was last left on.
+    /// Shows Settings on the pane it was last left on.
     @objc func showSettings(_ sender: Any?) {
-        windows.showSettings(at: sender as? SettingsDestination)
-    }
-
-    /// Shows the Settings window on its Tags pane.
-    @objc func showTagsSettings(_ sender: Any?) {
-        windows.showSettings(at: .pane(.tags))
+        windows.showSettings()
     }
 
     // MARK: - VM Actions

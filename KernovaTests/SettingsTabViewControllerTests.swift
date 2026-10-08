@@ -166,7 +166,7 @@ struct SettingsTabViewControllerTests {
         registry.showSettings(at: .network(lab.id))
 
         let tabs = try tabs(of: registry)
-        #expect(tabs.selectedPane == .networks)
+        #expect(tabs.selectedPaneForTesting == .networks)
         #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
     }
 
@@ -177,16 +177,32 @@ struct SettingsTabViewControllerTests {
         let registry = makeRegistry(viewModel)
         registry.showSettings(at: .pane(.clipboard))
         let tabs = try tabs(of: registry)
-        #expect(tabs.selectedPane == .clipboard)
+        #expect(tabs.selectedPaneForTesting == .clipboard)
 
         registry.showSettings(at: .network(lab.id))
 
-        #expect(tabs.selectedPane == .networks)
+        #expect(tabs.selectedPaneForTesting == .networks)
         #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
 
         // With no destination, the window stays on the pane it was left on.
         registry.showSettings()
-        #expect(tabs.selectedPane == .networks)
+        #expect(tabs.selectedPaneForTesting == .networks)
+    }
+
+    @Test("⌘, opens Settings through the app's own action, which names no destination and keeps the last pane")
+    func commandCommaKeepsTheLastPane() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let controller = MainMenuController(viewModel: viewModel, hasBundledGuestAgentDisk: true)
+        let appMenu = try #require(controller.makeMainMenu().items.first?.submenu)
+        let settings = try #require(appMenu.items.first { $0.keyEquivalent == "," })
+        #expect(settings.keyEquivalentModifierMask == [.command])
+        #expect(settings.action == #selector(AppDelegate.showSettings(_:)))
+        #expect(settings.representedObject == nil)
+
+        let registry = makeRegistry(viewModel)
+        registry.showSettings(at: .pane(.tags))
+        registry.showSettings()
+        #expect(try tabs(of: registry).selectedPaneForTesting == .tags)
     }
 
     @Test("Each pane is a destination, and one the build does not offer leaves the selection")
@@ -194,14 +210,14 @@ struct SettingsTabViewControllerTests {
         let tabController = SettingsTabViewController(viewModel: makeSettingsViewModel(preferences: preferences))
         for pane in SettingsPane.allCases {
             tabController.show(.pane(pane))
-            #expect(tabController.selectedPane == pane)
+            #expect(tabController.selectedPaneForTesting == pane)
         }
 
         let unentitled = makeSettingsViewModel(preferences: preferences, entitled: false)
         let limited = SettingsTabViewController(viewModel: unentitled)
         limited.show(.pane(.reminders))
         limited.show(.pane(.networks))
-        #expect(limited.selectedPane == .reminders)
+        #expect(limited.selectedPaneForTesting == .reminders)
         #expect(!limited.tabViewItems.contains { $0.viewController is NetworksSettingsViewController })
     }
 

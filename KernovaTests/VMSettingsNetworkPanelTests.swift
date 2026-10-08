@@ -433,9 +433,8 @@ struct VMSettingsNetworkPanelTests {
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
         var requested: [SettingsDestination] = []
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: false,
-            showAppSettings: { requested.append($0) })
+        viewModel.onShowSettings = { requested.append($0) }
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
         vc.showCategory(.network)

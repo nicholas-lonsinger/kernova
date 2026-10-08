@@ -569,6 +569,14 @@ final class VMLibraryViewModel {
     /// as it comes up.
     @ObservationIgnored var onShowConfigCheck: ((ConfigCheckRequest) -> Void)?
 
+    /// Asks for Kernova's Settings window on a destination.
+    @ObservationIgnored var onShowSettings: ((SettingsDestination) -> Void)?
+
+    /// Puts Kernova's Settings window in front of the user on `destination`.
+    func showSettings(at destination: SettingsDestination) {
+        onShowSettings?(destination)
+    }
+
     /// Whether a read found a config file it can't read while no presenter
     /// was attached: the check comes up when one is, with the library window,
     /// as the alerts the read raises do.
