@@ -29,6 +29,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     private var unreadable: Set<BundlePath> = []
     private var target: InMemoryVMBundleFiles?
     private var lockedElsewhere: Set<URL> = []
+    private var lockedElsewhereUnprobed: Set<URL> = []
     private var lockedByThisCopy: Set<URL> = []
     private var lockErrors: [URL: any Error] = [:]
     private let disk = CoordinatedBundleFileAccess()
@@ -143,6 +144,14 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
     func holdElsewhere(_ url: URL) {
         if let target { return target.holdElsewhere(url) }
         lock.withLock { _ = lockedElsewhere.insert(Self.key(url)) }
+    }
+
+    /// Marks the bundle at `url` as one another copy of Kernova takes after
+    /// this copy's last probe: probes read it free, and the next lock attempt
+    /// finds it held — from then on as ``holdElsewhere(_:)`` holds it.
+    func holdElsewhereAfterProbes(_ url: URL) {
+        if let target { return target.holdElsewhereAfterProbes(url) }
+        lock.withLock { _ = lockedElsewhereUnprobed.insert(Self.key(url)) }
     }
 
     /// Ends the hold ``holdElsewhere(_:)`` stood for.
@@ -299,6 +308,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing, @unchecked Sendable {
         let key = Self.key(bundleURL)
         return try lock.withLock {
             if let error = lockErrors[key] { throw error }
+            if lockedElsewhereUnprobed.remove(key) != nil { lockedElsewhere.insert(key) }
             guard !lockedElsewhere.contains(key), lockedByThisCopy.insert(key).inserted else {
                 return nil
             }

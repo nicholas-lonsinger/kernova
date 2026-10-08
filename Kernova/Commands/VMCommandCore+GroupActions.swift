@@ -8,15 +8,17 @@ import KernovaLogging
 extension VMCommandCore {
     /// How many of the VMs in `group` each action acts on now — what the
     /// actions' menu items count, by the rule the actions themselves act by
-    /// (``VMCapabilityCatalog/groupAction(_:on:)``).
+    /// (``VMCapabilityCatalog/groupAction(_:on:)``), against what another copy
+    /// of Kernova holds now.
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int] {
         let instances = entries(in: try self.group(group, verb: .groups).selection).compactMap { entry in
             if case .vm(let instance) = entry { instance } else { nil }
         }
+        library.refreshFromOtherCopies(only: Set(instances.map(\.id)))
         return Dictionary(
             uniqueKeysWithValues: VMGroupAction.allCases.map { action in
                 let acted = instances.count { instance in
-                    if case .acts = capabilities.groupAction(action, on: instance) { true } else { false }
+                    if case .acts = turn(of: action, on: instance) { true } else { false }
                 }
                 return (action, acted)
             })
@@ -34,9 +36,15 @@ extension VMCommandCore {
     /// display behind whatever the user is looking at, and a VM whose own verb
     /// would raise a question is passed by and reported. A failure is reported
     /// in the result rather than raised — so the caller owes the user one
-    /// account of everything left undone. Each VM is decided when its turn
-    /// comes, so one the action stopped concerning since it was counted is
-    /// passed over.
+    /// account of everything left undone.
+    ///
+    /// The members are the ones the group holds when the action begins; one
+    /// added later is not acted on, and one taken out of the group is. Each is
+    /// looked up again when its turn comes and decided as it stands then,
+    /// against what another copy of Kernova holds then: an arrival that has
+    /// become a VM is acted on, a VM the action stopped concerning is passed
+    /// over, and one that has left the library is passed over as
+    /// ``VMGroupActionOutcome/PassOver/removed``.
     ///
     /// Cancelling the calling task — a client hanging up — stops the action
     /// between VMs: the VM in hand finishes, and every later one is reported as
@@ -47,18 +55,18 @@ extension VMCommandCore {
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
         library.refreshFromOtherCopies()
         let resolved = try self.group(group, verb: action.verb)
-        let members = entries(in: resolved.selection)
+        let members = entries(in: resolved.selection).map { (id: $0.id, summary: summary($0)) }
         #log(
             Self.logger, .notice,
             "\(action.rawValue, privacy: .public) on every VM in '\(resolved.name, privacy: .public)': \(members.count, privacy: .public) VM(s)"
         )
         var results: [VMGroupActionResult] = []
-        for entry in members {
+        for member in members {
             guard !Task.isCancelled else {
-                results.append(VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .cancelled)))
+                results.append(VMGroupActionResult(vm: member.summary, outcome: .passedOver(reason: .cancelled)))
                 continue
             }
-            results.append(await result(of: action, on: entry))
+            results.append(await result(of: action, on: member.id, summarized: member.summary))
         }
         let report = VMGroupActionReport(
             action: action, groupKind: resolved.kind, groupID: resolved.id, groupName: resolved.name,
@@ -71,31 +79,56 @@ extension VMCommandCore {
         return report
     }
 
-    /// What `action` does to `entry`, decided now.
-    private func result(of action: VMGroupAction, on entry: AddressableEntry) async -> VMGroupActionResult {
-        guard case .vm(let instance) = entry else {
-            return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .state))
+    /// What `action` does to the member `id`, looked up and decided now;
+    /// `summary` is how it stood when the action began.
+    private func result(
+        of action: VMGroupAction, on id: UUID, summarized summary: VMSummary
+    ) async -> VMGroupActionResult {
+        library.refreshFromOtherCopies(only: [id])
+        guard let entry = library.entries.first(where: { $0.id == id })?.addressable else {
+            return VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .removed))
         }
-        let outcome: VMGroupActionOutcome =
-            switch capabilities.groupAction(action, on: instance) {
-            case .acts(let step):
-                await take(step, on: instance)
-            case .passedOverByState:
-                .passedOver(reason: .state)
-            case .owesGuestSetup:
-                .passedOver(reason: .guestSetup)
-            case .refused(let reason):
-                .passedOver(
-                    reason: .refused(error: commandError(for: reason, on: instance, verb: action.verb).dto))
-            }
-        return VMGroupActionResult(vm: summary(instance), outcome: outcome)
+        guard case .vm(let instance) = entry else {
+            return VMGroupActionResult(vm: self.summary(entry), outcome: .passedOver(reason: .state))
+        }
+        let outcome = await self.outcome(of: action, on: instance)
+        return VMGroupActionResult(vm: self.summary(instance), outcome: outcome)
     }
 
-    /// Runs `step` on `instance` as a ``StartPolicy/group`` bring-up, or the
-    /// plain suspend or graceful stop, with no consent and no remedy.
-    private func take(
-        _ step: VMCapabilityCatalog.GroupActionStep, on instance: VMInstance
-    ) async -> VMGroupActionOutcome {
+    /// Where `instance` stands for `action`: the step the action takes it by,
+    /// or why the action passes it over.
+    private enum Turn {
+        case acts(VMCapabilityCatalog.GroupActionStep)
+        case passesOver(VMGroupActionOutcome.PassOver)
+    }
+
+    /// Where `instance` stands for `action` now, by
+    /// ``VMCapabilityCatalog/groupAction(_:on:)`` — the one reading of a VM
+    /// another copy of Kernova holds as a pass-over.
+    private func turn(of action: VMGroupAction, on instance: VMInstance) -> Turn {
+        switch capabilities.groupAction(action, on: instance) {
+        case .acts(let step):
+            .acts(step)
+        case .passedOverByState:
+            .passesOver(.state)
+        case .owesGuestSetup:
+            .passesOver(.guestSetup)
+        case .refused(let reason):
+            .passesOver(.refused(error: commandError(for: reason, on: instance, verb: action.verb).dto))
+        }
+    }
+
+    /// What `action` does to `instance`, decided now: the step its standing
+    /// names, run as a ``StartPolicy/group`` bring-up or the plain suspend or
+    /// graceful stop, with no consent and no remedy.
+    private func outcome(of action: VMGroupAction, on instance: VMInstance) async -> VMGroupActionOutcome {
+        let step: VMCapabilityCatalog.GroupActionStep
+        switch turn(of: action, on: instance) {
+        case .passesOver(let reason):
+            return .passedOver(reason: reason)
+        case .acts(let acting):
+            step = acting
+        }
         do {
             switch step {
             case .start:
@@ -111,7 +144,14 @@ extension VMCommandCore {
         } catch is UnattendedGuestSetupRefusal {
             return .passedOver(reason: .guestSetup)
         } catch {
-            return Self.outcome(of: bringUpFailure(error, verb: step.verb, on: instance), takenBy: step.verb)
+            let refusal = bringUpFailure(error, verb: step.verb, on: instance)
+            // Another copy took the VM after the turn read it free. The
+            // refusing commit recorded the hold, so the standing read again
+            // passes the VM over as one found held at its turn.
+            if case .heldByAnotherCopy = refusal, case .passesOver(let reason) = turn(of: action, on: instance) {
+                return .passedOver(reason: reason)
+            }
+            return Self.outcome(of: refusal, takenBy: step.verb)
         }
     }
 

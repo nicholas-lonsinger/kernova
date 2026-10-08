@@ -392,7 +392,17 @@ final class VMIntentGateway {
         }
     }
 
-    /// Takes `action` on every VM in `group`, answering the VMs it was done to.
+    /// Every group whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
+    func groups(matching text: String) async throws -> [VMGroupEntity] {
+        let search = SidebarNameSearch(text: text)
+        return try await groups().filter { search.admits($0.name) }
+    }
+
+    /// Takes `action` on every VM in `group`, answering the VMs it was done to,
+    /// in the group's order and as they stand once it is done — less any
+    /// deleted since its turn, which has nothing left to read.
     ///
     /// A VM the action concerned and left undone fails the intent, with one
     /// line per such VM — what the `kernova` tool's exit 10 and the app's
@@ -404,10 +414,11 @@ final class VMIntentGateway {
                 throw CommandError.operationFailed(
                     verb: action.verb, title: report.undoneTitle, message: report.undoneMessage)
             }
-            return report.results.compactMap { result in
-                guard case .done = result.outcome else { return nil }
-                return self.entity(for: result.vm.id)
+            let done = report.results.compactMap { result in
+                if case .done = result.outcome { result.vm.id } else { nil }
             }
+            let read = Dictionary(uniqueKeysWithValues: await self.vms(withIDs: done).map { ($0.id, $0) })
+            return done.compactMap { read[$0] }
         }
     }
 

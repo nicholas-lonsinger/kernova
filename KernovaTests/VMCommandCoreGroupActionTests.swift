@@ -16,6 +16,7 @@ struct VMCommandCoreGroupActionTests {
         let core: VMCommandCore
         let library: VMLibrary
         let virtualization: MockVirtualizationService
+        let storage: MockVMStorageService
     }
 
     private func makeHarness() -> Harness {
@@ -29,7 +30,7 @@ struct VMCommandCoreGroupActionTests {
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
-        return Harness(core: core, library: library, virtualization: virtualization)
+        return Harness(core: core, library: library, virtualization: virtualization, storage: storage)
     }
 
     @discardableResult
@@ -338,6 +339,7 @@ struct VMCommandCoreGroupActionTests {
         let core: VMCommandCore
         let library: VMLibrary
         let virtualization: SuspendingMockVirtualizationService
+        let storage: MockVMStorageService
     }
 
     private func makeSuspendingHarness() -> SuspendingHarness {
@@ -351,7 +353,7 @@ struct VMCommandCoreGroupActionTests {
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
-        return SuspendingHarness(core: core, library: library, virtualization: virtualization)
+        return SuspendingHarness(core: core, library: library, virtualization: virtualization, storage: storage)
     }
 
     /// Two stopped VMs in a folder, in that order.
@@ -403,6 +405,118 @@ struct VMCommandCoreGroupActionTests {
         #expect(first.status == .running)
         #expect(second.status == .stopped)
         #expect(report.undone.isEmpty)
+    }
+
+    /// Runs Start All on the pair, doing `midRun` while the first VM's
+    /// bring-up is under way — before the second VM's turn.
+    private func startPair(
+        in harness: SuspendingHarness, midRun: () async throws -> Void
+    ) async throws -> VMGroupActionReport {
+        let running = Task { @MainActor in
+            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
+        }
+        await harness.virtualization.waitUntilSuspended()
+        try await midRun()
+        harness.virtualization.shouldSuspendOnStart = false
+        harness.virtualization.resumeSuspended()
+        return try await running.value
+    }
+
+    // MARK: - Membership during the run
+
+    @Test("A member that arrives as a VM before its turn is acted on")
+    func arrivalThatLandsBeforeItsTurnIsActedOn() async throws {
+        let harness = makeSuspendingHarness()
+        let first = RegisteredVMInstanceFixture.register(
+            name: "First", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
+        let gate = GatedStep()
+        let arrival = harness.library.beginGatedArrival(.importing, named: "Arriving", gate: gate)
+        try harness.library.organization.createFolder(named: "Pair", members: [first.id, arrival.id])
+
+        let report = try await startPair(in: harness) {
+            gate.release()
+            await arrival.settle()
+        }
+
+        #expect(report.results.map(\.vm.name) == ["First", "Arriving"])
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
+        #expect(report.results[1].vm.status == "running")
+        #expect(report.undone.isEmpty)
+    }
+
+    @Test("A member deleted before its turn is passed over as gone, named as it stood when the action began")
+    func memberDeletedBeforeItsTurnIsPassedOver() async throws {
+        let harness = makeSuspendingHarness()
+        let (first, second) = try makePair(in: harness)
+
+        let report = try await startPair(in: harness) {
+            try await harness.core.delete(.id(second.id), permanently: true, alsoRemoving: [], consent: .all)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .removed)])
+        #expect(report.results[1].vm.name == "Second")
+        #expect(report.results[1].vm.status == "stopped")
+        #expect(first.status == .running)
+        #expect(report.undone.isEmpty)
+    }
+
+    // MARK: - Another copy's hold
+
+    @Test("The counts read another copy's hold as it stands now")
+    func countsReadTheHoldNow() throws {
+        let harness = makeHarness()
+        let free = makeInstance(in: harness, name: "Free")
+        let held = makeInstance(in: harness, name: "Held")
+        try harness.library.organization.createFolder(named: "Pair", members: [free.id, held.id])
+        harness.storage.files.holdElsewhere(held.bundleURL)
+
+        #expect(try harness.core.concernedCounts(in: VMGroupReference(.folder, named: "Pair"))[.start] == 1)
+        #expect(held.heldByAnotherCopy)
+    }
+
+    @Test("A VM another copy starts before its turn is passed over, not failed")
+    func vmHeldBeforeItsTurnIsPassedOver() async throws {
+        let harness = makeSuspendingHarness()
+        let (first, second) = try makePair(in: harness)
+
+        let report = try await startPair(in: harness) {
+            harness.storage.files.holdElsewhere(second.bundleURL)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .state)])
+        #expect(report.results[1].vm.heldByAnotherCopy)
+        #expect(report.undone.isEmpty)
+        #expect(first.status == .running)
+        #expect(second.status == .stopped)
+    }
+
+    @Test("A VM another copy lets go of before its turn is acted on")
+    func vmReleasedBeforeItsTurnIsActedOn() async throws {
+        let harness = makeSuspendingHarness()
+        let (_, second) = try makePair(in: harness)
+        harness.storage.files.holdElsewhere(second.bundleURL)
+
+        let report = try await startPair(in: harness) {
+            harness.storage.files.releaseElsewhere(second.bundleURL)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
+        #expect(second.status == .running)
+    }
+
+    @Test("A VM another copy takes between its turn's read and its commit is passed over as held, not failed")
+    func vmTakenAtTheCommitIsPassedOver() async throws {
+        let harness = makeHarness()
+        let taken = makeInstance(in: harness, name: "Taken")
+        try harness.library.organization.createFolder(named: "One", members: [taken.id])
+        harness.storage.files.holdElsewhereAfterProbes(taken.bundleURL)
+
+        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "One"))
+
+        #expect(report.results.map(\.outcome) == [.passedOver(reason: .state)])
+        #expect(report.results[0].vm.heldByAnotherCopy)
+        #expect(report.undone.isEmpty)
+        #expect(harness.virtualization.startCallCount == 0)
     }
 
     // MARK: - Error mapping
