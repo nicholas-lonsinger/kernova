@@ -187,7 +187,7 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
         let secondID = library.instances.last?.id
-        secondID.map(library.selectRevealing)
+        if let secondID { library.selectRevealing(secondID) }
 
         await library.loadVMs()
 

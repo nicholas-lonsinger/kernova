@@ -167,7 +167,7 @@ struct SidebarNameSearchTests {
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
         viewModel.library.sidebarSearch = search("ubuntu")
 
-        let group = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Macs")
+        let group = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Macs")
 
         #expect(group.filter == VMLibraryFilter(guestOSes: [.macOS]))
         #expect(viewModel.library.sidebarSearch == search("ubuntu"))

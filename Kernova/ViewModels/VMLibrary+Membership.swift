@@ -381,13 +381,13 @@ extension VMLibrary {
     /// the new VM is theirs.
     func beginArrival(
         kind: VMArrival.Kind, configuration: VMConfiguration, destination: URL,
-        staged: VMStagedBundle, source: VMArrival.Source?,
+        staged: VMStagedBundle, source: VMArrival.Source?, starting: VMArrival.Starting = VMArrival.Starting(),
         write: @escaping (VMStagedBundle) async throws -> Void,
         whenAdopted: (@MainActor (VMInstance) -> [VMFollowUp])? = nil
     ) -> VMArrival {
         let arrival = VMArrival(
             id: configuration.id, kind: kind, configuration: configuration,
-            destinationURL: destination, staged: staged, source: source
+            destinationURL: destination, staged: staged, source: source, starting: starting
         ) { [weak self] arrival in
             guard let self else { throw CancellationError() }
             return try await self.settle(arrival, writtenBy: write, whenAdopted: whenAdopted)

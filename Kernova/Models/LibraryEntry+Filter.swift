@@ -35,20 +35,23 @@ extension VMInstance {
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: lastSeenAgentVersion, state: stateBucket,
-            isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: !snapshotManifest.isEmpty,
-            tags: Set(tags.assigned(hostState.tags).map(\.id)),
+            hostState: hostState, hasSnapshots: !snapshotManifest.isEmpty, tags: tags,
             bundledAgentVersion: bundledAgentVersion, networks: networks)
     }
 }
 
 extension VMArrival {
     /// What a ``VMLibraryFilter`` reads of this arrival: preparing, with no
-    /// session, no Ephemeral Mode, no snapshots and no tags.
-    func filterSubject(bundledAgentVersion: String?, networks: VMNetworkDirectory.State) -> VMLibraryFilter.Subject {
+    /// session, and with the Ephemeral Mode, snapshots and tags of the VM it
+    /// becomes as far as ``starting`` knows them; `networks` is the library's
+    /// named networks and `tags` its tags.
+    func filterSubject(
+        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
+    ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
             configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
-            isEphemeral: false, hasSnapshots: false, tags: [], bundledAgentVersion: bundledAgentVersion,
-            networks: networks)
+            hostState: starting.hostState, hasSnapshots: starting.hasSnapshots, tags: tags,
+            bundledAgentVersion: bundledAgentVersion, networks: networks)
     }
 }
 
@@ -63,16 +66,18 @@ extension LibraryEntry {
         case .vm(let instance):
             instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
         case .arriving(let arrival):
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
         case .unreadable: nil
         }
     }
 }
 
 extension VMLibraryFilter.Subject {
+    /// The subject of a VM configured as `configuration` whose host state is
+    /// `hostState`, carrying the tags of `tags` — the library's — it assigns.
     fileprivate init(
         _ configuration: VMConfiguration, lastSeenAgentVersion: String?, state: VMStateBucket,
-        isEphemeral: Bool, hasSnapshots: Bool, tags: Set<UUID>, bundledAgentVersion: String?,
+        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledAgentVersion: String?,
         networks: VMNetworkDirectory.State
     ) {
         self.init(
@@ -85,6 +90,7 @@ extension VMLibraryFilter.Subject {
             guestAgent: configuration.guestOS == .macOS
                 ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)
                 : nil,
-            isEphemeral: isEphemeral, hasSnapshots: hasSnapshots, tags: tags)
+            isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: hasSnapshots,
+            tags: Set(tags.assigned(hostState.tags).map(\.id)))
     }
 }

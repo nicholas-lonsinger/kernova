@@ -159,6 +159,19 @@ final class VMArrival {
     /// What the write copies from — `nil` for a create, which copies nothing.
     let source: Source?
 
+    /// What the VM this arrival becomes starts with besides its
+    /// configuration, as far as it is known before the write.
+    let starting: Starting
+
+    /// The host state the VM arrives with and whether it carries snapshots: a
+    /// clone's, the values its copy writes; an import's, its source's as read
+    /// when the import registered, as the copy will leave them; a create's,
+    /// and an import's whose source's state files don't read, a new VM's.
+    struct Starting: Sendable, Equatable {
+        var hostState = VMHostState()
+        var hasSnapshots = false
+    }
+
     private(set) var stage: Stage = .writing
 
     var name: String { configuration.name }
@@ -183,7 +196,8 @@ final class VMArrival {
     /// arrival in the same synchronous segment does so before it.
     init(
         id: UUID, kind: Kind, configuration: VMConfiguration, destinationURL: URL,
-        staged: VMStagedBundle, source: Source?, run: @escaping @MainActor (VMArrival) async throws -> VMInstance
+        staged: VMStagedBundle, source: Source?, starting: Starting = Starting(),
+        run: @escaping @MainActor (VMArrival) async throws -> VMInstance
     ) {
         self.id = id
         self.kind = kind
@@ -191,6 +205,7 @@ final class VMArrival {
         self.destinationURL = destinationURL
         self.staged = staged
         self.source = source
+        self.starting = starting
         self.run = run
         _ = settled
     }

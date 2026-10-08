@@ -683,8 +683,10 @@ final class MockVMCommanding: VMCommanding {
         return waitForOutcome ? try await outcome(of: imported) : imported
     }
 
-    func beginImport(from url: URL) throws -> VMSummary {
-        try registerImport(from: url, waitForOutcome: false)
+    func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
+        VMImportBatch(
+            imports: urls.map { url in Result { try registerImport(from: url, waitForOutcome: false) } },
+            membershipFailure: nil)
     }
 
     private func registerImport(from url: URL, waitForOutcome: Bool) throws -> VMSummary {

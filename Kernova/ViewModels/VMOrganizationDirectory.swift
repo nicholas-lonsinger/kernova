@@ -314,11 +314,8 @@ final class VMOrganizationDirectory {
             case .folder: listed.folders.map(\.name)
             case .tag: listed.tags.map(\.name)
             }
-        let taken = Set(names.map { $0.lowercased() })
-        guard taken.contains(base.lowercased()) else { return base }
-        var suffix = 2
-        while taken.contains("\(base) \(suffix)".lowercased()) { suffix += 1 }
-        return "\(base) \(suffix)"
+        // Compared as `validatedName` compares, so it accepts the name offered.
+        return UniqueName.firstAvailable(prefix: base, existing: names, caseInsensitive: true)
     }
 
     // MARK: - Smart groups
@@ -410,13 +407,6 @@ final class VMOrganizationDirectory {
     func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
         try commit { file in
             file.editFolders(where: { $0.id == id }) { Self.move(entry, before: successor, in: &$0.members) }
-        }
-    }
-
-    /// Takes each of `entries` out of every folder.
-    func removeFromEveryFolder(_ entries: Set<UUID>) throws {
-        try commit { file in
-            file.editFolders(where: { _ in true }) { $0.members.removeAll(where: entries.contains) }
         }
     }
 

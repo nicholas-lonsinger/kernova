@@ -143,7 +143,8 @@ struct VMOrganizationDirectoryTests {
         #expect(reread.folder(withID: clients.id)?.members == [c, a, b])
         #expect(reread.folder(withID: demo.id)?.members == [a])
 
-        try reread.removeFromEveryFolder([a])
+        try reread.remove(a, fromFolder: clients.id)
+        try reread.remove(a, fromFolder: demo.id)
         try reread.removeFolder(spare.id)
         let pruned = VMOrganizationDirectory(fileURL: fileURL)
         #expect(pruned.folders?.map(\.id) == [clients.id, demo.id])
@@ -313,6 +314,19 @@ struct VMOrganizationDirectoryTests {
         try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter())
         try directory.createSmartGroup(named: "linux 2", filter: VMLibraryFilter())
         #expect(directory.unusedName(from: "Linux", for: .smartGroup) == "Linux 3")
+    }
+
+    /// "ß" lowercases to itself but compares equal to "SS" ignoring case, so
+    /// a suggestion matched by lowercasing would be one creating refuses.
+    @Test("A suggested name is one creating accepts, matched ignoring case as creating matches it")
+    func unusedNameMatchesAsCreatingDoes() throws {
+        let directory = VMOrganizationDirectory(fileURL: nil)
+        try directory.createFolder(named: "STRASSE")
+
+        let suggested = directory.unusedName(from: "Straße", for: .folder)
+
+        #expect(suggested == "Straße 2")
+        #expect(throws: Never.self) { try directory.createFolder(named: suggested) }
     }
 
     @Test("A file that cannot be read is never overwritten")

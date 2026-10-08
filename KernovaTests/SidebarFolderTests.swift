@@ -16,7 +16,10 @@ struct SidebarFolderTests {
 
     private let scratch = TestScratchDirectory(prefix: "SidebarFolderTests")
 
-    private func makeViewModel(storage: MockVMStorageService = MockVMStorageService()) -> VMLibraryViewModel {
+    private func makeViewModel(
+        storage: MockVMStorageService = MockVMStorageService(),
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+    ) -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: storage,
             diskImageService: MockDiskImageService(),
@@ -28,7 +31,7 @@ struct SidebarFolderTests {
             downloadsDirectory: nil,
             preferences: preferences,
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled,
-            organization: VMOrganizationDirectory(fileURL: nil)
+            organization: organization
         )
     }
 
@@ -732,9 +735,9 @@ struct SidebarFolderTests {
         #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == clone.id && $0.section.folderID != nil })
     }
 
-    /// A VM trashed while Kernova was closed leaves its identifier in its
-    /// folders, unseen; it comes back by an import, or by a load or the
-    /// directory watcher adopting its bundle after Finder's Put Back.
+    /// A VM that left keeps its identifier in its folders; it comes back by an
+    /// import, or by a load or the directory watcher adopting its bundle after
+    /// Finder's Put Back.
     @Test("A VM returning under an identifier its folders still hold is listed in them again, whichever way it returns")
     func returningIdentityRejoinsOnEveryPath() async throws {
         let viewModel = makeViewModel()
@@ -754,8 +757,11 @@ struct SidebarFolderTests {
         #expect(members(of: clients, in: viewModel) == [imported.config.id, putBack])
     }
 
-    @Test("A VM leaving the library leaves every folder")
-    func evictionPrunesMembership() async throws {
+    /// Kernova sees a VM leave while it runs — an eviction, a delete — and
+    /// doesn't when its bundle goes while Kernova is closed; either way the
+    /// folders keep it, so how it left never decides whether it rejoins.
+    @Test("A VM leaving the library while Kernova runs keeps its folders, and is listed in them again when it returns")
+    func leavingKeepsMembership() async throws {
         let viewModel = makeViewModel()
         let a = viewModel.library.admitFixture(name: "A")
         let b = viewModel.library.admitFixture(name: "B")
@@ -763,19 +769,24 @@ struct SidebarFolderTests {
         let demo = try viewModel.library.createFolder(named: "Demo", members: [b.id, a.id])
 
         viewModel.library.evict(a)
-        #expect(members(of: clients, in: viewModel) == [b.id])
-        #expect(members(of: demo, in: viewModel) == [b.id])
-
         try await viewModel.commands.delete(
             .id(b.id), permanently: false, alsoRemoving: [], consent: Consent([.deleteVM]))
+
         #expect(viewModel.instances.isEmpty)
-        #expect(members(of: clients, in: viewModel) == [])
-        #expect(members(of: demo, in: viewModel) == [])
-        #expect(viewModel.library.folders?.count == 2)
+        #expect(members(of: clients, in: viewModel) == [a.id, b.id])
+        #expect(members(of: demo, in: viewModel) == [b.id, a.id])
+        let listed = { (folder: VMFolder) in
+            viewModel.sidebarLayout.sections.first { $0.id == .folder(folder.id) }.map(self.names(in:))
+        }
+        #expect(listed(clients) == [])
+
+        viewModel.library.admitFixture(name: "A") { $0.id = a.id }
+        #expect(listed(clients) == ["A"])
+        #expect(listed(demo) == ["A"])
     }
 
-    @Test("An import that becomes no VM leaves the folder it was dropped into")
-    func failedImportLeavesTheFolder() async throws {
+    @Test("An import that becomes no VM keeps the folder it was dropped into, which lists it once it arrives")
+    func failedImportKeepsTheFolder() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storage: storage)
         let clients = try viewModel.library.createFolder(named: "Clients")
@@ -787,7 +798,10 @@ struct SidebarFolderTests {
         await viewModel.awaitArrivalsForTesting()
 
         #expect(viewModel.entries.isEmpty)
-        #expect(members(of: clients, in: viewModel) == [])
+        #expect(members(of: clients, in: viewModel) == [source.config.id])
+        viewModel.library.admitFixture(name: "Never Copied") { $0.id = source.config.id }
+        let folder = try #require(viewModel.sidebarLayout.sections.first { $0.id == .folder(clients.id) })
+        #expect(names(in: folder) == ["Never Copied"])
     }
 
     // MARK: - Selection
@@ -807,5 +821,126 @@ struct SidebarFolderTests {
 
         #expect(viewModel.selection == inFolder(clients, a.id))
         #expect(outline.selectedRow == row(inFolder(clients, a.id), in: outline))
+    }
+
+    @Test("A reveal of a VM only a folder lists relaxes no filter: it keeps the folder row selected, or lands on it")
+    func revealOfAFolderMemberRelaxesNothing() throws {
+        let viewModel = makeViewModel()
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        let linux = viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let clients = try viewModel.library.createFolder(named: "Clients", members: [mac.id])
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+
+        viewModel.selection = inFolder(clients, mac.id)
+        viewModel.selectRevealing(mac.id)
+        #expect(viewModel.selection == inFolder(clients, mac.id))
+        #expect(viewModel.isRevealPending)
+
+        viewModel.selection = .library(linux.id)
+        viewModel.selectRevealing(mac.id)
+        #expect(viewModel.selection == inFolder(clients, mac.id))
+
+        #expect(viewModel.sidebarOptions.filter == linuxOnly)
+        #expect(preferences.sidebarViewOptions.filter == linuxOnly)
+    }
+
+    @Test("A Finder bundle of a VM the filter hides, dropped on a folder, lands on its row there and relaxes nothing")
+    func droppedExistingVMLandsInTheFolder() throws {
+        let viewModel = makeViewModel()
+        let source = try scratch.importSource(name: "Mac")
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = source.config.id }
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let clients = try viewModel.library.createFolder(named: "Clients")
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [source.url], intoFolder: clients.id))
+
+        #expect(viewModel.instances.count == 2)
+        #expect(members(of: clients, in: viewModel) == [mac.id])
+        #expect(viewModel.selection == inFolder(clients, mac.id))
+        #expect(viewModel.sidebarOptions.filter == linuxOnly)
+    }
+
+    @Test("A drop the folder can't take still imports every bundle, and says so once, as no import's failure")
+    func membershipFailureFailsNoImport() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        try Data("not json".utf8).write(to: organizationURL)
+        let viewModel = makeViewModel(organization: VMOrganizationDirectory(fileURL: organizationURL))
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let first = try scratch.importSource(name: "First")
+        let second = try scratch.importSource(name: "Second")
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [first.url, second.url], intoFolder: UUID()))
+
+        #expect(viewModel.library.arrivals.count == 2)
+        #expect(presenter.errorTitles == ["Couldn\u{2019}t Add to the Folder"])
+        await viewModel.awaitArrivalsForTesting()
+        #expect(Set(viewModel.instances.map(\.id)) == [first.config.id, second.config.id])
+    }
+
+    /// Jumping to another section's row would select a row that section may
+    /// keep collapsed, where the outline shows no selection the model holds.
+    @Test("A selection whose section and the library stop listing its VM clears, though a folder lists it")
+    func hiddenSelectionClears() throws {
+        let viewModel = makeViewModel()
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        try viewModel.library.createFolder(named: "Clients", members: [mac.id])
+        let macs = try viewModel.library.organization.createSmartGroup(
+            named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+        viewModel.selection = SidebarRowKey(section: .smartGroup(macs.id), group: nil, entryID: mac.id)
+
+        try viewModel.library.setFilter(linuxOnly, ofSmartGroup: macs.id)
+
+        #expect(viewModel.selection == nil)
+    }
+
+    @Test("An import batch leaves an arrival the user is watching selected, and the filter as it is")
+    func importBatchLeavesAWatchedArrival() async throws {
+        let viewModel = makeViewModel()
+        let source = try scratch.importSource(name: "Mac")
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = source.config.id }
+        let gate = GatedStep()
+        let watched = viewModel.library.beginGatedArrival(named: "Watched", gate: gate)
+        #expect(viewModel.selectedID == watched.id)
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+        let fresh = try scratch.importSource(name: "Fresh")
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [source.url, fresh.url]))
+
+        #expect(viewModel.selectedID == watched.id)
+        #expect(viewModel.sidebarOptions.filter == linuxOnly)
+        #expect(viewModel.library.entries.contains { $0.id == mac.id })
+        gate.release()
+        await viewModel.awaitArrivalsForTesting()
+    }
+
+    /// The sections a sidebar's first load makes open one after another; a
+    /// reveal taken as the first opens would scroll before the ones after it
+    /// push its row down.
+    @Test("A reveal made before the sidebar exists scrolls its row into view once every section has opened")
+    func revealBeforeTheSidebarScrollsAfterEverySectionOpens() throws {
+        let viewModel = makeViewModel()
+        let wanted = viewModel.library.admitFixture(name: "Wanted")
+        let lone = viewModel.library.admitFixture(name: "Lone")
+        let many = (0..<40).map { viewModel.library.admitFixture(name: "VM \($0)") }
+        try viewModel.library.createFolder(named: "First", members: [lone.id])
+        try viewModel.library.createFolder(named: "Second", members: many.map(\.id))
+        try viewModel.library.moveSection(.library, before: nil)
+
+        viewModel.selectRevealing(wanted.id)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        let wantedRow = row(.library(wanted.id), in: outline)
+        #expect(outline.selectedRow == wantedRow)
+        #expect(outline.visibleRect.contains(outline.rect(ofRow: wantedRow)))
     }
 }

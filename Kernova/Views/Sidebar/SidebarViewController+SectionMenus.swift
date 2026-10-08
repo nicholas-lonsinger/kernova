@@ -111,7 +111,7 @@ extension SidebarViewController {
         case .editOptions(let edit):
             viewModel.library.editSidebarOptions(edit)
         case .saveAsSmartGroup:
-            presentSaveAsSmartGroup()
+            presentSaveAsSmartGroup(library.sidebarOptions.filter)
         case .setSmartGroupFilter(let id, let filter):
             attempt("Couldn\u{2019}t Change the Smart Group") { try library.setFilter(filter, ofSmartGroup: id) }
         case .renameSmartGroup(let id):
@@ -143,12 +143,13 @@ extension SidebarViewController {
         }
     }
 
-    /// Asks for a name to save the library's filter under as a smart group,
-    /// starting from `name` — a suggestion from the filter when `nil`. A name
+    /// Asks for a name to save `filter` — the library's filter as the menu
+    /// found it — under as a smart group, starting from `name`, a suggestion
+    /// from the filter when `nil`. The group saves the filter the sheet shows,
+    /// whatever the library's has become by the time it is confirmed. A name
     /// the library refuses brings the sheet back with that name in it.
-    private func presentSaveAsSmartGroup(name: String? = nil) {
+    private func presentSaveAsSmartGroup(_ filter: VMLibraryFilter, name: String? = nil) {
         guard let window = view.window else { return }
-        let filter = viewModel.sidebarOptions.filter
         let values = SidebarViewMenu.values(of: viewModel)
         presentSheetAlert(
             SidebarNameSheet.newSmartGroup(
@@ -160,9 +161,9 @@ extension SidebarViewController {
                 guard let self else { return }
                 attempt(
                     "Couldn\u{2019}t Create the Smart Group",
-                    retry: { [weak self] in self?.presentSaveAsSmartGroup(name: typed) }
+                    retry: { [weak self] in self?.presentSaveAsSmartGroup(filter, name: typed) }
                 ) {
-                    let group = try viewModel.library.saveSidebarFilterAsSmartGroup(named: typed)
+                    let group = try viewModel.library.saveSidebarFilter(filter, asSmartGroupNamed: typed)
                     scrollSectionIntoView(.smartGroup(group.id))
                 }
             },
