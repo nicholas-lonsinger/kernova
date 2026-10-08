@@ -288,7 +288,7 @@ struct MainMenuViewMenuTests {
             vm = admitted
             _ = try viewModel.library.createFolder(named: "Lab", members: [admitted.id])
             viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-            _ = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
+            _ = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Linux")
         }
         let library = fixture.viewModel.library
         let sections: [SidebarSectionID] = [
