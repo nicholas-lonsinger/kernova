@@ -68,8 +68,8 @@ final class VsockGuestDropAgent: @unchecked Sendable {
     private var jobs: [UInt64: ClipboardTransferOperation] = [:]
 
     #if DEBUG
-    /// Test seam.
-    var liveChannelForTesting: VsockChannel? { liveChannel }
+    /// Test seam, readable from any thread: reads on the main queue that owns it.
+    var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
     #endif
 
     /// How one job ended.

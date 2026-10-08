@@ -74,12 +74,12 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private var endpoint: ClipboardEndpoint?
 
     #if DEBUG
-    /// Test seam.
-    var liveChannelForTesting: VsockChannel? { liveChannel }
+    /// Test seam, readable from any thread: reads on the main queue that owns it.
+    var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
 
-    /// Test seam.
+    /// Test seam, readable from any thread: reads on the main queue that owns it.
     var inboundPromiseGenerationForTesting: UInt64? {
-        MainActor.assumeIsolated { endpoint?.inboundOffer?.generation }
+        MainActorBridge.sync { endpoint?.inboundOffer?.generation }
     }
     #endif
 
@@ -138,8 +138,8 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     private var maxPasteBytes: Int = ClipboardPasteLimit.defaultBytes
 
     #if DEBUG
-    /// Test seam.
-    var isEnabledForTesting: Bool { enabled }
+    /// Test seam, readable from any thread: reads on the main queue that owns it.
+    var isEnabledForTesting: Bool { MainActorBridge.sync { enabled } }
 
     /// Fires on the main queue once a copy's off-main file resolve has landed —
     /// whether or not it offered — so a test can await the walk instead of
@@ -155,8 +155,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Test seam for the applied ceiling, so a test can wait for a pushed policy
-    /// to land instead of polling for its side effects.
-    var pasteLimitForTesting: Int { maxPasteBytes }
+    /// to land instead of polling for its side effects; readable from any
+    /// thread, it reads on the main queue that owns it.
+    var pasteLimitForTesting: Int { MainActorBridge.sync { maxPasteBytes } }
     #endif
 
     /// Most recent clipboard activity, surfaced to the menu-bar UI.

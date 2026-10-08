@@ -213,6 +213,18 @@ struct VsockGuestClipboardAgentTests {
         try await waitUntil { agent.liveChannelForTesting != nil }
     }
 
+    /// Waits until the agent serves a connection other than `previous`.
+    ///
+    /// Never waits for the disconnect in between: the reconnect loop publishes
+    /// the next channel one retry interval after the last one clears, and a
+    /// poll can sleep past that gap, then wait out its backstop on a channel
+    /// that is already back.
+    private func waitForReconnect(
+        of agent: VsockGuestClipboardAgent, replacing previous: VsockChannel
+    ) async throws {
+        try await waitUntil { agent.liveChannelForTesting.map { $0 !== previous } ?? false }
+    }
+
     // MARK: - Outbound (agent is the sender)
 
     @Test("outbound text: a local change is announced as a metadata offer, then streamed on request")
@@ -1299,7 +1311,7 @@ struct VsockGuestClipboardAgentTests {
         #expect(pasteboard.lastPrepareOptionsForTesting == .currentHostOnly)
 
         // The promise generation is recorded; a poll afterward does not re-offer.
-        let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }
+        let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 42)
         await MainActor.run { agent.checkClipboardChange() }
         try await expectNoOffer(from: hostChannel)
@@ -1551,7 +1563,7 @@ struct VsockGuestClipboardAgentTests {
         let provided = await pull.value
         #expect(provided == nil)
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.isEmpty }
-        #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == nil)
+        #expect(agent.inboundPromiseGenerationForTesting == nil)
     }
 
     // MARK: - Receive-side sanitization
@@ -2017,7 +2029,7 @@ struct VsockGuestClipboardAgentTests {
         // these reads queue behind it rather than racing it.
         let raised = 16 * 1024 * 1024 * 1024
         agent.applyPolicy(enabled: true, maxPasteBytes: raised)
-        #expect(await MainActor.run { agent.pasteLimitForTesting } == raised)
+        #expect(agent.pasteLimitForTesting == raised)
         #expect(
             await MainActor.run { agent.clipboardActivity }
                 == .pasteRefused(.pasteTooLarge, pasteLimitBytes: lowered))
@@ -2103,6 +2115,7 @@ struct VsockGuestClipboardAgentTests {
 
         // First connection: wait for liveChannel to be published.
         try await waitUntil { agent.liveChannelForTesting != nil }
+        let firstChannel = try #require(agent.liveChannelForTesting)
 
         // Trigger a poll — agent should offer "persistent text"
         await MainActor.run { agent.checkClipboardChange() }
@@ -2115,12 +2128,10 @@ struct VsockGuestClipboardAgentTests {
 
         // Close first connection to force reconnect
         host0.close()
-        try await waitUntil { agent.liveChannelForTesting == nil }
+        try await waitForReconnect(of: agent, replacing: firstChannel)
 
-        // Wait for second connection
-        try await waitUntil { agent.liveChannelForTesting != nil }
-
-        // After reconnect, lastSeenDigest is cleared — next poll should re-offer
+        // The new connection's endpoint starts with no offer-dedup digest, so the
+        // next poll re-offers the unchanged pasteboard.
         await MainActor.run { agent.checkClipboardChange() }
 
         let offer2Frame = try await nextFrame(from: host1)
@@ -2166,6 +2177,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
+        let firstChannel = try #require(agent.liveChannelForTesting)
 
         // The Mac's copy becomes a promise on the guest pasteboard, and a paste
         // inside the guest materializes it — so its bytes are resident, exactly
@@ -2183,8 +2195,7 @@ struct VsockGuestClipboardAgentTests {
         // its providers hold the offer's cache alive — and the change-count gate
         // is unset for the new host.
         host0.close()
-        try await waitUntil { agent.liveChannelForTesting == nil }
-        try await waitUntil { agent.liveChannelForTesting != nil }
+        try await waitForReconnect(of: agent, replacing: firstChannel)
 
         // The first poll of the new connection must leave the standing promise
         // alone: reading it would fire its providers and offer the Mac's own
@@ -2287,11 +2298,11 @@ struct VsockGuestClipboardAgentTests {
         // channel (teardownConnectionState clears both).
         try hostChannel.send(makeTextOfferFrame(generation: 77, text: "live payload"))
         try await waitUntil {
-            DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 77
+            agent.inboundPromiseGenerationForTesting == 77
         }
 
         // Capture the live channel's identity — only its reference matters here.
-        let liveChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
+        let liveChannel = try #require(agent.liveChannelForTesting)
 
         // A throwaway channel that was never served; teardownIfCurrent must reject
         // it by identity, leaving the live connection untouched.
@@ -2304,8 +2315,8 @@ struct VsockGuestClipboardAgentTests {
 
         // Both the live channel and its promise are intact — a failed identity
         // check would have nil'd both via teardownConnectionState.
-        #expect(DispatchQueue.main.sync { agent.liveChannelForTesting } === liveChannel)
-        #expect(DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting } == 77)
+        #expect(agent.liveChannelForTesting === liveChannel)
+        #expect(agent.inboundPromiseGenerationForTesting == 77)
     }
 
     @Test("teardownIfCurrent tears down when handed the live channel")
@@ -2321,12 +2332,12 @@ struct VsockGuestClipboardAgentTests {
 
         try await startAgentAndWaitForLiveChannel(agent: agent)
 
-        let liveChannel = try #require(DispatchQueue.main.sync { agent.liveChannelForTesting })
+        let liveChannel = try #require(agent.liveChannelForTesting)
 
         // Handed the live channel, the positive branch fires and tears it down.
         await MainActor.run { agent.teardownIfCurrentForTesting(liveChannel) }
 
-        #expect(DispatchQueue.main.sync { agent.liveChannelForTesting } == nil)
+        #expect(agent.liveChannelForTesting == nil)
     }
 
     @Test("serve publishes liveChannel synchronously so the read loop can process inbound frames immediately")
@@ -2375,7 +2386,7 @@ struct VsockGuestClipboardAgentTests {
         // A regression back to DispatchQueue.main.async would leave a window where
         // liveChannel is still nil here, because the async dispatch may not have
         // run before the read loop already processed frames.
-        let liveChannelSet = DispatchQueue.main.sync { agent.liveChannelForTesting != nil }
+        let liveChannelSet = agent.liveChannelForTesting != nil
         #expect(
             liveChannelSet,
             "liveChannel was nil on main queue after publish — publish was not synchronous with serve()'s progression")
@@ -2386,7 +2397,7 @@ struct VsockGuestClipboardAgentTests {
         // loop's only observable effect is the promise landing on the pasteboard.
         try hostChannel.send(makeTextOfferFrame(generation: 1, text: "ping"))
         try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting.contains(.string) }
-        let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }
+        let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == 1)
         try await expectNoPull(on: dialled)
     }
@@ -2417,7 +2428,7 @@ struct VsockGuestClipboardAgentTests {
         // that observable side effect, then confirm no promise was retained.
         try await pasteboard.changed.wait { pasteboard.changeCount > 0 }
         try await expectNoPull(on: dialled)
-        let promiseGen = DispatchQueue.main.sync { agent.inboundPromiseGenerationForTesting }
+        let promiseGen = agent.inboundPromiseGenerationForTesting
         #expect(promiseGen == nil)
         #expect(pasteboard.promisedTypesForTesting.isEmpty)
     }
@@ -2501,7 +2512,7 @@ struct VsockGuestClipboardAgentTests {
         defer { agent.stop() }
 
         // Sanity: read enabled flag via the test seam from the main queue.
-        let isEnabled = DispatchQueue.main.sync { agent.isEnabledForTesting }
+        let isEnabled = agent.isEnabledForTesting
         #expect(isEnabled == false)
     }
 
@@ -2520,7 +2531,7 @@ struct VsockGuestClipboardAgentTests {
 
         // Without an enabling policy, no connection should come up.
         try await Task.sleep(nanoseconds: 150_000_000)
-        let stillNil = DispatchQueue.main.sync { agent.liveChannelForTesting }
+        let stillNil = agent.liveChannelForTesting
         #expect(stillNil == nil)
 
         // Enable: connection comes up.
@@ -2648,16 +2659,16 @@ struct VsockGuestClipboardAgentTests {
         try await startAgentAndWaitForLiveChannel(agent: agent)  // leaves it enabled
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
 
-        // `applyPolicy` applies its change in one `DispatchQueue.main.async` hop
-        // and the main actor's executor is that same serial queue, so each read
-        // below is ordered behind it — the state is settled when it runs, with
-        // no poll and no per-iteration `main.sync`.
+        // `applyPolicy` applies its change in one `DispatchQueue.main.async` hop,
+        // and each read below runs on that same serial queue — the accessor's
+        // `main.sync`, or the main actor's executor — so it is ordered behind
+        // the change and needs no poll.
         agent.applyPolicy(enabled: false, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        #expect(await MainActor.run { agent.isEnabledForTesting } == false)
+        #expect(agent.isEnabledForTesting == false)
         #expect(await MainActor.run { agent.clipboardActivity } == .disabled)
 
         agent.applyPolicy(enabled: true, maxPasteBytes: ClipboardPasteLimit.defaultBytes)
-        #expect(await MainActor.run { agent.isEnabledForTesting } == true)
+        #expect(agent.isEnabledForTesting == true)
         #expect(await MainActor.run { agent.clipboardActivity } == .enabled)
     }
 
