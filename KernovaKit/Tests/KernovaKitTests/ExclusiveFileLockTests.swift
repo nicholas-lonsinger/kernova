@@ -49,6 +49,22 @@ struct ExclusiveFileLockTests {
         #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
     }
 
+    /// The `dup` stands in for the copy a child holds while any thread spawns
+    /// it, until its exec closes the copy.
+    @Test("release frees the lock while another descriptor still shares its open file description")
+    func releaseFreesTheLockDespiteASharedDescriptor() throws {
+        let url = try makeFile()
+        var shared: Int32 = -1
+        do {
+            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
+            shared = dup(held.descriptor)
+            try #require(shared >= 0)
+        }
+        defer { close(shared) }
+        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
+        #expect(try ExclusiveFileLock.isHeld(at: url) == false)
+    }
+
     @Test("the lock's descriptor is close-on-exec")
     func descriptorIsCloseOnExec() throws {
         let held = try #require(try ExclusiveFileLock.tryAcquire(at: makeDirectory()))
