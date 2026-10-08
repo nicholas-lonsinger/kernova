@@ -141,6 +141,10 @@ final class VMCommandClient {
 
     /// The next framed answer, or `nil` once the app hangs up.
     ///
+    /// A frame in another vocabulary throws the version mismatch before its
+    /// payload is decoded — whichever side is older, and whatever the payload
+    /// says.
+    ///
     /// An ``VMCommandResponse/Result/activate`` frame is answered here and read
     /// past, so no caller ever sees one.
     private func nextResponse() throws -> VMCommandResponse? {
@@ -154,9 +158,15 @@ final class VMCommandClient {
                 throw CLIFailure(.unavailable, "Kernova sent a frame this tool cannot read.")
             }
             if let frame = pending {
-                guard
-                    let response = try? JSONDecoder().decode(
-                        VMCommandResponse.self, from: Data(frame))
+                let data = Data(frame)
+                guard let version = try? VMCommandVersionHeader.protocolVersion(of: data) else {
+                    throw CLIFailure(.unavailable, "Kernova sent an answer this tool cannot read.")
+                }
+                guard version == VMCommandRequest.currentProtocolVersion else {
+                    throw VMCommandResponse.versionMismatch(
+                        tool: VMCommandRequest.currentProtocolVersion, app: version)
+                }
+                guard let response = try? JSONDecoder().decode(VMCommandResponse.self, from: data)
                 else {
                     throw CLIFailure(.unavailable, "Kernova sent an answer this tool cannot read.")
                 }
@@ -247,14 +257,31 @@ extension VMCommandResponse {
             + discards
     }
 
+    /// The failure for an app speaking command version `app` to a tool
+    /// speaking `tool`.
+    static func versionMismatch(tool: Int, app: Int) -> CLIFailure {
+        CLIFailure(
+            CLIExitCode(VMCommandTransportRefusal.unsupportedProtocolVersion(peer: tool, expected: app)),
+            versionMismatchMessage(tool: tool, app: app))
+    }
+
+    /// The mismatch in words, with the remedy for whichever side is older.
+    ///
+    /// The tool is a link into a Kernova bundle, so a newer tool means a newer
+    /// copy of Kernova is on disk than the one running.
+    private static func versionMismatchMessage(tool: Int, app: Int) -> String {
+        let versions = "The running Kernova speaks command version \(app); this tool speaks \(tool)."
+        return app < tool
+            ? versions + " Quit Kernova and open the copy this tool belongs to."
+            : versions + " Reinstall the tool from Kernova\u{2019}s Settings \u{2192} Advanced."
+    }
+
     private static func message(for refusal: VMCommandTransportRefusal) -> String {
         switch refusal {
         case .authorizationRefused(let reason):
             reason
         case .unsupportedProtocolVersion(let peer, let expected):
-            "This Kernova speaks command version \(peer); the tool speaks \(expected). "
-                + "The app and the tool it installed are different versions — reinstall the tool "
-                + "from Settings \u{2192} Advanced."
+            versionMismatchMessage(tool: peer, app: expected)
         case .undecodableRequest(let detail):
             "Kernova could not read the request: \(detail)"
         }

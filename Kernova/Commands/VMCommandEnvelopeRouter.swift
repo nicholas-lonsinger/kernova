@@ -28,13 +28,10 @@ struct VMCommandEnvelopeRouter {
     ///
     /// An envelope refusal is a frame, not a thrown error: the peer asked a
     /// question and is owed an answer, and only the transport can send one.
-    ///
-    /// The version is read before the verb: a verb another vocabulary spells
-    /// differently would not decode, and its peer is owed the version refusal.
     nonisolated func decode(_ data: Data) -> Result<VMCommandRequest, VMCommandTransportRefusal> {
         let request: VMCommandRequest
         do {
-            let version = try JSONDecoder().decode(VersionHeader.self, from: data).protocolVersion
+            let version = try VMCommandVersionHeader.protocolVersion(of: data)
             guard version == VMCommandRequest.currentProtocolVersion else {
                 return .failure(
                     .unsupportedProtocolVersion(peer: version, expected: VMCommandRequest.currentProtocolVersion))
@@ -44,11 +41,6 @@ struct VMCommandEnvelopeRouter {
             return .failure(.undecodableRequest(error.localizedDescription))
         }
         return .success(request)
-    }
-
-    /// The one field every vocabulary's request carries.
-    private struct VersionHeader: Decodable {
-        let protocolVersion: Int
     }
 
     /// Serializes one response for the wire.
