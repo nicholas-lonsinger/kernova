@@ -93,6 +93,13 @@ final class VMActivity {
     /// Wired by `VMLibrary.wireHooks(for:)`.
     @ObservationIgnored var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])?
 
+    /// Fired when this copy lets go of the run lock with the VM at rest —
+    /// the end of every hold an operation took — so the bundle, which no
+    /// read touches while held, is read again.
+    ///
+    /// Wired by `VMLibrary.wireHooks(for:)`.
+    @ObservationIgnored var onRunLockReleased: (@MainActor () -> Void)?
+
     /// Runs at an operation's ending commit, after the VM rests and before
     /// the outcome resolves, answering the follow-ups the ending owes.
     typealias WhenEnded = @MainActor (Result<Void, any Error>) -> [VMFollowUp]
@@ -677,6 +684,7 @@ final class VMActivity {
     private func releaseRunLockIfAtRest() {
         guard phase.isAtRest || phase == .removed, hold.isThisCopy else { return }
         setHold(.none)
+        if phase.isAtRest { onRunLockReleased?() }
     }
 
     /// Records what asking the bundle found about another copy's hold on it —
