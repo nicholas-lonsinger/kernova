@@ -88,9 +88,10 @@ final class VMNetworkDirectory {
     /// The named network a VM under `configuration` names, as this
     /// directory lists it — `nil` where its membership names none.
     func networkName(of configuration: VMConfiguration) -> VMNetworkName? {
-        guard let id = configuration.effectiveNetworkMembership?.namedNetwork else { return nil }
-        guard case .listed = state else { return .unreadable }
-        return network(joinedBy: configuration).map { .named($0.name) } ?? .unlisted(id)
+        guard let id = configuration.effectiveNetworkMembership?.namedNetwork,
+            let kind = VmnetNetworkKind(mode: configuration.networkMode)
+        else { return nil }
+        return VMNetworkName(id, kind: kind, in: state)
     }
 
     /// The network `text` names — by identifier, or by name ignoring case —
@@ -212,5 +213,18 @@ final class VMNetworkDirectory {
 
     nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
         networks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+extension VMNetworkName {
+    /// The named network `id` of `kind` as `networks` lists it: a network
+    /// listed only in the other mode is one the library does not list.
+    init(_ id: UUID, kind: VmnetNetworkKind, in networks: VMNetworkDirectory.State) {
+        switch networks {
+        case .unreadable:
+            self = .unreadable
+        case .listed(let networks):
+            self = networks.first { $0.id == id && $0.kind == kind }.map { .named($0.name) } ?? .unlisted(id)
+        }
     }
 }

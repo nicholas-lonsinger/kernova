@@ -47,17 +47,13 @@ extension NetworkModeChoice {
             case .isolated:
                 entry = Self.isolatedTitle
             case .network(let id):
-                switch networks {
-                case .unreadable:
-                    return NetworkChoiceLabel(mode: kind.mode, entry: Self.unreadableNetworkListTitle)
-                case .listed(let networks):
-                    // A network the library does not list in this mode is one
-                    // no surface can choose, so it never reads as merely
-                    // unavailable.
-                    guard let network = networks.first(where: { $0.id == id && $0.kind == kind }) else {
-                        return NetworkChoiceLabel(mode: kind.mode, entry: Self.unlistedNetworkTitle)
-                    }
-                    entry = network.name
+                // A network the library can't name — unlisted in this mode,
+                // or the list unreadable — is one no surface can choose, so
+                // it never reads as merely unavailable.
+                switch VMNetworkName(id, kind: kind, in: networks) {
+                case .named(let name): entry = name
+                case .unlisted: return NetworkChoiceLabel(mode: kind.mode, entry: Self.unlistedNetworkTitle)
+                case .unreadable: return NetworkChoiceLabel(mode: kind.mode, entry: Self.unreadableNetworkListTitle)
                 }
             }
         case .none:
