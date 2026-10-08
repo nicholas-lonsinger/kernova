@@ -20,7 +20,7 @@ extension VMLibrary {
         } catch {
             preconditionFailure("A test arrival's destination could not be derived: \(error)")
         }
-        return beginArrival(
+        let arrival = beginArrival(
             kind: kind, configuration: configuration, destination: destination, staged: staged,
             source: nil
         ) { staged in
@@ -28,6 +28,9 @@ extension VMLibrary {
             try storage.createVMBundle(at: staged.url)
             try staged.writeInitial(configuration)
         }
+        // As every command that begins one does.
+        selectArrival(arrival.id)
+        return arrival
     }
 
     /// ``beginGatedArrival(_:configuration:gate:)`` for a fresh configuration

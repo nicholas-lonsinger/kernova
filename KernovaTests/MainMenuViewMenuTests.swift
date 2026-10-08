@@ -316,7 +316,7 @@ struct MainMenuViewMenuTests {
             viewModel.library.admitFixture(name: "A")
             _ = try viewModel.library.createFolder(named: "Lab")
             viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-            _ = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
+            _ = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Linux")
         }
         let outline = fixture.sidebar.outlineView
         let sections = fixture.sidebar.tree.sections
@@ -378,7 +378,7 @@ struct MainMenuViewMenuTests {
         let fixture = try makeFixture { viewModel in
             vm = viewModel.library.admitFixture(name: "A", guestOS: .linux)
             viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-            _ = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
+            _ = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Linux")
         }
         let group = try #require(fixture.viewModel.library.smartGroups?.first)
         fixture.viewModel.selection = SidebarRowKey(

@@ -244,9 +244,9 @@ struct SidebarProjectionTests {
         #expect(library.selectedID == alpha.id)
         #expect(library.preferences.sidebarSelection == inWork)
 
-        // Already selected: the row it is selected in stays.
+        // Selected in a row no section lists: the reveal lands on one that does.
         library.selectRevealing(alpha.id)
-        #expect(library.selection == inWork)
+        #expect(library.selection == .library(alpha.id))
 
         library.selectRevealing(beta.id)
         #expect(library.selection == .library(beta.id))

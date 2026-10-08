@@ -202,10 +202,12 @@ final class SettingsTabViewController: NSTabViewController {
         }
     }
 
+    #if DEBUG
     /// The pane on screen, `nil` before the view loads.
-    var selectedPane: SettingsPane? {
+    var selectedPaneForTesting: SettingsPane? {
         (tabView.selectedTabViewItem?.identifier as? String).flatMap(SettingsPane.init(rawValue:))
     }
+    #endif
 
     /// Selects the pane `destination` names and, for a network, its row.
     ///

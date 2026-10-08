@@ -465,7 +465,7 @@ struct ConfigFileDecodingTests {
             encoder: VMConfiguration.makeJSONEncoder())
 
         #expect(diagnosis.problems.map(\.path?.description) == ["$.tags[1]", "$.lastRunAt"])
-        #expect(diagnosis.problems.map(\.repair) == [.removeEntry, .useDefault("null")])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry, .useDefault(nil)])
         let repaired = try VMConfiguration.makeJSONDecoder().decode(
             VMHostState.self, from: try #require(diagnosis.repaired))
         #expect(repaired.tags == [kept])
@@ -515,7 +515,7 @@ struct ConfigFileDecodingTests {
 
         #expect(
             diagnosis.problems.map(\.path?.description) == ["$.bridgedInterfaceIdentifier", "$.kernelCommandLine"])
-        #expect(diagnosis.problems.map(\.repair) == [.useDefault("null"), .useDefault("null")])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault(nil), .useDefault(nil)])
         let repaired = try VMConfiguration.makeJSONDecoder().decode(
             VMConfiguration.self, from: try #require(diagnosis.repaired))
         #expect(repaired.bridgedInterfaceIdentifier == fresh.bridgedInterfaceIdentifier)
@@ -533,7 +533,7 @@ struct ConfigFileDecodingTests {
             encoder: VMConfiguration.makeJSONEncoder())
 
         #expect(diagnosis.problems.map(\.path?.description) == ["$.lastFullscreenDisplayID"])
-        #expect(diagnosis.problems.map(\.repair) == [.useDefault("null")])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault(nil)])
         let repaired = try VMConfiguration.makeJSONDecoder().decode(
             VMHostState.self, from: try #require(diagnosis.repaired))
         #expect(repaired.lastFullscreenDisplayID == VMHostState().lastFullscreenDisplayID)
@@ -570,5 +570,89 @@ struct ConfigFileDecodingTests {
         #expect(repaired.filter.states == [.running])
         #expect(repaired.filter.ephemeralOnly == fresh.filter.ephemeralOnly)
         #expect(repaired.filter.guestOSes == [.linux])
+    }
+
+    @Test("A default that is no value reads as no value in the report")
+    func aNilDefaultReadsAsNoValue() {
+        let unset = ConfigProblem(
+            path: ConfigValuePath([.key("lastFullscreenDisplayID")]), issue: .unrecognized(found: "main"),
+            repair: .useDefault(nil))
+        let nested = ConfigProblem(
+            path: ConfigValuePath([.key("bridge")]), issue: .unrecognized(found: "5"), repair: .useDefault(nil),
+            issuePath: ConfigValuePath([.key("bridge"), .key("id")]))
+
+        #expect(
+            unset.reportLine(fileName: "host-state.json")
+                == "$.lastFullscreenDisplayID: \u{201C}main\u{201D} is not a recognized value. Default: no value.")
+        #expect(
+            nested.reportLine(fileName: "config.json")
+                == "$.bridge.id: \u{201C}5\u{201D} is not a recognized value. Default for $.bridge: no value.")
+    }
+
+    // MARK: - The caller's decoder
+
+    @Test("A decoder that decoded repairing, or diagnosed, decodes strictly afterwards")
+    func aRepairingDecodeLeavesTheDecoderStrict() throws {
+        let data = try configJSON { $0["networkMode"] = Self.unrecognized }
+        let decoder = VMConfiguration.makeJSONDecoder()
+
+        _ = try decoder.decodeRepairing(VMConfiguration.self, from: data)
+        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
+
+        _ = ConfigFileDiagnosis(
+            decoding: VMConfiguration.self, from: data, decoder: decoder, encoder: VMConfiguration.makeJSONEncoder())
+        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
+    }
+
+    // MARK: - Smart groups
+
+    @Test("A smart group's network no build spells is refused strictly, and removed alone when collecting")
+    func aSmartGroupsUnknownNetworkIsRemovedAlone() throws {
+        let group = UUID()
+        let folder = UUID()
+        let tag = UUID()
+        let data = Data(
+            #"""
+            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "NAT",
+                              "filter": {"networks": ["bogus:common"], "guestOSes": ["linux"]}}],
+             "folders": [{"id": "\#(folder.uuidString)", "name": "Lab", "members": []}],
+             "sectionOrder": ["folder:\#(folder.uuidString)", "virtualMachines", "smartGroup:\#(group.uuidString)"],
+             "tags": [{"id": "\#(tag.uuidString)", "name": "Work", "color": "red"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[0].filter.networks[0]"])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry])
+        let repaired = try JSONDecoder().decode(
+            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.smartGroups.map(\.id) == [group])
+        #expect(repaired.smartGroups.first?.filter == VMLibraryFilter(guestOSes: [.linux]))
+        #expect(repaired.folders.map(\.id) == [folder])
+        #expect(repaired.tags.map(\.id) == [tag])
+        #expect(repaired.sections.map(\.id) == [.folder(folder), .library, .smartGroup(group)])
+    }
+
+    @Test("A smart group that doesn't decode is removed alone; a file with none lists none")
+    func aBadSmartGroupIsRemovedAlone() throws {
+        let group = UUID()
+        let data = Data(
+            #"""
+            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "All", "filter": {}}, {"name": "Unnamed"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[1]"])
+        let repaired = try JSONDecoder().decode(
+            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.smartGroups.map(\.id) == [group])
+        #expect(try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: Data("{}".utf8)) == .init())
     }
 }

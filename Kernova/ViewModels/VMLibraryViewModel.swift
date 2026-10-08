@@ -89,9 +89,9 @@ final class VMLibraryViewModel {
 
     func selectRevealing(_ id: UUID) { library.selectRevealing(id) }
 
-    var pendingReveal: SidebarRowKey? { library.pendingReveal }
+    var isRevealPending: Bool { library.isRevealPending }
 
-    func takePendingReveal() -> SidebarRowKey? { library.takePendingReveal() }
+    func takePendingReveal() -> Bool { library.takePendingReveal() }
 
     var selectedInstance: VMInstance? { library.selectedInstance }
 
@@ -463,7 +463,7 @@ final class VMLibraryViewModel {
             drainBufferedPresentations()
             if owesConfigCheck {
                 owesConfigCheck = false
-                showConfigCheck()
+                onShowConfigCheck?(.automatic)
             }
             if let id = bufferedDisplayFocus {
                 bufferedDisplayFocus = nil
@@ -525,7 +525,28 @@ final class VMLibraryViewModel {
     /// does, for the same reason.
     @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
-    var activeRename: RenameTarget?
+    /// The one rename open: in a sidebar row — held by the library
+    /// (``VMLibrary/sidebarRenameID``), which ends it once no row lists the
+    /// VM — or in the detail pane.
+    var activeRename: RenameTarget? {
+        get { library.sidebarRenameID.map(RenameTarget.sidebar) ?? detailRenameID.map(RenameTarget.detail) }
+        set {
+            switch newValue {
+            case .sidebar(let id):
+                detailRenameID = nil
+                library.sidebarRenameID = id
+            case .detail(let id):
+                library.sidebarRenameID = nil
+                detailRenameID = id
+            case nil:
+                library.sidebarRenameID = nil
+                detailRenameID = nil
+            }
+        }
+    }
+
+    /// The VM a rename in the detail pane is open on.
+    private var detailRenameID: UUID?
 
     /// Asks for a VM's display window, for a verb that puts the display in
     /// front of the user.
@@ -555,9 +576,27 @@ final class VMLibraryViewModel {
     /// puts it there. The app delegate answers it with the Workspace call.
     @ObservationIgnored var onRevealInFinder: ((VMInstance) -> Void)?
 
+    /// Who asked for the config check window.
+    enum ConfigCheckRequest {
+        /// The user — a menu, a context menu, a button — so Kernova comes
+        /// forward with the window.
+        case user
+        /// A read that found a newly unreadable file, so the window comes up
+        /// without taking focus from the app or window the user is in.
+        case automatic
+    }
+
     /// Asks for the config check window, which reads every config file afresh
     /// as it comes up.
-    @ObservationIgnored var onShowConfigCheck: (() -> Void)?
+    @ObservationIgnored var onShowConfigCheck: ((ConfigCheckRequest) -> Void)?
+
+    /// Asks for Kernova's Settings window on a destination.
+    @ObservationIgnored var onShowSettings: ((SettingsDestination) -> Void)?
+
+    /// Puts Kernova's Settings window in front of the user on `destination`.
+    func showSettings(at destination: SettingsDestination) {
+        onShowSettings?(destination)
+    }
 
     /// Whether a read found a config file it can't read while no presenter
     /// was attached: the check comes up when one is, with the library window,
@@ -567,7 +606,7 @@ final class VMLibraryViewModel {
     /// Puts the config check in front of the user — File > Check Config
     /// Files…, and every surface that offers the same.
     func showConfigCheck() {
-        onShowConfigCheck?()
+        onShowConfigCheck?(.user)
     }
 
     func checkConfigFiles() async throws -> [UnreadableConfigFile] {
@@ -698,7 +737,7 @@ final class VMLibraryViewModel {
                 self.owesConfigCheck = true
                 return
             }
-            self.showConfigCheck()
+            self.onShowConfigCheck?(.automatic)
         }
         sleepWake.onFailure = { [weak self] error in
             self?.surfaceError(error.localizedDescription)
@@ -1237,14 +1276,14 @@ final class VMLibraryViewModel {
     // MARK: - Import
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
-    /// then puts each in the folder `folder` identifies, if any.
+    /// into the folder `folder` identifies, if any
+    /// (``VMCommanding/beginImports(from:intoFolder:)``).
     ///
     /// Every import reserves its destination and registers its arrival before
-    /// this returns (``VMCommanding/beginImport(from:)``), so two overlapping
-    /// triggers never collide on a destination name and never wait behind each
-    /// other's copies. The folder takes each arrival as it registers, so its
-    /// row shows the import there; one that becomes no VM leaves it. A bundle
-    /// the library already holds puts that VM in the folder.
+    /// this returns, so two overlapping triggers never collide on a
+    /// destination name and never wait behind each other's copies. Each
+    /// refused import is presented; a folder that couldn't take the batch is
+    /// presented once, apart from the imports, which run on.
     ///
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
@@ -1253,12 +1292,10 @@ final class VMLibraryViewModel {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         #log(Self.logger, .notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
-        var imported: [UUID] = []
-        for url in bundles {
-            runSync(on: nil) { imported.append(try commands.beginImport(from: url).id) }
-        }
-        if let folder, !imported.isEmpty {
-            runSync(on: nil) { try library.add(imported, toFolder: folder) }
+        let batch = commands.beginImports(from: bundles, intoFolder: folder)
+        for case .failure(let error) in batch.imports { present(error, for: nil) }
+        if let failure = batch.membershipFailure {
+            surfaceError(failure.localizedDescription, title: "Couldn\u{2019}t Add to the Folder")
         }
         return true
     }
@@ -1358,7 +1395,14 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Opens a rename of `instance` in its sidebar row, revealing the row
+    /// first (``VMLibrary/selectRevealing(_:in:)``); a VM no row can list is
+    /// asked for no rename.
     func renameVMInSidebar(_ instance: VMInstance) {
+        guard library.selectRevealing(instance.id) != nil else {
+            #log(Self.logger, .notice, "No sidebar row lists '\(instance.name, privacy: .public)' — no rename opened")
+            return
+        }
         #log(Self.logger, .debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
         activeRename = .sidebar(instance.id)
     }
@@ -1674,7 +1718,8 @@ final class VMLibraryViewModel {
     /// alert headed by the refusal's own title.
     private func present(_ error: Error, for instance: VMInstance?) {
         guard let command = error as? CommandError else {
-            surfaceError(error.localizedDescription)
+            surfaceError(
+                error.localizedDescription, title: (error as? any TitledError)?.alertTitle ?? "Error")
             return
         }
         switch command {

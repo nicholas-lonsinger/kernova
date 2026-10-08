@@ -136,15 +136,19 @@ extension VMLibrary {
     ///
     /// Holds the bundle's run lock across the move, as every delete does, so
     /// it refuses with ``ConfigFileRepairRefusal/inUse`` while any copy of
-    /// Kernova holds it.
+    /// Kernova holds it — and, under the lock, refuses a bundle no longer
+    /// unreadable as `bundle` found it (``VMBundleFiles/confirmUnreadable(as:)``).
     func moveToTrash(_ bundle: UnreadableVM) async throws {
         let storage = storageService
         let url = bundle.bundleURL
+        let checked = bundle.file
         try await Task.detached(priority: .userInitiated) {
-            guard let lock = try VMBundleFiles(url: url, access: storage.bundleFiles).lockRun() else {
+            let files = VMBundleFiles(url: url, access: storage.bundleFiles)
+            guard let lock = try files.lockRun() else {
                 throw ConfigFileRepairRefusal.inUse
             }
             try withExtendedLifetime(lock) {
+                try files.confirmUnreadable(as: checked)
                 try storage.deleteVMBundle(at: url)
             }
         }.value

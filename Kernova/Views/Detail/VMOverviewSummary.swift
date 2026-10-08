@@ -266,8 +266,23 @@ enum VMOverviewSummary {
             // states what is running, as the panel dims the switch that isn't.
             let passthrough = config.clipboardPassthroughIsEffective ? "on" : "off"
             return "Passthrough \(passthrough) \u{00B7} \(folders)"
-        case .system, .storage, .network, .snapshots:
+        case .snapshots:
+            return unreadableSnapshotsNote(instance)
+        case .system, .storage, .network:
             return nil
+        }
+    }
+
+    /// Names the listed snapshots whose settings the last read of the bundle
+    /// refused, `nil` when it refused none.
+    @MainActor
+    private static func unreadableSnapshotsNote(_ instance: VMInstance) -> String? {
+        let ids = Set(instance.unreadableFiles.compactMap(\.snapshotID))
+        let unreadable = instance.snapshotManifest.ordered.filter { ids.contains($0.id) }
+        switch unreadable.count {
+        case 0: return nil
+        case 1: return "The settings of \u{201C}\(unreadable[0].name)\u{201D} can\u{2019}t be read"
+        default: return "The settings of \(unreadable.count) snapshots can\u{2019}t be read"
         }
     }
 

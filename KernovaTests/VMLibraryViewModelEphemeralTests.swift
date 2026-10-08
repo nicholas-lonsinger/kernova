@@ -340,6 +340,45 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
     }
 
+    @Test("A baseline whose settings can't be read fails the revert under its own title, leaving the VM stopped")
+    func unreadableBaselineRevertIsTitled() async throws {
+        let harness = try await makeHarness()
+        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotConfigurationUnreadable
+
+        await harness.viewModel.stop(harness.instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(presenter.errorTitle == "Couldn\u{2019}t Revert to the Snapshot")
+        #expect(presenter.errorMessage == VMSnapshotError.snapshotConfigurationUnreadable.errorDescription)
+        #expect(harness.instance.status == .stopped)
+        #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
+    }
+
+    @Test("Start from the app is refused, under its own title, while the baseline's settings can't be read")
+    func startRefusedWhileTheBaselineIsUnreadable() async throws {
+        let harness = try await makeHarness(phase: .stopped)
+        let instance = harness.instance
+        let config = VMConfiguration(name: "Throwaway", guestOS: .linux, bootMode: .efi)
+        harness.storage.files.setSnapshotConfiguration(config, id: harness.later.id, at: instance.bundleURL)
+        harness.storage.files.setData(
+            Data("not json".utf8),
+            atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: harness.baseline.id),
+            in: instance.bundleURL)
+
+        await harness.viewModel.start(instance)
+
+        #expect(presenter.errorTitle == "Couldn\u{2019}t Start \u{201C}Throwaway\u{201D}")
+        #expect(presenter.errorMessage == VMCommandCore.ephemeralBaselineUnreadableMessage)
+        #expect(instance.status == .stopped)
+        #expect(instance.unreadableFiles.map(\.snapshotID) == [harness.baseline.id])
+
+        // Readable again, the same click starts it.
+        harness.storage.files.setSnapshotConfiguration(
+            config, id: harness.baseline.id, at: instance.bundleURL)
+        await harness.viewModel.start(instance)
+        try await waitForChange { instance.status == .running }
+    }
+
     // MARK: - Suspend
 
     @Test("Suspending keeps the session — it does not revert")

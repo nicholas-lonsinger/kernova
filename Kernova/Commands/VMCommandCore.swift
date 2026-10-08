@@ -377,8 +377,20 @@ final class VMCommandCore: VMCommanding {
             .terminating
         case .heldByAnotherCopy:
             .heldByAnotherCopy(vm: summary(instance))
+        case .ephemeralBaselineUnreadable:
+            .operationFailed(
+                verb: verb ?? .start,
+                title: "Couldn\u{2019}t \(Self.bringUpTitle(verb)) \u{201C}\(instance.name)\u{201D}",
+                message: Self.ephemeralBaselineUnreadableMessage)
         }
     }
+
+    /// Why a bring-up of an Ephemeral Mode VM whose baseline's settings can't
+    /// be read is refused.
+    static let ephemeralBaselineUnreadableMessage =
+        "Kernova can\u{2019}t read the snapshot Ephemeral Mode returns this virtual machine to, "
+        + "so it can\u{2019}t undo this session\u{2019}s changes. "
+        + "Choose File > Check Config Files\u{2026} to review it."
 
     /// The confirmation that starts `instance` beside `other`, which shares its
     /// machine identity — worded for the bring-up `verb` performs.
@@ -584,7 +596,7 @@ final class VMCommandCore: VMCommanding {
         if let moved = error as? VMLibrary.PairingMoveRefused {
             return admissionRefusal(moved.refusal.refusal, on: moved.holder, verb: verb)
         }
-        return .operationFailed(verb: verb, message: error.localizedDescription)
+        return .failed(verb: verb, error: error)
     }
 
     // MARK: - Reads

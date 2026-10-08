@@ -179,7 +179,7 @@ final class SidebarViewController: NSViewController {
                     // grouping read of every VM.
                     _ = self.viewModel.sidebarLayout
                     _ = self.viewModel.selection
-                    _ = self.viewModel.pendingReveal
+                    _ = self.viewModel.isRevealPending
                     _ = self.viewModel.activeRename
                     _ = self.viewModel.library.sidebarSearch
                 },
@@ -211,7 +211,7 @@ final class SidebarViewController: NSViewController {
     private func sync() {
         applyOutsideSearch()
         applyProjection()
-        applySelectionFromModel()
+        applySelectionFromModel(takingReveal: true)
         applyRenameState()
     }
 
@@ -221,7 +221,8 @@ final class SidebarViewController: NSViewController {
     ///
     /// The model's selection then moves onto the new rows
     /// (``VMLibrary/reconcileSelection(with:)``): a selected VM the change hid
-    /// is no longer selected.
+    /// from its section and the library is no longer selected, and a sidebar
+    /// rename of it ends.
     private func applyProjection() {
         let layout = viewModel.sidebarLayout
         let changes = tree.update(to: layout)
@@ -265,17 +266,20 @@ final class SidebarViewController: NSViewController {
     /// selection onto that row when it landed by fallback.
     ///
     /// Only a reveal the library still owes the row
-    /// (``VMLibrary/pendingReveal``) opens the collapsed sections hiding it,
-    /// and taking it settles it. Any other selection — a restored one
-    /// included — leaves the user's collapsed sections as they are, and the
-    /// outline shows no selected row while the model keeps the selection.
-    private func applySelectionFromModel() {
+    /// (``VMLibrary/isRevealPending``) opens the collapsed sections hiding
+    /// it, and taking it settles it — which only a pass `takingReveal` does,
+    /// once every section the pass made has opened, so no section opening
+    /// later pushes the revealed row out of view. Any other selection — a
+    /// restored one included — leaves the user's collapsed sections as they
+    /// are, and the outline shows no selected row while the model keeps the
+    /// selection.
+    private func applySelectionFromModel(takingReveal: Bool) {
         guard let selection = viewModel.selection, let node = tree.row(resolving: selection) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
         }
         if node.key != selection { viewModel.selection = node.key }
-        let revealing = viewModel.pendingReveal == node.key && viewModel.takePendingReveal() != nil
+        let revealing = takingReveal && viewModel.takePendingReveal()
         guard let row = revealing ? revealedRow(of: node) : shownRow(of: node) else {
             if outlineView.selectedRow != -1 { outlineView.deselectAll(nil) }
             return
@@ -375,14 +379,14 @@ final class SidebarViewController: NSViewController {
     // MARK: - Inline rename
 
     /// The row a sidebar rename of the entry `id` is open in: the row already
-    /// editing it while the tree still lists that row, else the selected row
-    /// when it shows that entry, else the entry's library row.
+    /// editing it while the tree still lists that row, else the row
+    /// ``VMLibrary/preferredRow(of:in:)`` resolves to, the row the library's
+    /// reconcile keeps the request against.
     private func renameRow(for id: UUID) -> SidebarRow? {
         if let editingRow, editingRow.key.entryID == id, tree.row(for: editingRow.key) === editingRow {
             return editingRow
         }
-        let selected = viewModel.selection.flatMap { tree.row(resolving: $0) }
-        let row = selected?.key.entryID == id ? selected : tree.row(resolving: .library(id))
+        let row = tree.row(resolving: viewModel.library.preferredRow(of: id))
         return row?.entry.vm == nil ? nil : row
     }
 
@@ -541,6 +545,7 @@ final class SidebarViewController: NSViewController {
                 showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                     for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
                 showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
+                showsUnreadableWarning: !instance.unreadableFiles.isEmpty,
                 tagCount: viewModel.library.tags(of: instance).count
             )
         case .arriving:
@@ -748,7 +753,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         persistExpansion(of: notification.userInfo?["NSObject"], expanded: true)
         // Restore the highlight for a still-selected row that was hidden while
         // its group was collapsed.
-        sync()
+        applySelectionFromModel(takingReveal: false)
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
@@ -979,6 +984,9 @@ extension SidebarViewController {
         }
 
         menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
+        if !instance.unreadableFiles.isEmpty {
+            menu.addItem(item("Check Config Files\u{2026}", #selector(menuCheckConfigFiles(_:)), instance))
+        }
 
         menu.addItem(.separator())
 

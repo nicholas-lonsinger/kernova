@@ -3882,6 +3882,9 @@ struct VMCommandCoreTests {
             hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+        // The baseline's own settings, which the start after the revert reads.
+        instance.fixtureBundleFiles.setSnapshotConfiguration(
+            instance.configuration, id: baseline.id, at: instance.bundleURL)
 
         let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none) }
         // The stop powers the guest off, and the baseline revert is admitted
@@ -4194,6 +4197,9 @@ struct VMCommandCoreTests {
             hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+        // The baseline's own settings, which the start after the revert reads.
+        instance.fixtureBundleFiles.setSnapshotConfiguration(
+            instance.configuration, id: baseline.id, at: instance.bundleURL)
 
         let restart = Task {
             try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)

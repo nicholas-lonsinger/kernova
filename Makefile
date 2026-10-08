@@ -214,7 +214,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	else \
 		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
 	fi
-	@for t in $(FIXTURE_TESTS); do bash "$$t" || exit 1; done
+	@bash Tools/tests/git-isolation.sh $(FIXTURE_TESTS)
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
 	@bash Tools/check-docs.sh

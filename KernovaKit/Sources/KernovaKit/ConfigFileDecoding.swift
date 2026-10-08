@@ -9,7 +9,7 @@ import Foundation
 /// | Field | Absent | Unrecognized, strict | Unrecognized, collecting |
 /// |---|---|---|---|
 /// | A preference (`default:`) | the default | throws | repaired to the default |
-/// | A list of entries (`default:` on an array) | the default | throws | each bad entry removed |
+/// | A list of entries (`default:` on an array or a set) | the default | throws | each bad entry removed |
 /// | A fact (`absentMeans:`) | the stated value | throws | recorded, unrepairable |
 /// | Required, repairable (`repairingTo:`) | throws; collecting repairs | throws | repaired to the default |
 ///
@@ -80,6 +80,15 @@ extension KeyedDecodingContainer {
         return kept
     }
 
+    /// A set of entries, decoded as the list of entries above is and
+    /// gathered into a set.
+    public func decode<Element: Codable & Hashable>(
+        _ type: Set<Element>.Type, forKey key: Key, default defaultValue: @autoclosure () -> Set<Element>,
+        in decoder: any Decoder
+    ) throws -> Set<Element> {
+        Set(try decode([Element].self, forKey: key, default: Array(defaultValue()), in: decoder))
+    }
+
     /// A fact: the value at `key`, or `stated` — what a file with no value
     /// there has always meant — when the file holds none.
     ///
@@ -146,17 +155,17 @@ extension Decoder {
     /// The collector a ``ConfigFileDiagnosis`` hands this decoder, `nil` for
     /// a strict decode.
     fileprivate var collector: ConfigProblemCollector? {
-        userInfo[.configProblems] as? ConfigProblemCollector
+        CodingUserInfoKey.configProblems.flatMap { userInfo[$0] } as? ConfigProblemCollector
     }
 }
 
 extension CodingUserInfoKey {
     /// Where a ``ConfigFileDiagnosis`` hands its decoder the collector that
-    /// switches every config field to recording.
-    fileprivate static let configProblems: CodingUserInfoKey = {
-        guard let key = CodingUserInfoKey(rawValue: "app.kernova.configProblems") else {
-            preconditionFailure("CodingUserInfoKey refused a constant raw value")
-        }
+    /// switches every config field to recording; `nil` only if the
+    /// initializer refuses the constant, when every decode is strict.
+    fileprivate static let configProblems: CodingUserInfoKey? = {
+        let key = CodingUserInfoKey(rawValue: "app.kernova.configProblems")
+        if key == nil { assertionFailure("CodingUserInfoKey refused a constant raw value") }
         return key
     }()
 }
@@ -256,11 +265,15 @@ extension JSONDecoder {
     }
 
     /// `data` decoded as `type`, every config field recording into
-    /// `collector` rather than throwing.
+    /// `collector` rather than throwing; the decoder decodes strictly again
+    /// once this returns.
     fileprivate func decode<T: Decodable>(
         _ type: T.Type, from data: Data, collectingInto collector: ConfigProblemCollector
     ) throws -> T {
-        userInfo[.configProblems] = collector
+        guard let key = CodingUserInfoKey.configProblems else { return try decode(type, from: data) }
+        let strict = userInfo
+        userInfo[key] = collector
+        defer { userInfo = strict }
         return try decode(type, from: data)
     }
 }
@@ -338,8 +351,9 @@ public struct ConfigProblem: Sendable, Equatable {
 
     /// What Use Defaults does about a problem.
     public enum Repair: Sendable, Equatable {
-        /// Puts this default, as the report writes it, in the value's place.
-        case useDefault(String)
+        /// Puts the default, as the report writes it, in the value's place;
+        /// `nil` when the default is no value.
+        case useDefault(String?)
         /// Removes the list entry the problem is in.
         case removeEntry
     }
@@ -421,7 +435,12 @@ public struct ConfigProblem: Sendable, Equatable {
         let summary = summary(fileName: fileName)
         switch repair {
         case .useDefault(let defaultText)?:
-            let shown = defaultText.isEmpty ? "\u{201C}\u{201D}" : defaultText
+            let shown =
+                switch defaultText {
+                case nil: "no value"
+                case ""?: "\u{201C}\u{201D}"
+                case let text?: text
+                }
             guard issuePath != nil, let path else { return "\(summary). Default: \(shown)." }
             return "\(summary). Default for \(path): \(shown)."
         case .removeEntry?:
@@ -457,15 +476,15 @@ enum ConfigValueText {
         return node.map(text(of:))
     }
 
-    /// `value` as its JSON encoding reads.
-    static func encoding<T: Encodable>(_ value: T) -> String {
+    /// `value` as its JSON encoding reads, `nil` when it encodes as no value.
+    static func encoding<T: Encodable>(_ value: T) -> String? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(value),
             let json = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
         else { return String(describing: value) }
-        return text(of: json)
+        return json is NSNull ? nil : text(of: json)
     }
 
     /// A string as itself; anything else as compact JSON.

@@ -46,8 +46,8 @@ struct VMGroupEntity: AppEntity {
 ///
 /// Forwards to ``VMIntentGateway`` as ``NetworkEntityQuery`` does: the groups
 /// are few and fully enumerable, so `allEntities()` gives Shortcuts a picker
-/// and a Find VM Groups action, and a typed name resolves through a
-/// case-insensitive contains match.
+/// and a Find VM Groups action, and a typed name resolves as a typed VM name
+/// does (``VMIntentGateway/groups(matching:)``).
 struct VMGroupEntityQuery: EntityStringQuery, EnumerableEntityQuery {
     static let findIntentDescription: IntentDescription? = IntentDescription(
         "Finds the library's smart groups and folders, each with the virtual machines in it.",
@@ -62,7 +62,7 @@ struct VMGroupEntityQuery: EntityStringQuery, EnumerableEntityQuery {
     }
 
     func entities(matching string: String) async throws -> [VMGroupEntity] {
-        try await gateway.groups().filter { $0.name.localizedCaseInsensitiveContains(string) }
+        try await gateway.groups(matching: string)
     }
 
     func allEntities() async throws -> [VMGroupEntity] {

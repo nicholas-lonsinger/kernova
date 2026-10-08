@@ -68,6 +68,18 @@ struct VMGroupIntentTests {
         #expect(groups[0].members.map(\.name) == ["Alpha"])
     }
 
+    @Test("A typed group name matches as a typed VM name does: trimmed, ignoring case and diacritics")
+    func groupNameMatchesAsAVMNameDoes() async throws {
+        let commands = MockVMCommanding()
+        let cafe = GroupSummary(id: UUID(), name: "Café Lab", kind: .folder, members: [])
+        let other = GroupSummary(id: UUID(), name: "Other", kind: .smartGroup, members: [])
+        commands.groupsToReturn = [cafe, other]
+        let gateway = makeGateway(commands)
+
+        #expect(try await gateway.groups(matching: " cafe ").map(\.id) == [cafe.id])
+        #expect(try await gateway.groups(matching: "CAFÉ").map(\.id) == [cafe.id])
+    }
+
     // MARK: - Action
 
     @Test("The group action runs once on the group and answers the VMs it was done to")
@@ -89,6 +101,34 @@ struct VMGroupIntentTests {
         #expect(done.map(\.id) == [alpha.id])
         #expect(commands.groupActionCalls.map(\.action) == [.stop])
         #expect(commands.groupActionCalls.map(\.group) == [group])
+    }
+
+    @Test("A VM the action was done to and that has since been deleted is left out of the answer, in group order")
+    func groupActionLeavesOutAVMDeletedSince() async throws {
+        let commands = MockVMCommanding()
+        let alpha = makeSummary(name: "Alpha")
+        let gone = makeSummary(name: "Gone")
+        let beta = makeSummary(name: "Beta")
+        commands.library = [alpha, beta]
+        commands.groupActionReport = VMGroupActionReport(
+            action: .start, groupKind: .folder, groupID: UUID(), groupName: "Lab",
+            results: [
+                VMGroupActionResult(vm: beta, outcome: .done(verb: .start)),
+                VMGroupActionResult(vm: gone, outcome: .done(verb: .start)),
+                VMGroupActionResult(vm: alpha, outcome: .done(verb: .start)),
+            ])
+
+        let index = MockVMEntityIndex()
+        let gateway = VMIntentGateway(
+            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: index,
+            record: makeTestIndexRecord())
+
+        let done = try await gateway.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
+
+        #expect(done.map(\.id) == [beta.id, alpha.id])
+        // Read VM by VM: the one listing is the readiness sync's.
+        try await index.awaitOperations(1)
+        #expect(commands.listCallCount == 1)
     }
 
     @Test("A VM the action left undone fails the intent, naming each such VM")

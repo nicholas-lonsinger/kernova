@@ -59,6 +59,11 @@ enum VMAdmission {
         /// Raised only where the VM would otherwise admit the request, so a
         /// surface reads it as applicable.
         case heldByAnotherCopy
+        /// The bring-up would begin a session that Ephemeral Mode undoes at
+        /// power-off by reverting to its baseline, and the last read of the
+        /// bundle could not read that baseline's settings — so the revert
+        /// would fail, leaving the session's changes on the disks.
+        case ephemeralBaselineUnreadable
 
         static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
@@ -66,7 +71,8 @@ enum VMAdmission {
             case (.takesStoppedVM(let l), .takesStoppedVM(let r)): l == r
             case (.invalidState, .invalidState), (.removed, .removed),
                 (.unsupportedByBuild, .unsupportedByBuild), (.terminating, .terminating),
-                (.heldByAnotherCopy, .heldByAnotherCopy):
+                (.heldByAnotherCopy, .heldByAnotherCopy),
+                (.ephemeralBaselineUnreadable, .ephemeralBaselineUnreadable):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason && l.asks == r.asks
@@ -109,6 +115,12 @@ enum VMAdmission {
         /// bringing this one up would duplicate — supplied only when deciding
         /// a bring-up.
         var identityConflict: VMIdentityConflict?
+        /// The VM is in Ephemeral Mode and the last read of its bundle could
+        /// not read its baseline snapshot's settings
+        /// (``VMInstance/ephemeralBaselineIsUnreadable``) — supplied only to
+        /// the commit of a bring-up that has just re-read the bundle, so an
+        /// offer of Start stands and the click is what explains the refusal.
+        var ephemeralBaselineUnreadable = false
         /// The VM holding the accessory an attach names — supplied only when
         /// deciding an attach (``VMAccessoryHolders/holder(of:)``).
         var accessoryHolder: VMInstance?
@@ -435,6 +447,11 @@ enum VMAdmission {
         if let change = outsideBundleRule(kind, facts: facts) {
             return .refuse(.takesStoppedVM(change))
         }
+        if case .bringUp(let bringUp) = kind, bringUp.beginsSessionFromRest,
+            facts.ephemeralBaselineUnreadable
+        {
+            return .refuse(.ephemeralBaselineUnreadable)
+        }
         if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
             return identityChecked(facts)
         }
@@ -510,6 +527,7 @@ enum VMAdmission {
     ) -> Decision {
         var settledFacts = facts
         settledFacts.identityConflict = nil
+        settledFacts.ephemeralBaselineUnreadable = false
         switch decideSettled(request, posture: posture, phase: basis, facts: settledFacts) {
         case .admit, .join:
             return .refuse(.busy(holder))

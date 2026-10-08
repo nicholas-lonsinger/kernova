@@ -1,5 +1,4 @@
 import Foundation
-import KernovaLogging
 
 /// The library's folders, changed through ``organization`` — each change
 /// that can take a row out of the sidebar followed by the selection moving
@@ -7,10 +6,9 @@ import KernovaLogging
 ///
 /// A folder section lists only the members the library holds
 /// (``SidebarLayout``), so an identifier no entry carries is listed nowhere.
-/// An entry leaving the library while it runs leaves every folder
-/// (``leaveEveryFolder(_:)``); one that left unseen — its bundle trashed with
-/// Kernova closed — keeps its identifier there, and a VM coming back under
-/// it is listed in those folders again, whichever way it returns.
+/// An entry leaving the library keeps its identifier in its folders, however
+/// it leaves, and a VM coming back under it is listed in them again, however
+/// it returns.
 extension VMLibrary {
     /// Every folder, in the order the sidebar lists them; `nil` while the
     /// file holding them can't be read.
@@ -53,23 +51,6 @@ extension VMLibrary {
     /// the member `successor`, or after every other when `successor` is `nil`.
     func move(_ entry: UUID, before successor: UUID?, inFolder id: UUID) throws {
         try organization.move(entry, before: successor, inFolder: id)
-    }
-
-    /// Takes the entry `id` out of every folder, as it leaves the library.
-    ///
-    /// A failed write leaves the identifier listed in the file, where no
-    /// section shows it while the library lists no entry under it; it is
-    /// logged rather than presented, since the change the user asked for —
-    /// the delete, the cancel — went through.
-    func leaveEveryFolder(_ id: UUID) {
-        do {
-            try organization.removeFromEveryFolder([id])
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Couldn't take \(id.uuidString, privacy: .public) out of the library's folders: \(error.localizedDescription, privacy: .public)"
-            )
-        }
     }
 
     private func holdsEntry(_ id: UUID) -> Bool {

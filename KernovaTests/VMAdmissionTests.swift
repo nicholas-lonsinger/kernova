@@ -77,7 +77,7 @@ struct VMAdmissionTests {
     /// invalid state, `R` removed, `U` unsupported by this build, `C` an
     /// identity conflict, `H` an accessory another attach holds, `T` refused
     /// by the app's termination, `O` refused as held by another copy, `S`
-    /// taken only by a stopped VM.
+    /// taken only by a stopped VM, `E` an Ephemeral baseline that can't be read.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -92,6 +92,7 @@ struct VMAdmissionTests {
         case .refuse(.terminating): "T"
         case .refuse(.heldByAnotherCopy): "O"
         case .refuse(.takesStoppedVM): "S"
+        case .refuse(.ephemeralBaselineUnreadable): "E"
         }
     }
 
@@ -854,6 +855,43 @@ struct VMAdmissionTests {
             VMAdmission.decide(
                 .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
                 posture: .commit, phase: .stopped, facts: facts) == .admit)
+    }
+
+    @Test("A bring-up from rest is refused while the Ephemeral baseline can't be read; a revert is not")
+    func unreadableEphemeralBaselineRefusesBringUps() {
+        var facts = Self.facts(pendingSetup: false)
+        facts.ephemeralBaselineUnreadable = true
+        let refused = VMAdmission.Decision.refuse(.ephemeralBaselineUnreadable)
+        #expect(
+            VMAdmission.decide(.start(recovery: false), posture: .commit, phase: .stopped, facts: facts)
+                == refused)
+        #expect(
+            VMAdmission.decide(.start(recovery: true), posture: .commit, phase: .stopped, facts: facts)
+                == refused)
+        var suspended = Self.facts(slot: true)
+        suspended.ephemeralBaselineUnreadable = true
+        #expect(
+            VMAdmission.decide(.resume, posture: .commit, phase: .suspended, facts: suspended) == refused)
+        var pendingSetup = Self.facts(pendingSetup: true)
+        pendingSetup.ephemeralBaselineUnreadable = true
+        #expect(
+            VMAdmission.decide(
+                .start(recovery: false), posture: .commit, phase: .initialBoot, facts: pendingSetup)
+                == refused)
+        // The revert is how the VM gets back, and a hot resume begins no
+        // session.
+        #expect(
+            VMAdmission.decide(
+                .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
+                posture: .commit, phase: .stopped, facts: facts) == .admit)
+        #expect(
+            VMAdmission.decide(
+                .resume, posture: .commit, phase: .livePaused(sessionID: Self.session), facts: facts)
+                == .admit)
+        // A state that takes no start says so, as without the fact.
+        #expect(
+            VMAdmission.decide(.start(recovery: false), posture: .commit, phase: Self.live, facts: facts)
+                == .refuse(.invalidState))
     }
 
     @Test("Discarding the saved state reopens the edits the slot pinned")
