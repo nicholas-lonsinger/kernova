@@ -350,12 +350,12 @@ struct SidebarLayout {
     /// filter still holds it, and it admits no VM.
     static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
-            !listed.contains(where: { $0.id == id && $0.kind == kind })
+        if case .vmnet(let kind, .network(let id)) = choice,
+            case .unlisted = VMNetworkName(id, kind: kind, in: networks)
         {
             return heldUnlistedNetworkTitle
         }
-        return choice.title(attachable: true, interfaces: [], networks: networks)
+        return choice.label(attachable: true, interfaces: [], networks: networks).text
     }
 
     /// How a filter names a network it holds that the library no longer lists.

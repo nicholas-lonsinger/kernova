@@ -98,10 +98,9 @@ final class VMNetworkDirectory {
     /// library does not list in the VM's mode.
     func network(joinedBy configuration: VMConfiguration) -> VMNamedNetwork? {
         guard let joined = configuration.joinedNetwork, case .vmnet(let id) = joined,
-            case .named(let networkID) = id.scope, let network = network(withID: networkID),
-            network.kind == id.kind
+            case .named(let networkID) = id.scope
         else { return nil }
-        return network
+        return state.network(networkID, of: id.kind)
     }
 
     /// The named network a VM under `configuration` names, as this
@@ -235,15 +234,23 @@ final class VMNetworkDirectory {
     }
 }
 
+extension ConfigFileState where Listed == [VMNamedNetwork] {
+    /// The network `id` identifies when it is listed in `kind`'s mode, `nil`
+    /// otherwise — a network listed only in the other mode is one the library
+    /// does not list — and while the list can't be read.
+    func network(_ id: UUID, of kind: VmnetNetworkKind) -> VMNamedNetwork? {
+        listed?.first { $0.id == id && $0.kind == kind }
+    }
+}
+
 extension VMNetworkName {
-    /// The named network `id` of `kind` as `networks` lists it: a network
-    /// listed only in the other mode is one the library does not list.
+    /// The named network `id` of `kind` as `networks` lists it
+    /// (``ConfigFileState/network(_:of:)``).
     init(_ id: UUID, kind: VmnetNetworkKind, in networks: VMNetworkDirectory.State) {
-        switch networks {
-        case .unreadable:
+        if networks.unreadable != nil {
             self = .unreadable
-        case .listed(let networks):
-            self = networks.first { $0.id == id && $0.kind == kind }.map { .named($0.name) } ?? .unlisted(id)
+        } else {
+            self = networks.network(id, of: kind).map { .named($0.name) } ?? .unlisted(id)
         }
     }
 }

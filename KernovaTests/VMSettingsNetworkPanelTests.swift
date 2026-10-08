@@ -842,6 +842,28 @@ struct VMSettingsNetworkPanelTests {
         #expect(closedTitle(popUp) == "Bridged \u{2013} en9 (unavailable)")
     }
 
+    @Test("An interface back on the host names itself in the picker and on the card once the picker opens")
+    func interfaceBackOnTheHostRenamesTheCurrentEntry() throws {
+        let provider = MockBridgedInterfaceProvider(available: [Self.wiFi])
+        let (vc, _) = makeNetworkController(
+            mode: .bridged, bridgedInterfaceIdentifier: "en1", interfaces: provider)
+        let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
+        #expect(closedTitle(popUp) == "Bridged \u{2013} en1 (unavailable)")
+
+        provider.available = [Self.wiFi, Self.ethernet]
+        _ = try openModeMenu(in: vc)
+
+        let current = try #require(item(.bridged("en1"), in: popUp))
+        #expect(current.title == "Ethernet (en1)")
+        #expect(current.isEnabled)
+        #expect(popUp.selectedItem === current)
+        #expect(!popUp.itemTitles.contains("en1 (unavailable)"))
+        #expect(closedTitle(popUp) == "Bridged \u{2013} Ethernet (en1)")
+        vc.showOverview()
+        let card = try #require(vc.overviewCardForTesting(.network))
+        #expect(findLabel(withText: "Bridged \u{2013} Ethernet (en1)", in: card) != nil)
+    }
+
     @Test("An identifier remembered from an earlier bridged choice adds no entry")
     func rememberedInterfaceAddsNoEntryWhileNAT() throws {
         let (vc, _) = makeNetworkController(

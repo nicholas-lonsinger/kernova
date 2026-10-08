@@ -38,20 +38,21 @@ struct VMOverviewResolverTests {
     @Test("Every choice names its mode's group and its entry, joined by an en dash")
     func modeTitlesNameGroupAndEntry() {
         #expect(
-            NetworkModeChoice.nat.title(attachable: true, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.nat.label(attachable: true, interfaces: [], networks: .listed([])).text
                 == "NAT \u{2013} Common")
-        #expect(NetworkModeChoice.none.title(attachable: true, interfaces: [], networks: .listed([])) == "None")
+        #expect(NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([])).text == "None")
         #expect(
-            NetworkModeChoice.hostOnly.title(attachable: true, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.hostOnly.label(attachable: true, interfaces: [], networks: .listed([])).text
                 == "Host Only \u{2013} Common")
         #expect(
-            NetworkModeChoice.bridged(nil).title(attachable: true, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.bridged(nil).label(attachable: true, interfaces: [], networks: .listed([])).text
                 == "Bridged \u{2013} Automatic")
         #expect(
             NetworkModeChoice.bridged("en0").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
                 == NetworkChoiceLabel(mode: .bridged, entry: "Wi-Fi (en0)"))
         #expect(
-            NetworkModeChoice.bridged("en0").title(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
+            NetworkModeChoice.bridged("en0").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
+                .text
                 == "Bridged \u{2013} Wi-Fi (en0)")
         #expect(NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([])).group == nil)
     }
@@ -63,31 +64,37 @@ struct VMOverviewResolverTests {
             NetworkModeChoice.vmnet(.hostOnly, .isolated).label(attachable: true, interfaces: [], networks: .listed([]))
                 == NetworkChoiceLabel(mode: .hostOnly, entry: "Isolated"))
         #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
-                attachable: true, interfaces: [], networks: .listed([])) == "Host Only \u{2013} Isolated")
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
+                attachable: true, interfaces: [], networks: .listed([])
+            ).text == "Host Only \u{2013} Isolated")
         #expect(
             NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
                 attachable: true, interfaces: [], networks: .listed([lab]))
                 == NetworkChoiceLabel(mode: .nat, entry: "Lab"))
         #expect(
-            NetworkModeChoice.vmnet(.nat, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: .listed([lab])) == "NAT \u{2013} Lab")
+            NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
+                attachable: true, interfaces: [], networks: .listed([lab])
+            ).text == "NAT \u{2013} Lab")
         #expect(
-            NetworkModeChoice.vmnet(.nat, .network(lab.id)).title(
-                attachable: false, interfaces: [], networks: .listed([lab])) == "NAT \u{2013} Lab (unavailable)")
+            NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
+                attachable: false, interfaces: [], networks: .listed([lab])
+            ).text == "NAT \u{2013} Lab (unavailable)")
         #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
-                attachable: false, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
+                attachable: false, interfaces: [], networks: .listed([])
+            ).text
                 == "Host Only \u{2013} Isolated (unavailable)")
         // Unlisted, or listed only in the other mode: no surface here can
         // choose it, so it never reads as merely unavailable.
         #expect(
-            NetworkModeChoice.vmnet(.nat, .network(UUID())).title(
-                attachable: false, interfaces: [], networks: .listed([lab]))
+            NetworkModeChoice.vmnet(.nat, .network(UUID())).label(
+                attachable: false, interfaces: [], networks: .listed([lab])
+            ).text
                 == "NAT \u{2013} Network Not in This Library")
         #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: .listed([lab]))
+            NetworkModeChoice.vmnet(.hostOnly, .network(lab.id)).label(
+                attachable: true, interfaces: [], networks: .listed([lab])
+            ).text
                 == "Host Only \u{2013} Network Not in This Library")
     }
 
@@ -102,33 +109,37 @@ struct VMOverviewResolverTests {
                 attachable: true, interfaces: [], networks: unreadable)
                 == NetworkChoiceLabel(mode: .nat, entry: "Network List Can\u{2019}t Be Read"))
         #expect(
-            NetworkModeChoice.vmnet(.nat, .network(UUID())).title(
-                attachable: true, interfaces: [], networks: unreadable)
+            NetworkModeChoice.vmnet(.nat, .network(UUID())).label(
+                attachable: true, interfaces: [], networks: unreadable
+            ).text
                 == "NAT \u{2013} Network List Can\u{2019}t Be Read")
         #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
-                attachable: true, interfaces: [], networks: unreadable) == "Host Only \u{2013} Isolated")
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
+                attachable: true, interfaces: [], networks: unreadable
+            ).text == "Host Only \u{2013} Isolated")
     }
 
     @Test("A mode the signature doesn't authorize still names itself, marked unavailable")
     func unentitledModesNameThemselves() {
         #expect(
-            NetworkModeChoice.hostOnly.title(attachable: false, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.hostOnly.label(attachable: false, interfaces: [], networks: .listed([])).text
                 == "Host Only \u{2013} Common (unavailable)")
         #expect(
-            NetworkModeChoice.bridged("en0").title(attachable: false, interfaces: [Self.wiFi], networks: .listed([]))
+            NetworkModeChoice.bridged("en0").label(attachable: false, interfaces: [Self.wiFi], networks: .listed([]))
+                .text
                 == "Bridged \u{2013} Wi-Fi (en0) (unavailable)")
         #expect(
-            NetworkModeChoice.bridged(nil).title(attachable: false, interfaces: [], networks: .listed([]))
+            NetworkModeChoice.bridged(nil).label(attachable: false, interfaces: [], networks: .listed([])).text
                 == "Bridged \u{2013} Automatic (unavailable)")
         // Entitled, but the host has stopped offering the interface.
         #expect(
-            NetworkModeChoice.bridged("en5").title(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
+            NetworkModeChoice.bridged("en5").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
+                .text
                 == "Bridged \u{2013} en5 (unavailable)")
         // An interface the host names nothing else reads as its bare identifier.
         let bare = BridgedInterface(identifier: "bridge0", localizedDisplayName: "bridge0")
         #expect(
-            NetworkModeChoice.bridged("bridge0").title(attachable: true, interfaces: [bare], networks: .listed([]))
+            NetworkModeChoice.bridged("bridge0").label(attachable: true, interfaces: [bare], networks: .listed([])).text
                 == "Bridged \u{2013} bridge0")
     }
 
@@ -173,6 +184,53 @@ struct VMOverviewResolverTests {
 
         #expect(resolver.resolved.networkModeLabel?.text == "Bridged \u{2013} Wi-Fi (en0)")
         #expect(interfaces.enumerationCount == 1)
+    }
+
+    @Test("The stored label names the network the configuration holds after each re-resolve, for every reader")
+    func storedLabelFollowsTheConfiguration() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.registerFixture {
+            $0.networkEnabled = true
+            $0.networkMode = .nat
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
+        // Named from the moment it exists, before any pass.
+        #expect(resolver.networkModeLabel.text == "NAT \u{2013} Common")
+
+        guard
+            case .applied = viewModel.setConfiguration(
+                [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.hostOnly.rawValue)], on: instance)
+        else {
+            Issue.record("The mode write did not land")
+            return
+        }
+        resolver.refresh()
+
+        #expect(resolver.networkModeLabel.text == "Host Only \u{2013} Common")
+        #expect(resolver.resolved.networkModeLabel?.text == "Host Only \u{2013} Common")
+        let card = VMOverviewSummary.rows(for: .network, instance: instance, resolved: resolver.resolved)
+        #expect(card.first?.label == "Host Only \u{2013} Common")
+    }
+
+    @Test("The picker's enumeration names a bridged interface back on the host for every reader")
+    func pickerEnumerationRenamesTheCurrentInterface() {
+        let interfaces = MockBridgedInterfaceProvider(available: [])
+        let instance = VMInstanceFixture.make {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "en0"
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        let resolver = makeResolver(instance: instance, interfaces: interfaces)
+        resolver.refresh()
+        #expect(resolver.resolved.networkModeLabel?.text == "Bridged \u{2013} en0 (unavailable)")
+
+        interfaces.available = [Self.wiFi]
+        resolver.resolveNetworkModeLabel(enumerated: interfaces.interfaces())
+        resolver.refresh()
+
+        #expect(resolver.resolved.networkModeLabel?.text == "Bridged \u{2013} Wi-Fi (en0)")
     }
 
     @Test("A mode that names no interface never enumerates the host's")
@@ -543,13 +601,13 @@ struct VMOverviewResolverTests {
         await resolver.bootDiskTaskForTesting?.value
         #expect(!resolver.resolved.snapshotSizes.isEmpty)
 
-        resolver.bind(instance: VMInstanceFixture.make(), viewModel: viewModel)
+        resolver.bind(instance: VMInstanceFixture.make { $0.networkEnabled = false }, viewModel: viewModel)
 
         // Nothing of the previous VM's survives to be stated on the new one's
-        // rows.
+        // rows, and the network is the new one's.
         #expect(resolver.resolved.snapshotSizes.isEmpty)
         #expect(resolver.resolved.bootDiskBytes == nil)
-        #expect(resolver.resolved.networkModeLabel == nil)
+        #expect(resolver.resolved.networkModeLabel == .noNetwork)
     }
 
     @Test("A resolved read reports the category whose card it moved")
