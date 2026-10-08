@@ -90,7 +90,7 @@ struct AppWindowRegistryPresenceTests {
     @Test("The Settings window counts on its own")
     func settingsShown() throws {
         let registry = makeRegistry()
-        registry.showSettings(nil)
+        registry.showSettings()
         adoptAppWindow(try #require(registry.settingsWindow))
 
         #expect(registry.hasTrackedUserWindow(countingMiniaturized: true))

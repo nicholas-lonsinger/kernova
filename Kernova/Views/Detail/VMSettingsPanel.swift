@@ -19,6 +19,8 @@ final class VMSettingsPanelContext {
     let bridgedInterfaces: any BridgedInterfaceProviding
     let micPermissionStatus: @MainActor () -> AVAuthorizationStatus
     let systemSettings: SystemSettingsLink
+    /// Shows Kernova's own Settings window on a destination.
+    let showAppSettings: @MainActor (SettingsDestination) -> Void
 
     /// The one resolution of everything the configuration cannot answer, which
     /// the overview's cards and the panels stating the same figure both read.
@@ -44,6 +46,7 @@ final class VMSettingsPanelContext {
         bridgedInterfaces: any BridgedInterfaceProviding,
         micPermissionStatus: @escaping @MainActor () -> AVAuthorizationStatus,
         systemSettings: SystemSettingsLink,
+        showAppSettings: @escaping @MainActor (SettingsDestination) -> Void,
         activationCenter: NotificationCenter
     ) {
         self.instance = instance
@@ -52,6 +55,7 @@ final class VMSettingsPanelContext {
         self.bridgedInterfaces = bridgedInterfaces
         self.micPermissionStatus = micPermissionStatus
         self.systemSettings = systemSettings
+        self.showAppSettings = showAppSettings
         self.fileMonitor = AttachmentFileMonitor(activationCenter: activationCenter)
         self.overview = VMOverviewResolver(
             instance: instance, viewModel: viewModel,

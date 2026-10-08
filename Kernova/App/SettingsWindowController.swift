@@ -7,13 +7,15 @@ import AppKit
 /// non-resizable, matching the platform convention for settings.
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    convenience init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+    let tabs: SettingsTabViewController
+
+    init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
+        let tabs = SettingsTabViewController(viewModel: viewModel)
         // `NSWindow.withStableContentSize` pins a fixed initial content size, and
         // this window has none: its height is whatever the selected pane publishes
         // as `preferredContentSize`, re-applied by `SettingsTabViewController` on
         // every tab switch.
-        let window = NSWindow(
-            contentViewController: SettingsTabViewController(viewModel: viewModel))
+        let window = NSWindow(contentViewController: tabs)
         window.title = "Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.autorecalculatesKeyViewLoop = true
@@ -26,6 +28,12 @@ final class SettingsWindowController: NSWindowController {
         // position-only autosave, so `SettingsTabViewController` re-asserts the
         // height on appear.
         window.setFrameAutosaveName(autosaveScope.settingsFrame)
-        self.init(window: window)
+        self.tabs = tabs
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("SettingsWindowController does not support NSCoder")
     }
 }

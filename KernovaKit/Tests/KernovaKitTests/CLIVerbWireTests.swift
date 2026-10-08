@@ -16,7 +16,7 @@ struct CLIVerbWireTests {
     private var info: VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
+            memoryBytes: 8 << 30, diskSizeInGB: 64, networkMode: "nat", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.64.4"),
             agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
@@ -43,7 +43,7 @@ struct CLIVerbWireTests {
         let exchanged = try CLIWire.exchange(
             [
                 "list", "--os", "linux", "--state", "running", "--state", "heldByAnotherCopy",
-                "--network", "shared", "--network", "unlisted", "--network", "Lab",
+                "--network", "nat", "--network", "unlisted", "--network", "Lab",
                 "--agent", "olderVersion", "--ephemeral", "--has-snapshots",
                 "--smart-group", "Linux Lab", "--sort", "dateCreated",
             ],
@@ -53,7 +53,7 @@ struct CLIVerbWireTests {
             filter: VMLibraryFilter(
                 guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
                 guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
-            networks: ["shared", "unlisted", "Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
+            networks: ["nat", "unlisted", "Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
             sort: .dateCreated)
         #expect(exchanged.sent == [.list(expected)])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
@@ -386,12 +386,12 @@ struct CLIVerbWireTests {
         #expect(try exchanged.answer.payload() == .networks([lab]))
     }
 
-    @Test("network create crosses with its name and kind, the kind shared unless --kind names one")
+    @Test("network create crosses with its name and kind, the kind nat unless --kind names one")
     func networkCreateSendsItsKind() throws {
         let answered = VMCommandResponse(result: .network(lab))
 
         let plain = try CLIWire.exchange(["network", "create", "Lab"], answering: answered)
-        #expect(plain.sent == [.createNetwork(name: "Lab", kind: .shared)])
+        #expect(plain.sent == [.createNetwork(name: "Lab", kind: .nat)])
         #expect(try plain.answer.payload() == .network(lab))
 
         let hostOnly = try CLIWire.exchange(

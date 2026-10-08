@@ -157,7 +157,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// The value `text` spells as typed, ignoring case but for a bridged
         /// interface's identifier: `bridged` for ``anyBridged``,
         /// `bridged:automatic` for Automatic, `bridged:<interface>` for that
-        /// interface, a vmnet mode alone (`shared`, `hostOnly`) for that
+        /// interface, a vmnet mode alone (`nat`, `hostOnly`) for that
         /// mode's common network, or another ``rawValue`` naming no named
         /// network. `nil` for anything else — a named network is typed by its
         /// name or identifier, which only the library resolves.
@@ -191,7 +191,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// What ``init(spelling:)`` reads, but for `bridged:<interface>`, in
         /// the order the Mode picker lists them.
         public static let spellings: [String] =
-            [VmnetNetworkKind.shared, .hostOnly].flatMap { kind in
+            [VmnetNetworkKind.nat, .hostOnly].flatMap { kind in
                 [kind.rawValue, NetworkModeChoice.vmnet(kind, .isolated).rawValue]
             }
             + [bridgedValue, bridgedValue + ":" + automaticSpelling, NetworkModeChoice.none.rawValue, unlistedValue]
@@ -332,18 +332,24 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         case guestOSes, states, networks, guestAgents, ephemeralOnly, withSnapshotsOnly, tags
     }
 
-    /// A missing key reads as that attribute unconstrained.
+    /// A missing key reads as that attribute unconstrained. Each include-set
+    /// decodes as a list, so a value this build does not take is removed alone.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = VMLibraryFilter()
+        func set<Element: Codable & Hashable>(_ key: CodingKeys, default value: Set<Element>) throws -> Set<Element> {
+            Set(try c.decode([Element].self, forKey: key, default: Array(value), in: decoder))
+        }
         self.init(
-            guestOSes: try c.decodeIfPresent(Set<VMGuestOS>.self, forKey: .guestOSes) ?? [],
-            states: try c.decodeIfPresent(Set<VMStateBucket>.self, forKey: .states) ?? [],
-            networks: try c.decodeIfPresent(Set<Network>.self, forKey: .networks) ?? [],
-            guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
-                ?? [],
-            ephemeralOnly: try c.decodeIfPresent(Bool.self, forKey: .ephemeralOnly) ?? false,
-            withSnapshotsOnly: try c.decodeIfPresent(Bool.self, forKey: .withSnapshotsOnly) ?? false,
-            tags: try c.decodeIfPresent(Set<UUID>.self, forKey: .tags) ?? [])
+            guestOSes: try set(.guestOSes, default: defaults.guestOSes),
+            states: try set(.states, default: defaults.states),
+            networks: try set(.networks, default: defaults.networks),
+            guestAgents: try set(.guestAgents, default: defaults.guestAgents),
+            ephemeralOnly: try c.decode(
+                Bool.self, forKey: .ephemeralOnly, default: defaults.ephemeralOnly, in: decoder),
+            withSnapshotsOnly: try c.decode(
+                Bool.self, forKey: .withSnapshotsOnly, default: defaults.withSnapshotsOnly, in: decoder),
+            tags: try set(.tags, default: defaults.tags))
     }
 
     /// Sets are written sorted, so under `.sortedKeys` equal filters encode to

@@ -475,7 +475,7 @@ enum VMConfigurationKeyRegistry {
 
     static let networkMode = VMConfigurationKey(
         name: "network.mode",
-        summary: "The network the guest joins: none, shared, bridged or hostOnly.",
+        summary: "The network the guest joins: none, nat, bridged or hostOnly.",
         gate: .networkMode,
         read: { $0.effectiveNetworkMode?.rawValue ?? noNetworkValue },
         write: { value, config, context in
@@ -504,7 +504,7 @@ enum VMConfigurationKeyRegistry {
     static let networkMembership = VMConfigurationKey(
         name: "network.membership",
         summary:
-            "Which network of its mode a shared or hostOnly guest joins: common, the one every "
+            "Which network of its mode a nat or hostOnly guest joins: common, the one every "
             + "other guest in the mode joins; isolated, a network of its own; or a named "
             + "network, by name or identifier, which only the guests naming it join.",
         gate: .networkMembership,

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// One USB accessory a VM takes back automatically: the durable key the unit
 /// answers to, and enough of its description to name it in a list while the
@@ -68,7 +69,7 @@ struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.pairings = try container.decode(
-            [USBAccessoryPairing].self, forKey: .pairings, default: [], in: decoder)
+            [USBAccessoryPairing].self, forKey: .pairings, default: Self().pairings, in: decoder)
     }
 
     var isEmpty: Bool { pairings.isEmpty }

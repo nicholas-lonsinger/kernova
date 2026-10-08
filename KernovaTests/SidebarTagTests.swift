@@ -525,7 +525,7 @@ struct SidebarTagTests {
         let tabs = SettingsTabViewController(viewModel: makeViewModel())
         tabs.loadViewIfNeeded()
 
-        tabs.select(.tags)
+        tabs.show(.pane(.tags))
 
         #expect(tabs.tabViewItems[tabs.selectedTabViewItemIndex].viewController is TagsSettingsViewController)
     }

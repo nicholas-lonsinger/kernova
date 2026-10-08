@@ -92,20 +92,18 @@ final class AppWindowRegistry {
 
     var settingsWindow: NSWindow? { settingsWindowController?.window }
 
-    /// Shows the Settings window, on `pane` when one is given and on the pane
-    /// it last showed otherwise.
-    func showSettings(_ sender: Any?, pane: SettingsTabViewController.Pane? = nil) {
+    /// Shows the Settings window on `destination`, or on the pane it was last
+    /// left on when `nil`.
+    func showSettings(at destination: SettingsDestination? = nil) {
         residency?.prepareToPresentWindow()
         let controller =
             settingsWindowController
             ?? SettingsWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
         settingsWindowController = controller
-        if let pane, let tabs = controller.contentViewController as? SettingsTabViewController {
-            tabs.select(pane)
-        }
+        if let destination { controller.tabs.show(destination) }
         NSApp.activate()
-        controller.showWindow(sender)
-        controller.window?.makeKeyAndOrderFront(sender)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Config check

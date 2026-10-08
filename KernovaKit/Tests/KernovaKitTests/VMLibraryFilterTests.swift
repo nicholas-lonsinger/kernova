@@ -16,7 +16,7 @@ struct VMLibraryFilterTests {
 
     private func subject(
         guestOS: VMGuestOS = .macOS, state: VMStateBucket = .stopped,
-        network: NetworkModeChoice = .shared, guestAgent: VMGuestAgentBucket? = .upToDate,
+        network: NetworkModeChoice = .nat, guestAgent: VMGuestAgentBucket? = .upToDate,
         isEphemeral: Bool = false, hasSnapshots: Bool = false, tags: Set<UUID> = []
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
@@ -53,11 +53,11 @@ struct VMLibraryFilterTests {
     @Test("Network admits only the choices in its set, membership included")
     func network() {
         let filter = VMLibraryFilter(networks: [
-            Self.network(.vmnet(.shared, .network(Self.named))), Self.network(.none),
+            Self.network(.vmnet(.nat, .network(Self.named))), Self.network(.none),
         ])
-        #expect(filter.admits(subject(network: .vmnet(.shared, .network(Self.named)))))
+        #expect(filter.admits(subject(network: .vmnet(.nat, .network(Self.named)))))
         #expect(filter.admits(subject(network: .none)))
-        #expect(!filter.admits(subject(network: .shared)))
+        #expect(!filter.admits(subject(network: .nat)))
         #expect(!filter.admits(subject(network: .vmnet(.hostOnly, .network(Self.named)))))
     }
 
@@ -94,10 +94,10 @@ struct VMLibraryFilterTests {
     func attributesAnd() {
         let work = UUID()
         let filter = VMLibraryFilter(
-            guestOSes: [.macOS], states: [.running], networks: [Self.network(.shared)], guestAgents: [.upToDate],
+            guestOSes: [.macOS], states: [.running], networks: [Self.network(.nat)], guestAgents: [.upToDate],
             ephemeralOnly: true, withSnapshotsOnly: true, tags: [work])
         let passing = subject(
-            state: .running, network: .shared, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true,
+            state: .running, network: .nat, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true,
             tags: [work])
         #expect(filter.admits(passing))
         var failsOne = [passing, passing, passing, passing, passing, passing, passing]
@@ -132,7 +132,7 @@ struct VMLibraryFilterTests {
             guestOSes: [.macOS, .linux], states: [.suspended],
             networks: Set(
                 [
-                    .shared, .vmnet(.hostOnly, .isolated), .vmnet(.shared, .network(Self.named)),
+                    .nat, .vmnet(.hostOnly, .isolated), .vmnet(.nat, .network(Self.named)),
                     .bridged(nil), .bridged("en0"), .none,
                 ].map(Self.network)
             ).union([.unlisted]),
@@ -175,16 +175,16 @@ struct VMLibraryFilterTests {
             (.none, "none"),
             (.bridged(nil), "bridged"),
             (.bridged("en0"), "bridged:en0"),
-            (.shared, "shared:common"),
+            (.nat, "nat:common"),
             (.vmnet(.hostOnly, .isolated), "hostOnly:isolated"),
-            (.vmnet(.shared, .network(Self.named)), "shared:\(Self.named.uuidString)"),
+            (.vmnet(.nat, .network(Self.named)), "nat:\(Self.named.uuidString)"),
         ]
         for (choice, raw) in cases {
             #expect(choice.rawValue == raw)
             #expect(NetworkModeChoice(rawValue: raw) == choice)
             #expect(try JSONDecoder().decode(NetworkModeChoice.self, from: JSONEncoder().encode(choice)) == choice)
         }
-        for garbage in ["", "bridged:", "shared", "shared:nowhere", "lan:common"] {
+        for garbage in ["", "bridged:", "nat", "nat:nowhere", "lan:common"] {
             #expect(NetworkModeChoice(rawValue: garbage) == nil)
         }
     }
@@ -193,7 +193,7 @@ struct VMLibraryFilterTests {
 
     @Test("Every named network the library does not list is one network to a filter")
     func unlistedNetworksAreOne() {
-        let elsewhere = VMLibraryFilter.Network(.vmnet(.shared, .network(UUID()))) { _, _ in false }
+        let elsewhere = VMLibraryFilter.Network(.vmnet(.nat, .network(UUID()))) { _, _ in false }
         let elsewhereToo = VMLibraryFilter.Network(.vmnet(.hostOnly, .network(UUID()))) { _, _ in false }
         #expect(elsewhere == .unlisted)
         #expect(elsewhereToo == .unlisted)
@@ -203,20 +203,20 @@ struct VMLibraryFilterTests {
         // list — one imported later included.
         let filter = VMLibraryFilter(networks: [elsewhere])
         #expect(filter.admits(subject(network: .vmnet(.hostOnly, .network(UUID())))))
-        #expect(!filter.admits(subject(network: .vmnet(.shared, .network(Self.named)))))
+        #expect(!filter.admits(subject(network: .vmnet(.nat, .network(Self.named)))))
     }
 
     @Test("A listed named network, and every other choice, is itself")
     func listedNetworksStayThemselves() {
-        let listed = Self.network(.vmnet(.shared, .network(Self.named)))
-        #expect(listed.choice == .vmnet(.shared, .network(Self.named)))
+        let listed = Self.network(.vmnet(.nat, .network(Self.named)))
+        #expect(listed.choice == .vmnet(.nat, .network(Self.named)))
         // The kind is part of what is listed: the same identifier under the
         // other kind is a network the library does not list.
         let otherKind = VMLibraryFilter.Network(.vmnet(.hostOnly, .network(Self.named))) { kind, id in
-            kind == .shared && id == Self.named
+            kind == .nat && id == Self.named
         }
         #expect(otherKind == .unlisted)
-        for choice: NetworkModeChoice in [.none, .shared, .hostOnly, .bridged(nil), .bridged("en0")] {
+        for choice: NetworkModeChoice in [.none, .nat, .hostOnly, .bridged(nil), .bridged("en0")] {
             #expect(VMLibraryFilter.Network(choice) { _, _ in false }.choice == choice)
         }
     }
@@ -225,9 +225,9 @@ struct VMLibraryFilterTests {
     func networkKeyRawValues() throws {
         #expect(VMLibraryFilter.Network.unlisted.rawValue == "unlisted")
         #expect(VMLibraryFilter.Network(rawValue: "unlisted") == .unlisted)
-        let shared = Self.network(.shared)
-        #expect(shared.rawValue == "shared:common")
-        #expect(VMLibraryFilter.Network(rawValue: "shared:common") == shared)
+        let shared = Self.network(.nat)
+        #expect(shared.rawValue == "nat:common")
+        #expect(VMLibraryFilter.Network(rawValue: "nat:common") == shared)
         #expect(VMLibraryFilter.Network(rawValue: "nowhere") == nil)
         #expect(
             try JSONDecoder().decode(
@@ -251,13 +251,13 @@ struct VMLibraryFilterTests {
 
     @Test("A network spelling reads a mode alone as its common network, and every spelling round-trips")
     func networkSpellings() {
-        #expect(VMLibraryFilter.Network(spelling: "shared") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "nat") == Self.network(.vmnet(.nat, .common)))
         #expect(VMLibraryFilter.Network(spelling: "hostOnly") == Self.network(.vmnet(.hostOnly, .common)))
-        #expect(VMLibraryFilter.Network(spelling: "shared:common") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "nat:common") == Self.network(.vmnet(.nat, .common)))
         #expect(VMLibraryFilter.Network(spelling: "bridged:en0") == Self.network(.bridged("en0")))
         #expect(VMLibraryFilter.Network(spelling: "unlisted") == .unlisted)
         // Case is ignored, but for the interface a bridged network names.
-        #expect(VMLibraryFilter.Network(spelling: "Shared") == Self.network(.vmnet(.shared, .common)))
+        #expect(VMLibraryFilter.Network(spelling: "Nat") == Self.network(.vmnet(.nat, .common)))
         #expect(VMLibraryFilter.Network(spelling: "HOSTONLY:Isolated") == Self.network(.vmnet(.hostOnly, .isolated)))
         #expect(VMLibraryFilter.Network(spelling: "Bridged:EN0") == Self.network(.bridged("EN0")))
         #expect(VMLibraryFilter.Network(spelling: "Unlisted") == .unlisted)
@@ -268,7 +268,7 @@ struct VMLibraryFilterTests {
         #expect(
             VMLibraryFilter.Network.spellings
                 == [
-                    "shared", "shared:isolated", "hostOnly", "hostOnly:isolated", "bridged", "bridged:automatic",
+                    "nat", "nat:isolated", "hostOnly", "hostOnly:isolated", "bridged", "bridged:automatic",
                     "none", "unlisted",
                 ])
     }
@@ -284,7 +284,7 @@ struct VMLibraryFilterTests {
         let automatic = subject(network: .bridged(nil))
         let en0 = subject(network: .bridged("en0"))
         let en1 = subject(network: .bridged("en1"))
-        let shared = subject(network: .shared)
+        let shared = subject(network: .nat)
         func admitted(_ spelling: String) throws -> [Bool] {
             let filter = VMLibraryFilter(networks: [try #require(VMLibraryFilter.Network(spelling: spelling))])
             return [automatic, en0, en1, shared].map(filter.admits)
@@ -304,8 +304,8 @@ struct VMLibraryFilterTests {
     @Test("A network spelling never names a named network, which only the library resolves")
     func networkSpellingRefusesNames() {
         #expect(VMLibraryFilter.Network(spelling: "Lab") == nil)
-        #expect(VMLibraryFilter.Network(spelling: "Shared Lab") == nil)
-        #expect(VMLibraryFilter.Network(spelling: "shared:\(Self.named.uuidString)") == nil)
+        #expect(VMLibraryFilter.Network(spelling: "NAT Lab") == nil)
+        #expect(VMLibraryFilter.Network(spelling: "nat:\(Self.named.uuidString)") == nil)
         #expect(VMLibraryFilter.Network(spelling: Self.named.uuidString) == nil)
     }
 
@@ -353,13 +353,13 @@ struct VMLibraryFilterTests {
     @Test("A named network the library stops listing, still held by a filter, admits no VM")
     func heldUnlistedNetworkAdmitsNothing() {
         let id = UUID()
-        let held = VMLibraryFilter.Network(.vmnet(.shared, .network(id))) { _, _ in true }
+        let held = VMLibraryFilter.Network(.vmnet(.nat, .network(id))) { _, _ in true }
         let filter = VMLibraryFilter(networks: [held])
         // A VM still naming it reads as on a network the library does not
         // list, which is not the held value; every other VM is on its own.
-        let stillNaming = VMLibraryFilter.Network(.vmnet(.shared, .network(id))) { _, _ in false }
+        let stillNaming = VMLibraryFilter.Network(.vmnet(.nat, .network(id))) { _, _ in false }
         #expect(stillNaming == .unlisted)
-        for network in [stillNaming, VMLibraryFilter.Network(.vmnet(.shared, .isolated)) { _, _ in true }] {
+        for network in [stillNaming, VMLibraryFilter.Network(.vmnet(.nat, .isolated)) { _, _ in true }] {
             let subject = VMLibraryFilter.Subject(
                 guestOS: .linux, state: .stopped, network: network, guestAgent: nil, isEphemeral: false,
                 hasSnapshots: false)

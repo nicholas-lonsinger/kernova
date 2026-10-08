@@ -192,25 +192,26 @@ struct SidebarSmartGroupTests {
     @Test("The naming sheet suggests a name from the filter and lists its conditions")
     func namingSheet() throws {
         let menu = SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { _ in })
-        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let shared = VMLibraryFilter.Network(.nat) { _, _ in true }
         let values = [
             SidebarViewMenu.Value(
                 subject: VMLibraryFilter.Subject(
                     guestOS: .macOS, state: .running, network: shared, guestAgent: .upToDate, isEphemeral: true,
                     hasSnapshots: false),
-                networkTitle: "Shared Network")
+                networkTitle: "NAT \u{2013} Common")
         ]
         let filter = VMLibraryFilter(
             guestOSes: [.macOS], states: [.running], networks: [shared], guestAgents: [.upToDate, .olderVersion],
             ephemeralOnly: true)
 
-        #expect(menu.suggestedName(for: filter, values: values) == "macOS \u{00B7} Running \u{00B7} Shared Network")
+        #expect(
+            menu.suggestedName(for: filter, values: values) == "macOS \u{00B7} Running \u{00B7} NAT \u{2013} Common")
         #expect(
             menu.suggestedName(for: VMLibraryFilter(guestAgents: [.upToDate, .olderVersion]), values: values)
                 == "Smart Group")
         #expect(
             menu.conditions(of: filter, values: values) == [
-                "Guest OS is macOS", "State is Running", "Network is Shared Network",
+                "Guest OS is macOS", "State is Running", "Network is NAT \u{2013} Common",
                 "Guest Agent is Up to Date or Older Version", "Ephemeral Mode",
             ])
 
@@ -234,7 +235,8 @@ struct SidebarSmartGroupTests {
     func namingSheetLaysOutItsConditions() throws {
         let conditions = [
             "Guest OS is macOS", "State is Running",
-            "Network is Shared Network, Host Only, or Network Not in This Library", "Ephemeral Mode",
+            "Network is NAT \u{2013} Common, Host Only \u{2013} Common, or Network Not in This Library",
+            "Ephemeral Mode",
         ]
         let sheet = SidebarNameSheet.newSmartGroup(suggestedName: "macOS", conditions: conditions) { _ in }
         let accessory = try #require(sheet.accessoryView)
@@ -415,11 +417,11 @@ struct SidebarSmartGroupTests {
     @Test("Deleting a named network leaves each filter naming it, which then admits no VM and says so")
     func deletingANetworkKeepsItsCondition() throws {
         let viewModel = makeViewModel()
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
         viewModel.library.admitFixture(name: "A") { $0.networkMembership = .network(lab.id) }
         viewModel.library.admitFixture(name: "B", guestOS: .macOS)
-        let onLab = VMLibraryFilter.Network(.vmnet(.shared, .network(lab.id))) { _, _ in true }
-        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let onLab = VMLibraryFilter.Network(.vmnet(.nat, .network(lab.id))) { _, _ in true }
+        let shared = VMLibraryFilter.Network(.nat) { _, _ in true }
         viewModel.sidebarOptions.filter = VMLibraryFilter(networks: [onLab])
         let labGroup = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Lab")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted])
@@ -463,7 +465,7 @@ struct SidebarSmartGroupTests {
         let viewModel = makeViewModel(
             networks: VMNetworkDirectory(fileURL: networksURL),
             organization: VMOrganizationDirectory(fileURL: organizationURL))
-        let lab = try viewModel.networks.create(name: "Lab", kind: .shared, verb: .createNetwork)
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
