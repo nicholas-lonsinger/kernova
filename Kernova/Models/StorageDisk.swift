@@ -41,9 +41,6 @@ struct StorageDisk: Codable, Sendable, Equatable {
     /// Free-form user note, empty when none was entered.
     var notes: String
 
-    /// The note a new entry has.
-    static let defaultNotes = ""
-
     init(
         id: UUID = UUID(),
         path: String,
@@ -52,7 +49,7 @@ struct StorageDisk: Codable, Sendable, Equatable {
         isInternal: Bool = false,
         kind: StorageDiskKind? = nil,
         bookmark: Data? = nil,
-        notes: String = Self.defaultNotes
+        notes: String = ""
     ) {
         self.id = id
         self.path = path
@@ -70,13 +67,14 @@ struct StorageDisk: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
-        self.path = try c.decode(String.self, forKey: .path)
+        let path = try c.decode(String.self, forKey: .path)
+        self.path = path
         self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
         self.label = try c.decode(String.self, forKey: .label)
         self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
         self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decode(String.self, forKey: .notes, default: Self.defaultNotes, in: decoder)
+        self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 
     /// Picks the bus class implied by the file extension.
@@ -152,16 +150,13 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     /// Free-form user note, empty when none was entered.
     var notes: String
 
-    /// The note a new entry has.
-    static let defaultNotes = ""
-
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = true,
         label: String? = nil,
         bookmark: Data? = nil,
-        notes: String = Self.defaultNotes
+        notes: String = ""
     ) {
         self.id = id
         self.path = path
@@ -177,11 +172,12 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
-        self.path = try c.decode(String.self, forKey: .path)
+        let path = try c.decode(String.self, forKey: .path)
+        self.path = path
         self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
         self.label = try c.decode(String.self, forKey: .label)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decode(String.self, forKey: .notes, default: Self.defaultNotes, in: decoder)
+        self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 }
 

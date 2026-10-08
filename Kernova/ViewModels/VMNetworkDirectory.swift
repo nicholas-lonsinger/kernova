@@ -29,6 +29,23 @@ final class VMNetworkDirectory {
     /// The file's payload.
     struct File: Codable, Equatable, Sendable {
         var networks: [VMNamedNetwork]
+
+        /// No networks.
+        init(networks: [VMNamedNetwork] = []) {
+            self.networks = networks
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case networks
+        }
+
+        /// A list: a network that doesn't decode is removed alone, and the
+        /// rest are kept.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            networks = try container.decode(
+                [VMNamedNetwork].self, forKey: .networks, default: File().networks, in: decoder)
+        }
     }
 
     /// What the file held the last time it was read: every named network,
@@ -50,8 +67,10 @@ final class VMNetworkDirectory {
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        state = file.state { Self.ordered($0.networks) }
-        if let unreadable = state.unreadable {
+        let read = file.state { Self.ordered($0.networks) }
+        guard read != state else { return }
+        state = read
+        if let unreadable = read.unreadable {
             #log(
                 Self.logger, .error,
                 "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
@@ -208,7 +227,7 @@ final class VMNetworkDirectory {
     /// The network list at `url`, as the library's own reads and writes take
     /// it.
     nonisolated static func file(at url: URL) -> CoordinatedJSONFile<File> {
-        CoordinatedJSONFile(location: .networkList(url), owner: .networkList, empty: File(networks: []))
+        CoordinatedJSONFile(location: .networkList(url), owner: .networkList, empty: File())
     }
 
     nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {
