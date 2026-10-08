@@ -448,7 +448,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     /// Whether that list has an inline edit open — Rename and Edit Notes on a
     /// row have to wait for it, same hazard
-    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:deleteOffer:)``
+    /// ``SnapshotSectionView/makeRowMenu(for:canRevert:canRename:canSetNotes:canDelete:)``
     /// guards against.
     private func hasActiveEdit(_ kind: AttachmentKind) -> Bool {
         list(kind)?.activeEdit != nil

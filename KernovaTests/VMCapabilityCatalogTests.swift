@@ -561,35 +561,15 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
     }
 
-    @Test("An Ephemeral baseline is deletable at rest and barred while a guest runs; no other snapshot is")
-    func canDeleteSnapshotBarsTheBaselineOnlyWhileLive() {
+    @Test("The snapshot delete is offered to a running Ephemeral VM, whose baseline it takes too")
+    func deleteSnapshotIsOfferedWhileRunning() {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let later = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(
-            in: harness, snapshots: [baseline, later],
+            in: harness, phase: .running(sessionID: UUID()), snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
-        #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
-        #expect(harness.catalog.canDeleteSnapshot(later, on: instance))
-
-        for live in [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())] {
-            instance.activity.placeForTesting(live)
-            #expect(!harness.catalog.canDeleteSnapshot(baseline, on: instance), "\(live)")
-            #expect(harness.catalog.canDeleteSnapshot(later, on: instance), "\(live)")
-        }
-
-        // A suspended VM has no guest in memory, so its baseline's delete is
-        // taken.
-        instance.activity.placeForTesting(.suspended)
-        #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
-
-        // With the mode off, the snapshot is a plain one in every state.
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        harness.library.editHostState(of: instance) {
-            $0.applyEphemeralMode(enabled: false, baseline: nil)
-        }
-        #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
+        #expect(harness.catalog.isAvailable(.deleteSnapshot, on: instance))
     }
 
     @Test("No snapshot is deletable in a state the manifest cannot be edited in")
@@ -599,32 +579,6 @@ struct VMCapabilityCatalogTests {
         let instance = makeInstance(in: harness, phase: Self.reverting, snapshots: [snapshot])
 
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
-        #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
-    }
-
-    /// A row renders its Delete's enablement and its explanation from this one
-    /// answer, so the running baseline's bar has to be distinguishable from
-    /// every other reason the delete is off.
-    @Test("The delete offer names the running baseline's bar apart from an unavailable manifest")
-    func snapshotDeleteOfferNamesWhatBarsIt() {
-        let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let later = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, snapshots: [baseline, later],
-            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        #expect(
-            harness.catalog.snapshotDeleteOffer(baseline, on: instance)
-                == .takesStoppedVM(.ephemeralBaselineDelete))
-        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .offered)
-
-        // A state the manifest cannot be edited in takes both rows, and says so
-        // as the state rather than as the mode.
-        instance.activity.placeForTesting(Self.reverting)
-        #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .unavailable)
-        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .unavailable)
     }
 
     @Test("A USB accessory edit exists only in a build that can pass one through")

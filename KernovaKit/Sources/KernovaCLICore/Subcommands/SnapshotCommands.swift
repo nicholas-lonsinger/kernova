@@ -159,7 +159,7 @@ extension KernovaCommand.Snapshot {
                 + "machine is left as it is. Refuses without --yes, because nothing else can "
                 + "return the virtual machine to that state afterwards. Deleting the snapshot "
                 + "Ephemeral Mode returns to also turns Ephemeral Mode off, so it refuses "
-                + "without --\(ephemeralModeFlag) instead, and while the virtual machine runs.")
+                + "without --\(ephemeralModeFlag) instead.")
 
         /// The flag that consents to deleting an Ephemeral Mode baseline, less
         /// its dashes.

@@ -640,16 +640,6 @@ final class VMInstance {
         ephemeralBaselineSnapshot?.id == snapshot.id
     }
 
-    /// The rule deleting `snapshot` breaks right now, `nil` when it breaks
-    /// none: the Ephemeral baseline's delete is unavailable while the guest is
-    /// in memory, per #1546.
-    ///
-    /// Beside admission rather than in it, so the delete reads it again under
-    /// its own operation's permit.
-    func snapshotDeleteRule(_ snapshot: VMSnapshot) -> StoppedVMChange? {
-        isEphemeralBaseline(snapshot) && hasLiveVirtualMachine ? .ephemeralBaselineDelete : nil
-    }
-
     var isInFullscreen: Bool { displayMode == .fullscreen }
 
     /// `true` when the display is not hosted inline — pop-out, fullscreen, or

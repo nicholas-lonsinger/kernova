@@ -2275,8 +2275,11 @@ struct VMCommandCoreTests {
     }
 
     @Test(
-        "Confirming the Ephemeral baseline's delete turns the mode off and trashes the snapshot",
-        arguments: [VMLifecyclePhase.stopped, .suspended])
+        "Confirming the Ephemeral baseline's delete turns the mode off and trashes it, in every state",
+        arguments: [
+            VMLifecyclePhase.stopped, .suspended, .running(sessionID: UUID()),
+            .livePaused(sessionID: UUID()),
+        ])
     func ephemeralBaselineDeleteTurnsTheModeOff(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
@@ -2299,9 +2302,9 @@ struct VMCommandCoreTests {
     }
 
     @Test(
-        "While a guest runs, the Ephemeral baseline's delete is refused with the reason, consent or not",
+        "While a guest runs, the Ephemeral baseline's delete asks its own consent and other snapshots delete as before",
         arguments: [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())])
-    func ephemeralBaselineDeleteIsRefusedWhileLive(phase: VMLifecyclePhase) async throws {
+    func ephemeralBaselineDeleteWhileLiveAsksItsOwnConsent(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let later = VMSnapshot(name: "Configured", macAddress: nil)
@@ -2309,30 +2312,18 @@ struct VMCommandCoreTests {
             in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
 
-        for consent in [Consent.none, Consent([.deleteEphemeralBaseline])] {
-            let error = try #require(
-                await commandError {
-                    try await harness.core.deleteSnapshot(
-                        .id(instance.id), snapshot: baseline.id, consent: consent)
-                })
-            guard case .changeTakesStoppedVM(_, _, let change) = error else {
-                Issue.record("expected a stopped-VM refusal, got \(error)")
-                return
-            }
-            #expect(change == .ephemeralBaselineDelete)
-            #expect(
-                error.message
-                    == "\u{201C}Core VM\u{201D} is \(instance.status.phrase(heldByAnotherCopy: false)). "
-                    + "Deleting a virtual machine\u{2019}s Ephemeral Mode baseline needs it shut down or suspended.")
-        }
-        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
-        #expect(harness.snapshots.discardedIDs.isEmpty)
+        let error = try #require(
+            await commandError {
+                try await harness.core.deleteSnapshot(
+                    .id(instance.id), snapshot: baseline.id, consent: .blanket)
+            })
+        #expect(error.confirmationPrompt?.kind == .deleteEphemeralBaseline)
 
-        // Every other snapshot deletes as it always has, the mode untouched.
         try await harness.core.deleteSnapshot(
             .id(instance.id), snapshot: later.id, consent: Consent([.deleteSnapshot]))
         #expect(instance.snapshotManifest.snapshots.map(\.id) == [baseline.id])
         #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+        #expect(instance.phase == phase)
     }
 
     @Test("A manifest write that fails after the mode turned off leaves the mode off and the snapshot listed")

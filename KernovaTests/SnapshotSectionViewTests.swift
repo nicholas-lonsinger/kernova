@@ -64,24 +64,17 @@ struct SnapshotSectionViewTests {
         allSubviews(NSButton.self, in: view) { $0.title == "Revert" }
     }
 
-    /// Renders the section with one delete offer per row, the way the panel
-    /// does: `barring`'s row marked as the Ephemeral baseline and barred as a
-    /// running VM bars it when one is given, `delete` on every other.
+    /// Renders the section the way the panel does, `baseline`'s row marked as
+    /// the Ephemeral baseline when one is given.
     private func render(
         _ view: SnapshotSectionView, manifest: VMSnapshotManifest, canTakeSnapshot: Bool,
-        canRevert: Bool, delete: VMCapabilityCatalog.SnapshotDeleteOffer = .offered,
-        barring baseline: VMSnapshot? = nil, canEditMetadata: Bool = true
+        canRevert: Bool, canDelete: Bool = true, baseline: VMSnapshot? = nil,
+        canEditMetadata: Bool = true
     ) {
-        let offers = manifest.snapshots.reduce(
-            into: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]()
-        ) { offers, snapshot in
-            offers[snapshot.id] =
-                snapshot.id == baseline?.id ? .takesStoppedVM(.ephemeralBaselineDelete) : delete
-        }
         view.update(
             manifest: manifest, canTakeSnapshot: canTakeSnapshot, canRevert: canRevert,
-            canRename: canEditMetadata, canSetNotes: canEditMetadata,
-            deleteOffers: offers, baselineID: baseline?.id)
+            canRename: canEditMetadata, canSetNotes: canEditMetadata, canDelete: canDelete,
+            baselineID: baseline?.id)
     }
 
     // MARK: - Empty state
@@ -284,7 +277,7 @@ struct SnapshotSectionViewTests {
 
         render(
             view, manifest: VMSnapshotManifest(snapshots: [baseline, later], currentID: baseline.id),
-            canTakeSnapshot: true, canRevert: true, barring: baseline)
+            canTakeSnapshot: true, canRevert: true, baseline: baseline)
 
         let markers = allSubviews(NSTextField.self, in: view) {
             $0.stringValue == "Baseline \u{00B7} Current" && isVisible($0, within: view)
@@ -304,7 +297,7 @@ struct SnapshotSectionViewTests {
 
         render(
             view, manifest: VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id),
-            canTakeSnapshot: true, canRevert: true, barring: baseline)
+            canTakeSnapshot: true, canRevert: true, baseline: baseline)
 
         #expect(
             allSubviews(NSTextField.self, in: view) {
@@ -316,46 +309,19 @@ struct SnapshotSectionViewTests {
             }.count == 1)
     }
 
-    @Test("The baseline's Delete is disabled while the VM runs")
-    func baselineDeleteIsDisabled() {
+    @Test("The baseline's Delete is offered like any other row's")
+    func baselineDeleteIsOffered() {
         let (view, _) = makeSection()
         let baseline = makeSnapshot("Clean install")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [baseline]), canTakeSnapshot: true,
-            canRevert: true, barring: baseline)
+            canRevert: true, baseline: baseline)
 
-        let menu = view.makeRowMenu(forRowWith: baseline.id)
-
-        #expect(menu?.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == false)
-        // Everything else on the row still works.
-        #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == true)
-        #expect(menu?.items.first { $0.title == "Revert" }?.isEnabled == true)
-    }
-
-    /// The bar a user can lift is the one the row explains: a VM holding its
-    /// manifest says nothing beyond the greying, because there is nothing to do
-    /// about it.
-    @Test("Only the baseline's Delete barred while the VM runs carries the reason")
-    func onlyTheBaselineBarExplainsItself() {
-        let (view, _) = makeSection()
-        let baseline = makeSnapshot("Clean install")
-        let later = makeSnapshot("Mid-session", offsetSeconds: 60)
-        let manifest = VMSnapshotManifest(snapshots: [baseline, later])
-        render(
-            view, manifest: manifest, canTakeSnapshot: true, canRevert: true, barring: baseline)
-
-        let barred = view.makeRowMenu(forRowWith: baseline.id)?.items
+        let delete = view.makeRowMenu(forRowWith: baseline.id)?.items
             .first { $0.title == "Delete\u{2026}" }
-        #expect(barred?.isEnabled == false)
-        #expect(barred?.toolTip == StoppedVMChange.ephemeralBaselineDelete.sentence)
 
-        render(
-            view, manifest: manifest, canTakeSnapshot: false, canRevert: false, delete: .unavailable)
-
-        let unavailable = view.makeRowMenu(forRowWith: baseline.id)?.items
-            .first { $0.title == "Delete\u{2026}" }
-        #expect(unavailable?.isEnabled == false)
-        #expect(unavailable?.toolTip == nil)
+        #expect(delete?.isEnabled == true)
+        #expect(delete?.toolTip == nil)
     }
 
     @Test("A snapshot that isn't the baseline stays deletable")
@@ -365,7 +331,7 @@ struct SnapshotSectionViewTests {
         let later = makeSnapshot("Mid-session", offsetSeconds: 60)
         render(
             view, manifest: VMSnapshotManifest(snapshots: [baseline, later]), canTakeSnapshot: true,
-            canRevert: true, barring: baseline)
+            canRevert: true, baseline: baseline)
 
         let menu = view.makeRowMenu(forRowWith: later.id)
 
@@ -440,7 +406,7 @@ struct SnapshotSectionViewTests {
             canRevert: true)
 
         let menu = view.makeRowMenu(
-            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, canDelete: true)
 
         #expect(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
@@ -457,7 +423,7 @@ struct SnapshotSectionViewTests {
             canRevert: false)
 
         let menu = view.makeRowMenu(
-            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .offered)
+            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, canDelete: true)
 
         #expect(menu.items.first { $0.title == "Revert" }?.isEnabled == false)
     }
@@ -471,7 +437,7 @@ struct SnapshotSectionViewTests {
             canRevert: true)
 
         let menu = view.makeRowMenu(
-            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, canDelete: true)
         let delete = menu.items.first { $0.title == "Delete\u{2026}" }
         delete.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -487,7 +453,7 @@ struct SnapshotSectionViewTests {
             canRevert: true)
 
         let menu = view.makeRowMenu(
-            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .offered)
+            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, canDelete: true)
         let info = menu.items.first { $0.title == "Get Info" }
         info.map { _ = $0.target?.perform($0.action, with: $0) }
 
@@ -636,16 +602,16 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true, delete: .unavailable)
+            canRevert: true, canDelete: false)
 
         #expect(
             view.makeRowMenu(
-                for: snapshot, canRevert: true, canRename: true, canSetNotes: true, deleteOffer: .unavailable
+                for: snapshot, canRevert: true, canRename: true, canSetNotes: true, canDelete: false
             )
             .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
         #expect(
             view.makeRowMenu(
-                for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .unavailable
+                for: snapshot, canRevert: false, canRename: true, canSetNotes: true, canDelete: false
             )
             .items.first { $0.title == "Edit Notes" }?.isEnabled == true)
     }
@@ -691,7 +657,7 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One", notes: "A note")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, delete: .unavailable, canEditMetadata: false)
+            canRevert: false, canDelete: false, canEditMetadata: false)
 
         let menu = view.makeRowMenu(forRowWith: snapshot.id)
         #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
@@ -708,10 +674,10 @@ struct SnapshotSectionViewTests {
         let snapshot = makeSnapshot("One")
         render(
             view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, delete: .unavailable)
+            canRevert: false, canDelete: false)
 
         let menu = view.makeRowMenu(
-            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, deleteOffer: .unavailable)
+            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, canDelete: false)
 
         #expect(menu.items.first { $0.title == "Rename" }?.isEnabled == true)
         #expect(menu.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == false)

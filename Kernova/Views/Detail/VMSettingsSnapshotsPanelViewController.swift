@@ -70,18 +70,13 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
         guard let snapshotSection else { return }
         let capabilities = viewModel.capabilities
         let manifest = instance.snapshotManifest
-        let deleteOffers = manifest.ordered.reduce(
-            into: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]()
-        ) { offers, snapshot in
-            offers[snapshot.id] = capabilities.snapshotDeleteOffer(snapshot, on: instance)
-        }
         snapshotSection.update(
             manifest: manifest,
             canTakeSnapshot: capabilities.isAvailable(.takeSnapshot, on: instance),
             canRevert: capabilities.isAvailable(.revertToSnapshot, on: instance),
             canRename: capabilities.isAvailable(.renameSnapshot, on: instance),
             canSetNotes: capabilities.isAvailable(.setSnapshotNotes, on: instance),
-            deleteOffers: deleteOffers,
+            canDelete: capabilities.isAvailable(.deleteSnapshot, on: instance),
             baselineID: instance.ephemeralBaselineSnapshot?.id)
         // The sizes walk every file each snapshot holds, so the pane reads them
         // off the main actor.

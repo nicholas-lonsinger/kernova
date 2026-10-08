@@ -455,19 +455,31 @@ struct VMLibraryViewModelEphemeralTests {
 
     // MARK: - Baseline delete
 
-    @Test("While the VM runs, its baseline's delete is neither offered nor taken")
-    func baselineDeleteIsRefusedWhileRunning() async throws {
+    /// Ephemeral Mode is read at power-off, so the session the delete left
+    /// running ends keeping its changes rather than reverting to a baseline
+    /// that is gone.
+    @Test("Deleting the baseline while the VM runs turns the mode off, and its power-off reverts nothing")
+    func runningBaselineDeleteLeavesThePowerOffAlone() async throws {
         let harness = try await makeHarness()
 
         harness.viewModel.requestDeleteSnapshot(harness.instance, snapshot: harness.baseline)
-        #expect(presenter.deleteSnapshots.isEmpty)
+        #expect(presenter.deleteSnapshots == [harness.baseline])
 
         await harness.viewModel.deleteSnapshot(
             harness.instance, snapshot: harness.baseline, confirmed: .deleteEphemeralBaseline
         ).value
-        #expect(presenter.errorMessage?.hasSuffix("needs it shut down or suspended.") == true)
-        #expect(harness.snapshots.discardedIDs.isEmpty)
-        #expect(harness.instance.ephemeralBaselineSnapshot?.id == harness.baseline.id)
+
+        #expect(!presenter.showError)
+        #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
+        #expect(!harness.instance.hostState.ephemeralModeEnabled)
+        #expect(harness.instance.hasLiveVirtualMachine)
+
+        await harness.viewModel.stop(harness.instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(!presenter.showError)
+        #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
     }
 
     @Test("Confirming the baseline's delete at rest turns Ephemeral Mode off and deletes it")

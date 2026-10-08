@@ -784,9 +784,6 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     case cloneWritingOutsideBundle
     /// Snapshotting a VM whose guest can write to a disk outside its bundle.
     case snapshotWritingOutsideBundle
-    /// Deleting a VM's Ephemeral Mode baseline, which turns the mode off —
-    /// unavailable while the guest is in memory, per #1546.
-    case ephemeralBaselineDelete
 
     /// The rule, as every surface states it.
     public var sentence: String {
@@ -797,8 +794,6 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
             "Cloning a virtual machine with a writable external disk needs it stopped."
         case .snapshotWritingOutsideBundle:
             "Taking a snapshot of a virtual machine with a writable external disk needs it stopped."
-        case .ephemeralBaselineDelete:
-            "Deleting a virtual machine\u{2019}s Ephemeral Mode baseline needs it shut down or suspended."
         }
     }
 }
@@ -995,7 +990,8 @@ extension CommandErrorDTO {
     /// VM holds it and a step it can take certainly frees it — that step.
     ///
     /// An Ephemeral Mode baseline is named as one and offered no remedy: its
-    /// delete is refused while its VM runs, and turns Ephemeral Mode off.
+    /// delete turns Ephemeral Mode off, a consequence a remedy sentence does
+    /// not state.
     private static func macAddressInUseMessage(
         _ address: String, vm: String, holder: String, holding: MACAddressHolding,
         otherHolders: [MACAddressHolder]

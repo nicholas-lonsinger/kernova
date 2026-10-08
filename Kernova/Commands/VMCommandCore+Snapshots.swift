@@ -421,16 +421,11 @@ extension VMCommandCore {
         instance.isEphemeralBaseline(snapshot) ? .endingEphemeralMode : .plain
     }
 
-    /// The delete of `snapshot` from `instance` as it stands now — refused
-    /// while a guest runs under the Ephemeral Mode it would turn off
-    /// (``VMInstance/snapshotDeleteRule(_:)``), and without the consent
-    /// ``deleteSnapshotPrompt(_:on:)`` asks for.
+    /// The delete of `snapshot` from `instance` as it stands now, refused
+    /// without the consent ``deleteSnapshotPrompt(_:on:)`` asks for.
     private func requireDelete(
         _ snapshot: VMSnapshot, on instance: VMInstance, consent: Consent
     ) throws -> SnapshotDelete {
-        if let change = instance.snapshotDeleteRule(snapshot) {
-            throw admissionRefusal(.takesStoppedVM(change), on: instance, verb: .deleteSnapshot)
-        }
         let prompt = Self.deleteSnapshotPrompt(snapshot, on: instance)
         guard consent.covers(prompt.kind) else {
             throw CommandError.confirmationRequired(prompt)

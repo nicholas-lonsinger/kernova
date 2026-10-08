@@ -230,10 +230,6 @@ final class VMLibraryViewModel {
     /// what decides whether the USB Device menu exists at all.
     var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
 
-    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        capabilities.canDeleteSnapshot(snapshot, on: instance)
-    }
-
     func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
             return try await commands.snapshotSizes(of: .id(instance.id))
@@ -1195,7 +1191,7 @@ final class VMLibraryViewModel {
 
     /// Opens the delete-snapshot confirmation.
     func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
-        guard canDeleteSnapshot(instance, snapshot: snapshot) else {
+        guard capabilities.isAvailable(.deleteSnapshot, on: instance) else {
             #log(
                 Self.logger, .notice,
                 "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer its delete now"
