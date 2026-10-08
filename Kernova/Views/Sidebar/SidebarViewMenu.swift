@@ -535,13 +535,16 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     isOn: filter.states.contains(bucket),
                     picked: with { $0.states = [bucket] })
             })
+        let networkRows = networkChoices(filter: filter, values: values)
         let network = Attribute(
             title: "Network", allTitle: "All Networks", isActive: !filter.networks.isEmpty,
             cleared: with { $0.networks = [] },
-            choices: networkChoices(filter: filter, values: values).map { choice in
+            choices: networkRows.map { choice in
                 Attribute.Choice(
-                    title: choice.title, count: choice.count, isOn: filter.networks.contains(choice.network),
-                    picked: with { $0.networks = toggled($0.networks, choice.network) })
+                    title: choice.title, count: choice.count, isOn: choice.network.isAdmitted(by: filter.networks),
+                    picked: with {
+                        $0.networks = Self.toggled(choice.network, in: $0.networks, listed: networkRows.map(\.network))
+                    })
             })
         // Any picked tag admits a VM, so picks widen the set.
         let defined = tags() ?? []
@@ -602,10 +605,31 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         return [guestOS, state, network] + (offersTags ? [tagged] : []) + [guestAgent, other]
     }
 
+    /// `held` with `network`'s row toggled: an unchecked row adds it; a
+    /// checked one removes it, and when ``VMLibraryFilter/Network/anyBridged``
+    /// still admits it, trades that for the other bridged networks in
+    /// `listed`.
+    static func toggled(
+        _ network: VMLibraryFilter.Network, in held: Set<VMLibraryFilter.Network>,
+        listed: [VMLibraryFilter.Network]
+    ) -> Set<VMLibraryFilter.Network> {
+        guard network.isAdmitted(by: held) else { return held.union([network]) }
+        var kept = held.subtracting([network])
+        if network.isAdmitted(by: kept) {
+            kept.remove(.anyBridged)
+            kept.formUnion(
+                listed.filter { other in
+                    guard case .bridged? = other.choice else { return false }
+                    return other != network
+                })
+        }
+        return kept
+    }
+
     /// The Network submenu's choices: one per network the library's VMs are
     /// on — every network the library does not list being one — in the Mode
-    /// picker's order. A network the filter names but no VM is on any more
-    /// stays listed, so it can be turned off.
+    /// picker's order. A network the filter names but no VM reads as stays
+    /// listed, counting the VMs it admits, so it can be turned off.
     private func networkChoices(
         filter: VMLibraryFilter, values: [Value]
     ) -> [(network: VMLibraryFilter.Network, title: String, count: Int)] {
@@ -618,7 +642,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         }
         for orphan in filter.networks where byNetwork[orphan] == nil {
             order.append(orphan)
-            byNetwork[orphan] = (networkTitle(orphan), 0)
+            byNetwork[orphan] = (networkTitle(orphan), values.count { orphan.admits($0.subject.network) })
         }
         return order.compactMap { network in byNetwork[network].map { (network, $0.title, $0.count) } }
             .sorted { lhs, rhs in

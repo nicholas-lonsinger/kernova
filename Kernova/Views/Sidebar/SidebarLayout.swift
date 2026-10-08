@@ -367,23 +367,33 @@ struct SidebarLayout {
 
     /// Where a network sorts among others: the order the Mode picker lists
     /// its choices in, with ``VMLibraryFilter/Network/unlisted`` after the
-    /// vmnet networks. A named network a filter holds sorts with its mode's
-    /// named networks, listed or not.
+    /// vmnet networks and ``VMLibraryFilter/Network/anyBridged`` before
+    /// Automatic. A named network a filter holds sorts with its mode's named
+    /// networks, listed or not.
     static func networkRank(_ network: VMLibraryFilter.Network) -> Int {
-        if network == .anyBridged { return 7 }
-        guard let choice = network.choice else { return 6 }
-        switch choice {
-        case .vmnet(let kind, let membership):
-            let base = kind == .nat ? 0 : 3
-            switch membership {
-            case .common: return base
-            case .isolated: return base + 1
-            case .network: return base + 2
+        let slot: NetworkRankSlot =
+            switch network.choice {
+            case .vmnet(.nat, .common)?: .natCommon
+            case .vmnet(.nat, .isolated)?: .natIsolated
+            case .vmnet(.nat, .network)?: .natNetwork
+            case .vmnet(.hostOnly, .common)?: .hostOnlyCommon
+            case .vmnet(.hostOnly, .isolated)?: .hostOnlyIsolated
+            case .vmnet(.hostOnly, .network)?: .hostOnlyNetwork
+            case .bridged(nil)?: .bridgedAutomatic
+            case .bridged?: .bridgedInterface
+            case .none?: .none
+            case nil: network == .anyBridged ? .anyBridged : .unlisted
             }
-        case .bridged(nil): return 7
-        case .bridged: return 8
-        case .none: return 9
-        }
+        return slot.rawValue
+    }
+
+    /// ``networkRank(_:)``'s slots, in order.
+    private enum NetworkRankSlot: Int {
+        case natCommon, natIsolated, natNetwork
+        case hostOnlyCommon, hostOnlyIsolated, hostOnlyNetwork
+        case unlisted
+        case anyBridged, bridgedAutomatic, bridgedInterface
+        case none
     }
 
     /// Every row's key, in display order.

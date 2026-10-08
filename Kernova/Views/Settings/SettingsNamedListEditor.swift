@@ -42,10 +42,12 @@ protocol SettingsNamedListSource: AnyObject {
 /// source and deletes after its confirmation, and an observation loop, live
 /// while the pane is on screen, that repaints the list on any change.
 ///
-/// A refusal is shown as a sheet on the Settings window. A change arriving
-/// while a name is being edited repaints once the edit ends, since a reload
-/// would end the edit. While the list can't be read, a notice pointing to the
-/// config file check stands in for it, and the control offers nothing.
+/// A refusal is shown as a sheet on the Settings window. A change from
+/// elsewhere arriving while a name is being edited repaints once the edit
+/// ends, since a reload would end the edit; the pane's own changes end the
+/// edit, committing it, before they run. While the list can't be read, a
+/// notice pointing to the config file check stands in for it, and the
+/// control offers nothing.
 @MainActor
 final class SettingsNamedListEditor: NSObject {
     /// One table column.
@@ -282,16 +284,22 @@ final class SettingsNamedListEditor: NSObject {
         presentSheetAlert(confirmation, in: window)
     }
 
-    /// Runs `change`, then repaints; what it was refused with is shown under
-    /// `title`.
+    /// Runs one of the pane's own changes: ends a name edit in progress,
+    /// committing it, then runs `change` and repaints. What it was refused
+    /// with is shown under `title`.
     func attempt(_ title: String, _ change: () throws -> Void) {
+        if editingNameField != nil { tableView.window?.makeFirstResponder(nil) }
+        run(title, change)
+        reload()
+    }
+
+    /// Runs `change`, showing what it was refused with under `title`.
+    private func run(_ title: String, _ change: () throws -> Void) {
         do {
             try change()
-            reload()
         } catch {
             let message = (error as? CommandError)?.message ?? error.localizedDescription
             #log(logger, .notice, "\(title, privacy: .public): \(message, privacy: .public)")
-            reload()
             guard let window = tableView.window else { return }
             presentSheetAlert(.acknowledgement(title: title, message: message), in: window)
         }
@@ -378,7 +386,7 @@ extension SettingsNamedListEditor: NSTextFieldDelegate {
         if ids.indices.contains(row), field.stringValue != source.name(of: ids[row]) {
             let id = ids[row]
             let name = field.stringValue
-            attempt("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
+            run("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
         }
         repaint()
     }

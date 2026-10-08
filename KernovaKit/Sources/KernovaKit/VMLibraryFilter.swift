@@ -116,10 +116,15 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// Whether a filter holding this value admits a VM whose network
         /// reads as `network`.
         public func admits(_ network: Network) -> Bool {
-            switch (storage, network.choice) {
-            case (.anyBridged, .bridged?): true
-            default: self == network
-            }
+            network.isAdmitted(by: [self])
+        }
+
+        /// Whether a filter holding `held` admits a VM whose network reads as
+        /// this one.
+        public func isAdmitted(by held: Set<Network>) -> Bool {
+            if held.contains(self) { return true }
+            guard case .bridged? = choice else { return false }
+            return held.contains(.anyBridged)
         }
 
         /// `choice` as a filter tells it apart: ``unlisted`` when it names a
@@ -316,7 +321,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         var failed: [Attribute] = []
         if !guestOSes.isEmpty, !guestOSes.contains(subject.guestOS) { failed.append(.guestOS) }
         if !states.isEmpty, !states.contains(subject.state) { failed.append(.state) }
-        if !networks.isEmpty, !networks.contains(where: { $0.admits(subject.network) }) {
+        if !networks.isEmpty, !subject.network.isAdmitted(by: networks) {
             failed.append(.network)
         }
         if !guestAgents.isEmpty, !(subject.guestAgent.map(guestAgents.contains) ?? false) {

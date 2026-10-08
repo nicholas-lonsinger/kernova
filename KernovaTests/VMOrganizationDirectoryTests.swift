@@ -401,4 +401,39 @@ struct VMOrganizationDirectoryTests {
         #expect(VMOrganizationDirectory(fileURL: fileURL).state == before)
         #expect(directory.folders?.map(\.id) == [kept.id])
     }
+
+    @Test("Renaming a deleted smart group, folder or tag reports it missing, whatever the name")
+    func renameOfAMissingElementReportsItMissing() throws {
+        let directory = VMOrganizationDirectory(fileURL: fileURL)
+        let group = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
+        let folder = try directory.createFolder(named: "Lab")
+        let tag = try directory.createTag(named: "Work", color: .blue)
+        try directory.createSmartGroup(named: "Linux", filter: VMLibraryFilter(guestOSes: [.linux]))
+        try directory.createFolder(named: "Kept")
+        try directory.createTag(named: "Home", color: .red)
+        try directory.removeSmartGroup(group.id)
+        try directory.removeFolder(folder.id)
+        try directory.removeTag(tag.id)
+
+        for name in ["", " ", UUID().uuidString] {
+            #expect(throws: VMOrganizationDirectory.ChangeError.missing(.smartGroup)) {
+                try directory.renameSmartGroup(group.id, to: name)
+            }
+            #expect(throws: VMOrganizationDirectory.ChangeError.missing(.folder)) {
+                try directory.renameFolder(folder.id, to: name)
+            }
+            #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) {
+                try directory.renameTag(tag.id, to: name)
+            }
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.smartGroup)) {
+            try directory.renameSmartGroup(group.id, to: "Linux")
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.folder)) {
+            try directory.renameFolder(folder.id, to: "Kept")
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) {
+            try directory.renameTag(tag.id, to: "Home")
+        }
+    }
 }

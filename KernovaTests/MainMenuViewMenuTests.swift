@@ -13,6 +13,7 @@ import Testing
 @MainActor
 struct MainMenuViewMenuTests {
     private let preferences = makeTestPreferences()
+    private let scratch = TestScratchDirectory(prefix: "MainMenuViewMenuTests")
 
     @MainActor
     private struct Fixture {
@@ -32,9 +33,10 @@ struct MainMenuViewMenuTests {
     }
 
     private func makeFixture(
-        sidebarAttached: Bool = true, populate: (VMLibraryViewModel) throws -> Void = { _ in }
+        sidebarAttached: Bool = true, organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
+        populate: (VMLibraryViewModel) throws -> Void = { _ in }
     ) throws -> Fixture {
-        let viewModel = makeLibraryViewModel(preferences: preferences)
+        let viewModel = makeLibraryViewModel(preferences: preferences, organization: organization)
         try populate(viewModel)
         let sidebar = SidebarViewController(viewModel: viewModel)
         sidebar.loadViewIfNeeded()
@@ -250,13 +252,14 @@ struct MainMenuViewMenuTests {
         }
     }
 
-    /// A key-down as typed on an ANSI keyboard. AppKit populates a menu bar's
-    /// menus while matching such an event, and not while matching one
-    /// `NSEvent.keyEvent` makes (observed on macOS 27.0).
-    private func typedKey(_ keyCode: CGKeyCode, _ flags: CGEventFlags) throws -> NSEvent {
-        let event = try #require(CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true))
-        event.flags = flags
-        return try #require(NSEvent(cgEvent: event))
+    /// A key-down producing `characters` under `modifiers`, whatever the
+    /// keyboard layout.
+    private func keyDown(_ characters: String, _ modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+        try #require(
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false,
+                keyCode: 0))
     }
 
     @Test("A Sort By shortcut sets the sort through the menu bar's own key matching")
@@ -267,33 +270,42 @@ struct MainMenuViewMenuTests {
         fixture.host.librarySidebar = fixture.sidebar
         fixture.viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
 
-        // ⌃⌥⌘1
-        let event = try typedKey(18, [.maskControl, .maskAlternate, .maskCommand])
-        #expect(fixture.mainMenu.performKeyEquivalent(with: event))
+        #expect(fixture.mainMenu.performKeyEquivalent(with: try keyDown("1", [.control, .option, .command])))
 
         #expect(fixture.viewModel.sidebarOptions.sort == SidebarViewMenu.sortChoices.first)
         #expect(fixture.viewModel.sidebarOptions.filter == VMLibraryFilter(guestOSes: [.linux]))
     }
 
-    @Test("Matching a shortcut leaves the sidebar items as built")
-    func matchingDoesNotRebuild() throws {
+    /// AppKit populates the View menu while it matches any key equivalent
+    /// against the menu bar, so its rebuild reads only what the app holds.
+    @Test("Rebuilding the View menu with a folder or smart group selected reloads no organization file")
+    func rebuildReadsNoOrganizationFile() throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
         var vm: VMInstance?
-        var folder: VMFolder?
-        let fixture = try makeFixture { viewModel in
-            let admitted = viewModel.library.admitFixture(name: "A")
+        let fixture = try makeFixture(organization: VMOrganizationDirectory(fileURL: organizationURL)) { viewModel in
+            let admitted = viewModel.library.admitFixture(name: "A", guestOS: .linux)
             vm = admitted
-            folder = try viewModel.library.createFolder(named: "Lab", members: [admitted.id])
+            _ = try viewModel.library.createFolder(named: "Lab", members: [admitted.id])
+            viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+            _ = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
         }
-        fixture.viewModel.selection = SidebarRowKey(
-            section: .folder(try #require(folder).id), group: nil, entryID: try #require(vm).id)
-        let built = fixture.opened().items
+        let library = fixture.viewModel.library
+        let sections: [SidebarSectionID] = [
+            .folder(try #require(library.folders?.first).id),
+            .smartGroup(try #require(library.smartGroups?.first).id),
+        ]
+        // What a reload would find, and read as no groups at all.
+        try Data("not json".utf8).write(to: organizationURL)
 
-        // ⌘C, which the Edit menu holds.
-        _ = fixture.mainMenu.performKeyEquivalent(with: try typedKey(8, .maskCommand))
-
-        let after = fixture.viewMenu.items
-        #expect(after.count == built.count)
-        #expect(zip(after, built).allSatisfy { $0 === $1 })
+        for section in sections {
+            fixture.viewModel.selection = SidebarRowKey(section: section, group: nil, entryID: try #require(vm).id)
+            let route = section.folderID != nil ? "Folder" : "Smart Group"
+            let start = try #require(
+                try item(route, in: fixture.opened()).submenu?.items.first { $0.title.hasPrefix("Start All") })
+            #expect(start.isEnabled, "\(route)")
+            #expect(library.organization.state.listed != nil, "\(route)")
+        }
     }
 
     // MARK: - Expansion

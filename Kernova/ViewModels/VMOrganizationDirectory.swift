@@ -138,30 +138,37 @@ final class VMOrganizationDirectory {
         }
 
         /// Applies `change` to the smart group `id` identifies, refusing when
-        /// none does.
-        mutating func editSmartGroup(_ id: UUID, _ change: (inout VMSmartGroup) -> Void) throws {
-            guard let index = sections.firstIndex(where: { $0.smartGroup?.id == id }),
-                case .smartGroup(var group) = sections[index]
-            else { throw ChangeError.missing(.smartGroup) }
-            change(&group)
-            sections[index] = .smartGroup(group)
+        /// none does before `change` runs.
+        mutating func editSmartGroup(_ id: UUID, _ change: (inout VMSmartGroup) throws -> Void) throws {
+            try editSection(id, .smartGroup, read: \.smartGroup, write: Section.smartGroup, change)
         }
 
         /// Applies `change` to the folder `id` identifies, refusing when none
-        /// does.
-        mutating func editFolder(_ id: UUID, _ change: (inout VMFolder) -> Void) throws {
-            guard let index = sections.firstIndex(where: { $0.folder?.id == id }),
-                case .folder(var folder) = sections[index]
-            else { throw ChangeError.missing(.folder) }
-            change(&folder)
-            sections[index] = .folder(folder)
+        /// does before `change` runs.
+        mutating func editFolder(_ id: UUID, _ change: (inout VMFolder) throws -> Void) throws {
+            try editSection(id, .folder, read: \.folder, write: Section.folder, change)
+        }
+
+        /// Applies `change` to the section `read` finds holding the `kind`
+        /// `id` identifies, writing the result back through `write`.
+        private mutating func editSection<Value: Identifiable<UUID>>(
+            _ id: UUID, _ kind: Element, read: (Section) -> Value?, write: (Value) -> Section,
+            _ change: (inout Value) throws -> Void
+        ) throws {
+            for index in sections.indices {
+                guard var value = read(sections[index]), value.id == id else { continue }
+                try change(&value)
+                sections[index] = write(value)
+                return
+            }
+            throw ChangeError.missing(kind)
         }
 
         /// Applies `change` to the tag `id` identifies, refusing when none
-        /// does.
-        mutating func editTag(_ id: UUID, _ change: (inout VMTag) -> Void) throws {
+        /// does before `change` runs.
+        mutating func editTag(_ id: UUID, _ change: (inout VMTag) throws -> Void) throws {
             guard let index = tags.firstIndex(where: { $0.id == id }) else { throw ChangeError.missing(.tag) }
-            change(&tags[index])
+            try change(&tags[index])
         }
 
         /// Applies `change` to every folder.
@@ -359,9 +366,10 @@ final class VMOrganizationDirectory {
     /// Renames the smart group `id` identifies.
     func renameSmartGroup(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(
-                name, of: .smartGroup, for: id, among: file.smartGroups.map { ($0.id, $0.name) })
-            try file.editSmartGroup(id) { $0.name = name }
+            let named = file.smartGroups.map { ($0.id, $0.name) }
+            try file.editSmartGroup(id) {
+                $0.name = try Self.validatedName(name, of: .smartGroup, for: id, among: named)
+            }
         }
     }
 
@@ -396,8 +404,8 @@ final class VMOrganizationDirectory {
     /// Renames the folder `id` identifies.
     func renameFolder(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(name, of: .folder, for: id, among: file.folders.map { ($0.id, $0.name) })
-            try file.editFolder(id) { $0.name = name }
+            let named = file.folders.map { ($0.id, $0.name) }
+            try file.editFolder(id) { $0.name = try Self.validatedName(name, of: .folder, for: id, among: named) }
         }
     }
 
@@ -456,8 +464,8 @@ final class VMOrganizationDirectory {
     /// Renames the tag `id` identifies.
     func renameTag(_ id: UUID, to name: String) throws {
         try commit { file in
-            let name = try Self.validatedName(name, of: .tag, for: id, among: file.tags.map { ($0.id, $0.name) })
-            try file.editTag(id) { $0.name = name }
+            let named = file.tags.map { ($0.id, $0.name) }
+            try file.editTag(id) { $0.name = try Self.validatedName(name, of: .tag, for: id, among: named) }
         }
     }
 
