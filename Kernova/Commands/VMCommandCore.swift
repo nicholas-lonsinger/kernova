@@ -213,7 +213,7 @@ final class VMCommandCore: VMCommanding {
     ///
     /// Display names are not unique, so more than one match is a refusal
     /// carrying every candidate rather than a guess at which was meant.
-    func resolveEntry(_ selector: VMSelector) throws -> LibraryEntry {
+    func resolveEntry(_ selector: VMSelector) throws -> AddressableEntry {
         let matches = candidates(for: selector)
         guard let only = matches.first else { throw CommandError.notFound(selector) }
         guard matches.count == 1 else {
@@ -231,8 +231,8 @@ final class VMCommandCore: VMCommanding {
         }
     }
 
-    private func candidates(for selector: VMSelector) -> [LibraryEntry] {
-        let entries = library.entries
+    private func candidates(for selector: VMSelector) -> [AddressableEntry] {
+        let entries = library.entries.compactMap(\.addressable)
         switch selector {
         case .id(let id):
             return entries.filter { $0.id == id }
@@ -266,7 +266,7 @@ final class VMCommandCore: VMCommanding {
             heldByAnotherCopy: false)
     }
 
-    func summary(_ entry: LibraryEntry) -> VMSummary {
+    func summary(_ entry: AddressableEntry) -> VMSummary {
         switch entry {
         case .vm(let instance): summary(instance)
         case .arriving(let arrival): summary(arrival)
@@ -606,7 +606,7 @@ final class VMCommandCore: VMCommanding {
 
     private func info(_ instance: VMInstance) -> VMInfo {
         let config = instance.configuration
-        let subject = library.sidebarContext.subject(of: .vm(instance))
+        let subject = library.sidebarContext.subject(of: instance)
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
@@ -617,7 +617,7 @@ final class VMCommandCore: VMCommanding {
             diskSizeInGB: config.diskSizeInGB,
             networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
             networkMembership: config.effectiveNetworkMembership?.rawValue,
-            networkName: library.networks.network(joinedBy: config)?.name,
+            networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: library.guestAddresses.address(for: instance),
             agentStatus: instance.agentStatus.wireName,
@@ -636,7 +636,7 @@ final class VMCommandCore: VMCommanding {
     /// saved state, no snapshots, and the bundle path it publishes at.
     private func info(_ arrival: VMArrival) -> VMInfo {
         let config = arrival.configuration
-        let subject = library.sidebarContext.subject(of: .arriving(arrival))
+        let subject = library.sidebarContext.subject(of: arrival)
         return VMInfo(
             id: arrival.id,
             name: arrival.name,
@@ -647,7 +647,7 @@ final class VMCommandCore: VMCommanding {
             diskSizeInGB: config.diskSizeInGB,
             networkMode: config.networkEnabled ? config.networkMode.rawValue : nil,
             networkMembership: config.effectiveNetworkMembership?.rawValue,
-            networkName: library.networks.network(joinedBy: config)?.name,
+            networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: GuestAddressObserver.address(withNoLiveGuest: config),
             agentStatus: AgentStatus.waiting.wireName,
@@ -720,7 +720,7 @@ final class VMCommandCore: VMCommanding {
 
     private func currentObservedStates() -> [UUID: ObservedState] {
         var states: [UUID: ObservedState] = [:]
-        for entry in library.entries {
+        for entry in library.entries.compactMap(\.addressable) {
             switch entry {
             case .vm(let instance):
                 states[instance.instanceID] = ObservedState(
@@ -747,7 +747,7 @@ final class VMCommandCore: VMCommanding {
     private func emitLibraryChanges() {
         let current = currentObservedStates()
         var batch: [VMLibraryEvent] = []
-        for entry in library.entries {
+        for entry in library.entries.compactMap(\.addressable) {
             let id = entry.id
             guard let now = current[id] else { continue }
             guard let before = lastObserved[id] else {
@@ -825,5 +825,38 @@ final class VMCommandCore: VMCommanding {
     private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
         guard let failure = arrival.failure(for: error) else { return }
         broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
+    }
+}
+
+/// A library row a verb can name: a VM, or an arrival still writing its
+/// bundle. A bundle Kernova can't read has no case, so no verb can reach one.
+@MainActor
+enum AddressableEntry {
+    case vm(VMInstance)
+    case arriving(VMArrival)
+
+    var id: UUID {
+        switch self {
+        case .vm(let instance): instance.id
+        case .arriving(let arrival): arrival.id
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .vm(let instance): instance.name
+        case .arriving(let arrival): arrival.name
+        }
+    }
+}
+
+extension LibraryEntry {
+    /// The row as a verb can name it, `nil` for a bundle Kernova can't read.
+    var addressable: AddressableEntry? {
+        switch self {
+        case .vm(let instance): .vm(instance)
+        case .arriving(let arrival): .arriving(arrival)
+        case .unreadable: nil
+        }
     }
 }

@@ -18,7 +18,8 @@ func makeSettingsViewModel(
     vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitled: Bool = true,
-    machineFiles: (any VMBundleMachineFileWorking)? = nil
+    machineFiles: (any VMBundleMachineFileWorking)? = nil,
+    networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil)
 ) -> VMLibraryViewModel {
     VMLibraryViewModel(
         storageService: storage,
@@ -33,7 +34,8 @@ func makeSettingsViewModel(
         preferences: preferences,
         vmnetNetworks: vmnetNetworks,
         arpTable: arpTable,
-        entitlements: entitled ? .entitled : .unentitled
+        entitlements: entitled ? .entitled : .unentitled,
+        networks: networks
     )
 }
 

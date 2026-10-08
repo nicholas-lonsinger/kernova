@@ -395,8 +395,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// Decides `menuItem`'s enablement and, for the commands whose wording
     /// depends on state, retitles it.
     func validate(_ menuItem: NSMenuItem) -> Bool {
-        // App-level commands — New, Show Library, Open VMs Folder, Quit
-        // Completely — are never gated on the selection, or a selected import
+        // App-level commands — New, Show Library, Open VMs Folder, Check Config
+        // Files, Quit Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
         guard let capability = Self.capability(for: menuItem.action) else { return true }
 
@@ -515,6 +515,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // "Library", which the Window menu already uses for the main window.
         fileMenu.addItem(
             withTitle: "Open VMs Folder", action: #selector(AppDelegate.openVMsFolder(_:)),
+            keyEquivalent: "")
+        fileMenu.addItem(
+            withTitle: "Check Config Files\u{2026}", action: #selector(AppDelegate.checkConfigFiles(_:)),
             keyEquivalent: "")
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")

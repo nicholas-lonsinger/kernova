@@ -53,12 +53,13 @@ extension SidebarViewOptions {
 extension LibraryEntry {
     /// What a ``VMLibrarySort`` reads of this entry.
     var sortKeys: VMLibrarySort.Keys {
-        VMLibrarySort.Keys(name: name, createdAt: configuration.createdAt, lastRun: lastRun)
+        VMLibrarySort.Keys(name: name, createdAt: configuration?.createdAt, lastRun: lastRun)
     }
 
     /// When this entry last ran: live while it is in a session, or held by
     /// another copy, which may be running it — ``VMHostState/lastRunAt`` then
-    /// holds a session's start. An arrival has no run recorded.
+    /// holds a session's start. An arrival, or a bundle Kernova can't read,
+    /// has no run recorded.
     var lastRun: VMLibrarySort.LastRun {
         guard case .vm(let instance) = self else { return .unrecorded }
         switch instance.stateBucket {
@@ -74,6 +75,8 @@ extension LibraryEntry {
             instance.status.displayName(heldByAnotherCopy: instance.heldByAnotherCopy)
         case .arriving(let arrival):
             arrival.displayLabel
+        case .unreadable:
+            UnreadableVM.statusText
         }
     }
 }
@@ -96,7 +99,9 @@ extension VMLibrarySort {
         case .name, .manual:
             entry.statusName
         case .dateCreated:
-            "Created \(entry.configuration.createdAt.formatted(date: .abbreviated, time: .omitted))"
+            entry.configuration.map {
+                "Created \($0.createdAt.formatted(date: .abbreviated, time: .omitted))"
+            } ?? entry.statusName
         case .lastRun:
             switch entry.lastRun {
             case .live:

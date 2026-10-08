@@ -37,13 +37,16 @@ struct VMOverviewResolverTests {
 
     @Test("Every mode names itself the way the picker titles its entry")
     func modeTitlesMatchThePicker() {
-        #expect(NetworkModeChoice.shared.title(attachable: true, interfaces: [], networks: []) == "Shared Network")
-        #expect(NetworkModeChoice.none.title(attachable: true, interfaces: [], networks: []) == "None")
-        #expect(NetworkModeChoice.hostOnly.title(attachable: true, interfaces: [], networks: []) == "Host Only")
         #expect(
-            NetworkModeChoice.bridged(nil).title(attachable: true, interfaces: [], networks: []) == "Automatic")
+            NetworkModeChoice.shared.title(attachable: true, interfaces: [], networks: .listed([])) == "Shared Network")
+        #expect(NetworkModeChoice.none.title(attachable: true, interfaces: [], networks: .listed([])) == "None")
         #expect(
-            NetworkModeChoice.bridged("en0").title(attachable: true, interfaces: [Self.wiFi], networks: [])
+            NetworkModeChoice.hostOnly.title(attachable: true, interfaces: [], networks: .listed([])) == "Host Only")
+        #expect(
+            NetworkModeChoice.bridged(nil).title(attachable: true, interfaces: [], networks: .listed([])) == "Automatic"
+        )
+        #expect(
+            NetworkModeChoice.bridged("en0").title(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
                 == "Wi-Fi (en0)")
     }
 
@@ -52,39 +55,53 @@ struct VMOverviewResolverTests {
         let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .shared)
         #expect(
             NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
-                attachable: true, interfaces: [], networks: []) == "Host Only, Isolated")
+                attachable: true, interfaces: [], networks: .listed([])) == "Host Only, Isolated")
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: [lab]) == "Lab")
+                attachable: true, interfaces: [], networks: .listed([lab])) == "Lab")
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(lab.id)).title(
-                attachable: false, interfaces: [], networks: [lab]) == "Lab (unavailable)")
+                attachable: false, interfaces: [], networks: .listed([lab])) == "Lab (unavailable)")
         // Unlisted, or listed only in the other mode: no surface here can
         // choose it, so it never reads as merely unavailable.
         #expect(
             NetworkModeChoice.vmnet(.shared, .network(UUID())).title(
-                attachable: true, interfaces: [], networks: [lab]) == "Network Not in This Library")
+                attachable: true, interfaces: [], networks: .listed([lab])) == "Network Not in This Library")
         #expect(
             NetworkModeChoice.vmnet(.hostOnly, .network(lab.id)).title(
-                attachable: true, interfaces: [], networks: [lab]) == "Network Not in This Library")
+                attachable: true, interfaces: [], networks: .listed([lab])) == "Network Not in This Library")
+    }
+
+    @Test("While the network list can't be read, a named network reads as that, and no other title moves")
+    func networkTitlesWhileTheListIsUnreadable() {
+        let unreadable = VMNetworkDirectory.State.unreadable(
+            UnreadableConfigFile(
+                location: .networkList(URL(fileURLWithPath: "/tmp/Networks.json")), owner: .networkList,
+                problems: [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]))
+        #expect(
+            NetworkModeChoice.vmnet(.shared, .network(UUID())).title(
+                attachable: true, interfaces: [], networks: unreadable) == "Network List Can\u{2019}t Be Read")
+        #expect(
+            NetworkModeChoice.vmnet(.hostOnly, .isolated).title(
+                attachable: true, interfaces: [], networks: unreadable) == "Host Only, Isolated")
     }
 
     @Test("A mode the signature doesn't authorize still names itself, marked unavailable")
     func unentitledModesNameThemselves() {
         #expect(
-            NetworkModeChoice.hostOnly.title(attachable: false, interfaces: [], networks: [])
+            NetworkModeChoice.hostOnly.title(attachable: false, interfaces: [], networks: .listed([]))
                 == "Host Only (unavailable)")
         #expect(
-            NetworkModeChoice.bridged("en0").title(attachable: false, interfaces: [Self.wiFi], networks: [])
+            NetworkModeChoice.bridged("en0").title(attachable: false, interfaces: [Self.wiFi], networks: .listed([]))
                 == "Bridged (unavailable)")
         // Entitled, but the host has stopped offering the interface.
         #expect(
-            NetworkModeChoice.bridged("en5").title(attachable: true, interfaces: [Self.wiFi], networks: [])
+            NetworkModeChoice.bridged("en5").title(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
                 == "en5 (unavailable)")
         // An interface the host names nothing else reads as its bare identifier.
         let bare = BridgedInterface(identifier: "bridge0", localizedDisplayName: "bridge0")
         #expect(
-            NetworkModeChoice.bridged("bridge0").title(attachable: true, interfaces: [bare], networks: [])
+            NetworkModeChoice.bridged("bridge0").title(attachable: true, interfaces: [bare], networks: .listed([]))
                 == "bridge0")
     }
 

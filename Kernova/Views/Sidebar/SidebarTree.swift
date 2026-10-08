@@ -20,10 +20,13 @@ class SidebarNode {
 final class SidebarSection: SidebarNode {
     let id: SidebarSectionID
     fileprivate(set) var title: String
+    /// ``SidebarLayout/Section/notice``.
+    fileprivate(set) var notice: String?
 
-    fileprivate init(id: SidebarSectionID, title: String) {
+    fileprivate init(id: SidebarSectionID, title: String, notice: String?) {
         self.id = id
         self.title = title
+        self.notice = notice
     }
 }
 
@@ -217,9 +220,10 @@ final class SidebarTree {
         var newSections: [SidebarSection] = []
         for spec in layout.sections {
             let existing = self.sectionsByID[spec.id]
-            let section = existing ?? SidebarSection(id: spec.id, title: spec.title)
+            let section = existing ?? SidebarSection(id: spec.id, title: spec.title, notice: spec.notice)
             if let existing {
                 retitle(existing, from: existing.title, to: spec.title) { existing.title = spec.title }
+                retitle(existing, from: existing.notice ?? "", to: spec.notice ?? "") { existing.notice = spec.notice }
             } else {
                 changes.created.append(section)
             }

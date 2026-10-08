@@ -22,25 +22,27 @@ final class VMNetworkDirectory {
         .appendingPathComponent("Kernova", isDirectory: true)
         .appendingPathComponent("Networks.json", isDirectory: false)
 
+    /// What every surface that cannot list the networks tells the user.
+    nonisolated static let unreadableMessage =
+        "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
+
     /// The file's payload.
-    private struct File: Codable, Equatable, Sendable {
+    struct File: Codable, Equatable, Sendable {
         var networks: [VMNamedNetwork]
     }
 
-    /// Every named network, ordered by name.
-    private(set) var networks: [VMNamedNetwork] = []
+    /// What the file held the last time it was read: every named network,
+    /// ordered by name.
+    typealias State = ConfigFileState<[VMNamedNetwork]>
 
-    /// Why the file could not be read the last time, `nil` when it was, or
-    /// holds nothing yet. A change reads the file again first and refuses
-    /// when that read fails, so an unread file is never overwritten.
-    private(set) var readFailure: String?
+    private(set) var state: State = .listed([])
 
     /// The file the networks persist in, `nil` to keep them in memory only.
-    @ObservationIgnored private let file: CoordinatedJSONFile<File>?
+    @ObservationIgnored nonisolated let file: CoordinatedJSONFile<File>?
 
     /// The networks `fileURL` holds — none when there is no file yet.
     init(fileURL: URL?) {
-        self.file = fileURL.map { CoordinatedJSONFile(url: $0, empty: File(networks: [])) }
+        self.file = fileURL.map(Self.file(at:))
         reload()
     }
 
@@ -48,24 +50,28 @@ final class VMNetworkDirectory {
     /// the library wrote since.
     func reload() {
         guard let file else { return }
-        do {
-            networks = Self.ordered(try file.read().networks)
-            readFailure = nil
-        } catch {
-            let reason = error.reason
-            readFailure = reason
+        state = file.state { Self.ordered($0.networks) }
+        if let unreadable = state.unreadable {
             #log(
                 Self.logger, .error,
-                "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(reason, privacy: .public)"
+                "Couldn't read the named networks at \(file.url.path(percentEncoded: false), privacy: .public): \(String(describing: unreadable.problems), privacy: .public)"
             )
         }
     }
 
     // MARK: - Reads
 
+    /// The networks listed, refusing as `verb` while the file cannot be read.
+    func listedNetworks(verb: VMVerb) throws -> [VMNamedNetwork] {
+        guard let networks = state.listed else {
+            throw CommandError.operationFailed(verb: verb, message: Self.unreadableMessage)
+        }
+        return networks
+    }
+
     /// The network `id` identifies, `nil` when the library lists none.
     func network(withID id: UUID) -> VMNamedNetwork? {
-        networks.first { $0.id == id }
+        state.listed?.first { $0.id == id }
     }
 
     /// The listed network a VM under `configuration` joins, `nil` where it
@@ -79,16 +85,26 @@ final class VMNetworkDirectory {
         return network
     }
 
+    /// The named network a VM under `configuration` names, as this
+    /// directory lists it — `nil` where its membership names none.
+    func networkName(of configuration: VMConfiguration) -> VMNetworkName? {
+        guard let id = configuration.effectiveNetworkMembership?.namedNetwork else { return nil }
+        guard case .listed = state else { return .unreadable }
+        return network(joinedBy: configuration).map { .named($0.name) } ?? .unlisted(id)
+    }
+
     /// The network `text` names — by identifier, or by name ignoring case —
     /// `nil` when the library lists none.
     func network(named text: String) -> VMNamedNetwork? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let id = UUID(uuidString: trimmed), let network = network(withID: id) { return network }
-        return networks.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        return state.listed?.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
-    /// The network `text` names, refusing a name the library lists none by.
-    func requireNetwork(named text: String) throws -> VMNamedNetwork {
+    /// The network `text` names, refusing as `verb` a name the library lists
+    /// none by, and every name while the file cannot be read.
+    func requireNetwork(named text: String, verb: VMVerb) throws -> VMNamedNetwork {
+        _ = try listedNetworks(verb: verb)
         guard let network = network(named: text) else {
             throw CommandError.itemNotFoundOnHost(item: "network named \u{201C}\(text)\u{201D}")
         }
@@ -166,27 +182,32 @@ final class VMNetworkDirectory {
         verb: VMVerb, _ change: ([VMNamedNetwork]) throws -> [VMNamedNetwork]
     ) throws {
         guard let file else {
-            networks = Self.ordered(try change(networks))
+            state = .listed(Self.ordered(try change(try listedNetworks(verb: verb))))
             return
         }
         do {
-            networks = try file.update { File(networks: Self.ordered(try change(Self.ordered($0.networks)))) }
-                .networks
+            state = .listed(
+                try file.update { File(networks: Self.ordered(try change(Self.ordered($0.networks)))) }
+                    .networks)
         } catch let failure as CoordinatedJSONFile<File>.Failure {
             switch failure {
-            case .unreadable(let error):
-                throw CommandError.operationFailed(
-                    verb: verb,
-                    message:
-                        "Kernova couldn\u{2019}t read its list of networks, so it changes none: \(error.localizedDescription)"
-                )
+            case .unreadable(let unreadable):
+                state = .unreadable(unreadable)
+                throw CommandError.operationFailed(verb: verb, message: Self.unreadableMessage)
             case .unsaved(let error):
                 throw CommandError.operationFailed(
                     verb: verb,
                     message: "Kernova couldn\u{2019}t save its list of networks: \(error.localizedDescription)")
             }
         }
-        readFailure = nil
+    }
+
+    // MARK: - Repair
+
+    /// The network list at `url`, as the library's own reads and writes take
+    /// it.
+    nonisolated static func file(at url: URL) -> CoordinatedJSONFile<File> {
+        CoordinatedJSONFile(location: .networkList(url), owner: .networkList, empty: File(networks: []))
     }
 
     nonisolated private static func ordered(_ networks: [VMNamedNetwork]) -> [VMNamedNetwork] {

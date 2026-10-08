@@ -59,11 +59,11 @@ struct VMCommandCoreNetworkTests {
                 ConfigurationEntry(key: "network.membership", value: "Lab"),
             ], consent: .none)
 
-        #expect(harness.core.networks().map(\.members) == [[harness.core.summary(alpha)]])
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == "Lab")
+        #expect(try harness.core.networks().map(\.members) == [[harness.core.summary(alpha)]])
+        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Lab"))
         #expect(lab.kind == .hostOnly)
         try harness.core.renameNetwork("lab", to: "Bench")
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == "Bench")
+        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Bench"))
     }
 
     @Test("Deleting a network moves every VM naming it to a network of its own")
@@ -81,7 +81,7 @@ struct VMCommandCoreNetworkTests {
 
         try harness.core.deleteNetwork(lab.id.uuidString)
 
-        #expect(harness.core.networks().isEmpty)
+        #expect(try harness.core.networks().isEmpty)
         #expect(member.configuration.networkMembership == .isolated)
         #expect(bridged.configuration.networkMembership == .isolated)
         #expect(bystander.configuration.networkMembership == .common)
@@ -105,7 +105,7 @@ struct VMCommandCoreNetworkTests {
         try VMInstanceFixture.writeSaveFile(for: suspended)
 
         #expect(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
-        #expect(harness.core.networks().map(\.id) == [lab.id])
+        #expect(try harness.core.networks().map(\.id) == [lab.id])
         #expect(stopped.configuration.networkMembership == .network(lab.id))
     }
 
@@ -129,7 +129,7 @@ struct VMCommandCoreNetworkTests {
 
         try harness.core.deleteNetwork("Lab")
 
-        #expect(harness.core.networks().isEmpty)
+        #expect(try harness.core.networks().isEmpty)
         // Its state takes no write; it names an unlisted network until it does.
         #expect(suspended.configuration.networkMembership == .network(lab.id))
     }

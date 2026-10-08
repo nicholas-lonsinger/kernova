@@ -18,6 +18,8 @@ final class TagsSettingsViewController: NSViewController {
 
     /// The tags the table shows, in the library's order.
     private(set) var tags: [VMTag] = []
+    /// Whether the last read found the tags unreadable.
+    var isUnreadable: Bool { editor.isUnreadable }
 
     private lazy var editor = SettingsNamedListEditor(
         noun: "Tag",
@@ -48,7 +50,7 @@ final class TagsSettingsViewController: NSViewController {
 
     /// The smart groups whose filter names `tag`.
     func smartGroups(filteringOn tag: VMTag) -> [VMSmartGroup] {
-        library.smartGroups.filter { $0.filter.tags.contains(tag.id) }
+        (library.smartGroups ?? []).filter { $0.filter.tags.contains(tag.id) }
     }
 
     /// How the list names the VMs carrying a tag.
@@ -218,9 +220,15 @@ final class TagsSettingsViewController: NSViewController {
 // MARK: - SettingsNamedListSource
 
 extension TagsSettingsViewController: SettingsNamedListSource {
-    func listedIDs() -> [UUID] {
-        tags = library.tags
-        return tags.map(\.id)
+    func listedIDs() -> [UUID]? {
+        tags = library.tags ?? []
+        return library.tags.map { $0.map(\.id) }
+    }
+
+    var unreadableText: String { "Kernova can\u{2019}t read its tags." }
+
+    func showConfigCheck() {
+        viewModel.showConfigCheck()
     }
 
     private func tag(_ id: UUID) -> VMTag? {

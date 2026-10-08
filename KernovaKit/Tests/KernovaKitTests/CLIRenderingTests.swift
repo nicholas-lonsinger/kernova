@@ -16,12 +16,14 @@ struct CLIRenderingTests {
         name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved, heldByAnotherCopy: false)
 
     private func info(
-        ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30
+        ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
+        networkMembership: String = "common", networkName: VMNetworkName? = nil
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
-            networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: ipAddress, agentStatus: "current",
+            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: networkMembership,
+            networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
+            ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
             stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
@@ -133,6 +135,27 @@ struct CLIRenderingTests {
         #expect(rendered.contains("Running"))
         #expect(rendered.contains("8 GB"))
         #expect(rendered.contains("192.168.64.4"))
+    }
+
+    @Test("A named network whose name the unreadable list can't give reads as that, not as its identifier")
+    func anUnreadableNetworkNameReadsAsSuch() throws {
+        let id = "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"
+        let rendered = TableRenderer.render(
+            info(networkMembership: id, networkName: .unreadable), quiet: false)
+        let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
+
+        #expect(network.hasSuffix("shared, Network List Can\u{2019}t Be Read"))
+        #expect(!rendered.contains(id))
+    }
+
+    @Test("A named network the library does not list reads as its identifier")
+    func anUnlistedNetworkReadsAsItsIdentifier() throws {
+        let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
+        let rendered = TableRenderer.render(
+            info(networkMembership: id.uuidString, networkName: .unlisted(id)), quiet: false)
+        let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
+
+        #expect(network.hasSuffix("shared, \(id.uuidString)"))
     }
 
     @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")
@@ -729,5 +752,30 @@ struct CLIRenderingTests {
             let object = try JSONSerialization.jsonObject(with: Data(rendered.utf8))
             #expect(object as? [String: String] == fields)
         }
+    }
+
+    @Test("A network name's JSON names its state beside the name or identifier it carries, and reads back")
+    func networkNameJSONNamesItsState() throws {
+        let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
+        let expected: [(VMNetworkName, [String: String])] = [
+            (.named("Lab"), ["state": "named", "name": "Lab"]),
+            (.unlisted(id), ["state": "unlisted", "id": id.uuidString]),
+            (.unreadable, ["state": "unreadable"]),
+        ]
+        for (networkName, fields) in expected {
+            let rendered = try JSONRenderer.render(networkName)
+            let object = try JSONSerialization.jsonObject(with: Data(rendered.utf8))
+            #expect(object as? [String: String] == fields)
+            #expect(try JSONDecoder().decode(VMNetworkName.self, from: Data(rendered.utf8)) == networkName)
+        }
+    }
+
+    @Test("info's JSON carries the network name as its state object")
+    func infoJSONCarriesTheNetworkNameObject() throws {
+        let id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        let rendered = try JSONRenderer.render(info(networkMembership: id, networkName: .named("Lab")))
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
+        #expect(object["networkName"] as? [String: String] == ["state": "named", "name": "Lab"])
     }
 }

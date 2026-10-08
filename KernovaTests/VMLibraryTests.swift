@@ -46,6 +46,7 @@ struct VMLibraryTests {
         library.onFailure = { [failures] title, message in
             failures.record(title: title, message: message)
         }
+        library.onUnreadableFilesFound = { [failures] in failures.recordCheckRequest() }
         return (library, storageService, virtualizationService, removableMediaDeviceService)
     }
 
@@ -237,7 +238,7 @@ struct VMLibraryTests {
         #expect(library.selectedID == config2.id)
     }
 
-    @Test("loadVMs surfaces error when individual bundles fail to load")
+    @Test("loadVMs keeps a bundle it can't read as an unreadable row and asks for the check")
     func loadVMsSurfacesErrorForFailedBundles() async {
         let storage = MockVMStorageService()
         // Add a good bundle and a bad bundle
@@ -255,12 +256,12 @@ struct VMLibraryTests {
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
 
-        // Good VM loaded, bad VM skipped
+        // Good VM loaded; the bad bundle is a row of its own, and no VM
         #expect(library.instances.count == 1)
         #expect(library.instances.first?.name == "Good VM")
-        // Error surfaced to user about the failed bundle
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage != nil)
+        #expect(library.entries.compactMap(\.unreadable).map(\.bundleURL) == [badURL])
+        #expect(failures.checkRequests == 1)
+        #expect(failures.showError == false)
     }
 
     @Test("loadVMs falls back to first VM when stored ID is invalid")
@@ -752,7 +753,7 @@ struct VMLibraryTests {
         #expect(library.selectedID == remaining.id || library.selectedID != removed.id)
     }
 
-    @Test("reconcileWithDisk presents error when config loading fails")
+    @Test("reconcileWithDisk keeps a bundle it can't read as a row and asks for the check")
     func reconcilePresentsErrorForFailedConfigs() {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
@@ -773,8 +774,8 @@ struct VMLibraryTests {
 
         library.reconcileWithDisk()
 
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("broken-vm") == true)
+        #expect(failures.checkRequests == 1)
+        #expect(library.entries.compactMap(\.unreadable).map(\.name) == ["broken-vm.kernova"])
         #expect(library.instances.contains { $0.name == "Good VM" })
     }
 
@@ -791,7 +792,7 @@ struct VMLibraryTests {
         #expect(failures.errorMessage?.contains("VM bundle not found") == true)
     }
 
-    @Test("reconcileWithDisk does not re-present error for already-reported corrupted bundles")
+    @Test("reconcileWithDisk does not ask for the check again for an already-reported bundle")
     func reconcileDeduplicatesFailedBundleErrors() {
         let storage = MockVMStorageService()
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -805,14 +806,12 @@ struct VMLibraryTests {
         // First reconciliation should present the error
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("broken-vm") == true)
+        #expect(failures.checkRequests == 1)
 
         // Second reconciliation should NOT re-present the same error
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
-        #expect(failures.errorMessage == nil)
+        #expect(failures.checkRequests == 0)
     }
 
     @Test("reconcileWithDisk suppression is maintained after full reload")
@@ -823,29 +822,27 @@ struct VMLibraryTests {
         storage.bundles[badURL] = VMConfiguration(name: "Bad VM", guestOS: .linux, bootMode: .efi)
         storage.loadConfigurationFailURLs.insert(badURL)
 
-        // The initial load reports the error and seeds reportedFailedBundles
+        // The initial load reports the error and seeds unreadableReports
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("broken-vm") == true)
+        #expect(failures.checkRequests == 1)
 
         // First reconcile after the load is suppressed
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
+        #expect(failures.checkRequests == 0)
 
         // Full reload resets suppression, then re-seeds from its own failures
         await library.loadVMs()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("broken-vm") == true)
+        #expect(failures.checkRequests == 1)
 
         // Reconciliation should still be suppressed since loadVMs re-seeded the set
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
+        #expect(failures.checkRequests == 0)
     }
 
-    @Test("reconcileWithDisk does not re-present errors already reported by loadVMs")
+    @Test("reconcileWithDisk does not ask for the check for bundles loadVMs reported")
     func reconcileDoesNotDuplicateLoadVMsErrors() async {
         let storage = MockVMStorageService()
         let badURL = scratch.url
@@ -856,22 +853,20 @@ struct VMLibraryTests {
         // The initial load should report the error
         let (library, _, _, _) = makeLibrary(storageService: storage)
         await library.loadVMs()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("broken-vm") == true)
+        #expect(failures.checkRequests == 1)
 
         // Clear the alert state (simulating user dismissing the dialog)
         failures.reset()
 
         // First reconcileWithDisk should NOT re-present the same error
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
-        #expect(failures.errorMessage == nil)
+        #expect(failures.checkRequests == 0)
     }
 
     /// A present but unreadable sidecar holds state nobody knows, so the VM stays
     /// out rather than entering with defaults a later write would put over it.
-    @Test("A bundle whose host state cannot be read is reported and not loaded")
-    func unreadableHostStateKeepsTheBundleOut() async {
+    @Test("A bundle whose host state cannot be read is reported and kept as an unreadable row")
+    func unreadableHostStateKeepsTheBundleOut() async throws {
         let storage = MockVMStorageService()
         let goodConfig = VMConfiguration(name: "Good VM", guestOS: .linux, bootMode: .efi)
         let goodURL = scratch.url
@@ -886,13 +881,16 @@ struct VMLibraryTests {
         await library.loadVMs()
 
         #expect(library.instances.map(\.name) == ["Good VM"])
-        #expect(failures.errorMessage?.contains("unreadable-host-state") == true)
+        let row = try #require(library.entries.compactMap(\.unreadable).first)
+        #expect(row.name == "Bad VM")
+        #expect(row.file.location == .bundle(badURL, .hostState))
+        #expect(failures.checkRequests == 1)
         #expect(storage.saveHostStateCallCount == 0)
     }
 
     /// Pairings are made again by attaching the device once, so an unreadable
     /// file costs the VM nothing more than them.
-    @Test("A bundle whose pairings cannot be read loads with none, is reported, and keeps the file")
+    @Test("A bundle whose pairings cannot be read loads with none, asks for the check once, and keeps the file")
     func unreadablePairingsLoadEmpty() async throws {
         let storage = MockVMStorageService()
         let config = VMConfiguration(name: "Paired VM", guestOS: .linux, bootMode: .efi)
@@ -910,7 +908,12 @@ struct VMLibraryTests {
         #expect(
             storage.files.data(atRelativePath: VMBundleLayout.usbPairingsRelativePath, in: bundleURL)
                 == unreadable)
-        #expect(failures.errorMessage?.contains("Paired VM") == true)
+        // The check lists the file; no alert of its own.
+        #expect(failures.errorMessage == nil)
+        #expect(failures.checkRequests == 1)
+        library.reconcileWithDisk()
+        library.refreshFromOtherCopies()
+        #expect(failures.checkRequests == 1)
     }
 
     @Test("reconcileWithDisk keeps out, and reports once, a new bundle whose host state cannot be read")
@@ -926,18 +929,20 @@ struct VMLibraryTests {
         failures.reset()
         library.reconcileWithDisk()
         #expect(library.instances.isEmpty)
-        #expect(failures.errorMessage?.contains("unreadable-sidecar") == true)
+        #expect(library.entries.compactMap(\.unreadable).map(\.name) == ["Unreadable VM"])
+        #expect(failures.checkRequests == 1)
 
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
+        #expect(failures.checkRequests == 0)
 
         storage.loadHostStateFailURLs.remove(bundleURL)
         library.reconcileWithDisk()
         #expect(library.instances.map(\.name) == ["Unreadable VM"])
+        #expect(library.entries.compactMap(\.unreadable).isEmpty)
     }
 
-    @Test("reconcileWithDisk re-presents error after previously-failed bundle loads successfully")
+    @Test("reconcileWithDisk reports a bundle again after it read successfully in between")
     func reconcileReReportsAfterBundleRecovery() {
         let storage = MockVMStorageService()
         let (library, _, _, _) = makeLibrary(storageService: storage)
@@ -952,8 +957,7 @@ struct VMLibraryTests {
         // First reconciliation reports the error
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("recoverable") == true)
+        #expect(failures.checkRequests == 1)
 
         // "Fix" the bundle by removing it from the fail set
         storage.loadConfigurationFailURLs.remove(bundleURL)
@@ -961,7 +965,7 @@ struct VMLibraryTests {
         // Reconciliation succeeds — no error, and the bundle is cleared from reported set
         failures.reset()
         library.reconcileWithDisk()
-        #expect(failures.showError == false)
+        #expect(failures.checkRequests == 0)
 
         // Re-corrupt it
         storage.loadConfigurationFailURLs.insert(bundleURL)
@@ -972,8 +976,7 @@ struct VMLibraryTests {
 
         // Should report the error again since it was cleared from the reported set
         library.reconcileWithDisk()
-        #expect(failures.showError == true)
-        #expect(failures.errorMessage?.contains("recoverable") == true)
+        #expect(failures.checkRequests == 1)
     }
 
     // MARK: - Initial Boot status assignment

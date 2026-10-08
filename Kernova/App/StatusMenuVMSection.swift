@@ -46,7 +46,7 @@ final class StatusMenuVMSection {
 
     /// The rows the section should show for `entries`: every arrival, and
     /// each VM keeping the app alive with the clipboard refusal its transfer
-    /// report holds.
+    /// report holds. An unreadable bundle keeps nothing alive.
     ///
     /// The `isKeepingAppAlive` filter is what keeps a stopped VM off the
     /// dropdown, and with it that VM's report — the row is the only thing a
@@ -63,6 +63,8 @@ final class StatusMenuVMSection {
                     instanceID: instance.instanceID,
                     title: "\(instance.name) — \(instance.statusDisplayName)",
                     noticeText: Self.noticeText(for: instance))
+            case .unreadable:
+                return nil
             }
         }
     }

@@ -80,7 +80,7 @@ struct SidebarSmartGroupTests {
         let macs = group("Macs", VMLibraryFilter(guestOSes: [.macOS]))
         let layout = SidebarLayout.project(
             entries: entries, options: SidebarViewOptions(sort: .name),
-            sections: [.smartGroup(running), .smartGroup(macs), .library],
+            organization: .listed([.smartGroup(running), .smartGroup(macs), .library]),
             context: .testing())
 
         #expect(layout.sections.map(\.id) == [.smartGroup(running.id), .smartGroup(macs.id), .library])
@@ -106,7 +106,7 @@ struct SidebarSmartGroupTests {
         let none = group("Windows-free", VMLibraryFilter(states: [.suspended]))
         let layout = SidebarLayout.project(
             entries: entries, options: SidebarViewOptions(),
-            sections: [.smartGroup(everything), .smartGroup(none), .library], context: .testing())
+            organization: .listed([.smartGroup(everything), .smartGroup(none), .library]), context: .testing())
 
         #expect(names(in: layout.sections[0]) == ["A", "B"])
         #expect(names(in: layout.sections[1]).isEmpty)
@@ -124,7 +124,7 @@ struct SidebarSmartGroupTests {
         let layout = SidebarLayout.project(
             entries: entries,
             options: SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), grouping: .guestOS),
-            sections: [.smartGroup(everything), .library], context: .testing())
+            organization: .listed([.smartGroup(everything), .library]), context: .testing())
 
         #expect(names(in: layout.sections[0]) == ["Linux", "Mac"])
         guard case .groups = layout.sections[1].content else {
@@ -146,8 +146,8 @@ struct SidebarSmartGroupTests {
 
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Macs")
 
-        let saved = try #require(viewModel.library.smartGroups.first)
-        #expect(viewModel.library.smartGroups.count == 1)
+        let saved = try #require(viewModel.library.smartGroups?.first)
+        #expect(viewModel.library.smartGroups?.count == 1)
         #expect(saved.name == "Macs")
         #expect(saved.filter == filter)
         #expect(viewModel.sidebarOptions == SidebarViewOptions(sort: .name))
@@ -171,7 +171,7 @@ struct SidebarSmartGroupTests {
             try viewModel.library.saveSidebarFilterAsSmartGroup(named: "macs")
         }
         #expect(viewModel.sidebarOptions.filter == filter)
-        #expect(viewModel.library.smartGroups.count == 1)
+        #expect(viewModel.library.smartGroups?.count == 1)
     }
 
     @Test("The library menu offers saving only while a filter is on")
@@ -283,7 +283,7 @@ struct SidebarSmartGroupTests {
         window.endSheet(refusal, returnCode: .alertFirstButtonReturn)
 
         try await waitUntil { window.attachedSheet.flatMap(nameField(in:))?.stringValue == "macs" }
-        #expect(viewModel.library.smartGroups.count == 1)
+        #expect(viewModel.library.smartGroups?.count == 1)
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(guestOSes: [.macOS]))
         if let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .alertSecondButtonReturn) }
     }
@@ -306,9 +306,9 @@ struct SidebarSmartGroupTests {
         menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Save as Smart Group\u{2026}" }))
         window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)
 
-        try await waitUntil { viewModel.library.smartGroups.count == 1 }
-        let group = try #require(viewModel.library.smartGroups.first)
-        #expect(viewModel.library.organization.sections.map(\.id) == [.library, .smartGroup(group.id)])
+        try await waitUntil { viewModel.library.smartGroups?.count == 1 }
+        let group = try #require(viewModel.library.smartGroups?.first)
+        #expect(viewModel.library.organization.sections?.map(\.id) == [.library, .smartGroup(group.id)])
         // The sync the organization change queued, and any later one, keeps
         // the view where the new section put it.
         controller.viewDidAppear()
@@ -370,7 +370,7 @@ struct SidebarSmartGroupTests {
         let macOS = try #require(guestOS.items.firstIndex { $0.title == "macOS" })
         guestOS.performActionForItem(at: macOS)
 
-        #expect(viewModel.library.smartGroups.first?.filter == VMLibraryFilter(guestOSes: [.linux, .macOS]))
+        #expect(viewModel.library.smartGroups?.first?.filter == VMLibraryFilter(guestOSes: [.linux, .macOS]))
         // The library's own filter is untouched.
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
         try await waitUntil { outline.numberOfRows == 6 }
@@ -382,7 +382,7 @@ struct SidebarSmartGroupTests {
         // Edited back to empty, the group lists every VM.
         let all = try #require(controller.viewMenu(for: .smartGroup(saved.id))?.items[1].submenu)
         all.performActionForItem(at: 0)
-        #expect(viewModel.library.smartGroups.first?.filter == VMLibraryFilter())
+        #expect(viewModel.library.smartGroups?.first?.filter == VMLibraryFilter())
         #expect(names(in: viewModel.sidebarLayout.sections[1]) == ["Linux", "Mac"])
     }
 
@@ -392,7 +392,7 @@ struct SidebarSmartGroupTests {
         viewModel.library.admitFixture(name: "A")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Old")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
 
@@ -407,7 +407,7 @@ struct SidebarSmartGroupTests {
         let menu = try #require(controller.viewMenu(for: .smartGroup(id)))
         menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Delete Smart Group" }))
 
-        #expect(viewModel.library.smartGroups.isEmpty)
+        #expect(viewModel.library.smartGroups == [])
         try await waitUntil { outline.numberOfRows == 2 }
         #expect((outline.item(atRow: 0) as? SidebarSection)?.id == .library)
     }
@@ -431,9 +431,9 @@ struct SidebarSmartGroupTests {
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
-        #expect(viewModel.networks.networks.isEmpty)
+        #expect(viewModel.networks.state == .listed([]))
         #expect(
-            viewModel.library.smartGroups.map(\.filter) == [
+            viewModel.library.smartGroups?.map(\.filter) == [
                 VMLibraryFilter(networks: [onLab]), VMLibraryFilter(guestOSes: [.linux], networks: [onLab, .unlisted]),
             ])
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(networks: [onLab, shared]))
@@ -451,7 +451,7 @@ struct SidebarSmartGroupTests {
         let held = try #require(submenu.items.firstIndex { $0.title == "Network No Longer in This Library" })
         #expect(submenu.items[held].state == .on)
         submenu.performActionForItem(at: held)
-        #expect(viewModel.library.smartGroups.first?.filter == VMLibraryFilter())
+        #expect(viewModel.library.smartGroups?.first?.filter == VMLibraryFilter())
     }
 
     @Test("A network is deleted without touching the smart groups' file, readable or not")
@@ -467,7 +467,126 @@ struct SidebarSmartGroupTests {
 
         try viewModel.commands.deleteNetwork(lab.id.uuidString)
 
-        #expect(VMNetworkDirectory(fileURL: networksURL).networks.isEmpty)
+        #expect(VMNetworkDirectory(fileURL: networksURL).state == .listed([]))
+        #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
+    }
+
+    // MARK: - Unreadable smart groups
+
+    /// A view model whose smart groups' file holds bytes that aren't JSON.
+    private func viewModelWithUnreadableSmartGroups() throws -> (VMLibraryViewModel, URL) {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        try Data("not json".utf8).write(to: organizationURL)
+        return (makeViewModel(organization: VMOrganizationDirectory(fileURL: organizationURL)), organizationURL)
+    }
+
+    @Test("Smart groups that can't be read are one disabled row pointing to the config check")
+    func unreadableSmartGroupsRow() throws {
+        let (viewModel, _) = try viewModelWithUnreadableSmartGroups()
+        viewModel.library.admitFixture(name: "Linux")
+
+        let sections = viewModel.sidebarLayout.sections
+        #expect(sections.map(\.id) == [.unreadableOrganization, .library])
+        #expect(sections[0].title == "Smart Groups and Folders Can\u{2019}t Be Read")
+        #expect(sections[0].content.isEmpty)
+        #expect(sections[0].emptyText == nil)
+        #expect(sections[0].notice?.contains("File > Check Config Files\u{2026}") == true)
+
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let item = try #require(outline.item(atRow: 0) as? SidebarSection)
+        #expect(item.id == .unreadableOrganization)
+        #expect(item.children.isEmpty)
+        #expect(outline.isExpandable(item) == false)
+        #expect(controller.outlineView(outline, shouldSelectItem: item) == false)
+        #expect(controller.viewMenu(for: item.id) == nil)
+        let cell = try #require(outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
+        #expect(cell.toolTip == VMOrganizationDirectory.unreadableMessage)
+        #expect(cell.textField?.stringValue == "Smart Groups and Folders Can\u{2019}t Be Read")
+    }
+
+    @Test("A smart-group change is refused while the file can't be read, and writes nothing")
+    func unreadableSmartGroupsRefuseChanges() throws {
+        let (viewModel, organizationURL) = try viewModelWithUnreadableSmartGroups()
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
+
+        #expect(throws: VMOrganizationDirectory.ChangeError.unreadable) {
+            try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Macs")
+        }
+        #expect(throws: VMOrganizationDirectory.ChangeError.unreadable) {
+            try viewModel.library.moveSection(.smartGroup(UUID()), before: nil)
+        }
+        #expect(
+            VMOrganizationDirectory.ChangeError.unreadable.errorDescription
+                == VMOrganizationDirectory.unreadableMessage)
+        // The filter a refused save would have cleared stays on.
+        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(guestOSes: [.macOS]))
+        #expect(viewModel.library.organization.state.unreadable != nil)
+        #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
+    }
+
+    @Test("Tags that can't be read show as such in the Tags pane, a row's Tags item, the grouping and the filter")
+    func unreadableTagsShowAsUnreadable() throws {
+        let (viewModel, organizationURL) = try viewModelWithUnreadableSmartGroups()
+        let tagged = UUID()
+        let vm = viewModel.library.admitFixture(name: "Desk")
+        var checks = 0
+        viewModel.onShowConfigCheck = { checks += 1 }
+
+        #expect(viewModel.library.tags == nil)
+        #expect(viewModel.library.tags(of: vm).isEmpty)
+        #expect(throws: VMOrganizationDirectory.ChangeError.unreadable) {
+            try viewModel.library.createTag(named: "Work", color: .red)
+        }
+
+        // The pane shows the notice in place of the list, and offers no change.
+        let pane = TagsSettingsViewController(viewModel: viewModel)
+        pane.loadViewIfNeeded()
+        pane.viewWillAppear()
+        #expect(pane.isUnreadable)
+        #expect(pane.tags.isEmpty)
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
+        }
+        let addRemove = try #require(find(NSSegmentedControl.self, in: pane.view).first)
+        #expect(!addRemove.isEnabled(forSegment: 0))
+        let check = try #require(
+            find(NSButton.self, in: pane.view).first { $0.title == "Check Config Files\u{2026}" })
+        check.performClick(nil)
+        #expect(checks == 1)
+
+        // A row's Tags item points to the check, as Add to Folder does.
+        let controller = SidebarViewController(viewModel: viewModel)
+        _ = try shownOutline(of: controller)
+        let menu = controller.buildContextMenu(for: vm)
+        for title in ["Tags", "Add to Folder"] {
+            let item = try #require(menu.items.first { $0.title == title })
+            #expect(!item.isEnabled, "\(title)")
+            #expect(item.submenu == nil, "\(title)")
+            #expect(item.toolTip == VMOrganizationDirectory.unreadableMessage, "\(title)")
+        }
+
+        // Grouped by tag, every VM is under one group saying the tags can't be
+        // read — never "No Tags", which would claim it carries none.
+        viewModel.sidebarOptions = SidebarViewOptions(grouping: .tag)
+        let library = try #require(viewModel.sidebarLayout.sections.first { $0.id == .library })
+        guard case .groups(let groups) = library.content else {
+            Issue.record("The library section isn't grouped")
+            return
+        }
+        #expect(groups.groups.map(\.title) == [SidebarLayout.unreadableTagsGroupTitle])
+
+        // A tag the filter holds reads as unreadable, not as deleted, and its
+        // one choice clears every tag condition.
+        viewModel.sidebarOptions = SidebarViewOptions(filter: VMLibraryFilter(tags: [tagged]))
+        let tags = try #require(
+            controller.viewMenu(for: .library)?.items.first { $0.title == "Tags" }?.submenu)
+        let unread = try #require(tags.items.firstIndex { $0.title == SidebarViewMenu.heldUnreadableTagsTitle })
+        #expect(tags.items[unread].state == .on)
+        #expect(!tags.items.contains { $0.title == SidebarViewMenu.heldUndefinedTagTitle })
+        tags.performActionForItem(at: unread)
+        #expect(viewModel.sidebarOptions.filter.tags.isEmpty)
         #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))
     }
 
@@ -479,7 +598,7 @@ struct SidebarSmartGroupTests {
         let busy = viewModel.library.admitFixture(name: "Busy", phase: .running(sessionID: UUID()))
         viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.running])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Running")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         let inGroup = SidebarRowKey(section: .smartGroup(id), group: nil, entryID: busy.id)
         viewModel.selection = inGroup
         let controller = SidebarViewController(viewModel: viewModel)
@@ -506,7 +625,7 @@ struct SidebarSmartGroupTests {
         viewModel.library.admitFixture(name: "Linux")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Macs")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         let inGroup = SidebarRowKey(section: .smartGroup(id), group: nil, entryID: mac.id)
         viewModel.selection = inGroup
 
@@ -524,7 +643,7 @@ struct SidebarSmartGroupTests {
         let a = viewModel.library.admitFixture(name: "A")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         viewModel.selection = SidebarRowKey(section: .smartGroup(id), group: nil, entryID: a.id)
 
         try viewModel.library.deleteSmartGroup(id)
@@ -538,7 +657,7 @@ struct SidebarSmartGroupTests {
         let alpha = viewModel.library.admitFixture(name: "Alpha")
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         let inGroup = SidebarRowKey(section: .smartGroup(id), group: nil, entryID: alpha.id)
         viewModel.selection = inGroup
         let controller = SidebarViewController(viewModel: viewModel)
@@ -568,7 +687,7 @@ struct SidebarSmartGroupTests {
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
 
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         #expect(outline.numberOfRows == 3)
         #expect(!outline.isItemExpanded(outline.item(atRow: row(of: .library, in: outline))))
         #expect(outline.isItemExpanded(outline.item(atRow: row(of: .smartGroup(id), in: outline))))
@@ -678,7 +797,7 @@ struct SidebarSmartGroupTests {
         #expect(outline.performDragOperation(drag))
         outline.concludeDragOperation(drag)
 
-        #expect(viewModel.library.smartGroups.map(\.name) == ["C", "A", "B"])
+        #expect(viewModel.library.smartGroups?.map(\.name) == ["C", "A", "B"])
         // Appearing runs the sidebar's sync pass synchronously.
         controller.viewDidAppear()
         let sections = (0..<outline.numberOfRows).compactMap { outline.item(atRow: $0) as? SidebarSection }
@@ -697,15 +816,17 @@ struct SidebarSmartGroupTests {
         _ = tree.update(
             to: .project(
                 entries: entries, options: SidebarViewOptions(),
-                sections: groups.map(VMOrganizationDirectory.Section.smartGroup) + [.library], context: .testing()))
+                organization: .listed(groups.map(VMOrganizationDirectory.Section.smartGroup) + [.library]),
+                context: .testing()))
         let before = tree.sections
 
         let changes = tree.update(
             to: .project(
                 entries: entries, options: SidebarViewOptions(),
-                sections: [groups[2], groups[0], groups[1]].map(VMOrganizationDirectory.Section.smartGroup) + [
-                    .library
-                ],
+                organization: .listed(
+                    [groups[2], groups[0], groups[1]].map(VMOrganizationDirectory.Section.smartGroup) + [
+                        .library
+                    ]),
                 context: .testing()))
 
         let root = try #require(changes.children.first { $0.parent == nil })
@@ -723,7 +844,7 @@ struct SidebarSmartGroupTests {
         let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
         try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Macs")
-        let id = try #require(viewModel.library.smartGroups.first?.id)
+        let id = try #require(viewModel.library.smartGroups?.first?.id)
         let inGroup = SidebarRowKey(section: .smartGroup(id), group: nil, entryID: mac.id)
         viewModel.selection = inGroup
         let controller = SidebarViewController(viewModel: viewModel)

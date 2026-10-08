@@ -58,12 +58,17 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
         fatalError("SidebarGroupHeaderCellView does not support NSCoder")
     }
 
-    /// Shows `title`, and — for a section that filters — `filtering`, with
-    /// `onFilterButton` called with the button when it is clicked.
+    /// Shows `title` — disabled, with `notice` on hover, for a section that
+    /// lists nothing and says why — and, for a section that filters,
+    /// `filtering`, with `onFilterButton` called with the button when it is
+    /// clicked.
     func configure(
-        title: String, filtering: Filtering? = nil, onFilterButton: ((NSButton) -> Void)? = nil
+        title: String, notice: String? = nil, filtering: Filtering? = nil,
+        onFilterButton: ((NSButton) -> Void)? = nil
     ) {
         label.stringValue = title
+        label.textColor = notice == nil ? .secondaryLabelColor : .disabledControlTextColor
+        toolTip = notice
         countLabel.stringValue = filtering?.countText ?? ""
         countLabel.isHidden = filtering?.countText == nil
         filterButtonAction = onFilterButton

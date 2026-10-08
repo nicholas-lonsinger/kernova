@@ -98,9 +98,9 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.build = build
     }
 
-    // Custom `init(from:)` for the non-optional-with-a-default
-    // `requestedFreshDownload`, which synthesis would `decode` rather than
-    // `decodeIfPresent` (see `VMConfiguration.init(from:)`).
+    // Custom `init(from:)` for `requestedFreshDownload`, a fact about the
+    // install: a context with no value there states no fresh download was
+    // asked for, where synthesized `Codable` would fail the whole decode.
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.source = try c.decode(Source.self, forKey: .source)
@@ -108,8 +108,8 @@ struct MacOSInstallContext: Codable, Sendable, Equatable {
             String.self, forKey: .downloadDestinationPath)
         self.localIPSWPath = try c.decodeIfPresent(String.self, forKey: .localIPSWPath)
         self.localIPSWBookmark = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmark)
-        self.requestedFreshDownload =
-            try c.decodeIfPresent(Bool.self, forKey: .requestedFreshDownload) ?? false
+        self.requestedFreshDownload = try c.decode(
+            Bool.self, forKey: .requestedFreshDownload, absentMeans: false, in: decoder)
         self.remoteURL = try c.decodeIfPresent(URL.self, forKey: .remoteURL)
         self.version = try c.decodeIfPresent(String.self, forKey: .version)
         self.build = try c.decodeIfPresent(String.self, forKey: .build)

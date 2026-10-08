@@ -137,23 +137,33 @@ final class VMBundle {
         (try? files.isRunLockedElsewhere()) ?? false
     }
 
-    /// Reads all four state files in one coordinated read and publishes what
-    /// they hold — for a bundle another copy of Kernova may have written
-    /// while this copy held no run lock.
+    /// Reads the state files in one coordinated read and publishes what they
+    /// hold — for a bundle another copy of Kernova may have written while
+    /// this copy held no run lock.
     ///
-    /// Throws, publishing nothing, when ``VMBundleFiles/read()`` does.
-    func refresh() throws {
+    /// Answers the files the read left in place
+    /// (``VMBundleRead/unreadableFiles``), and throws, publishing nothing,
+    /// when ``VMBundleFiles/read()`` does.
+    @discardableResult
+    func refresh() throws(UnreadableConfigFile) -> [UnreadableConfigFile] {
         let read = try files.read()
-        if let unreadable = read.pairingsUnreadable {
+        for unreadable in read.unreadableFiles {
             #log(
                 Self.logger, .warning,
-                "Re-read '\(read.configuration.name, privacy: .public)' with no pairings: \(unreadable.localizedDescription, privacy: .public)"
+                "Re-read '\(read.configuration.name, privacy: .public)' leaving \(unreadable.fileName, privacy: .public) in place: \(unreadable.summary, privacy: .public)"
             )
         }
         publish(read.configuration, to: \.configuration)
         publish(read.hostState, to: \.hostState)
         publish(read.snapshotManifest, to: \.snapshotManifest)
         publish(read.usbPairings, to: \.usbPairings)
+        return read.unreadableFiles
+    }
+
+    /// Every file of the bundle a read refuses, read fresh and publishing
+    /// nothing (``VMBundleFiles/unreadableFiles()``).
+    func unreadableFiles() -> [UnreadableConfigFile] {
+        files.unreadableFiles()
     }
 
     /// Sets a committed value only when it moved, so a no-op write wakes no

@@ -10,6 +10,10 @@ struct SidebarSectionID: RawRepresentable, Hashable, Sendable, Codable {
 
     /// The section listing every library entry.
     static let library = SidebarSectionID(rawValue: "virtualMachines")
+
+    /// The section listed where the smart groups and folders go while they
+    /// can't be read.
+    static let unreadableOrganization = SidebarSectionID(rawValue: "unreadableOrganization")
 }
 
 /// A group header's identity within its section.

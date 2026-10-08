@@ -12,8 +12,9 @@ import KernovaLogging
 /// Kernova closed — keeps its identifier there, and a VM coming back under
 /// it is listed in those folders again, whichever way it returns.
 extension VMLibrary {
-    /// Every folder, in the order the sidebar lists them.
-    var folders: [VMFolder] { organization.folders }
+    /// Every folder, in the order the sidebar lists them; `nil` while the
+    /// file holding them can't be read.
+    var folders: [VMFolder]? { organization.folders }
 
     /// Lists a new folder named `name` holding `members`.
     @discardableResult

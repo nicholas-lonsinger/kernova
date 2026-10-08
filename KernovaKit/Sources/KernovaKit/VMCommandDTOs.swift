@@ -33,6 +33,62 @@ public struct VMSummary: Codable, Sendable, Hashable {
     }
 }
 
+/// The named network a VM's membership names, as the library lists it.
+public enum VMNetworkName: Codable, Sendable, Hashable {
+    /// The library lists it under this name.
+    case named(String)
+    /// The library lists no network with this identifier — one imported from
+    /// another Mac, or put back by a snapshot taken before it was deleted.
+    case unlisted(UUID)
+    /// The library's list of networks can't be read, so nothing names it.
+    case unreadable
+
+    /// What a surface showing the network's name shows: the name,
+    /// ``NetworkModeChoice/unreadableNetworkListTitle`` while the list can't
+    /// be read, and `nil` for a network the library does not list.
+    public var title: String? {
+        switch self {
+        case .named(let name): name
+        case .unlisted: nil
+        case .unreadable: NetworkModeChoice.unreadableNetworkListTitle
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, name, id
+    }
+
+    private enum State: String, Codable {
+        case named, unlisted, unreadable
+    }
+
+    /// Reads the shape ``encode(to:)`` writes.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(State.self, forKey: .state) {
+        case .named: self = .named(try container.decode(String.self, forKey: .name))
+        case .unlisted: self = .unlisted(try container.decode(UUID.self, forKey: .id))
+        case .unreadable: self = .unreadable
+        }
+    }
+
+    /// Writes the case as `state`, beside the `name` a named network carries
+    /// or the `id` an unlisted one does — the object `--format json` prints.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .named(let name):
+            try container.encode(State.named, forKey: .state)
+            try container.encode(name, forKey: .name)
+        case .unlisted(let id):
+            try container.encode(State.unlisted, forKey: .state)
+            try container.encode(id, forKey: .id)
+        case .unreadable:
+            try container.encode(State.unreadable, forKey: .state)
+        }
+    }
+}
+
 /// Everything an `info` read answers about one VM.
 public struct VMInfo: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
@@ -57,9 +113,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// named network's identifier, as `network.membership` reads it — `nil`
     /// where it joins no app-managed network (networking off, or bridged).
     public let networkMembership: String?
-    /// The name of the named network the VM joins, `nil` where it joins none
-    /// or one the library does not list.
-    public let networkName: String?
+    /// The named network the VM's membership names, `nil` where it names
+    /// none.
+    public let networkName: VMNetworkName?
     /// The address the guest presents on that network.
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
@@ -97,7 +153,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         diskSizeInGB: Int,
         networkMode: String?,
         networkMembership: String?,
-        networkName: String?,
+        networkName: VMNetworkName?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
         agentStatus: String,

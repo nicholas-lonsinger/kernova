@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// Machines", in the order the user arranges them.
 ///
 /// The outline view's items are the nodes of a ``SidebarTree`` built from
-/// ``SidebarLayout/project(entries:options:retaining:sections:context:)``,
+/// ``SidebarLayout/project(entries:options:search:retaining:organization:context:)``,
 /// updated by inserts and removes; per-row live updates are owned by each
 /// ``SidebarVMRowCellView``. Selection is a two-way binding to
 /// `viewModel.selection`, idempotent in both directions.
@@ -534,18 +534,22 @@ final class SidebarViewController: NSViewController {
 
     private func contentWidth(of entry: LibraryEntry) -> CGFloat {
         let detail = rowDetail { entry }()
-        guard case .vm(let instance) = entry else {
+        switch entry {
+        case .vm(let instance):
+            return SidebarVMRowCellView.contentWidth(
+                forName: instance.name, detail: detail,
+                showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
+                    for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
+                showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
+                tagCount: viewModel.library.tags(of: instance).count
+            )
+        case .arriving:
             return SidebarVMRowCellView.contentWidth(
                 forName: entry.name, detail: detail, showsAgentAccessory: false,
                 showsEphemeralAccessory: false)
+        case .unreadable(let bundle):
+            return SidebarUnreadableRowCellView.contentWidth(forName: bundle.name)
         }
-        return SidebarVMRowCellView.contentWidth(
-            forName: instance.name, detail: detail,
-            showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
-                for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
-            showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
-            tagCount: viewModel.library.tags(of: instance).count
-        )
     }
 
     /// Trailing slack added to the snap-to-fit width so the longest name isn't
@@ -582,6 +586,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
         case let row as SidebarRow:
             switch row.entry {
             case .arriving(let arrival): arrivalCell(arrival)
+            case .unreadable(let bundle): unreadableCell(bundle)
             case .vm(let instance): vmCell(instance, isRenaming: editingRow === row)
             }
         default: nil
@@ -649,6 +654,15 @@ extension SidebarViewController: NSOutlineViewDelegate {
             let options = self.viewModel.sidebarOptions
             return options.showsDetails ? options.sort.detail(for: entry, at: self.clock.now) : nil
         }
+    }
+
+    private func unreadableCell(_ bundle: UnreadableVM) -> NSView {
+        let cell =
+            outlineView.makeView(
+                withIdentifier: SidebarUnreadableRowCellView.reuseIdentifier, owner: nil)
+            as? SidebarUnreadableRowCellView ?? SidebarUnreadableRowCellView()
+        cell.configure(bundle: bundle)
+        return cell
     }
 
     private func vmCell(_ instance: VMInstance, isRenaming: Bool) -> NSView {
@@ -762,8 +776,27 @@ extension SidebarViewController {
 
         return switch node.entry {
         case .arriving(let arrival): buildContextMenu(for: arrival)
+        case .unreadable(let bundle): buildContextMenu(for: bundle)
         case .vm(let instance): buildContextMenu(for: instance, in: node.key.section)
         }
+    }
+
+    /// A bundle Kernova can't read offers the config check, its place in the
+    /// Finder, and the Trash.
+    func buildContextMenu(for bundle: UnreadableVM) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func item(_ title: String, _ action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = bundle
+            return item
+        }
+        menu.addItem(item("Check Config Files\u{2026}", #selector(menuCheckConfigFiles(_:))))
+        menu.addItem(item("Show in Finder", #selector(menuShowUnreadableInFinder(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item("Move to Trash\u{2026}", #selector(menuMoveUnreadableToTrash(_:))))
+        return menu
     }
 
     /// An arrival offers only the cancel of its create, clone or import.
@@ -1072,6 +1105,33 @@ extension SidebarViewController {
     @objc private func menuCancelPreparing(_ sender: NSMenuItem) {
         guard let arrival = sender.representedObject as? VMArrival else { return }
         viewModel.requestCancelPreparing(arrival)
+    }
+
+    @objc private func menuCheckConfigFiles(_ sender: NSMenuItem) {
+        viewModel.showConfigCheck()
+    }
+
+    @objc private func menuShowUnreadableInFinder(_ sender: NSMenuItem) {
+        guard let bundle = sender.representedObject as? UnreadableVM else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([bundle.bundleURL])
+    }
+
+    /// Asks before the whole bundle goes to the Trash.
+    @objc private func menuMoveUnreadableToTrash(_ sender: NSMenuItem) {
+        guard let bundle = sender.representedObject as? UnreadableVM, let window = view.window
+        else { return }
+        presentSheetAlert(
+            AlertConfiguration(
+                title: "Move \u{201C}\(bundle.name)\u{201D} to the Trash?",
+                message: "The virtual machine\u{2019}s bundle moves to the Trash with everything in it.",
+                buttons: [
+                    AlertButton("Move to Trash", role: .destructive) { [weak self] in
+                        guard let self else { return }
+                        Task { await self.viewModel.moveToTrash(bundle) }
+                    },
+                    AlertButton("Cancel", role: .cancel),
+                ]),
+            in: window)
     }
 }
 

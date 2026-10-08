@@ -58,8 +58,7 @@ extension VMCommandCore {
 
     func groups() throws -> [GroupSummary] {
         library.refreshFromOtherCopies()
-        try readOrganization(verb: .groups)
-        let organization = library.organization
+        let organization = try readOrganization(verb: .groups)
         let named: [(id: UUID, name: String, kind: VMGroupKind)] =
             organization.smartGroups.map { ($0.id, $0.name, .smartGroup) }
             + organization.folders.map { ($0.id, $0.name, .folder) }
@@ -76,8 +75,9 @@ extension VMCommandCore {
 
     /// The entries `selection` admits, in its order: each one its filter
     /// admits and in every group it names, under the manual sort in the
-    /// order of the folder it names, else the library's.
-    func entries(in selection: VMLibrarySelection) -> [LibraryEntry] {
+    /// order of the folder it names, else the library's. A bundle Kernova
+    /// can't read is never one of them.
+    func entries(in selection: VMLibrarySelection) -> [AddressableEntry] {
         let context = library.sidebarContext
         let candidates: [LibraryEntry]
         if let order = selection.manualOrder {
@@ -87,21 +87,21 @@ extension VMCommandCore {
             candidates = library.entries
         }
         let admitted = candidates.filter { entry in
-            let subject = context.subject(of: entry)
+            guard let subject = context.subject(of: entry) else { return false }
             return selection.filter.admits(subject) && selection.groups.allSatisfy { $0.contains(entry, subject) }
         }
-        return selection.sort.ordered(admitted)
+        return selection.sort.ordered(admitted).compactMap(\.addressable)
     }
 
     func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection {
         var filter = query.filter
         if !query.networks.isEmpty { library.networks.reload() }
         for text in query.networks {
-            filter.networks.insert(try network(spelledBy: text))
+            filter.networks.insert(try network(spelledBy: text, verb: verb))
         }
-        if !query.tags.isEmpty { try readOrganization(verb: verb) }
+        let organization = query.tags.isEmpty ? nil : try readOrganization(verb: verb)
         for text in query.tags {
-            guard let tag = library.organization.tag(named: text) else {
+            guard let tag = organization?.tag(named: text) else {
                 throw CommandError.itemNotFoundOnHost(item: "tag named \u{201C}\(text)\u{201D}")
             }
             filter.tags.insert(tag.id)
@@ -113,8 +113,10 @@ extension VMCommandCore {
 
     /// The network `text` names as a listing reads it: a mode
     /// (``VMLibraryFilter/Network/init(spelling:)``), or a named network by
-    /// name or identifier — either ignoring case.
-    private func network(spelledBy text: String) throws -> VMLibraryFilter.Network {
+    /// name or identifier — either ignoring case. A name no mode spells is
+    /// refused as unreadable, not as unknown, while the library's list of
+    /// networks can't be read.
+    private func network(spelledBy text: String, verb: VMVerb) throws -> VMLibraryFilter.Network {
         let mode = VMLibraryFilter.Network(spelling: text)
         let named = library.networks.network(named: text)
         switch (mode, named) {
@@ -127,14 +129,16 @@ extension VMCommandCore {
                 "\u{201C}\(text)\u{201D} names both a network mode and the network \u{201C}\(named.name)\u{201D}. "
                     + "Name that network by its identifier, \(named.id.uuidString).")
         case (nil, nil):
+            if library.networks.state.unreadable != nil {
+                throw CommandError.operationFailed(verb: verb, message: VMNetworkDirectory.unreadableMessage)
+            }
             throw CommandError.itemNotFoundOnHost(item: "network named \u{201C}\(text)\u{201D}")
         }
     }
 
     /// The group `reference` names, as the library holds it now.
     func group(_ reference: VMGroupReference, verb: VMVerb) throws -> VMResolvedGroup {
-        try readOrganization(verb: verb)
-        let organization = library.organization
+        let organization = try readOrganization(verb: verb)
         let notFound = CommandError.itemNotFoundOnHost(
             item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
         switch reference.kind {
@@ -158,14 +162,15 @@ extension VMCommandCore {
         try group(reference, verb: verb).membership
     }
 
-    /// Reads the library's smart groups, folders and tags as their file holds
-    /// them now, refusing when the file cannot be read rather than answering
-    /// none.
-    private func readOrganization(verb: VMVerb) throws {
+    /// The library's smart groups, folders and tags as their file holds them
+    /// now, refusing when the file cannot be read rather than answering none.
+    private func readOrganization(verb: VMVerb) throws -> VMOrganizationDirectory.File {
         library.organization.reload()
-        if let reason = library.organization.readFailure {
-            throw CommandError.operationFailed(
-                verb: verb, message: "Kernova couldn\u{2019}t read its smart groups, folders and tags: \(reason)")
+        switch library.organization.state {
+        case .listed(let organization):
+            return organization
+        case .unreadable:
+            throw CommandError.operationFailed(verb: verb, message: VMOrganizationDirectory.unreadableMessage)
         }
     }
 }

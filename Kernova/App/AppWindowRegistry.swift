@@ -5,7 +5,7 @@ import KernovaLogging
 /// on screen.
 ///
 /// Every window a person can see belongs here — the library, Settings, the
-/// per-VM clipboard windows, and the display windows
+/// config check, the per-VM clipboard windows, and the display windows
 /// ``VMDisplayPlacementController`` places — so the presence question has a
 /// single answer rather than one per owner.
 @MainActor
@@ -108,6 +108,23 @@ final class AppWindowRegistry {
         controller.window?.makeKeyAndOrderFront(sender)
     }
 
+    // MARK: - Config check
+
+    private var configCheckWindowController: ConfigCheckWindowController?
+
+    var configCheckWindow: NSWindow? { configCheckWindowController?.window }
+
+    /// Shows the Check Config Files window, checking every config file again.
+    func showConfigCheck() {
+        residency?.prepareToPresentWindow()
+        let controller =
+            configCheckWindowController
+            ?? ConfigCheckWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
+        configCheckWindowController = controller
+        NSApp.activate()
+        controller.showAndCheck()
+    }
+
     // MARK: - Clipboard
 
     /// Shows or focuses the clipboard window for `instance`, when the VM's state
@@ -152,6 +169,7 @@ final class AppWindowRegistry {
         if displayPlacement.hasWindow(where: { onScreen($0) }) { return true }
         if clipboardWindows.values.contains(where: { onScreen($0.window) }) { return true }
         if onScreen(settingsWindow) { return true }
+        if onScreen(configCheckWindow) { return true }
         return false
     }
 
@@ -201,6 +219,7 @@ final class AppWindowRegistry {
         displayPlacement.closeAllForAppDismissal()
         for controller in Array(clipboardWindows.values) { controller.window?.close() }
         settingsWindow?.close()
+        configCheckWindow?.close()
         mainWindowController?.window?.close()
     }
 }

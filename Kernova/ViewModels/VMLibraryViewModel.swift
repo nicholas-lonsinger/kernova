@@ -461,6 +461,10 @@ final class VMLibraryViewModel {
         didSet {
             guard presenter != nil else { return }
             drainBufferedPresentations()
+            if owesConfigCheck {
+                owesConfigCheck = false
+                showConfigCheck()
+            }
             if let id = bufferedDisplayFocus {
                 bufferedDisplayFocus = nil
                 if let instance = instances.first(where: { $0.id == id }) {
@@ -550,6 +554,50 @@ final class VMLibraryViewModel {
     /// Asks for a VM's bundle to be selected in the Finder, for the verb that
     /// puts it there. The app delegate answers it with the Workspace call.
     @ObservationIgnored var onRevealInFinder: ((VMInstance) -> Void)?
+
+    /// Asks for the config check window, which reads every config file afresh
+    /// as it comes up.
+    @ObservationIgnored var onShowConfigCheck: (() -> Void)?
+
+    /// Whether a read found a config file it can't read while no presenter
+    /// was attached: the check comes up when one is, with the library window,
+    /// as the alerts the read raises do.
+    @ObservationIgnored private var owesConfigCheck = false
+
+    /// Puts the config check in front of the user — File > Check Config
+    /// Files…, and every surface that offers the same.
+    func showConfigCheck() {
+        onShowConfigCheck?()
+    }
+
+    func checkConfigFiles() async throws -> [UnreadableConfigFile] {
+        try await library.checkConfigFiles()
+    }
+
+    func useDefaults(in files: [UnreadableConfigFile]) async -> [VMLibrary.ConfigFileRepairFailure] {
+        await library.useDefaults(in: files)
+    }
+
+    /// The folder the library's config files sit under — the VMs folder and
+    /// `Networks.json` both — which the check writes their paths relative to;
+    /// `nil` when it cannot be resolved.
+    var libraryDirectory: URL? {
+        try? storageService.vmsDirectory.deletingLastPathComponent()
+    }
+
+    /// Moves the bundle `bundle` was read from to the Trash, whole, telling
+    /// the user when the Trash turns it down.
+    func moveToTrash(_ bundle: UnreadableVM) async {
+        do {
+            try await library.moveToTrash(bundle)
+        } catch {
+            #log(
+                Self.logger, .error,
+                "Couldn't move \(bundle.bundleURL.lastPathComponent, privacy: .public) to the Trash: \(error.localizedDescription, privacy: .public)"
+            )
+            surfaceError(error.localizedDescription, title: "Couldn\u{2019}t Move to Trash")
+        }
+    }
 
     /// Measures the window or screen a starting VM's display will occupy, for
     /// `displaySizesToWindow`.
@@ -643,6 +691,14 @@ final class VMLibraryViewModel {
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
+        }
+        library.onUnreadableFilesFound = { [weak self] in
+            guard let self else { return }
+            guard self.presenter != nil else {
+                self.owesConfigCheck = true
+                return
+            }
+            self.showConfigCheck()
         }
         sleepWake.onFailure = { [weak self] error in
             self?.surfaceError(error.localizedDescription)

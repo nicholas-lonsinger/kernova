@@ -579,7 +579,7 @@ struct VMSettingsGeneralPanelTests {
                 #expect(
                     toggle.isEnabled
                         == (ephemeral
-                            ? key.accepts("false", for: instance, entitlements: .entitled, networks: [])
+                            ? key.accepts("false", for: instance, entitlements: .entitled, networks: .listed([]))
                             : viewModel.capabilities.isEphemeralModeEnableAvailable(on: instance)),
                     "\(label)")
                 #expect(

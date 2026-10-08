@@ -22,6 +22,8 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// The networks the table shows, as the facade reports them.
     private(set) var networks: [NetworkSummary] = []
+    /// Whether the last read found the list unreadable.
+    var isUnreadable: Bool { editor.isUnreadable }
 
     private lazy var editor = SettingsNamedListEditor(
         noun: "Network",
@@ -49,7 +51,7 @@ final class NetworksSettingsViewController: NSViewController {
     /// order the New Network sheet lists them — empty in a build that can
     /// attach none, which offers no Networks pane.
     static func creatableKinds(_ entitlements: EntitlementService) -> [VmnetNetworkKind] {
-        [VmnetNetworkKind.shared, .hostOnly].filter {
+        VMNamedNetwork.kindsInCreationOrder.filter {
             entitlements.canAttach(.vmnet(VmnetNetworkID(kind: $0, scope: .named(UUID()))))
         }
     }
@@ -175,9 +177,19 @@ final class NetworksSettingsViewController: NSViewController {
 // MARK: - SettingsNamedListSource
 
 extension NetworksSettingsViewController: SettingsNamedListSource {
-    func listedIDs() -> [UUID] {
-        networks = viewModel.commands.networks()
+    func listedIDs() -> [UUID]? {
+        guard let listed = try? viewModel.commands.networks() else {
+            networks = []
+            return nil
+        }
+        networks = listed
         return networks.map(\.id)
+    }
+
+    var unreadableText: String { "Kernova can\u{2019}t read its list of networks." }
+
+    func showConfigCheck() {
+        viewModel.showConfigCheck()
     }
 
     private func network(_ id: UUID) -> NetworkSummary? {
@@ -198,7 +210,7 @@ extension NetworksSettingsViewController: SettingsNamedListSource {
     }
 
     func readListedValues() {
-        _ = viewModel.commands.networks()
+        _ = try? viewModel.commands.networks()
     }
 
     var canCreate: Bool {

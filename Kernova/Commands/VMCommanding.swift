@@ -522,8 +522,9 @@ protocol VMCommanding: AnyObject {
     /// The library's named networks, ordered by name, each with the VMs on it.
     ///
     /// Addresses no VM: a network is the library's, and a VM joins one through
-    /// its `network.membership` key.
-    func networks() -> [NetworkSummary]
+    /// its `network.membership` key. Refuses while the library's list of
+    /// networks cannot be read, rather than answering none.
+    func networks() throws -> [NetworkSummary]
 
     /// Lists a new network named `name`, whose VMs run in `kind`. Refuses a
     /// name another network has, ignoring case, and one a membership value

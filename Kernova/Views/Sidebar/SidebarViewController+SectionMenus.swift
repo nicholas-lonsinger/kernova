@@ -85,7 +85,7 @@ extension SidebarViewController {
         let filtering = filtering(for: section)
         let id = section.id
         cell.configure(
-            title: section.title, filtering: filtering,
+            title: section.title, notice: section.notice, filtering: filtering,
             onFilterButton: filtering == nil
                 ? nil : { [weak self] button in self?.popUpViewMenu(for: id, from: button) })
     }

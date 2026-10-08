@@ -693,25 +693,34 @@ final class VMActivity {
     ///
     /// A VM holding the lock has nothing to catch up with — no other copy can
     /// have written its bundle — and one that is not at rest holds it.
-    func refreshFromBundle() {
-        guard phase.isAtRest, !hold.isThisCopy, let owner else { return }
+    ///
+    /// Answers the files the re-read could not read, `nil` when it read
+    /// nothing.
+    @discardableResult
+    func refreshFromBundle() -> [UnreadableConfigFile]? {
+        guard phase.isAtRest, !hold.isThisCopy, let owner else { return nil }
         let bundle = owner.bundle
         recordOtherCopyHold(heldElsewhere: bundle.isRunLockedElsewhere())
-        do {
-            try bundle.refresh()
+        let unreadable: [UnreadableConfigFile]
+        do throws(UnreadableConfigFile) {
+            unreadable = try bundle.refresh()
         } catch {
             #log(
                 Self.logger, .warning,
                 "Could not re-read the bundle of '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
+            // The refusal names the first file alone; the report names each.
+            unreadable = bundle.unreadableFiles()
         }
         let before = phase
         reconcileRest()
-        guard phase != before else { return }
-        #log(
-            Self.logger, .notice,
-            "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
-        )
+        if phase != before {
+            #log(
+                Self.logger, .notice,
+                "Re-read '\(self.name, privacy: .public)' from its bundle: it now rests \(String(describing: self.phase), privacy: .public)"
+            )
+        }
+        return unreadable
     }
 
     /// The one write of ``hold``, noticed by observers of

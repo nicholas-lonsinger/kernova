@@ -202,7 +202,7 @@ struct VMScriptingGatewayTests {
         commands.infoByID[summary.id] = VMInfo(
             id: summary.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 6,
             memoryBytes: 8 << 30, diskSizeInGB: 128, networkMode: "shared", networkMembership: "common",
-            networkName: "Lab",
+            networkName: .named("Lab"),
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.3"),
             agentStatus: "connected", hasSavedState: true, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
             guestAgent: nil, stateBucket: .stopped,
@@ -226,6 +226,26 @@ struct VMScriptingGatewayTests {
         #expect(vm.ephemeral)
         #expect(vm.snapshotCount == 2)
         #expect(vm.bundlePath == "/VMs/Alpha.kernova")
+    }
+
+    @Test("A VM's network name reads as unreadable while the list can't be read, and missing while unlisted")
+    func networkNameReadsEachCase() throws {
+        let commands = MockVMCommanding()
+        let summary = makeSummary(name: "Alpha", status: "stopped")
+        commands.library = [summary]
+        func networkName(_ name: VMNetworkName) throws -> String? {
+            commands.infoByID[summary.id] = VMInfo(
+                id: summary.id, name: "Alpha", status: "stopped", guestOS: "macOS", cpuCount: 2,
+                memoryBytes: 4 << 30, diskSizeInGB: 64, networkMode: "shared",
+                networkMembership: UUID().uuidString, networkName: name, macAddress: nil, ipAddress: .notObserved,
+                agentStatus: "connected", hasSavedState: false, isEphemeral: false, snapshotCount: 0,
+                hasSnapshots: false, guestAgent: nil, stateBucket: .stopped, bundlePath: "/VMs/Alpha.kernova",
+                heldByAnotherCopy: false)
+            return try #require(makeGateway(commands).virtualMachines().first).networkName
+        }
+
+        #expect(try networkName(.unreadable) == "Network List Can\u{2019}t Be Read")
+        #expect(try networkName(.unlisted(UUID())) == nil)
     }
 
     @Test("A VM with nothing to report on a field answers with missing value")

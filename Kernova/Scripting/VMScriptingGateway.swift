@@ -318,7 +318,8 @@ final class VMScriptingGateway {
     nonisolated static let cannotMakeVirtualMachine = "A script can\u{2019}t make a virtual machine."
 
     /// Every named network, ordered by name — or nothing, with the command
-    /// asking deferred, until the library has landed.
+    /// asking deferred, until the library has landed, and with the command
+    /// refused while the library's list of networks cannot be read.
     ///
     /// The deferral is what holds a `delete` or a `set` back too: each
     /// evaluates its network specifier through here before it acts, and a
@@ -326,7 +327,7 @@ final class VMScriptingGateway {
     /// the network.
     func networks() -> [VMNetworkScriptObject] {
         guard !deferUntilLanded() else { return [] }
-        return commands.networks().map(object(for:))
+        return run(.networks, on: nil) { try commands.networks() }?.map(object(for:)) ?? []
     }
 
     /// One network's read, with the VMs on it.
@@ -388,8 +389,9 @@ final class VMScriptingGateway {
                 "Kernova orders networks by name, so a script can\u{2019}t move one.")
             return
         }
-        guard command.scriptErrorNumber == 0 else { return }
-        let listed = commands.networks()
+        guard command.scriptErrorNumber == 0,
+            let listed = run(.deleteNetwork, on: nil, { try commands.networks() })
+        else { return }
         // Cocoa evaluated the index against this same list on this turn.
         guard listed.indices.contains(index) else {
             #log(

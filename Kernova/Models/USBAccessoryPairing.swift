@@ -67,8 +67,8 @@ struct USBAccessoryPairingSet: Codable, Sendable, Equatable {
     // decode, the way a `decode` of a non-optional field would.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.pairings =
-            try container.decodeIfPresent([USBAccessoryPairing].self, forKey: .pairings) ?? []
+        self.pairings = try container.decode(
+            [USBAccessoryPairing].self, forKey: .pairings, default: [], in: decoder)
     }
 
     var isEmpty: Bool { pairings.isEmpty }

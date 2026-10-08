@@ -69,6 +69,9 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     nonisolated static let folderAccessibilityLabel = "Folder Options"
     /// How a filter names a tag it holds that the library no longer defines.
     nonisolated static let heldUndefinedTagTitle = "Tag No Longer in This Library"
+    /// How a filter names the tags it holds while the file defining the
+    /// library's tags can't be read.
+    nonisolated static let heldUnreadableTagsTitle = "Tags Can\u{2019}t Be Read"
 
     /// The orders Sort By lists above its separator; Manual is below it.
     nonisolated static let sortChoices = VMLibrarySort.allCases.filter { $0 != .manual }
@@ -97,12 +100,13 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     private let perform: (Command) -> Void
     /// What a network the filter names reads as once no VM is on it.
     private let networkTitle: (VMLibraryFilter.Network) -> String
-    /// The library's tags, in their order.
-    private let tags: () -> [VMTag]
+    /// The library's tags, in their order; `nil` while the file defining
+    /// them can't be read.
+    private let tags: () -> [VMTag]?
 
     init(
         networkTitle: @escaping (VMLibraryFilter.Network) -> String,
-        tags: @escaping () -> [VMTag],
+        tags: @escaping () -> [VMTag]?,
         perform: @escaping (Command) -> Void
     ) {
         self.networkTitle = networkTitle
@@ -115,20 +119,23 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     convenience init(viewModel: VMLibraryViewModel, perform: @escaping (Command) -> Void) {
         self.init(
             networkTitle: { [weak viewModel] network in
-                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.networks ?? [])
+                SidebarLayout.heldNetworkTitle(network, networks: viewModel?.networks.state ?? .listed([]))
             },
-            tags: { [weak viewModel] in viewModel?.library.tags ?? [] },
+            tags: { [weak viewModel] in viewModel.flatMap(\.library.tags) },
             perform: perform)
     }
 
-    /// `viewModel`'s library as the menus count it.
+    /// `viewModel`'s library as the menus count it: a bundle Kernova can't
+    /// read holds none of the values they count.
     static func values(of viewModel: VMLibraryViewModel) -> [Value] {
         let context = viewModel.sidebarContext
-        return viewModel.entries.map { entry in
-            let subject = context.subject(of: entry)
+        return viewModel.entries.compactMap { entry in
+            guard let subject = context.subject(of: entry), let configuration = entry.configuration else {
+                return nil
+            }
             return Value(
                 subject: subject,
-                networkTitle: SidebarLayout.networkTitle(subject.network, of: entry.configuration, context: context))
+                networkTitle: SidebarLayout.networkTitle(subject.network, of: configuration, context: context))
         }
     }
 
@@ -212,7 +219,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         choiceMenu(
             "Group By", current: options.grouping,
             // Tag only while the library has tags, as the Tags filter row.
-            cases: [.guestOS, .state, .network] + (tags().isEmpty ? [] : [.tag]), trailing: .none,
+            cases: [.guestOS, .state, .network] + ((tags() ?? []).isEmpty ? [] : [.tag]), trailing: .none,
             title: \.title
         ) { .editOptions(.grouping($0)) }
     }
@@ -294,9 +301,15 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
 
     /// A VM row's Add to Folder item for the entry `entry`: a submenu listing
     /// each of `folders`, checked where it holds the entry and each pick
-    /// toggling that, then New Folder….
-    func addToFolderItem(entry: UUID, folders: [VMFolder]) -> NSMenuItem {
+    /// toggling that, then New Folder…; disabled, pointing to the config
+    /// check, while the folders can't be read (`nil`).
+    func addToFolderItem(entry: UUID, folders: [VMFolder]?) -> NSMenuItem {
         let item = NSMenuItem(title: "Add to Folder", action: nil, keyEquivalent: "")
+        guard let folders else {
+            item.isEnabled = false
+            item.toolTip = VMOrganizationDirectory.unreadableMessage
+            return item
+        }
         let submenu = NSMenu(title: "Add to Folder")
         submenu.autoenablesItems = false
         for folder in folders {
@@ -322,12 +335,17 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
     /// A VM row's Tags item for the VM `entry`, which carries the tags
     /// `assigned` identifies: a submenu listing each of the library's tags
     /// with its color, checked where the VM carries it and each pick toggling
-    /// that — offered only while `isEnabled` — then Edit Tags….
+    /// that — offered only while `isEnabled` — then Edit Tags…; disabled,
+    /// pointing to the config check, while the tags can't be read.
     func tagsItem(entry: UUID, assigned: Set<UUID>, isEnabled: Bool) -> NSMenuItem {
         let item = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
+        guard let tags = tags() else {
+            item.isEnabled = false
+            item.toolTip = VMOrganizationDirectory.unreadableMessage
+            return item
+        }
         let submenu = NSMenu(title: "Tags")
         submenu.autoenablesItems = false
-        let tags = tags()
         for tag in tags {
             let isAssigned = assigned.contains(tag.id)
             let tagItem = self.tagItem(
@@ -526,11 +544,19 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     picked: with { $0.networks = toggled($0.networks, choice.network) })
             })
         // Any picked tag admits a VM, so picks widen the set.
-        let defined = tags()
+        let defined = tags() ?? []
         // A tag the filter names but the library no longer defines stays
         // listed, checked, so its condition — which no VM passes — shows and
-        // can be turned off.
-        let deleted = filter.tags.subtracting(defined.map(\.id)).sorted { $0.uuidString < $1.uuidString }
+        // can be turned off; while the tags can't be read, one choice stands
+        // for every tag the filter names.
+        let deleted =
+            tags() == nil ? [] : filter.tags.subtracting(defined.map(\.id)).sorted { $0.uuidString < $1.uuidString }
+        let unread =
+            tags() == nil && !filter.tags.isEmpty
+            ? [
+                Attribute.Choice(
+                    title: Self.heldUnreadableTagsTitle, count: 0, isOn: true, picked: with { $0.tags = [] })
+            ] : []
         let tagged = Attribute(
             title: "Tags", allTitle: "All Tags", isActive: !filter.tags.isEmpty, conditionTitle: "Tag",
             cleared: with { $0.tags = [] },
@@ -545,7 +571,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     Attribute.Choice(
                         title: Self.heldUndefinedTagTitle, count: 0, isOn: true,
                         picked: with { $0.tags.remove(id) })
-                })
+                } + unread)
         let guestAgent = Attribute(
             title: "Guest Agent", allTitle: "All", isActive: !filter.guestAgents.isEmpty,
             cleared: with { $0.guestAgents = [] },

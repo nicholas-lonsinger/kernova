@@ -4,7 +4,7 @@ import KernovaKit
 /// The sidebar's rows as values: sections, each listing library entries
 /// directly or under group headers.
 ///
-/// ``project(entries:options:search:retaining:sections:context:)`` is the one function from the library
+/// ``project(entries:options:search:retaining:organization:context:)`` is the one function from the library
 /// to a layout; ``SidebarTree`` turns a layout into the outline view's items.
 /// Each list a layout holds — its sections, a section's groups, a list's
 /// entries — keeps the first of any repeated identifier: a repeat would be a
@@ -22,6 +22,9 @@ struct SidebarLayout {
         /// The count its header shows: always for a smart group or a folder,
         /// and for the library while a filter or the search narrows it.
         var count: Count? = nil
+        /// Why the section lists nothing and can't, shown on hover; the
+        /// sidebar shows a section with a notice disabled, and it never opens.
+        var notice: String? = nil
     }
 
     @MainActor
@@ -71,18 +74,28 @@ struct SidebarLayout {
         let bundledAgentVersion: String?
         /// The library's named networks: a VM naming any other is on
         /// ``VMLibraryFilter/Network/unlisted``.
-        let networks: [VMNamedNetwork]
-        /// The library's tags, in their order: a VM carries only these.
-        let tags: [VMTag]
+        let networks: VMNetworkDirectory.State
+        /// The library's tags, in their order: a VM carries only these, so
+        /// none while the file defining them can't be read (`nil`).
+        let tags: [VMTag]?
         /// What a VM's network reads as —
         /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
         /// filter menu.
         let networkTitle: (VMConfiguration) -> String
 
-        /// What a filter reads of `entry`.
-        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject {
-            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+        /// What a filter reads of `entry`, `nil` for a bundle Kernova can't
+        /// read.
+        func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
+            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
+        }
+
+        func subject(of instance: VMInstance) -> VMLibraryFilter.Subject {
+            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
+        }
+
+        func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
+            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks)
         }
     }
 
@@ -108,6 +121,13 @@ struct SidebarLayout {
     static let noMatchesText = "No matching VMs"
     static let emptyFolderText = "Drag VMs here to add them"
 
+    /// The section listed where the smart groups and folders go while the
+    /// file holding them can't be read.
+    static let unreadableOrganizationSection =
+        Section(
+            id: .unreadableOrganization, title: "Smart Groups and Folders Can\u{2019}t Be Read",
+            content: .rows(Rows([])), notice: VMOrganizationDirectory.unreadableMessage)
+
     /// The sections in display order, each identifier at most once.
     let sections: [Section]
 
@@ -123,9 +143,11 @@ struct SidebarLayout {
     }
 
     /// The layout the sidebar shows for `entries`: a section for each of
-    /// `sections`, in its order — the library's listing the entries `options`
-    /// admits, in its order, under its groups. `search` narrows every section
-    /// to the VMs it admits.
+    /// `organization`'s sections, in its order — the library's listing the
+    /// entries `options` admits, in its order, under its groups. `search`
+    /// narrows every section to the VMs it admits. While the file holding the
+    /// smart groups and folders can't be read, one section saying so stands in
+    /// their place, before the library's.
     ///
     /// The entry `retaining` names is listed in the library section whether
     /// or not the filter and the search admit it: the selected VM a change to
@@ -133,14 +155,18 @@ struct SidebarLayout {
     /// off it.
     static func project(
         entries: [LibraryEntry], options: SidebarViewOptions, search: SidebarNameSearch = SidebarNameSearch(),
-        retaining: UUID? = nil, sections: [VMOrganizationDirectory.Section] = [.library], context: Context
+        retaining: UUID? = nil, organization: ConfigFileState<[VMOrganizationDirectory.Section]> = .listed([.library]),
+        context: Context
     ) -> SidebarLayout {
         // Every entry's subject is read, the retained one's included, so an
         // observation of the projection tracks every value the counts read.
         var subjects: [UUID: VMLibraryFilter.Subject] = [:]
         for entry in entries { subjects[entry.id] = context.subject(of: entry) }
+        // A bundle Kernova can't read holds nothing a filter reads, and stays
+        // listed so its way out stays in sight; the search reads its name as
+        // its row shows it.
         let found = entries.filter { search.admits($0.name) }
-        let matching = Set(found.filter { subjects[$0.id].map(options.filter.admits) ?? false }.map(\.id))
+        let matching = Set(found.filter { subjects[$0.id].map(options.filter.admits) ?? true }.map(\.id))
         let shown = options.sort.ordered(entries.filter { $0.id == retaining || matching.contains($0.id) })
         let content: Content =
             switch options.grouping {
@@ -153,15 +179,21 @@ struct SidebarLayout {
             id: .library, title: "Virtual Machines", content: content,
             emptyText: narrowed && !entries.isEmpty ? noMatchesText : nil,
             count: narrowed ? .narrowed(shown: shown.count, of: entries.count) : nil)
-        return SidebarLayout(
-            sections: sections.map { listed in
-                switch listed {
-                case .smartGroup(let group):
-                    section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
-                case .folder(let folder): section(for: folder, entries: entries, search: search, sort: options.sort)
-                case .library: library
-                }
-            })
+        switch organization {
+        case .listed(let sections):
+            return SidebarLayout(
+                sections: sections.map { listed in
+                    switch listed {
+                    case .smartGroup(let group):
+                        section(for: group, entries: entries, subjects: subjects, search: search, sort: options.sort)
+                    case .folder(let folder):
+                        section(for: folder, entries: entries, search: search, sort: options.sort)
+                    case .library: library
+                    }
+                })
+        case .unreadable:
+            return SidebarLayout(sections: [unreadableOrganizationSection, library])
+        }
     }
 
     /// `folder`'s section: its members the library lists that `search`
@@ -210,16 +242,18 @@ struct SidebarLayout {
     ) -> [Group] {
         var pending: [Pending] = []
         for entry in entries {
-            guard let subject = subjects[entry.id] else { continue }
-            for key in groupKeys(of: subject, by: grouping, context: context) {
+            let subject = subjects[entry.id]
+            let keys = subject.map { groupKeys(of: $0, by: grouping, context: context) } ?? [unreadableGroupKey]
+            for key in keys {
                 if let index = pending.firstIndex(where: { $0.key == key }) {
                     pending[index].entries.append(entry)
                     continue
                 }
                 let title: String =
-                    switch grouping {
-                    case .none, .guestOS, .state, .tag: key.title
-                    case .network: networkTitle(subject.network, of: entry.configuration, context: context)
+                    switch (grouping, subject, entry.configuration) {
+                    case (.network, let subject?, let configuration?):
+                        networkTitle(subject.network, of: configuration, context: context)
+                    default: key.title
                     }
                 pending.append(Pending(key: key, title: title, entries: [entry]))
             }
@@ -234,6 +268,11 @@ struct SidebarLayout {
                 rows: Rows(group.entries))
         }
     }
+
+    /// The group of the bundles Kernova can't read, which hold none of the
+    /// values a grouping reads, after every other group.
+    private static let unreadableGroupKey = GroupKey(
+        value: "unreadable", rank: .max, title: UnreadableVM.statusText)
 
     /// A group's identity — the value its members share — and where it sorts.
     private struct GroupKey: Equatable {
@@ -253,8 +292,13 @@ struct SidebarLayout {
     /// The title of the group listing the VMs that carry no tag.
     static let untaggedGroupTitle = "No Tags"
 
+    /// The title of the one group every VM is listed under, by tag, while
+    /// the file defining the tags can't be read.
+    static let unreadableTagsGroupTitle = "Tags Can\u{2019}t Be Read"
+
     /// The groups `subject` is listed under: one per value, but one per tag it
-    /// carries — in the library's order of its tags — or the untagged group.
+    /// carries — in the library's order of its tags — or the untagged group;
+    /// by tag while the tags can't be read, one group saying so.
     private static func groupKeys(
         of subject: VMLibraryFilter.Subject, by grouping: SidebarGrouping, context: Context
     ) -> [GroupKey] {
@@ -278,12 +322,16 @@ struct SidebarLayout {
         case .network:
             [GroupKey(value: subject.network.rawValue, rank: networkRank(subject.network), title: "")]
         case .tag:
-            subject.tags.isEmpty
-                ? [GroupKey(value: "none", rank: context.tags.count, title: untaggedGroupTitle)]
-                : context.tags.enumerated().compactMap { rank, tag in
-                    subject.tags.contains(tag.id)
-                        ? GroupKey(value: tag.id.uuidString, rank: rank, title: tag.name) : nil
-                }
+            if let tags = context.tags {
+                subject.tags.isEmpty
+                    ? [GroupKey(value: "none", rank: tags.count, title: untaggedGroupTitle)]
+                    : tags.enumerated().compactMap { rank, tag in
+                        subject.tags.contains(tag.id)
+                            ? GroupKey(value: tag.id.uuidString, rank: rank, title: tag.name) : nil
+                    }
+            } else {
+                [GroupKey(value: "tagsUnreadable", rank: 0, title: unreadableTagsGroupTitle)]
+            }
         }
     }
 
@@ -300,10 +348,10 @@ struct SidebarLayout {
     /// A named network the library no longer lists — deleted since the filter
     /// was saved — reads apart from ``VMLibraryFilter/Network/unlisted``: the
     /// filter still holds it, and it admits no VM.
-    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: [VMNamedNetwork]) -> String {
+    static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice,
-            !networks.contains(where: { $0.id == id && $0.kind == kind })
+        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
+            !listed.contains(where: { $0.id == id && $0.kind == kind })
         {
             return heldUnlistedNetworkTitle
         }

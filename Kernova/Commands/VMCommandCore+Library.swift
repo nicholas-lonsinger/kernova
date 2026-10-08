@@ -506,7 +506,7 @@ extension VMCommandCore {
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — select it rather than re-importing.
-            switch library.entries.first(where: { $0.id == config.id }) {
+            switch library.entries.first(where: { $0.id == config.id })?.addressable {
             case .vm(let existing):
                 library.selectRevealing(existing.id)
                 #log(

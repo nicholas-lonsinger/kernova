@@ -54,17 +54,23 @@ struct VMNetworkIntentTests {
         let id = UUID()
         let entity = VMEntity(
             VMIntentFixtures.info(
-                networkMode: "shared", networkMembership: id.uuidString, networkName: "Lab"))
+                networkMode: "shared", networkMembership: id.uuidString, networkName: .named("Lab")))
 
         #expect(entity.networkMembership == id.uuidString)
         #expect(entity.networkName == "Lab")
         #expect(VMEntity(VMIntentFixtures.info()).networkName == nil)
+        #expect(
+            VMEntity(VMIntentFixtures.info(networkMembership: id.uuidString, networkName: .unlisted(id)))
+                .networkName == nil)
+        #expect(
+            VMEntity(VMIntentFixtures.info(networkMembership: id.uuidString, networkName: .unreadable))
+                .networkName == "Network List Can\u{2019}t Be Read")
     }
 
     // MARK: - Lookup
 
     @Test("The networks list in the core's order, each VM on one read in full")
-    func networksReadTheirMembersInFull() async {
+    func networksReadTheirMembersInFull() async throws {
         let commands = MockVMCommanding()
         let alpha = makeSummary(name: "Alpha")
         commands.library = [alpha, makeSummary(name: "Beta")]
@@ -72,7 +78,7 @@ struct VMNetworkIntentTests {
         let test = NetworkSummary(id: UUID(), name: "Test", kind: .hostOnly, members: [])
         commands.networksToReturn = [lab, test]
 
-        let networks = await makeGateway(commands).networks()
+        let networks = try await makeGateway(commands).networks()
 
         #expect(networks.map(\.id) == [lab.id, test.id])
         #expect(networks.map(\.kind) == [.shared, .hostOnly])
@@ -82,16 +88,16 @@ struct VMNetworkIntentTests {
     }
 
     @Test("Resolving by identifier, or by a typed name, answers only the networks asked for")
-    func lookupFilters() async {
+    func lookupFilters() async throws {
         let commands = MockVMCommanding()
         let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])
         let test = NetworkSummary(id: UUID(), name: "Test Lab", kind: .hostOnly, members: [])
         commands.networksToReturn = [lab, test]
         let gateway = makeGateway(commands)
 
-        #expect(await gateway.networks(withIDs: [test.id, UUID()]).map(\.id) == [test.id])
-        #expect(await gateway.networks(matching: "lab").map(\.id) == [lab.id, test.id])
-        #expect(await gateway.networks(matching: "test").map(\.id) == [test.id])
+        #expect(try await gateway.networks(withIDs: [test.id, UUID()]).map(\.id) == [test.id])
+        #expect(try await gateway.networks(matching: "lab").map(\.id) == [lab.id, test.id])
+        #expect(try await gateway.networks(matching: "test").map(\.id) == [test.id])
     }
 
     // MARK: - Verbs

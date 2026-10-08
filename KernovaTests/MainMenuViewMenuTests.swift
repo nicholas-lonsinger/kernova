@@ -114,7 +114,7 @@ struct MainMenuViewMenuTests {
             vm = admitted
             _ = try viewModel.library.createFolder(named: "Lab", members: [admitted.id])
         }
-        let folder = try #require(fixture.viewModel.library.folders.first)
+        let folder = try #require(fixture.viewModel.library.folders?.first)
         fixture.viewModel.selection = SidebarRowKey(
             section: .folder(folder.id), group: nil, entryID: try #require(vm).id)
         let menu = fixture.opened()
@@ -341,7 +341,7 @@ struct MainMenuViewMenuTests {
             viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
             _ = try viewModel.library.saveSidebarFilterAsSmartGroup(named: "Linux")
         }
-        let group = try #require(fixture.viewModel.library.smartGroups.first)
+        let group = try #require(fixture.viewModel.library.smartGroups?.first)
         fixture.viewModel.selection = SidebarRowKey(
             section: .smartGroup(group.id), group: nil, entryID: try #require(vm).id)
         let menu = fixture.opened()
@@ -355,6 +355,6 @@ struct MainMenuViewMenuTests {
         }
 
         try pick("Delete Smart Group", in: route.submenu)
-        #expect(fixture.viewModel.library.smartGroups.isEmpty)
+        #expect(fixture.viewModel.library.smartGroups == [])
     }
 }

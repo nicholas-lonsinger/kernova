@@ -1,19 +1,22 @@
 import Foundation
 import KernovaKit
 
-/// One row of the library: a VM, or a create, clone or import whose bundle is
-/// still being written.
+/// One row of the library: a VM, a create, clone or import whose bundle is
+/// still being written, or a bundle whose files Kernova can't read.
 ///
-/// Every VM verb takes a ``VMInstance``, so none can reach an arrival.
+/// Every VM verb takes a ``VMInstance``, so none can reach an arrival or an
+/// unreadable bundle.
 @MainActor
 enum LibraryEntry {
     case vm(VMInstance)
     case arriving(VMArrival)
+    case unreadable(UnreadableVM)
 
     var id: UUID {
         switch self {
         case .vm(let instance): instance.id
         case .arriving(let arrival): arrival.id
+        case .unreadable(let bundle): bundle.id
         }
     }
 
@@ -21,14 +24,17 @@ enum LibraryEntry {
         switch self {
         case .vm(let instance): instance.name
         case .arriving(let arrival): arrival.name
+        case .unreadable(let bundle): bundle.name
         }
     }
 
-    /// The configuration the row is ordered and described by.
-    var configuration: VMConfiguration {
+    /// The configuration the row is ordered and described by; `nil` for a
+    /// bundle whose configuration cannot be read.
+    var configuration: VMConfiguration? {
         switch self {
         case .vm(let instance): instance.configuration
         case .arriving(let arrival): arrival.configuration
+        case .unreadable: nil
         }
     }
 
@@ -40,11 +46,16 @@ enum LibraryEntry {
         if case .arriving(let arrival) = self { arrival } else { nil }
     }
 
+    var unreadable: UnreadableVM? {
+        if case .unreadable(let bundle) = self { bundle } else { nil }
+    }
+
     /// The row's identity as an outline-view item.
     var object: AnyObject {
         switch self {
         case .vm(let instance): instance
         case .arriving(let arrival): arrival
+        case .unreadable(let bundle): bundle
         }
     }
 }

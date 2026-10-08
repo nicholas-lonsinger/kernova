@@ -72,7 +72,7 @@ extension VMCommandCore {
     }
 
     /// What `action` does to `entry`, decided now.
-    private func result(of action: VMGroupAction, on entry: LibraryEntry) async -> VMGroupActionResult {
+    private func result(of action: VMGroupAction, on entry: AddressableEntry) async -> VMGroupActionResult {
         guard case .vm(let instance) = entry else {
             return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .state))
         }

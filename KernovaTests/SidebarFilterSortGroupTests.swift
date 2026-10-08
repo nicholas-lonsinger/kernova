@@ -14,9 +14,10 @@ extension SidebarLayout.Context {
         bundledAgentVersion: String? = "2.0", networks: [VMNamedNetwork] = [], tags: [VMTag] = []
     ) -> SidebarLayout.Context {
         SidebarLayout.Context(
-            bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags,
+            bundledAgentVersion: bundledAgentVersion, networks: .listed(networks), tags: tags,
             networkTitle: {
-                NetworkModeChoice.title(of: $0, entitlements: .entitled, interfaces: { [] }, networks: networks)
+                NetworkModeChoice.title(
+                    of: $0, entitlements: .entitled, interfaces: { [] }, networks: .listed(networks))
             })
     }
 }

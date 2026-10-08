@@ -99,6 +99,11 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// the attaches of the accessories paired with it.
     @ObservationIgnored var onSessionBecameAttachable: ((VMInstance) -> [VMFollowUp])?
 
+    /// Fires when a read of the library finds a config file it cannot read
+    /// that no earlier read reported — the cue to put the config check in
+    /// front of the user.
+    @ObservationIgnored var onUnreadableFilesFound: (() -> Void)?
+
     // MARK: - Capabilities
 
     /// Every per-VM capability predicate, derived from this library — what a
@@ -192,7 +197,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     private func sidebarNarrowingAdmits(_ id: UUID) -> Bool {
         guard let entry = entries.first(where: { $0.id == id }) else { return false }
-        return sidebarSearch.admits(entry.name) && sidebarOptions.filter.admits(sidebarContext.subject(of: entry))
+        return sidebarSearch.admits(entry.name)
+            && (sidebarContext.subject(of: entry).map(sidebarOptions.filter.admits) ?? true)
     }
 
     /// The selected entry's identifier.
@@ -277,7 +283,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     var sidebarLayout: SidebarLayout {
         .project(
             entries: entries, options: sidebarOptions, search: sidebarSearch, retaining: retainedEntryID,
-            sections: organization.sections, context: sidebarContext)
+            organization: organization.state.map(\.sections), context: sidebarContext)
     }
 
     /// Moves the section `id` identifies — a smart group, a folder or the
@@ -294,7 +300,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// when a VM's network names one: a pass titles every bridged VM from one
     /// enumeration, and the next pass sees the host as it is then.
     var sidebarContext: SidebarLayout.Context {
-        let named = networks.networks
+        let named = networks.state
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
@@ -324,7 +330,9 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     func selectRevealing(_ id: UUID) {
         guard let entry = entries.first(where: { $0.id == id }) else { return }
         if !sidebarShows(id) {
-            sidebarOptions.filter = sidebarOptions.filter.admitting(sidebarContext.subject(of: entry))
+            if let subject = sidebarContext.subject(of: entry) {
+                sidebarOptions.filter = sidebarOptions.filter.admitting(subject)
+            }
             if !sidebarSearch.admits(entry.name) { sidebarSearch = SidebarNameSearch() }
         }
         selectedID = id
@@ -415,14 +423,18 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
 
     var customOrder: [UUID] = []
 
-    /// Bundle names whose load failures have already been reported to the user.
-    ///
-    /// Prevents repeated error dialogs for persistently corrupted bundles across
-    /// successive `reconcileWithDisk()` calls.
-    var reportedFailedBundles: Set<String> = []
+    /// The unreadable config files already reported through
+    /// ``onUnreadableFilesFound``, so a file that stays unreadable does not
+    /// open the check again at every read.
+    var unreadableReports = UnreadableFileReports()
+
+    /// Whether a read recorded a newly unreadable file that
+    /// ``reportNewlyUnreadable()`` has not yet reported.
+    var owesUnreadableReport = false
 
     /// Bundle names already reported as holding an identifier the library
-    /// knows at another bundle, for the same reason.
+    /// knows at another bundle, so a bundle that stays a duplicate is not
+    /// reported at every `reconcileWithDisk()`.
     var reportedDuplicateBundles: Set<String> = []
 
     // MARK: - Directory Watcher
@@ -511,7 +523,7 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         /// arrival's own pipeline adopts.
         case publishing(VMArrival)
         /// Another bundle already holds this identifier; this one was reported
-        /// and left out. `existing` is `nil` when the holder is an arrival.
+        /// and left out. `existing` is `nil` when the holder is no VM.
         case duplicate(of: VMInstance?, at: URL)
     }
 
@@ -543,6 +555,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             let instance = makeInstance(scanned)
             entries[index] = .vm(instance)
             return .adopted(instance)
+        case .unreadable(let holder):
+            return reportDuplicate(at: url, holderName: holder.name, existing: nil)
         case .vm(let instance):
             if VMBundleIdentity.spelling(instance.bundleURL) == VMBundleIdentity.spelling(url) {
                 return .alreadyAdopted(instance)
@@ -557,9 +571,43 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
             instance.rebind(to: bundleFactory.make(scanned.read))
-            reportUnreadablePairings(of: scanned.read)
+            recordUnreadable(of: scanned.read)
             return .rebound(instance)
         }
+    }
+
+    /// Makes `bundles` the library's unreadable rows, answering whether any
+    /// row changed.
+    ///
+    /// Each bundle joins, or replaces its own row when what the read found
+    /// changed; a row whose bundle is not among `bundles` leaves — read and
+    /// adopted as its VM since, or gone from disk — handing its selection to
+    /// the VM its bundle became.
+    @discardableResult
+    func admitUnreadable(_ bundles: [UnreadableBundle]) -> Bool {
+        var changed = false
+        for bundle in bundles {
+            let id = UnreadableVM.id(for: bundle.url)
+            guard let index = entries.firstIndex(where: { $0.id == id }) else {
+                entries.append(.unreadable(UnreadableVM(bundle)))
+                changed = true
+                continue
+            }
+            guard let row = entries[index].unreadable,
+                row.file != bundle.file || row.bundleURL != bundle.url
+            else { continue }
+            entries[index] = .unreadable(UnreadableVM(bundle))
+            changed = true
+        }
+        let kept = Set(bundles.map { UnreadableVM.id(for: $0.url) })
+        for row in entries.compactMap(\.unreadable) where !kept.contains(row.id) {
+            entries.removeAll { $0.id == row.id }
+            changed = true
+            guard selectedID == row.id else { continue }
+            selectedID =
+                instances.first { isSameBundle($0.bundleURL, row.bundleURL) }?.id ?? entries.first?.id
+        }
+        return changed
     }
 
     /// Whether two URLs name one bundle on disk, however each is spelled; a URL
@@ -592,21 +640,20 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences)
         wireHooks(for: instance)
-        reportUnreadablePairings(of: scanned.read)
+        recordUnreadable(of: scanned.read)
         return instance
     }
 
-    /// Tells the user about a pairings file a read left in place because it
-    /// could not decode it.
-    private func reportUnreadablePairings(of read: VMBundleRead) {
-        guard let unreadable = read.pairingsUnreadable else { return }
-        #log(
-            Self.logger, .error,
-            "The USB accessory pairings of '\(read.configuration.name, privacy: .public)' could not be read and were left in place: \(unreadable.localizedDescription, privacy: .public)"
-        )
-        surfaceError(
-            "\u{201C}\(read.configuration.name)\u{201D} won\u{2019}t take any USB accessory back automatically. \(unreadable.localizedDescription)",
-            title: "USB Accessories Not Read")
+    /// Records the files `read` left in place for the check
+    /// (``recordUnreadable(_:under:)``).
+    private func recordUnreadable(of read: VMBundleRead) {
+        for unreadable in read.unreadableFiles {
+            #log(
+                Self.logger, .error,
+                "'\(read.configuration.name, privacy: .public)' left \(unreadable.fileName, privacy: .public) in place: \(String(describing: unreadable.problems), privacy: .public)"
+            )
+        }
+        recordUnreadable(read.unreadableFiles, under: read.files.url)
     }
 
     // MARK: - Arrival Rows
@@ -663,7 +710,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
         #log(Self.logger, .notice, "Reordered VMs in sidebar")
     }
 
-    /// Sorts rows by custom order, falling back to `createdAt` for unordered ones.
+    /// Sorts rows by custom order, falling back to `createdAt` for unordered
+    /// ones, and to the end for an unordered row with no creation date.
     func sortEntries() {
         let orderMap = Dictionary(zip(customOrder, customOrder.indices), uniquingKeysWith: { first, _ in first })
         entries.sort { lhs, rhs in
@@ -675,7 +723,8 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
             case (.none, .some):
                 return false
             case (.none, .none):
-                return lhs.configuration.createdAt < rhs.configuration.createdAt
+                return (lhs.configuration?.createdAt ?? .distantFuture)
+                    < (rhs.configuration?.createdAt ?? .distantFuture)
             }
         }
     }
@@ -1092,20 +1141,6 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     // MARK: - Error Handling
-
-    /// Error type for VM loading failures.
-    enum LoadError: LocalizedError {
-        case bundleLoadFailed(names: [String])
-
-        var errorDescription: String? {
-            switch self {
-            case .bundleLoadFailed(let names):
-                assert(!names.isEmpty, "bundleLoadFailed requires at least one bundle name")
-                return
-                    "Failed to load the following VMs: \(names.joined(separator: ", ")). They may have corrupted configurations."
-            }
-        }
-    }
 
     func presentError(_ error: Error) {
         surfaceError(error.localizedDescription)

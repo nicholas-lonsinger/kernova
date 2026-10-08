@@ -49,7 +49,7 @@ networks (`Networks.json`) and its smart groups, folders and tag definitions (`O
 from every bundle, each file written only by its directory — `VMNetworkDirectory`
 and `VMOrganizationDirectory` (`Kernova/ViewModels/`), which `VMLibrary` owns,
 both through `CoordinatedJSONFile`. `VMBundle` holds their committed
-values and is the one writer of a library bundle's files, through
+values and is the one writer of a library bundle's readable files, through
 `VMBundleFiles` over the `VMBundleFileAccessing` seam
 (`CoordinatedBundleFileAccess` in production); every write holds a
 `VMEditPermit` that `VMActivity` mints on admission, and a configuration write
@@ -64,7 +64,12 @@ runtime owner of one VM: it reads its state off its `VMBundle`, and its
 whose `VMSession` actor alone touches the `VZVirtualMachine`. `VMLibrary`
 lists a `VMArrival` beside its VMs for each create, clone or import still
 writing its bundle, and turns every published bundle into a `VMInstance`
-through `adopt`. `VMBundleLayout` derives every in-bundle path.
+through `adopt`; a bundle no read can take is listed as an `UnreadableVM`
+instead. Every config file decodes through one decoder whose collecting mode
+(`ConfigFileDiagnosis`) yields an `UnreadableConfigFile`; the config check
+(`VMLibrary+ConfigCheck.swift`) reads them all and rewrites a file no read can
+take through `VMBundleFiles.repair` or `CoordinatedJSONFile.repair`.
+`VMBundleLayout` derives every in-bundle path.
 
 Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read

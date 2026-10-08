@@ -19,7 +19,7 @@ extension NetworkModeChoice {
     /// itself, marked unavailable: the picker offers no entry for it, so this
     /// is what shows a VM already on it what it is set to.
     func title(
-        attachable: Bool, interfaces: [BridgedInterface], networks: [VMNamedNetwork]
+        attachable: Bool, interfaces: [BridgedInterface], networks: VMNetworkDirectory.State
     ) -> String {
         let unavailable = " (unavailable)"
         switch self {
@@ -31,11 +31,17 @@ extension NetworkModeChoice {
             case .isolated:
                 base = "\(Self.kindTitle(kind)), Isolated"
             case .network(let id):
-                // A network the library does not list in this mode is one no
-                // surface can choose, so it never reads as merely unavailable.
-                guard let network = networks.first(where: { $0.id == id && $0.kind == kind })
-                else { return Self.unlistedNetworkTitle }
-                base = network.name
+                switch networks {
+                case .unreadable:
+                    return Self.unreadableNetworkListTitle
+                case .listed(let networks):
+                    // A network the library does not list in this mode is one
+                    // no surface can choose, so it never reads as merely
+                    // unavailable.
+                    guard let network = networks.first(where: { $0.id == id && $0.kind == kind })
+                    else { return Self.unlistedNetworkTitle }
+                    base = network.name
+                }
             }
             return attachable ? base : base + unavailable
         case .none:
@@ -55,7 +61,7 @@ extension NetworkModeChoice {
     /// `interfaces` is asked only when the choice names a host interface.
     static func title(
         of config: VMConfiguration, entitlements: EntitlementService,
-        interfaces: () -> [BridgedInterface], networks: [VMNamedNetwork]
+        interfaces: () -> [BridgedInterface], networks: VMNetworkDirectory.State
     ) -> String {
         let choice = NetworkModeChoice(config)
         return choice.title(
@@ -279,7 +285,7 @@ final class VMOverviewResolver {
             titledNetworkChoice = choice
             resolved.networkModeTitle = NetworkModeChoice.title(
                 of: config, entitlements: viewModel.entitlements,
-                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.networks)
+                interfaces: bridgedInterfaces.interfaces, networks: viewModel.networks.state)
         }
         resolved.ipAddress = viewModel.guestAddress(for: instance)
     }
