@@ -11,7 +11,7 @@ final class ConfigCheckWindowController: NSWindowController {
     private let checkViewController: ConfigCheckViewController
 
     init(viewModel: VMLibraryViewModel, autosaveScope: WindowAutosaveScope) {
-        let checkViewController = ConfigCheckViewController(viewModel: viewModel)
+        let checkViewController = ConfigCheckViewController(source: viewModel)
         self.checkViewController = checkViewController
         let window = NSWindow.withStableContentSize(
             NSSize(width: 620, height: 420),
@@ -32,10 +32,15 @@ final class ConfigCheckWindowController: NSWindowController {
         fatalError("ConfigCheckWindowController does not support NSCoder")
     }
 
-    /// Brings the window forward and checks every config file again.
-    func showAndCheck() {
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+    /// Brings the window forward — key too when `makingKey` — and checks
+    /// every config file again.
+    func showAndCheck(makingKey: Bool) {
+        if makingKey {
+            showWindow(nil)
+            window?.makeKeyAndOrderFront(nil)
+        } else {
+            window?.orderFront(nil)
+        }
         checkViewController.runCheck()
     }
 }

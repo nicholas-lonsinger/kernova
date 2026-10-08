@@ -131,7 +131,7 @@ struct CLIArgumentParsingTests {
     @Test("--network sends every value as typed, in order, for the app to read as a mode or a named network")
     func networksGoAsTyped() throws {
         let typed = [
-            "shared", "hostOnly:isolated", "Bridged", "bridged:en0", "none", "unlisted", "Lab",
+            "nat", "hostOnly:isolated", "Bridged", "bridged:en0", "none", "unlisted", "Lab",
             "8D0C3F0E-8E1B-4F7B-9F61-0D7C4D6A1E21",
         ]
         let query = try listQuery(typed.flatMap { ["--network", $0] })
@@ -445,9 +445,9 @@ struct CLIArgumentParsingTests {
     @Test("An assignment is split at its first =, and an empty value is a value")
     func assignmentsSplitAtTheFirstEquals() throws {
         #expect(
-            try KernovaCommand.Set.entries(from: ["cpus=4", "network.mode=shared"]) == [
+            try KernovaCommand.Set.entries(from: ["cpus=4", "network.mode=nat"]) == [
                 ConfigurationEntry(key: "cpus", value: "4"),
-                ConfigurationEntry(key: "network.mode", value: "shared"),
+                ConfigurationEntry(key: "network.mode", value: "nat"),
             ])
         // The first `=` and no other: a value carrying one arrives whole.
         #expect(

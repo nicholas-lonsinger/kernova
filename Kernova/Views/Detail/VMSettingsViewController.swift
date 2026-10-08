@@ -239,6 +239,7 @@ final class VMSettingsViewController: NSViewController {
                 // hold refuses dims.
                 _ = self.instance.heldByAnotherCopy
                 _ = self.instance.snapshotManifest
+                _ = self.instance.unreadableFiles
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
                 // Registers every instance's configuration, so the

@@ -16,7 +16,7 @@ struct VMNamedNetwork: Codable, Sendable, Hashable, Identifiable {
 
     /// The kinds the New Network sheet offers, in its order: the first is the
     /// kind a new network gets unless another is chosen.
-    static let kindsInCreationOrder: [VmnetNetworkKind] = [.shared, .hostOnly]
+    static let kindsInCreationOrder: [VmnetNetworkKind] = [.nat, .hostOnly]
 
     /// The kind a new network gets unless another is chosen.
     static var defaultKind: VmnetNetworkKind { kindsInCreationOrder[0] }

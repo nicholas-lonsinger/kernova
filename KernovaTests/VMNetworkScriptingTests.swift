@@ -44,7 +44,7 @@ struct VMNetworkScriptingTests {
         let alpha = makeSummary(name: "Alpha")
         commands.library = [alpha]
         let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .hostOnly, members: [alpha])
-        let test = NetworkSummary(id: UUID(), name: "Test", kind: .shared, members: [])
+        let test = NetworkSummary(id: UUID(), name: "Test", kind: .nat, members: [])
         commands.networksToReturn = [lab, test]
 
         let networks = makeGateway(commands).networks()
@@ -55,7 +55,7 @@ struct VMNetworkScriptingTests {
             networks.map(\.kind)
                 == [
                     NSNumber(value: VMScriptNetworkKind.hostOnly.code),
-                    NSNumber(value: VMScriptNetworkKind.sharedNetwork.code),
+                    NSNumber(value: VMScriptNetworkKind.nat.code),
                 ])
         #expect(networks[0].virtualMachines.map(\.uniqueID) == [alpha.id.uuidString])
         #expect(networks[1].virtualMachines.isEmpty)
@@ -80,13 +80,13 @@ struct VMNetworkScriptingTests {
         #expect(gateway.answeringCommand?.scriptErrorNumber == 0)
     }
 
-    @Test("A make that names no kind makes a Shared Network")
-    func makeDefaultsToShared() throws {
+    @Test("A make that names no kind makes a NAT network")
+    func makeDefaultsToNAT() throws {
         let commands = MockVMCommanding()
 
         _ = makeGateway(commands).makeElement(forKey: AppDelegate.networksKey, name: "Lab", kind: nil)
 
-        #expect(commands.createNetworkCalls.map(\.kind) == [.shared])
+        #expect(commands.createNetworkCalls.map(\.kind) == [.nat])
     }
 
     @Test("A kind from no vocabulary this app writes is refused before the core")
@@ -140,7 +140,7 @@ struct VMNetworkScriptingTests {
     @Test("Setting a network's name renames it by identifier")
     func settingTheNameRenames() throws {
         let commands = MockVMCommanding()
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])
+        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])
         commands.networksToReturn = [lab]
         // The object holds its gateway weakly; the app's lives as long as it does.
         let gateway = makeGateway(commands)
@@ -155,7 +155,7 @@ struct VMNetworkScriptingTests {
     @Test("A refused rename is recorded on the set command")
     func aRefusedRenameIsRecorded() throws {
         let commands = MockVMCommanding()
-        commands.networksToReturn = [NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])]
+        commands.networksToReturn = [NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])]
         let refusal = CommandError.invalidArgument("A network named “Test” already exists.")
         commands.networkError = refusal
         let gateway = makeGateway(commands)
@@ -174,8 +174,8 @@ struct VMNetworkScriptingTests {
     @Test("A delete removes the network at the index Cocoa evaluated, by identifier")
     func deleteReachesTheCore() throws {
         let commands = MockVMCommanding()
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])
-        let test = NetworkSummary(id: UUID(), name: "Test", kind: .shared, members: [])
+        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])
+        let test = NetworkSummary(id: UUID(), name: "Test", kind: .nat, members: [])
         commands.networksToReturn = [lab, test]
         let gateway = makeGateway(commands)
         gateway.answeringCommand = try makeCommand("delo")
@@ -188,7 +188,7 @@ struct VMNetworkScriptingTests {
     @Test("A move's removal is refused, deleting nothing")
     func aMoveDeletesNothing() throws {
         let commands = MockVMCommanding()
-        commands.networksToReturn = [NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])]
+        commands.networksToReturn = [NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])]
         let gateway = makeGateway(commands)
         let command = try makeCommand("move")
         gateway.answeringCommand = command
@@ -202,8 +202,8 @@ struct VMNetworkScriptingTests {
     @Test("A delete addressing several networks stops at the first refusal")
     func aRefusedDeleteStopsTheRun() throws {
         let commands = MockVMCommanding()
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .shared, members: [])
-        let test = NetworkSummary(id: UUID(), name: "Test", kind: .shared, members: [])
+        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])
+        let test = NetworkSummary(id: UUID(), name: "Test", kind: .nat, members: [])
         commands.networksToReturn = [lab, test]
         let refusal = CommandError.operationFailed(
             verb: .deleteNetwork, message: "“Alpha” takes no change to its network right now.")

@@ -46,6 +46,11 @@ final class VMBundle {
     private(set) var hostState: VMHostState
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
+    /// Every file of the bundle the last read of it refused, in the order it
+    /// met them — published by each read, ``refresh()`` and
+    /// ``rereadUnreadableFiles()``, so a file repaired or edited on disk
+    /// leaves the list at the next one.
+    private(set) var unreadableFiles: [UnreadableConfigFile]
 
     fileprivate init(
         _ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking,
@@ -58,6 +63,7 @@ final class VMBundle {
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
         usbPairings = read.usbPairings
+        unreadableFiles = read.unreadableFiles
     }
 
     /// What builds every ``VMBundle``, holding the machine-file work they share
@@ -141,12 +147,20 @@ final class VMBundle {
     /// hold — for a bundle another copy of Kernova may have written while
     /// this copy held no run lock.
     ///
-    /// Answers the files the read left in place
-    /// (``VMBundleRead/unreadableFiles``), and throws, publishing nothing,
-    /// when ``VMBundleFiles/read()`` does.
+    /// Answers the files the read left in place, publishing them as
+    /// ``unreadableFiles``. Throws when ``VMBundleFiles/read()`` does,
+    /// publishing no state file's value and every file a read refuses as
+    /// ``unreadableFiles``.
     @discardableResult
     func refresh() throws(UnreadableConfigFile) -> [UnreadableConfigFile] {
-        let read = try files.read()
+        let read: VMBundleRead
+        do throws(UnreadableConfigFile) {
+            read = try files.read()
+        } catch {
+            // The refusal names the first file alone; the list names each.
+            rereadUnreadableFiles()
+            throw error
+        }
         for unreadable in read.unreadableFiles {
             #log(
                 Self.logger, .warning,
@@ -157,13 +171,17 @@ final class VMBundle {
         publish(read.hostState, to: \.hostState)
         publish(read.snapshotManifest, to: \.snapshotManifest)
         publish(read.usbPairings, to: \.usbPairings)
+        publish(read.unreadableFiles, to: \.unreadableFiles)
         return read.unreadableFiles
     }
 
-    /// Every file of the bundle a read refuses, read fresh and publishing
-    /// nothing (``VMBundleFiles/unreadableFiles()``).
-    func unreadableFiles() -> [UnreadableConfigFile] {
-        files.unreadableFiles()
+    /// Reads which of the bundle's files a read refuses
+    /// (``VMBundleFiles/unreadableFiles()``), publishing that list as
+    /// ``unreadableFiles`` and no state file's value.
+    @discardableResult
+    func rereadUnreadableFiles() -> [UnreadableConfigFile] {
+        publish(files.unreadableFiles(), to: \.unreadableFiles)
+        return unreadableFiles
     }
 
     /// Sets a committed value only when it moved, so a no-op write wakes no

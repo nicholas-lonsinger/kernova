@@ -51,10 +51,19 @@ extension VMLibrary {
     /// wrote, recording a file it finds unreadable for the next report to name
     /// and reading no library file.
     func refreshFromOtherCopies(of instance: VMInstance) {
-        // The one report of a VM's bundle: what this read found, the bundle
-        // read for its unreadable files alone where the VM re-reads nothing.
-        let unreadable = instance.activity.refreshFromBundle() ?? instance.bundle.unreadableFiles()
+        // A bundle this copy holds is not re-read, and records nothing until
+        // the hold ends (``recordUnreadableFiles(of:)``).
+        guard let unreadable = instance.activity.refreshFromBundle() else { return }
         recordUnreadable(unreadable, under: instance.bundleURL)
+    }
+
+    /// Records every file of `instance`'s bundle a read refuses, read for
+    /// that alone (``VMBundle/rereadUnreadableFiles()``) — the list its
+    /// re-read from the bundle (``VMActivity/refreshFromBundle()``)
+    /// publishes too, so a bundle is reported from one source whichever read
+    /// takes it.
+    func recordUnreadableFiles(of instance: VMInstance) {
+        recordUnreadable(instance.bundle.rereadUnreadableFiles(), under: instance.bundleURL)
     }
 
     /// Removes the restore staging directory an interrupted revert left in any
@@ -254,6 +263,9 @@ extension VMLibrary {
             // The bundles that become unreadable rows: those this pass could
             // not read that no VM in the library is built from.
             var unreadable: [UnreadableBundle] = []
+            // The VMs this pass found in a listed bundle it could read, or
+            // holds.
+            var confirmedIDs: Set<UUID> = []
             func noteUnreadable(_ bundleURL: URL, _ file: UnreadableConfigFile) {
                 Self.logUnreadable(bundleURL, file)
                 // A VM already built from the bundle keeps its row, for the
@@ -262,16 +274,22 @@ extension VMLibrary {
                 // reports it — every file read, where this pass read
                 // `config.json` alone.
                 if let instance = instances.first(where: { isSameBundle($0.bundleURL, bundleURL) }) {
-                    recordUnreadable(instance.bundle.unreadableFiles(), under: bundleURL)
+                    recordUnreadableFiles(of: instance)
                     return
                 }
                 recordUnreadable([file], under: bundleURL)
                 unreadable.append(UnreadableBundle(url: bundleURL, file: file))
             }
-            // The VMs this pass found in a listed bundle it could read.
-            var confirmedIDs: Set<UUID> = []
             var didChange = false
             for bundleURL in diskBundles {
+                // A bundle this copy holds is a VM already, and no other copy
+                // writes it, so it is not read.
+                if let held = instances.first(where: {
+                    $0.activity.holdsRunLock && isSameBundle($0.bundleURL, bundleURL)
+                }) {
+                    confirmedIDs.insert(held.id)
+                    continue
+                }
                 let id: UUID
                 do {
                     id = try reader.files(at: bundleURL).readConfiguration().id

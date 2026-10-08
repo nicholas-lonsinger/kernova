@@ -58,7 +58,7 @@ struct VMOrganizationDirectoryTests {
                 "ephemeralOnly" : true,
                 "guestAgents" : [ "upToDate" ],
                 "guestOSes" : [ "macOS" ],
-                "networks" : [ "shared:common", "unlisted" ],
+                "networks" : [ "nat:common", "unlisted" ],
                 "states" : [ "running" ],
                 "tags" : [ "6F1D7E2C-0000-4000-8000-000000000003" ],
                 "withSnapshotsOnly" : false
@@ -93,7 +93,7 @@ struct VMOrganizationDirectoryTests {
                 .folder(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))), .library,
                 .smartGroup(id),
             ])
-        let shared = VMLibraryFilter.Network(.shared) { _, _ in true }
+        let shared = VMLibraryFilter.Network(.nat) { _, _ in true }
         let work = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000003"))
         #expect(
             directory.smartGroups == [

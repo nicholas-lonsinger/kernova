@@ -404,7 +404,7 @@ struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
 // MARK: - Errors
 
-enum VMSnapshotError: LocalizedError {
+enum VMSnapshotError: LocalizedError, TitledError {
     /// A file the snapshot should capture is not in the bundle.
     case captureSourceMissing(String)
     /// The snapshot holds no saved state to restore from.
@@ -430,6 +430,16 @@ enum VMSnapshotError: LocalizedError {
             "Kernova can\u{2019}t read this snapshot\u{2019}s settings. Choose File > Check Config Files\u{2026} to review it."
         case .snapshotMissingFile(let path):
             "This snapshot doesn't include \u{201C}\(path)\u{201D}, so it can't be reverted to."
+        }
+    }
+
+    var alertTitle: String? {
+        switch self {
+        case .captureSourceMissing:
+            "Couldn\u{2019}t Take the Snapshot"
+        case .snapshotMissingSavedState, .snapshotMissingConfiguration,
+            .snapshotConfigurationUnreadable, .snapshotMissingFile:
+            "Couldn\u{2019}t Revert to the Snapshot"
         }
     }
 }

@@ -78,8 +78,8 @@ struct SidebarLayout {
         /// The library's tags, in their order: a VM carries only these, so
         /// none while the file defining them can't be read (`nil`).
         let tags: [VMTag]?
-        /// What a VM's network reads as —
-        /// ``NetworkModeChoice/title(of:entitlements:interfaces:networks:)``
+        /// What a VM's network reads as — the text of
+        /// ``NetworkModeChoice/label(of:entitlements:interfaces:networks:)``
         /// in the app. Asked for each VM while grouping by network, and by the
         /// filter menu.
         let networkTitle: (VMConfiguration) -> String
@@ -350,12 +350,12 @@ struct SidebarLayout {
     /// filter still holds it, and it admits no VM.
     static func heldNetworkTitle(_ network: VMLibraryFilter.Network, networks: VMNetworkDirectory.State) -> String {
         guard let choice = network.choice else { return NetworkModeChoice.unlistedNetworkTitle }
-        if case .vmnet(let kind, .network(let id)) = choice, let listed = networks.listed,
-            !listed.contains(where: { $0.id == id && $0.kind == kind })
+        if case .vmnet(let kind, .network(let id)) = choice,
+            case .unlisted = VMNetworkName(id, kind: kind, in: networks)
         {
             return heldUnlistedNetworkTitle
         }
-        return choice.title(attachable: true, interfaces: [], networks: networks)
+        return choice.label(attachable: true, interfaces: [], networks: networks).text
     }
 
     /// How a filter names a network it holds that the library no longer lists.
@@ -369,7 +369,7 @@ struct SidebarLayout {
         guard let choice = network.choice else { return 6 }
         switch choice {
         case .vmnet(let kind, let membership):
-            let base = kind == .shared ? 0 : 3
+            let base = kind == .nat ? 0 : 3
             switch membership {
             case .common: return base
             case .isolated: return base + 1

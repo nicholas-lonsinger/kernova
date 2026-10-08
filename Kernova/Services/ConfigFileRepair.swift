@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 
 /// How putting the defaults in place in one config file ended, when it did
@@ -73,15 +74,20 @@ enum ConfigFileRepairRefusal: LocalizedError, Equatable {
     case notRepairable
     /// A copy of Kernova holds the bundle's run lock.
     case inUse
+    /// The bundle a move to the Trash was asked for reads now, so it is a
+    /// virtual machine again.
+    case readsNow
 
     var errorDescription: String? {
         switch self {
         case .changedSinceCheck:
-            "The file changed since the check. Review what it holds now before using defaults."
+            "The file changed since the check. Review what it holds now."
         case .notRepairable:
             "Kernova can\u{2019}t repair this file."
         case .inUse:
             "A copy of Kernova is using the virtual machine."
+        case .readsNow:
+            "Kernova can read this virtual machine now. To remove it, delete it from the library."
         }
     }
 }

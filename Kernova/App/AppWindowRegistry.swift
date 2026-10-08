@@ -22,6 +22,8 @@ final class AppWindowRegistry {
     }
 
     private let autosaveScope: WindowAutosaveScope
+    /// Brings Kernova forward, for a window the user asked for.
+    private let activateApp: @MainActor () -> Void
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
@@ -31,11 +33,13 @@ final class AppWindowRegistry {
     init(
         viewModel: VMLibraryViewModel,
         displayPlacement: VMDisplayPlacementController,
-        autosaveScope: WindowAutosaveScope
+        autosaveScope: WindowAutosaveScope,
+        activateApp: @escaping @MainActor () -> Void = { NSApp.activate() }
     ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
         self.autosaveScope = autosaveScope
+        self.activateApp = activateApp
         displayPlacement.host = self
     }
 
@@ -92,20 +96,18 @@ final class AppWindowRegistry {
 
     var settingsWindow: NSWindow? { settingsWindowController?.window }
 
-    /// Shows the Settings window, on `pane` when one is given and on the pane
-    /// it last showed otherwise.
-    func showSettings(_ sender: Any?, pane: SettingsTabViewController.Pane? = nil) {
+    /// Shows the Settings window on `destination`, or on the pane it was last
+    /// left on when `nil`.
+    func showSettings(at destination: SettingsDestination? = nil) {
         residency?.prepareToPresentWindow()
         let controller =
             settingsWindowController
             ?? SettingsWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
         settingsWindowController = controller
-        if let pane, let tabs = controller.contentViewController as? SettingsTabViewController {
-            tabs.select(pane)
-        }
-        NSApp.activate()
-        controller.showWindow(sender)
-        controller.window?.makeKeyAndOrderFront(sender)
+        if let destination { controller.tabs.show(destination) }
+        activateApp()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Config check
@@ -114,15 +116,23 @@ final class AppWindowRegistry {
 
     var configCheckWindow: NSWindow? { configCheckWindowController?.window }
 
-    /// Shows the Check Config Files window, checking every config file again.
-    func showConfigCheck() {
+    /// Shows the Check Config Files window, checking every config file again:
+    /// in front and key, with Kernova brought forward, for the user's
+    /// `request`; in front of Kernova's other windows alone for an automatic
+    /// one.
+    func showConfigCheck(_ request: VMLibraryViewModel.ConfigCheckRequest) {
         residency?.prepareToPresentWindow()
         let controller =
             configCheckWindowController
             ?? ConfigCheckWindowController(viewModel: viewModel, autosaveScope: autosaveScope)
         configCheckWindowController = controller
-        NSApp.activate()
-        controller.showAndCheck()
+        switch request {
+        case .user:
+            activateApp()
+            controller.showAndCheck(makingKey: true)
+        case .automatic:
+            controller.showAndCheck(makingKey: false)
+        }
     }
 
     // MARK: - Clipboard

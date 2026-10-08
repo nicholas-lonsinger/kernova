@@ -278,12 +278,12 @@ struct VMCommandCoreTests {
     @Test("A running VM's observed address answers info and the ip verb alike")
     func theObservedAddressAnswersEveryHeadlessRead() async throws {
         let harness = makeHarness()
-        harness.vmnet.scriptedSubnets = [.common(.shared): .scripted("192.168.64.0")]
+        harness.vmnet.scriptedSubnets = [.common(.nat): .scripted("192.168.64.0")]
         let instance = makeInstance(
             in: harness, name: "Addressed", phase: .running(sessionID: UUID())
         ) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
             $0.macAddress = "aa:bb:cc:dd:ee:01"
         }
 
@@ -3882,6 +3882,9 @@ struct VMCommandCoreTests {
             hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+        // The baseline's own settings, which the start after the revert reads.
+        instance.fixtureBundleFiles.setSnapshotConfiguration(
+            instance.configuration, id: baseline.id, at: instance.bundleURL)
 
         let restart = Task { try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none) }
         // The stop powers the guest off, and the baseline revert is admitted
@@ -4194,6 +4197,9 @@ struct VMCommandCoreTests {
             hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: baseline.id)
+        // The baseline's own settings, which the start after the revert reads.
+        instance.fixtureBundleFiles.setSnapshotConfiguration(
+            instance.configuration, id: baseline.id, at: instance.bundleURL)
 
         let restart = Task {
             try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)

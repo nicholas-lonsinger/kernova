@@ -118,7 +118,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
 
         /// The value `text` spells as typed, ignoring case but for a bridged
         /// interface's identifier: a ``rawValue`` naming no named network, or
-        /// a vmnet mode alone (`shared`, `hostOnly`) for that mode's common
+        /// a vmnet mode alone (`nat`, `hostOnly`) for that mode's common
         /// network. `nil` for anything else — a named network is typed by its
         /// name or identifier, which only the library resolves.
         public init?(spelling text: String) {
@@ -142,7 +142,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         /// What ``init(spelling:)`` reads, but for `bridged:<interface>`, in
         /// the order the Mode picker lists them.
         public static let spellings: [String] =
-            [VmnetNetworkKind.shared, .hostOnly].flatMap { kind in
+            [VmnetNetworkKind.nat, .hostOnly].flatMap { kind in
                 [kind.rawValue, NetworkModeChoice.vmnet(kind, .isolated).rawValue]
             }
             + [NetworkModeChoice.bridged(nil).rawValue, NetworkModeChoice.none.rawValue, unlistedValue]
@@ -280,18 +280,23 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         case guestOSes, states, networks, guestAgents, ephemeralOnly, withSnapshotsOnly, tags
     }
 
-    /// A missing key reads as that attribute unconstrained.
+    /// A missing key reads as that attribute unconstrained. Each include-set
+    /// decodes as a list, so a value this build does not take is removed alone.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = VMLibraryFilter()
         self.init(
-            guestOSes: try c.decodeIfPresent(Set<VMGuestOS>.self, forKey: .guestOSes) ?? [],
-            states: try c.decodeIfPresent(Set<VMStateBucket>.self, forKey: .states) ?? [],
-            networks: try c.decodeIfPresent(Set<Network>.self, forKey: .networks) ?? [],
-            guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
-                ?? [],
-            ephemeralOnly: try c.decodeIfPresent(Bool.self, forKey: .ephemeralOnly) ?? false,
-            withSnapshotsOnly: try c.decodeIfPresent(Bool.self, forKey: .withSnapshotsOnly) ?? false,
-            tags: try c.decodeIfPresent(Set<UUID>.self, forKey: .tags) ?? [])
+            guestOSes: try c.decode(
+                Set<VMGuestOS>.self, forKey: .guestOSes, default: defaults.guestOSes, in: decoder),
+            states: try c.decode(Set<VMStateBucket>.self, forKey: .states, default: defaults.states, in: decoder),
+            networks: try c.decode(Set<Network>.self, forKey: .networks, default: defaults.networks, in: decoder),
+            guestAgents: try c.decode(
+                Set<VMGuestAgentBucket>.self, forKey: .guestAgents, default: defaults.guestAgents, in: decoder),
+            ephemeralOnly: try c.decode(
+                Bool.self, forKey: .ephemeralOnly, default: defaults.ephemeralOnly, in: decoder),
+            withSnapshotsOnly: try c.decode(
+                Bool.self, forKey: .withSnapshotsOnly, default: defaults.withSnapshotsOnly, in: decoder),
+            tags: try c.decode(Set<UUID>.self, forKey: .tags, default: defaults.tags, in: decoder))
     }
 
     /// Sets are written sorted, so under `.sortedKeys` equal filters encode to

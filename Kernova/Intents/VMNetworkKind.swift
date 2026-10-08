@@ -9,20 +9,20 @@ import KernovaKit
 /// ``VMStopMethod`` gives. ``init(_:)`` is exhaustive over the kinds, so a new
 /// one fails to build here rather than reaching Shortcuts unnamed.
 enum VMNetworkKind: String, AppEnum {
-    case shared
+    case nat
     case hostOnly
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Network Kind")
 
     static let caseDisplayRepresentations: [VMNetworkKind: DisplayRepresentation] = [
-        .shared: "Shared Network",
+        .nat: "NAT",
         .hostOnly: "Host Only",
     ]
 
     /// The kind this case names.
     var kind: NetworkKind {
         switch self {
-        case .shared: .shared
+        case .nat: .nat
         case .hostOnly: .hostOnly
         }
     }
@@ -31,7 +31,7 @@ enum VMNetworkKind: String, AppEnum {
     init(_ kind: NetworkKind) {
         self =
             switch kind {
-            case .shared: .shared
+            case .nat: .nat
             case .hostOnly: .hostOnly
             }
     }

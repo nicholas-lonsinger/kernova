@@ -88,13 +88,14 @@ struct AppPreferences {
         nonmutating set { setEncoded(newValue, forKey: Keys.sidebarSelection) }
     }
 
-    /// The value stored as JSON under `key`, or `nil` when none is stored or
-    /// it does not decode as `type` — a failure logged, and the caller's
-    /// default standing in for the value.
+    /// The value stored as JSON under `key`, each config field that does not
+    /// decode at its fallback (``JSONDecoder/decodeRepairing(_:from:)``) — or
+    /// `nil` when none is stored or it does not decode as `type` even so, a
+    /// failure logged and the caller's default standing in for the value.
     private func decoded<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
         guard let data = defaults.data(forKey: key) else { return nil }
         do {
-            return try JSONDecoder().decode(type, from: data)
+            return try JSONDecoder().decodeRepairing(type, from: data)
         } catch {
             #log(
                 Self.logger, .error,

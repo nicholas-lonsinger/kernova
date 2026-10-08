@@ -21,7 +21,7 @@ struct CLIRenderingTests {
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "shared", networkMembership: networkMembership,
+            memoryBytes: memoryBytes, diskSizeInGB: 64, networkMode: "nat", networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: "current",
             hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
@@ -144,7 +144,7 @@ struct CLIRenderingTests {
             info(networkMembership: id, networkName: .unreadable), quiet: false)
         let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
 
-        #expect(network.hasSuffix("shared, Network List Can\u{2019}t Be Read"))
+        #expect(network.hasSuffix("nat, Network List Can\u{2019}t Be Read"))
         #expect(!rendered.contains(id))
     }
 
@@ -155,7 +155,7 @@ struct CLIRenderingTests {
             info(networkMembership: id.uuidString, networkName: .unlisted(id)), quiet: false)
         let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
 
-        #expect(network.hasSuffix("shared, \(id.uuidString)"))
+        #expect(network.hasSuffix("nat, \(id.uuidString)"))
     }
 
     @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")
@@ -320,7 +320,7 @@ struct CLIRenderingTests {
                 name: "Lab", kind: .hostOnly, members: [alpha, longName]),
             NetworkSummary(
                 id: UUID(uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF") ?? UUID(),
-                name: "Spare", kind: .shared, members: []),
+                name: "Spare", kind: .nat, members: []),
         ]
     }
 
@@ -414,7 +414,7 @@ struct CLIRenderingTests {
 
     private let settings = [
         ConfigurationEntry(key: "cpus", value: "4"),
-        ConfigurationEntry(key: "network.mode", value: "shared"),
+        ConfigurationEntry(key: "network.mode", value: "nat"),
         ConfigurationEntry(key: "clipboard.sharing", value: "true"),
     ]
 
@@ -451,7 +451,7 @@ struct CLIRenderingTests {
     func quietSettingsListingIsValuesOnly() {
         // Values rather than key=value: a script asking for one setting wants
         // the value, and a whole listing stays line-for-line with `get --keys`.
-        #expect(TableRenderer.render(settings, quiet: true) == "4\nshared\ntrue")
+        #expect(TableRenderer.render(settings, quiet: true) == "4\nnat\ntrue")
     }
 
     @Test("A virtual machine with no settings to report prints nothing at all")

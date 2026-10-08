@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -216,7 +217,7 @@ struct ConfigFileDecodingTests {
 
         init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .shared), in: decoder)
+            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .nat), in: decoder)
         }
     }
 
@@ -233,10 +234,10 @@ struct ConfigFileDecodingTests {
         #expect(
             problem.reportLine(fileName: "x.json")
                 == "$.inner.mode: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
-                + "Default for $.inner: {\"mode\":\"shared\"}.")
+                + "Default for $.inner: {\"mode\":\"nat\"}.")
         #expect(
             try JSONDecoder().decode(Holder.self, from: try #require(diagnosis.repaired))
-                == Holder(inner: Holder.Inner(mode: .shared)))
+                == Holder(inner: Holder.Inner(mode: .nat)))
     }
 
     // MARK: - Facts
@@ -341,7 +342,7 @@ struct ConfigFileDecodingTests {
         }
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
-        #expect(network.networkMode == .shared)
+        #expect(network.networkMode == .nat)
     }
 
     @Test("A snapshot's captured network missing networkEnabled had no network device")
@@ -357,7 +358,7 @@ struct ConfigFileDecodingTests {
         #expect(
             network
                 == VMCapturedNetwork(
-                    networkEnabled: false, networkMode: .shared, networkMembership: .common,
+                    networkEnabled: false, networkMode: .nat, networkMembership: .common,
                     bridgedInterfaceIdentifier: nil, macAddress: nil))
     }
 
@@ -379,7 +380,7 @@ struct ConfigFileDecodingTests {
         // The lenient read still answers: each value as its absence reads.
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.networkEnabled == false)
-        #expect(network.networkMode == .shared)
+        #expect(network.networkMode == .nat)
     }
 
     // MARK: - Trashed originals
@@ -464,7 +465,7 @@ struct ConfigFileDecodingTests {
             encoder: VMConfiguration.makeJSONEncoder())
 
         #expect(diagnosis.problems.map(\.path?.description) == ["$.tags[1]", "$.lastRunAt"])
-        #expect(diagnosis.problems.map(\.repair) == [.removeEntry, .useDefault("null")])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry, .useDefault(nil)])
         let repaired = try VMConfiguration.makeJSONDecoder().decode(
             VMHostState.self, from: try #require(diagnosis.repaired))
         #expect(repaired.tags == [kept])
@@ -496,5 +497,162 @@ struct ConfigFileDecodingTests {
         #expect(repaired.folders.map(\.id) == [folder])
         #expect(repaired.tags.map(\.id) == [tag])
         #expect(repaired.sections.map(\.id) == [.library, .folder(folder)])
+    }
+
+    // MARK: - Preferences repaired to a new instance's value
+
+    @Test("A VM's bridged interface and kernel command line that don't decode repair to a new VM's")
+    func configurationOptionalPreferencesRepair() throws {
+        let data = try configJSON {
+            $0["bridgedInterfaceIdentifier"] = 5
+            $0["kernelCommandLine"] = ["console=hvc0"]
+        }
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        }
+        let diagnosis = diagnose(data)
+        let fresh = VMConfiguration(name: "Dev", guestOS: .linux, bootMode: .efi)
+
+        #expect(
+            diagnosis.problems.map(\.path?.description) == ["$.bridgedInterfaceIdentifier", "$.kernelCommandLine"])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault(nil), .useDefault(nil)])
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.bridgedInterfaceIdentifier == fresh.bridgedInterfaceIdentifier)
+        #expect(repaired.kernelCommandLine == fresh.kernelCommandLine)
+    }
+
+    @Test("A VM's fullscreen display that doesn't decode repairs to a new VM's")
+    func hostStateFullscreenDisplayRepairs() throws {
+        let data = Data(#"{"lastFullscreenDisplayID": "main", "displayPreference": "fullscreen"}"#.utf8)
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMHostState.self, from: data, decoder: VMConfiguration.makeJSONDecoder(),
+            encoder: VMConfiguration.makeJSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.lastFullscreenDisplayID"])
+        #expect(diagnosis.problems.map(\.repair) == [.useDefault(nil)])
+        let repaired = try VMConfiguration.makeJSONDecoder().decode(
+            VMHostState.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.lastFullscreenDisplayID == VMHostState().lastFullscreenDisplayID)
+        #expect(repaired.displayPreference == .fullscreen)
+    }
+
+    @Test("Sidebar view options that don't decode repair to new options', a filter's bad entry removed alone")
+    func sidebarViewOptionsRepair() throws {
+        let data = Data(
+            #"""
+            {"sort": "byColor", "grouping": "state", "showsDetails": 2,
+             "filter": {"states": ["running", "levitating"], "ephemeralOnly": "yes", "guestOSes": ["linux"]}}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(SidebarViewOptions.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: SidebarViewOptions.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+        let fresh = SidebarViewOptions()
+
+        #expect(
+            diagnosis.problems.map(\.path?.description) == [
+                "$.filter.states[1]", "$.filter.ephemeralOnly", "$.sort", "$.showsDetails",
+            ])
+        #expect(
+            diagnosis.problems.map(\.repair) == [
+                .removeEntry, .useDefault(String(fresh.filter.ephemeralOnly)), .useDefault(fresh.sort.rawValue),
+                .useDefault(String(fresh.showsDetails)),
+            ])
+        let repaired = try JSONDecoder().decode(SidebarViewOptions.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.sort == fresh.sort)
+        #expect(repaired.showsDetails == fresh.showsDetails)
+        #expect(repaired.grouping == .state)
+        #expect(repaired.filter.states == [.running])
+        #expect(repaired.filter.ephemeralOnly == fresh.filter.ephemeralOnly)
+        #expect(repaired.filter.guestOSes == [.linux])
+    }
+
+    @Test("A default that is no value reads as no value in the report")
+    func aNilDefaultReadsAsNoValue() {
+        let unset = ConfigProblem(
+            path: ConfigValuePath([.key("lastFullscreenDisplayID")]), issue: .unrecognized(found: "main"),
+            repair: .useDefault(nil))
+        let nested = ConfigProblem(
+            path: ConfigValuePath([.key("bridge")]), issue: .unrecognized(found: "5"), repair: .useDefault(nil),
+            issuePath: ConfigValuePath([.key("bridge"), .key("id")]))
+
+        #expect(
+            unset.reportLine(fileName: "host-state.json")
+                == "$.lastFullscreenDisplayID: \u{201C}main\u{201D} is not a recognized value. Default: no value.")
+        #expect(
+            nested.reportLine(fileName: "config.json")
+                == "$.bridge.id: \u{201C}5\u{201D} is not a recognized value. Default for $.bridge: no value.")
+    }
+
+    // MARK: - The caller's decoder
+
+    @Test("A decoder that decoded repairing, or diagnosed, decodes strictly afterwards")
+    func aRepairingDecodeLeavesTheDecoderStrict() throws {
+        let data = try configJSON { $0["networkMode"] = Self.unrecognized }
+        let decoder = VMConfiguration.makeJSONDecoder()
+
+        _ = try decoder.decodeRepairing(VMConfiguration.self, from: data)
+        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
+
+        _ = ConfigFileDiagnosis(
+            decoding: VMConfiguration.self, from: data, decoder: decoder, encoder: VMConfiguration.makeJSONEncoder())
+        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
+    }
+
+    // MARK: - Smart groups
+
+    @Test("A smart group's network no build spells is refused strictly, and removed alone when collecting")
+    func aSmartGroupsUnknownNetworkIsRemovedAlone() throws {
+        let group = UUID()
+        let folder = UUID()
+        let tag = UUID()
+        let data = Data(
+            #"""
+            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "NAT",
+                              "filter": {"networks": ["bogus:common"], "guestOSes": ["linux"]}}],
+             "folders": [{"id": "\#(folder.uuidString)", "name": "Lab", "members": []}],
+             "sectionOrder": ["folder:\#(folder.uuidString)", "virtualMachines", "smartGroup:\#(group.uuidString)"],
+             "tags": [{"id": "\#(tag.uuidString)", "name": "Work", "color": "red"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[0].filter.networks[0]"])
+        #expect(diagnosis.problems.map(\.repair) == [.removeEntry])
+        let repaired = try JSONDecoder().decode(
+            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.smartGroups.map(\.id) == [group])
+        #expect(repaired.smartGroups.first?.filter == VMLibraryFilter(guestOSes: [.linux]))
+        #expect(repaired.folders.map(\.id) == [folder])
+        #expect(repaired.tags.map(\.id) == [tag])
+        #expect(repaired.sections.map(\.id) == [.folder(folder), .library, .smartGroup(group)])
+    }
+
+    @Test("A smart group that doesn't decode is removed alone; a file with none lists none")
+    func aBadSmartGroupIsRemovedAlone() throws {
+        let group = UUID()
+        let data = Data(
+            #"""
+            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "All", "filter": {}}, {"name": "Unnamed"}]}
+            """#.utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
+        }
+        let diagnosis = ConfigFileDiagnosis(
+            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
+
+        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[1]"])
+        let repaired = try JSONDecoder().decode(
+            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
+        #expect(repaired.smartGroups.map(\.id) == [group])
+        #expect(try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: Data("{}".utf8)) == .init())
     }
 }
