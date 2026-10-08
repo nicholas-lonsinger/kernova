@@ -221,7 +221,8 @@ final class SidebarViewController: NSViewController {
     ///
     /// The model's selection then moves onto the new rows
     /// (``VMLibrary/reconcileSelection(with:)``): a selected VM the change hid
-    /// is no longer selected.
+    /// from its section and the library is no longer selected, and a sidebar
+    /// rename of it ends.
     private func applyProjection() {
         let layout = viewModel.sidebarLayout
         let changes = tree.update(to: layout)
@@ -378,8 +379,9 @@ final class SidebarViewController: NSViewController {
     // MARK: - Inline rename
 
     /// The row a sidebar rename of the entry `id` is open in: the row already
-    /// editing it while the tree still lists that row, else the row a reveal
-    /// of the entry lands on (``VMLibrary/preferredRow(of:in:)``).
+    /// editing it while the tree still lists that row, else the row
+    /// ``VMLibrary/preferredRow(of:in:)`` resolves to, the row the library's
+    /// reconcile keeps the request against.
     private func renameRow(for id: UUID) -> SidebarRow? {
         if let editingRow, editingRow.key.entryID == id, tree.row(for: editingRow.key) === editingRow {
             return editingRow

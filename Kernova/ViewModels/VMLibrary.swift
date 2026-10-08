@@ -323,17 +323,27 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     }
 
     /// Moves ``selection`` onto what `layout` — by default the current
-    /// ``sidebarLayout`` — shows, by ``SidebarLayout/reconciled(_:libraryHolds:)``.
+    /// ``sidebarLayout`` — shows, by ``SidebarLayout/reconciled(_:libraryHolds:)``,
+    /// and ends a ``sidebarRenameID`` request no row of it lists.
     func reconcileSelection(with layout: SidebarLayout? = nil) {
         let layout = layout ?? sidebarLayout
         let reconciled = layout.reconciled(selection) { id in entries.contains { $0.id == id } }
         if reconciled != selection { selection = reconciled }
+        if let id = sidebarRenameID, layout.resolve(preferredRow(of: id)) == nil { sidebarRenameID = nil }
     }
 
-    /// The row a selection of the entry `id` starts from, for
-    /// ``SidebarLayout/resolve(_:)`` to land: its row in `section` when one is
-    /// named, else the selected row when it is the entry's, else its library
-    /// row — so a reveal and a rename look for an entry's row alike.
+    /// The entry a rename in its sidebar row is asked for on.
+    ///
+    /// Reconciled with the selection: a layout listing no row for it ends the
+    /// request, so it never waits for a row to come back and opens a rename
+    /// nobody is asking for any more. The text typed into a row a change takes
+    /// down is committed, as the row's edit ending commits it.
+    var sidebarRenameID: UUID?
+
+    /// The row the entry `id` is looked for from: its row in `section` when
+    /// one is named, else the selected row when it is the entry's, else its
+    /// library row — where a reveal starts (``SidebarLayout/revealTarget(_:)``)
+    /// and what a sidebar rename resolves (``SidebarLayout/resolve(_:)``).
     func preferredRow(of id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey {
         if let section { return SidebarRowKey(section: section, group: nil, entryID: id) }
         if let selection, selection.entryID == id { return selection }
@@ -353,14 +363,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     func selectRevealing(_ id: UUID, in section: SidebarSectionID? = nil) -> SidebarRowKey? {
         guard let entry = entries.first(where: { $0.id == id }) else { return nil }
         let preferred = preferredRow(of: id, in: section)
-        if let row = sidebarLayout.resolve(preferred) {
+        if let row = sidebarLayout.revealTarget(preferred) {
             select(row)
             return row
         }
         var options = sidebarOptions
         if let subject = sidebarContext.subject(of: entry) { options.filter = options.filter.admitting(subject) }
         let search = sidebarSearch.admits(entry.name) ? sidebarSearch : SidebarNameSearch()
-        guard let row = sidebarLayout(options: options, search: search).resolve(preferred) else { return nil }
+        guard let row = sidebarLayout(options: options, search: search).revealTarget(preferred) else { return nil }
         sidebarOptions = options
         sidebarSearch = search
         select(row)
@@ -373,10 +383,14 @@ final class VMLibrary: VMInstanceRoster, USBAccessoryPairingWriting, VMAdmission
     /// the user is already watching. A filter hiding it everywhere relaxes
     /// nothing: the selection stays where the user can see it.
     func selectArrival(_ id: UUID, in section: SidebarSectionID? = nil) {
-        guard selectedEntry?.arrival == nil, let row = sidebarLayout.resolve(preferredRow(of: id, in: section))
+        guard !isWatchingArrival, let row = sidebarLayout.revealTarget(preferredRow(of: id, in: section))
         else { return }
         select(row)
     }
+
+    /// Whether the selection is an arrival, which a selection made for
+    /// anything starting leaves where it is.
+    var isWatchingArrival: Bool { selectedEntry?.arrival != nil }
 
     /// Selects `row`, owing it a reveal.
     private func select(_ row: SidebarRowKey) {

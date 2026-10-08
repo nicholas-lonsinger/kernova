@@ -511,6 +511,66 @@ struct SidebarViewControllerTests {
         #expect(viewModel.activeRename == nil)
     }
 
+    @Test("A sidebar rename whose row a filter hides before it opens ends, and opens nothing when the row returns")
+    func renameWithNoRowLapses() throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+
+        viewModel.renameVMInSidebar(mac)
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        #expect(viewModel.activeRename == nil)
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+        #expect(!isRenamingAnyRow(in: outline))
+    }
+
+    /// The edit ends with its row, committing what was typed, as any row
+    /// an update takes down does.
+    @Test("A sidebar rename whose row a filter hides mid-edit commits its text and ends")
+    func renameWhoseRowLeavesMidEditEnds() async throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        viewModel.library.admitFixture(name: "Linux", guestOS: .linux, files: storage.files)
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func macCell() -> SidebarVMRowCellView? {
+            controller.tree.row(for: .library(mac.id)).flatMap { node in
+                outline.view(atColumn: 0, row: outline.row(forItem: node), makeIfNecessary: false)
+                    as? SidebarVMRowCellView
+            }
+        }
+        viewModel.renameVMInSidebar(mac)
+        // The rename reaches the row through the sidebar's own observation
+        // loop, which offers no test-facing signal to await.
+        try await waitUntil { macCell()?.isRenaming == true }
+        let cell = try #require(macCell())
+        let label = try nameLabel(in: cell)
+        let editor = try #require(label.currentEditor())
+        editor.string = "Typed"
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
+        #expect(viewModel.activeRename == nil)
+        controller.viewDidAppear()
+        #expect(mac.name == "Typed")
+
+        viewModel.sidebarOptions.filter = VMLibraryFilter()
+        controller.viewDidAppear()
+        #expect(viewModel.activeRename == nil)
+        #expect(!isRenamingAnyRow(in: outline))
+    }
+
+    private func isRenamingAnyRow(in outline: NSOutlineView) -> Bool {
+        (0..<outline.numberOfRows).contains {
+            (outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView)?.isRenaming == true
+        }
+    }
+
     @Test("A reveal answers the row it selected; one with no row to land on changes nothing")
     func revealAnswersItsRow() {
         let viewModel = makeViewModel()

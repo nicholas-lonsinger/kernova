@@ -882,14 +882,14 @@ struct SidebarFolderTests {
         #expect(Set(viewModel.instances.map(\.id)) == [first.config.id, second.config.id])
     }
 
-    /// One answer to which row holds an entry: a selection the layout moves
-    /// off its row lands where a reveal of the entry would.
-    @Test("A selection whose section and the library stop listing its VM moves to the row another section lists")
-    func selectionFallsBackToAnotherSection() throws {
+    /// Jumping to another section's row would select a row that section may
+    /// keep collapsed, where the outline shows no selection the model holds.
+    @Test("A selection whose section and the library stop listing its VM clears, though a folder lists it")
+    func hiddenSelectionClears() throws {
         let viewModel = makeViewModel()
         let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        let clients = try viewModel.library.createFolder(named: "Clients", members: [mac.id])
+        try viewModel.library.createFolder(named: "Clients", members: [mac.id])
         let macs = try viewModel.library.organization.createSmartGroup(
             named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
         let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
@@ -898,7 +898,28 @@ struct SidebarFolderTests {
 
         try viewModel.library.setFilter(linuxOnly, ofSmartGroup: macs.id)
 
-        #expect(viewModel.selection == inFolder(clients, mac.id))
+        #expect(viewModel.selection == nil)
+    }
+
+    @Test("An import batch leaves an arrival the user is watching selected, and the filter as it is")
+    func importBatchLeavesAWatchedArrival() async throws {
+        let viewModel = makeViewModel()
+        let source = try scratch.importSource(name: "Mac")
+        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = source.config.id }
+        let gate = GatedStep()
+        let watched = viewModel.library.beginGatedArrival(named: "Watched", gate: gate)
+        #expect(viewModel.selectedID == watched.id)
+        let linuxOnly = VMLibraryFilter(guestOSes: [.linux])
+        viewModel.sidebarOptions.filter = linuxOnly
+        let fresh = try scratch.importSource(name: "Fresh")
+
+        #expect(viewModel.importVMs(fromDroppedURLs: [source.url, fresh.url]))
+
+        #expect(viewModel.selectedID == watched.id)
+        #expect(viewModel.sidebarOptions.filter == linuxOnly)
+        #expect(viewModel.library.entries.contains { $0.id == mac.id })
+        gate.release()
+        await viewModel.awaitArrivalsForTesting()
     }
 
     /// The sections a sidebar's first load makes open one after another; a

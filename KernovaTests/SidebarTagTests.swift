@@ -192,7 +192,9 @@ struct SidebarTagTests {
         }
     }
 
-    @Test("An import's arrival reads as its source does: its tags and Ephemeral Mode")
+    /// The manifest lists a snapshot whose own files were never written: an
+    /// import reads the manifest, not each snapshot.
+    @Test("An import's arrival reads as its source does: its tags, Ephemeral Mode and snapshots")
     func importArrivalReadsAsItsSource() async throws {
         let storage = MockVMStorageService()
         let viewModel = makeViewModel(storage: storage)
@@ -200,8 +202,14 @@ struct SidebarTagTests {
         let source = try scratch.importSource(name: "Arriving")
         var hostState = VMHostState(tags: [work.id])
         hostState.applyEphemeralMode(enabled: true, baseline: nil)
-        try VMConfiguration.makeJSONEncoder().encode(hostState)
+        let encoder = VMConfiguration.makeJSONEncoder()
+        try encoder.encode(hostState)
             .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
+        let manifestURL = source.url.appendingPathComponent(VMBundleLayout.snapshotManifestRelativePath)
+        try FileManager.default.createDirectory(
+            at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encoder.encode(VMSnapshotManifest(snapshots: [VMSnapshot(name: "Kept", macAddress: nil)]).record)
+            .write(to: manifestURL)
         viewModel.sidebarOptions.filter = VMLibraryFilter(tags: [work.id])
 
         #expect(viewModel.importVMs(fromDroppedURLs: [source.url]))
@@ -210,6 +218,7 @@ struct SidebarTagTests {
         let subject = try #require(viewModel.library.sidebarContext.subject(of: .arriving(arrival)))
         #expect(subject.tags == [work.id])
         #expect(subject.isEphemeral)
+        #expect(subject.hasSnapshots)
         // The tag filter lists it, so the import selects it.
         #expect(viewModel.selectedID == arrival.id)
         await viewModel.awaitArrivalsForTesting()

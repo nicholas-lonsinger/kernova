@@ -525,7 +525,28 @@ final class VMLibraryViewModel {
     /// does, for the same reason.
     @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
-    var activeRename: RenameTarget?
+    /// The one rename open: in a sidebar row — held by the library
+    /// (``VMLibrary/sidebarRenameID``), which ends it once no row lists the
+    /// VM — or in the detail pane.
+    var activeRename: RenameTarget? {
+        get { library.sidebarRenameID.map(RenameTarget.sidebar) ?? detailRenameID.map(RenameTarget.detail) }
+        set {
+            switch newValue {
+            case .sidebar(let id):
+                detailRenameID = nil
+                library.sidebarRenameID = id
+            case .detail(let id):
+                library.sidebarRenameID = nil
+                detailRenameID = id
+            case nil:
+                library.sidebarRenameID = nil
+                detailRenameID = nil
+            }
+        }
+    }
+
+    /// The VM a rename in the detail pane is open on.
+    private var detailRenameID: UUID?
 
     /// Asks for a VM's display window, for a verb that puts the display in
     /// front of the user.

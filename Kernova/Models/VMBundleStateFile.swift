@@ -311,6 +311,21 @@ struct VMBundleFiles: Sendable {
         }
     }
 
+    /// What a bundle about to be copied is known to hold, in one coordinated
+    /// read: `config.json`, and the host state and whether the manifest lists
+    /// a snapshot, each `nil` when its file doesn't read. Reads no snapshot's
+    /// own files.
+    func readArrivalState() throws(UnreadableConfigFile) -> (
+        configuration: VMConfiguration, hostState: VMHostState?, hasSnapshots: Bool?
+    ) {
+        try reading { files throws(UnreadableConfigFile) in
+            let configuration = try VMBundleStateFile.configuration.read(from: files, in: url)
+            let hostState = try? VMBundleStateFile.hostState.read(from: files, in: url)
+            let manifest = try? VMBundleStateFile.snapshotManifestRecord.read(from: files, in: url)
+            return (configuration, hostState, manifest.map { !$0.snapshots.isEmpty })
+        }
+    }
+
     /// Reads `config.json` alone.
     func readConfiguration() throws(UnreadableConfigFile) -> VMConfiguration {
         try reading { files throws(UnreadableConfigFile) in

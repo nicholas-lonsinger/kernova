@@ -397,18 +397,22 @@ struct SidebarLayout {
         }
     }
 
-    /// The row `preferred`'s entry lands on: `preferred` itself, else the
-    /// entry's first row in `preferred`'s section, in the library section, or
-    /// in any section, in that order; `nil` when no section lists the entry.
-    ///
-    /// The one answer to which row holds an entry — for a selection the
-    /// layout moved, a reveal and a rename alike.
-    func resolve(_ preferred: SidebarRowKey) -> SidebarRowKey? {
-        let rows = rowKeys.filter { $0.entryID == preferred.entryID }
-        if rows.contains(preferred) { return preferred }
-        return rows.first { $0.section == preferred.section }
-            ?? rows.first { $0.section == .library }
-            ?? rows.first
+    /// Where a selection of `selection`'s row stands in this layout: that row
+    /// itself, else the entry's first row in the same section, else its first
+    /// row in the library section; `nil` when neither lists the entry. A
+    /// selection never moves to a section it wasn't made in other than the
+    /// library's.
+    func resolve(_ selection: SidebarRowKey) -> SidebarRowKey? {
+        let rows = rowKeys.filter { $0.entryID == selection.entryID }
+        if rows.contains(selection) { return selection }
+        return rows.first { $0.section == selection.section } ?? rows.first { $0.section == .library }
+    }
+
+    /// Where a reveal starting from `preferred` goes: the row
+    /// ``resolve(_:)`` lands on, else the entry's first row in whichever
+    /// section lists it; `nil` when no section does.
+    func revealTarget(_ preferred: SidebarRowKey) -> SidebarRowKey? {
+        resolve(preferred) ?? rowKeys.first { $0.entryID == preferred.entryID }
     }
 
     /// Where `selection` stands once this layout is shown: on the row it

@@ -517,7 +517,8 @@ extension VMCommandCore {
     /// makes the batch's one selection: its first entry, in that folder when
     /// the folder took them — a VM already in the library, or an import
     /// already copying it, revealed; an arrival just started selected on an
-    /// arrival's terms (``VMLibrary/selectArrival(_:in:)``).
+    /// arrival's terms (``VMLibrary/selectArrival(_:in:)``). An arrival the
+    /// user is watching keeps the selection, whichever kind comes first.
     ///
     /// The folder takes the entries before the selection looks for a row, so
     /// a VM the library's filter hides is revealed in the folder, relaxing
@@ -542,10 +543,11 @@ extension VMCommandCore {
                 membershipFailure = error
             }
         }
-        switch registered.first {
-        case .started(let arrival)?: library.selectArrival(arrival.id, in: section)
-        case let first?: library.selectRevealing(first.id, in: section)
-        case nil: break
+        if let first = registered.first, !library.isWatchingArrival {
+            switch first {
+            case .started(let arrival): library.selectArrival(arrival.id, in: section)
+            case .existing, .joined: library.selectRevealing(first.id, in: section)
+            }
         }
         return (starts, membershipFailure)
     }
@@ -560,12 +562,10 @@ extension VMCommandCore {
     private func registerImport(from sourceURL: URL) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
-            let files = VMBundleFiles(url: sourceURL, access: storageService.bundleFiles)
             // A host state or manifest that doesn't read is the library's to
-            // report once it reads the copy; the import starts from the
-            // configuration alone.
-            let read = try? files.read()
-            let config = try read?.configuration ?? files.readConfiguration()
+            // report once it reads the copy; the import starts without it.
+            let read = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles).readArrivalState()
+            let config = read.configuration
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — answered with it rather than re-imported.
@@ -582,7 +582,7 @@ extension VMCommandCore {
                 break
             }
 
-            var hostState = read?.hostState ?? VMHostState()
+            var hostState = read.hostState ?? VMHostState()
             hostState.arriveAsCopy()
             return .started(
                 library.beginArrival(
@@ -591,7 +591,7 @@ extension VMCommandCore {
                     staged: try VMStagedBundle.mint(in: storageService),
                     source: .importing(sourceURL),
                     starting: VMArrival.Starting(
-                        hostState: hostState, hasSnapshots: !(read?.snapshotManifest.isEmpty ?? true)),
+                        hostState: hostState, hasSnapshots: read.hasSnapshots ?? false),
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)
