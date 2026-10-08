@@ -204,7 +204,7 @@ protocol VMCommanding: AnyObject {
 
     /// How many of the VMs in `group` each action acts on now — the counts the
     /// actions' menu items show, by the rule the actions themselves act by,
-    /// over the groups as this copy holds them in memory: no file is read.
+    /// from what this copy holds in memory alone: no disk is touched.
     ///
     /// - Throws: what ``groupAction(_:on:)`` throws before acting on any VM.
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int]

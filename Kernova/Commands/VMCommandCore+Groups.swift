@@ -38,6 +38,14 @@ struct VMResolvedGroup {
     let name: String
     let membership: VMGroupMembership
 
+    /// The entries this group holds, in its order: the folder's own, else the
+    /// library's.
+    var selection: VMLibrarySelection {
+        VMLibrarySelection(filter: VMLibraryFilter(), groups: [membership], sort: .manual)
+    }
+}
+
+extension VMResolvedGroup {
     /// The group `reference` names in `organization`, `nil` for one it does
     /// not list.
     init?(_ reference: VMGroupReference, in organization: VMOrganizationDirectory.File) {
@@ -56,22 +64,6 @@ struct VMResolvedGroup {
                     contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
         }
     }
-
-    init(kind: VMGroupKind, id: UUID, name: String, membership: VMGroupMembership) {
-        self.kind = kind
-        self.id = id
-        self.name = name
-        self.membership = membership
-    }
-
-    /// The entries this group holds, in its order: the folder's own, else the
-    /// library's.
-    var selection: VMLibrarySelection {
-        VMLibrarySelection(filter: VMLibraryFilter(), groups: [membership], sort: .manual)
-    }
-
-    /// What names this group by its identifier.
-    var reference: VMGroupReference { VMGroupReference(kind, named: id.uuidString) }
 }
 
 /// The listing and the library's groups: which VMs a filter, a network, a

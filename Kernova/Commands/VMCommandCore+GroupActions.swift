@@ -6,19 +6,20 @@ import KernovaLogging
 /// executor behind the group header menus, the `kernova` lifecycle verbs given
 /// a group, and the Shortcuts group action.
 extension VMCommandCore {
-    /// How many of the VMs in `group` each action acts on now — what the
-    /// actions' menu items count, by the rule the actions themselves act by
-    /// (``VMCapabilityCatalog/groupAction(_:on:)``), against what another copy
-    /// of Kernova holds now.
+    /// How many of the VMs in `group` each action acts on — what the actions'
+    /// menu items count, by the rule the actions themselves act by
+    /// (``VMCapabilityCatalog/groupAction(_:on:)``).
     ///
-    /// Reads the group as this copy holds it in memory and touches the disk
-    /// only to ask each member's run lock whether another copy holds it — the
-    /// View menu counts these while AppKit matches key equivalents.
+    /// Reads only what this copy already holds in memory and touches no disk —
+    /// the View menu counts these while AppKit matches key equivalents. So a
+    /// count is as current as the sidebar's rows: what another copy of Kernova
+    /// holds or wrote shows once the library next catches up with it
+    /// (``VMLibrary/refreshFromOtherCopies(only:reportingUnreadable:)``), and
+    /// the action itself decides each VM afresh.
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int] {
         let instances = entries(in: try heldGroup(group, verb: .groups).selection).compactMap { entry in
             if case .vm(let instance) = entry { instance } else { nil }
         }
-        for instance in instances { instance.activity.probeOtherCopyHold() }
         return Dictionary(
             uniqueKeysWithValues: VMGroupAction.allCases.map { action in
                 let acted = instances.count { instance in
@@ -42,15 +43,19 @@ extension VMCommandCore {
     /// in the result rather than raised — so the caller owes the user one
     /// account of everything left undone.
     ///
-    /// The members are the ones the group's file holds when the action
-    /// begins; one added later is not acted on. Each is looked up again when
-    /// its turn comes and decided as it stands then — against what another
-    /// copy of Kernova holds then, and the group as this copy holds it then,
-    /// without reading the file again: an arrival that has become a VM is
-    /// acted on, a VM the action stopped concerning is passed over, and one
-    /// that has left the library or the group is passed over as
-    /// ``VMGroupActionOutcome/PassOver/removed`` or
-    /// ``VMGroupActionOutcome/PassOver/leftGroup``.
+    /// The members are the ones the group holds once the library has caught
+    /// up with what another copy of Kernova holds and wrote, when the action
+    /// begins; one added later is not acted on. A smart group's members stay
+    /// those: its filter reads the state the action itself changes. Each
+    /// member is looked up again when its turn comes, re-read from its bundle,
+    /// and decided as it stands then: an arrival that has become a VM is acted
+    /// on, a VM the action stopped concerning is passed over, and one that has
+    /// left the library is passed over as
+    /// ``VMGroupActionOutcome/PassOver/removed`` — or, taken out of a folder,
+    /// as ``VMGroupActionOutcome/PassOver/leftGroup``.
+    ///
+    /// A config file a read finds unreadable is recorded for the library's
+    /// next report rather than brought on screen mid-action.
     ///
     /// Cancelling the calling task — a client hanging up — stops the action
     /// between VMs: the VM in hand finishes, and every later one is reported as
@@ -59,6 +64,7 @@ extension VMCommandCore {
     /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
     ///   library does not list, before any VM is acted on.
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
+        library.refreshFromOtherCopies(reportingUnreadable: false)
         let resolved = try self.group(group, verb: action.verb)
         let members = entries(in: resolved.selection)
         #log(
@@ -89,11 +95,11 @@ extension VMCommandCore {
     private func result(
         of action: VMGroupAction, on member: AddressableEntry, in group: VMResolvedGroup
     ) async -> VMGroupActionResult {
-        guard let row = library.entries.first(where: { $0.id == member.id }), let entry = row.addressable else {
+        guard let entry = library.entries.first(where: { $0.id == member.id })?.addressable else {
             return VMGroupActionResult(vm: summary(member), outcome: .passedOver(reason: .removed))
         }
-        if case .vm(let instance) = entry { instance.activity.probeOtherCopyHold() }
-        guard isStill(row, in: group) else {
+        if case .vm(let instance) = entry { library.refreshFromOtherCopies(of: instance) }
+        guard isStill(member.id, in: group) else {
             return VMGroupActionResult(vm: summary(entry), outcome: .passedOver(reason: .leftGroup))
         }
         guard case .vm(let instance) = entry else {
@@ -103,15 +109,12 @@ extension VMCommandCore {
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)
     }
 
-    /// Whether `row` is in `group` as this copy holds the library's
-    /// organization now, without reading its file again — and, while that
-    /// file is unreadable, as it was when the action began.
-    private func isStill(_ row: LibraryEntry, in group: VMResolvedGroup) -> Bool {
-        guard case .listed(let organization) = library.organization.state else { return true }
-        guard let current = VMResolvedGroup(group.reference, in: organization),
-            let subject = library.sidebarContext.subject(of: row)
-        else { return false }
-        return current.membership.contains(row, subject)
+    /// Whether the member `id` is still in `group`: for a folder, as this copy
+    /// holds it in memory — and as it was when the action began while its
+    /// file is unreadable; a smart group's members are fixed at the start.
+    private func isStill(_ id: UUID, in group: VMResolvedGroup) -> Bool {
+        guard group.kind == .folder, let folders = library.organization.folders else { return true }
+        return folders.first { $0.id == group.id }?.members.contains(id) ?? false
     }
 
     /// Where `instance` stands for `action`: the step the action takes it by,

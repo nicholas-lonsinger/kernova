@@ -346,14 +346,16 @@ struct VMCommandCoreGroupActionTests {
         let storage: MockVMStorageService
     }
 
-    private func makeSuspendingHarness() -> SuspendingHarness {
+    private func makeSuspendingHarness(
+        organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil)
+    ) -> SuspendingHarness {
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
         let lifecycle = makeTestLifecycle(virtualization: virtualization, fileSystem: fileSystem)
         let library = makeWiredLibrary(
             storage: storage, machineFiles: MockVMBundleMachineFiles(files: storage.files), lifecycle: lifecycle,
-            fileSystem: fileSystem, preferences: preferences)
+            fileSystem: fileSystem, preferences: preferences, organization: organization)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem, preferences: preferences)
@@ -414,10 +416,11 @@ struct VMCommandCoreGroupActionTests {
     /// Runs Start All on the pair, doing `midRun` while the first VM's
     /// bring-up is under way — before the second VM's turn.
     private func startPair(
-        in harness: SuspendingHarness, midRun: () async throws -> Void
+        in harness: SuspendingHarness, group: VMGroupReference = VMGroupReference(.folder, named: "Pair"),
+        midRun: () async throws -> Void
     ) async throws -> VMGroupActionReport {
         let running = Task { @MainActor in
-            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
+            try await harness.core.groupAction(.start, on: group)
         }
         await harness.virtualization.waitUntilSuspended()
         try await midRun()
@@ -501,17 +504,21 @@ struct VMCommandCoreGroupActionTests {
         return (harness, free, held, { checks })
     }
 
-    @Test("The counts read another copy's hold as it stands now, and nothing else")
-    func countsReadTheHoldNow() throws {
+    @Test("The counts read only what this copy holds, touching no disk; the library's catch-up moves them")
+    func countsTouchNoDisk() throws {
         let (harness, _, held, checks) = try makeUnreadableHarness()
         harness.storage.files.holdElsewhere(held.bundleURL)
         let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
+        let pair = VMGroupReference(.folder, named: "Pair")
 
-        #expect(try harness.core.concernedCounts(in: VMGroupReference(.folder, named: "Pair"))[.start] == 1)
-        #expect(held.heldByAnotherCopy)
-        // No bundle re-read, no library file reloaded, no config check asked for.
+        // No run lock probed, no bundle re-read, no config check asked for.
+        #expect(try harness.core.concernedCounts(in: pair)[.start] == 2)
+        #expect(!held.heldByAnotherCopy)
         #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
         #expect(checks() == 0)
+
+        harness.library.refreshFromOtherCopies()
+        #expect(try harness.core.concernedCounts(in: pair)[.start] == 1)
     }
 
     @Test("The counts read the groups as this copy holds them, reloading no file")
@@ -528,18 +535,85 @@ struct VMCommandCoreGroupActionTests {
         #expect(harness.library.organization.state.listed != nil)
     }
 
-    @Test("Each turn reads another copy's hold and nothing else")
-    func turnsReadOnlyTheHold() async throws {
+    @Test("The action catches the library up first, leaving what it finds unreadable to the next report")
+    func actionCatchesUpWithoutRaisingTheCheck() async throws {
         let (harness, _, held, checks) = try makeUnreadableHarness()
         harness.storage.files.holdElsewhere(held.bundleURL)
-        let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
 
         let report = try await harness.core.groupAction(.stop, on: VMGroupReference(.folder, named: "Pair"))
 
         #expect(report.results.map(\.outcome) == [.passedOver(reason: .state), .passedOver(reason: .state)])
         #expect(report.results[1].vm.heldByAnotherCopy)
-        #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
         #expect(checks() == 0)
+        harness.library.reportNewlyUnreadable()
+        #expect(checks() == 1)
+    }
+
+    @Test("A smart group's members are the ones it holds once the library has caught up")
+    func smartGroupResolvesFromTheCaughtUpLibrary() async throws {
+        let harness = makeHarness()
+        makeInstance(in: harness, name: "Free")
+        let held = makeInstance(in: harness, name: "Held")
+        try harness.library.organization.createSmartGroup(named: "Idle", filter: VMLibraryFilter(states: [.stopped]))
+        harness.storage.files.holdElsewhere(held.bundleURL)
+
+        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.smartGroup, named: "Idle"))
+
+        #expect(report.results.map(\.vm.name) == ["Free"])
+        #expect(report.results.map(\.outcome) == [.done(verb: .start)])
+    }
+
+    @Test("A smart group's members are fixed at the start: one another copy takes is held, not gone from the group")
+    func smartGroupMemberTakenMidRunIsHeld() async throws {
+        let harness = makeSuspendingHarness()
+        let (_, second) = try makePair(in: harness)
+        try harness.library.organization.createSmartGroup(named: "Idle", filter: VMLibraryFilter(states: [.stopped]))
+
+        let report = try await startPair(in: harness, group: VMGroupReference(.smartGroup, named: "Idle")) {
+            harness.storage.files.holdElsewhere(second.bundleURL)
+        }
+
+        #expect(report.results.map(\.vm.name) == ["First", "Second"])
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .state)])
+        #expect(report.results[1].vm.heldByAnotherCopy)
+    }
+
+    @Test("Each turn re-reads its VM's bundle: a guest setup another copy finished is seen")
+    func turnReReadsItsVM() async throws {
+        let harness = makeSuspendingHarness()
+        let first = RegisteredVMInstanceFixture.register(
+            name: "First", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
+        let fresh = RegisteredVMInstanceFixture.register(
+            name: "Fresh", phase: .initialBoot, guestOS: .macOS, library: harness.library, preferences: preferences
+        ) {
+            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
+        }
+        try harness.library.organization.createFolder(named: "Pair", members: [first.id, fresh.id])
+
+        let report = try await startPair(in: harness) {
+            var finished = fresh.configuration
+            finished.installContext = nil
+            harness.storage.files.setConfiguration(finished, at: fresh.bundleURL)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
+        #expect(fresh.status == .running)
+    }
+
+    @Test("A turn reloads no library file")
+    func turnReloadsNoLibraryFile() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
+        let harness = makeSuspendingHarness(organization: VMOrganizationDirectory(fileURL: organizationURL))
+        let (_, second) = try makePair(in: harness)
+
+        let report = try await startPair(in: harness) {
+            try Data("not json".utf8).write(to: organizationURL)
+        }
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
+        #expect(second.status == .running)
+        #expect(harness.library.organization.state.listed != nil)
     }
 
     @Test("A VM another copy starts before its turn is passed over, not failed")
