@@ -88,7 +88,7 @@ struct NetworksSettingsViewControllerTests {
             vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
             entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL))
         var checks = 0
-        viewModel.onShowConfigCheck = { checks += 1 }
+        viewModel.onShowConfigCheck = { _ in checks += 1 }
 
         let pane = makePane(viewModel)
 

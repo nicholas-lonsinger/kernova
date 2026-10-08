@@ -155,8 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onRevealInFinder = { instance in
             NSWorkspace.shared.activateFileViewerSelecting([instance.bundleURL])
         }
-        viewModel.onShowConfigCheck = { [weak self] in
-            self?.windows.showConfigCheck()
+        viewModel.onShowConfigCheck = { [weak self] request in
+            self?.windows.showConfigCheck(request)
         }
         viewModel.displayBootGeometryProvider = self
     }
@@ -441,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func checkConfigFiles(_ sender: Any?) {
-        windows.showConfigCheck()
+        windows.showConfigCheck(.user)
     }
 
     @objc func showLibrary(_ sender: Any?) {

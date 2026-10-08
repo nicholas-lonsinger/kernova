@@ -534,7 +534,7 @@ struct SidebarSmartGroupTests {
         let tagged = UUID()
         let vm = viewModel.library.admitFixture(name: "Desk")
         var checks = 0
-        viewModel.onShowConfigCheck = { checks += 1 }
+        viewModel.onShowConfigCheck = { _ in checks += 1 }
 
         #expect(viewModel.library.tags == nil)
         #expect(viewModel.library.tags(of: vm).isEmpty)
