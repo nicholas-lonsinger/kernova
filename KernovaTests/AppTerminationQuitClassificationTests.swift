@@ -1,5 +1,4 @@
 import Darwin
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova

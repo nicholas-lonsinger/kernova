@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova
