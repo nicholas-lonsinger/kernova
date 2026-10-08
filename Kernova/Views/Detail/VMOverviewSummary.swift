@@ -62,8 +62,9 @@ enum VMOverviewAction: String, Sendable {
 /// Produced by ``VMOverviewResolver`` and read by every surface stating one of
 /// them — the overview's cards and the panel rows showing the same figure.
 struct VMOverviewResolved: Sendable {
-    /// The Mode picker's current title, which names the network the VM joins.
-    var networkModeTitle: String?
+    /// How the network the VM joins names itself; the Mode picker's closed
+    /// title and the Network card read its ``NetworkChoiceLabel/text``.
+    var networkModeLabel: NetworkChoiceLabel?
     /// What the guest's address resolves to for the mode it is on.
     var ipAddress: GuestIPAddress = .unavailable
     /// The boot disk's capacity, once its off-main read lands.
@@ -163,7 +164,7 @@ enum VMOverviewSummary {
                 ),
             ]
         case .network:
-            guard config.networkEnabled, let mode = resolved.networkModeTitle else {
+            guard config.networkEnabled, let mode = resolved.networkModeLabel?.text else {
                 return [Row(label: "Mode", value: "None")]
             }
             // The network names the row, so the address it hands the guest is
@@ -265,8 +266,23 @@ enum VMOverviewSummary {
             // states what is running, as the panel dims the switch that isn't.
             let passthrough = config.clipboardPassthroughIsEffective ? "on" : "off"
             return "Passthrough \(passthrough) \u{00B7} \(folders)"
-        case .system, .storage, .network, .snapshots:
+        case .snapshots:
+            return unreadableSnapshotsNote(instance)
+        case .system, .storage, .network:
             return nil
+        }
+    }
+
+    /// Names the listed snapshots whose settings the last read of the bundle
+    /// refused, `nil` when it refused none.
+    @MainActor
+    private static func unreadableSnapshotsNote(_ instance: VMInstance) -> String? {
+        let ids = Set(instance.unreadableFiles.compactMap(\.snapshotID))
+        let unreadable = instance.snapshotManifest.ordered.filter { ids.contains($0.id) }
+        switch unreadable.count {
+        case 0: return nil
+        case 1: return "The settings of \u{201C}\(unreadable[0].name)\u{201D} can\u{2019}t be read"
+        default: return "The settings of \(unreadable.count) snapshots can\u{2019}t be read"
         }
     }
 

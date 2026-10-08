@@ -176,7 +176,7 @@ extension VMCommandCore {
         case .invalidState, .removed, .heldByAnotherCopy:
             return true
         case .busy, .identityConflict, .accessoryHeld, .unsupportedByBuild, .terminating,
-            .takesStoppedVM:
+            .takesStoppedVM, .ephemeralBaselineUnreadable:
             return false
         }
     }
@@ -434,15 +434,13 @@ extension VMCommandCore {
             "Failed to \(verb.rawValue, privacy: .public) '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
         )
         if let failure = bringUpFailedAttachment(from: error, verb: verb, on: instance) {
-            return .operationFailed(
-                verb: verb, message: error.localizedDescription,
-                recovery: .removeStartFailedAttachment(failure))
+            return .failed(verb: verb, error: error, recovery: .removeStartFailedAttachment(failure))
         }
         if let explained = explainedFailure(for: error, verb: verb, on: instance) {
             return .operationFailed(
                 verb: verb, title: explained.title, message: explained.message)
         }
-        return .operationFailed(verb: verb, message: error.localizedDescription)
+        return .failed(verb: verb, error: error)
     }
 
     /// Maps a bring-up error to a ``StartFailedAttachment`` when it identifies
@@ -504,13 +502,11 @@ extension VMCommandCore {
     }
 
     /// Maps a bring-up or install failure to a title and message naming its
-    /// cause, or `nil` when the raw error description is the right surface.
+    /// cause, or `nil` when the error's own description — and the title it
+    /// names (``TitledError``) — is the right surface.
     private func explainedFailure(
         for error: Error, verb: VMVerb, on instance: VMInstance
     ) -> (title: String, message: String)? {
-        if case DownloadError.checksumMismatch = error {
-            return (title: "Download Doesn't Match Its Checksum", message: error.localizedDescription)
-        }
         guard VirtualizationService.isVirtualMachineLimitExceeded(error) else { return nil }
         let action = Self.bringUpLabel(for: instance, verb: verb)
         // The heading names the operation, the message names the control: a
@@ -601,7 +597,7 @@ extension VMCommandCore {
             try dropGuestAccountBelowProvisioningFloor(on: instance)
         } catch {
             reportUnattendedFailure(
-                .operationFailed(verb: .start, message: error.localizedDescription),
+                .failed(verb: .start, error: error),
                 on: instance)
             return []
         }

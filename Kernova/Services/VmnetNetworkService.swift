@@ -8,7 +8,7 @@ extension VmnetNetworkKind {
     /// The network mode a VM on a network of this kind has.
     var mode: VMNetworkMode {
         switch self {
-        case .shared: .shared
+        case .nat: .nat
         case .hostOnly: .hostOnly
         }
     }
@@ -17,7 +17,7 @@ extension VmnetNetworkKind {
     /// realizes (Bridged — external DHCP owns addressing there).
     init?(mode: VMNetworkMode) {
         switch mode {
-        case .shared: self = .shared
+        case .nat: self = .nat
         case .hostOnly: self = .hostOnly
         case .bridged: return nil
         }
@@ -184,7 +184,7 @@ struct HostVmnetNetworkOperator: VmnetNetworkOperating {
     private func mode(for kind: VmnetNetworkKind) -> operating_modes_t {
         switch kind {
         case .hostOnly: .VMNET_HOST_MODE
-        case .shared: .VMNET_SHARED_MODE
+        case .nat: .VMNET_SHARED_MODE
         }
     }
 }
@@ -219,7 +219,7 @@ protocol VmnetSessionNetworking: Sendable {
     func selection(ofNetwork network: vmnet_network_ref) -> VmnetNetworkSelection?
 }
 
-/// Owns the app's managed vmnet networks: the common Host Only and Shared
+/// Owns the app's managed vmnet networks: the common Host Only and NAT
 /// networks, each VM's networks of its own, and the named networks VMs join
 /// together.
 ///

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Bus class for a `StorageDisk` entry.
 ///
@@ -66,13 +67,14 @@ struct StorageDisk: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
-        self.path = try c.decode(String.self, forKey: .path)
+        let path = try c.decode(String.self, forKey: .path)
+        self.path = path
         self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
         self.label = try c.decode(String.self, forKey: .label)
         self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
         self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decode(String.self, forKey: .notes, default: "", in: decoder)
+        self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 
     /// Picks the bus class implied by the file extension.
@@ -170,11 +172,12 @@ struct RemovableMediaItem: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
-        self.path = try c.decode(String.self, forKey: .path)
+        let path = try c.decode(String.self, forKey: .path)
+        self.path = path
         self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
         self.label = try c.decode(String.self, forKey: .label)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
-        self.notes = try c.decode(String.self, forKey: .notes, default: "", in: decoder)
+        self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 }
 

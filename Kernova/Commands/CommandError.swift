@@ -85,7 +85,25 @@ enum CommandError: Error, Sendable, Equatable {
     case filesKept(FilesKept)
 }
 
+/// An error that names the heading a surface shows it under — carried onto
+/// the ``CommandError/operationFailed(verb:title:message:recovery:)`` it
+/// becomes by ``CommandError/failed(verb:error:recovery:)``.
+protocol TitledError: Error {
+    /// The heading, `nil` for a case that names none of its own.
+    var alertTitle: String? { get }
+}
+
 extension CommandError {
+    /// `error` as a verb that ran and did not complete: its description, and
+    /// the heading it names for itself (``TitledError``).
+    static func failed(
+        verb: VMVerb, error: any Error, recovery: CommandRecovery? = nil
+    ) -> CommandError {
+        .operationFailed(
+            verb: verb, title: (error as? any TitledError)?.alertTitle,
+            message: error.localizedDescription, recovery: recovery)
+    }
+
     /// The heading a surface shows this refusal under.
     ///
     /// Rendered from ``dto``, so an alert and a wire client cannot word the

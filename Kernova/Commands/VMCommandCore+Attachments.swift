@@ -87,8 +87,8 @@ extension VMCommandCore {
                     Self.logger, .error,
                     "Failed to create storage disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw CommandError.operationFailed(
-                    verb: .editStorageDisk, message: error.localizedDescription)
+                throw CommandError.failed(
+                    verb: .editStorageDisk, error: error)
             }
             let layout = VMBundleLayout(bundleURL: context.bundle.url)
             var createdLabel = "\(sizeInGB) GB Disk"
@@ -311,8 +311,8 @@ extension VMCommandCore {
                     Self.logger, .error,
                     "Failed to create removable disk for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
                 )
-                throw CommandError.operationFailed(
-                    verb: .editRemovableMedia, message: error.localizedDescription)
+                throw CommandError.failed(
+                    verb: .editRemovableMedia, error: error)
             }
             // The file is the user's, and stays whatever becomes of the entry.
             let created = destinationURL.path(percentEncoded: false)

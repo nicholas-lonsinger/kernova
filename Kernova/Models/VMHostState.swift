@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The user's preferred display hosting for a VM on start/resume.
 enum VMDisplayPreference: String, Codable, Sendable, Equatable, CaseIterable {
@@ -101,14 +102,15 @@ struct VMHostState: Codable, Sendable, Equatable {
         self.displayPreference = try c.decode(
             VMDisplayPreference.self, forKey: .displayPreference,
             default: defaults.displayPreference, in: decoder)
-        self.lastFullscreenDisplayID =
-            try c.decodeIfPresent(UInt32.self, forKey: .lastFullscreenDisplayID)
+        self.lastFullscreenDisplayID = try c.decode(
+            UInt32?.self, forKey: .lastFullscreenDisplayID, default: defaults.lastFullscreenDisplayID,
+            in: decoder)
         self.agentInstallNudgeDismissed = try c.decode(
             Bool.self, forKey: .agentInstallNudgeDismissed,
             default: defaults.agentInstallNudgeDismissed, in: decoder)
         // A list, so an identifier that doesn't decode is removed alone and
         // the VM keeps every other tag.
-        self.tags = Set(try c.decode([UUID].self, forKey: .tags, default: Array(defaults.tags), in: decoder))
+        self.tags = try c.decode(Set<UUID>.self, forKey: .tags, default: defaults.tags, in: decoder)
         // A record whose absence states only that no run is recorded — true
         // of a value nobody can read — so it repairs to that.
         self.lastRunAt = try c.decode(Date?.self, forKey: .lastRunAt, default: defaults.lastRunAt, in: decoder)

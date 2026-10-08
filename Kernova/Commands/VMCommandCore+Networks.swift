@@ -90,7 +90,7 @@ extension VMCommandCore {
 extension NetworkKind {
     init(_ kind: VmnetNetworkKind) {
         switch kind {
-        case .shared: self = .shared
+        case .nat: self = .nat
         case .hostOnly: self = .hostOnly
         }
     }
@@ -99,7 +99,7 @@ extension NetworkKind {
 extension VmnetNetworkKind {
     init(_ kind: NetworkKind) {
         switch kind {
-        case .shared: self = .shared
+        case .nat: self = .nat
         case .hostOnly: self = .hostOnly
         }
     }

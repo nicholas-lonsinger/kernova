@@ -463,7 +463,7 @@ final class VMLibraryViewModel {
             drainBufferedPresentations()
             if owesConfigCheck {
                 owesConfigCheck = false
-                showConfigCheck()
+                onShowConfigCheck?(.automatic)
             }
             if let id = bufferedDisplayFocus {
                 bufferedDisplayFocus = nil
@@ -576,9 +576,27 @@ final class VMLibraryViewModel {
     /// puts it there. The app delegate answers it with the Workspace call.
     @ObservationIgnored var onRevealInFinder: ((VMInstance) -> Void)?
 
+    /// Who asked for the config check window.
+    enum ConfigCheckRequest {
+        /// The user — a menu, a context menu, a button — so Kernova comes
+        /// forward with the window.
+        case user
+        /// A read that found a newly unreadable file, so the window comes up
+        /// without taking focus from the app or window the user is in.
+        case automatic
+    }
+
     /// Asks for the config check window, which reads every config file afresh
     /// as it comes up.
-    @ObservationIgnored var onShowConfigCheck: (() -> Void)?
+    @ObservationIgnored var onShowConfigCheck: ((ConfigCheckRequest) -> Void)?
+
+    /// Asks for Kernova's Settings window on a destination.
+    @ObservationIgnored var onShowSettings: ((SettingsDestination) -> Void)?
+
+    /// Puts Kernova's Settings window in front of the user on `destination`.
+    func showSettings(at destination: SettingsDestination) {
+        onShowSettings?(destination)
+    }
 
     /// Whether a read found a config file it can't read while no presenter
     /// was attached: the check comes up when one is, with the library window,
@@ -588,7 +606,7 @@ final class VMLibraryViewModel {
     /// Puts the config check in front of the user — File > Check Config
     /// Files…, and every surface that offers the same.
     func showConfigCheck() {
-        onShowConfigCheck?()
+        onShowConfigCheck?(.user)
     }
 
     func checkConfigFiles() async throws -> [UnreadableConfigFile] {
@@ -719,7 +737,7 @@ final class VMLibraryViewModel {
                 self.owesConfigCheck = true
                 return
             }
-            self.showConfigCheck()
+            self.onShowConfigCheck?(.automatic)
         }
         sleepWake.onFailure = { [weak self] error in
             self?.surfaceError(error.localizedDescription)
@@ -1700,7 +1718,8 @@ final class VMLibraryViewModel {
     /// alert headed by the refusal's own title.
     private func present(_ error: Error, for instance: VMInstance?) {
         guard let command = error as? CommandError else {
-            surfaceError(error.localizedDescription)
+            surfaceError(
+                error.localizedDescription, title: (error as? any TitledError)?.alertTitle ?? "Error")
             return
         }
         switch command {

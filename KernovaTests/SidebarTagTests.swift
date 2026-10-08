@@ -569,12 +569,21 @@ struct SidebarTagTests {
         #expect(pane.tags == [lab])
     }
 
-    @Test("Edit Tags… opens Settings on the Tags pane")
+    @Test("Edit Tags… asks for Settings on the Tags pane, which shows the tags")
     func settingsOpensOnTags() throws {
-        let tabs = SettingsTabViewController(viewModel: makeViewModel())
+        let viewModel = makeViewModel()
+        var requested: [SettingsDestination] = []
+        viewModel.onShowSettings = { requested.append($0) }
+        let controller = SidebarViewController(viewModel: viewModel)
+        controller.loadViewIfNeeded()
+
+        controller.perform(.editTags)
+
+        #expect(requested == [.pane(.tags)])
+        let tabs = SettingsTabViewController(viewModel: viewModel)
         tabs.loadViewIfNeeded()
 
-        tabs.select(.tags)
+        tabs.show(.pane(.tags))
 
         #expect(tabs.tabViewItems[tabs.selectedTabViewItemIndex].viewController is TagsSettingsViewController)
     }

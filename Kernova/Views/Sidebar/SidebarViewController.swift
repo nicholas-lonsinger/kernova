@@ -545,6 +545,7 @@ final class SidebarViewController: NSViewController {
                 showsAgentAccessory: SidebarVMRowCellView.visibleAgentStatus(
                     for: instance, installPromptDisabled: viewModel.agentInstallPromptDisabled) != nil,
                 showsEphemeralAccessory: instance.hostState.ephemeralModeEnabled,
+                showsUnreadableWarning: !instance.unreadableFiles.isEmpty,
                 tagCount: viewModel.library.tags(of: instance).count
             )
         case .arriving:
@@ -983,6 +984,9 @@ extension SidebarViewController {
         }
 
         menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
+        if !instance.unreadableFiles.isEmpty {
+            menu.addItem(item("Check Config Files\u{2026}", #selector(menuCheckConfigFiles(_:)), instance))
+        }
 
         menu.addItem(.separator())
 

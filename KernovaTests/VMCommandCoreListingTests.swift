@@ -47,7 +47,7 @@ struct VMCommandCoreListingTests {
     private func makeMixedLibrary(in harness: Harness) {
         makeInstance(in: harness, name: "Zed", guestOS: .macOS, phase: .running(sessionID: UUID()))
         makeInstance(in: harness, name: "Alpha", phase: .running(sessionID: UUID())) {
-            $0.applyNetworkMode(.shared)
+            $0.applyNetworkMode(.nat)
         }
         makeInstance(in: harness, name: "Mac", guestOS: .macOS, hostState: VMHostState(ephemeralModeEnabled: true))
         makeInstance(
@@ -127,7 +127,7 @@ struct VMCommandCoreListingTests {
             VMLibraryFilter(guestOSes: [.linux]),
             VMLibraryFilter(states: [.running, .suspended]),
             VMLibraryFilter(guestOSes: [.macOS], states: [.stopped]),
-            VMLibraryFilter(networks: [.init(spelling: "shared")!, .init(spelling: "none")!]),
+            VMLibraryFilter(networks: [.init(spelling: "nat")!, .init(spelling: "none")!]),
             VMLibraryFilter(guestAgents: [.olderVersion]),
             VMLibraryFilter(guestAgents: [.neverConnected, .olderVersion]),
             VMLibraryFilter(ephemeralOnly: true),
@@ -178,14 +178,14 @@ struct VMCommandCoreListingTests {
             $0.applyNetworkMode(.hostOnly)
             $0.networkMembership = .network(lab.id)
         }
-        makeInstance(in: harness, name: "Shared") { $0.applyNetworkMode(.shared) }
+        makeInstance(in: harness, name: "Shared") { $0.applyNetworkMode(.nat) }
         makeInstance(in: harness, name: "Offline")
 
         #expect(try listed(harness, VMListQuery(networks: ["lab"])) == ["Member"])
         #expect(try listed(harness, VMListQuery(networks: [lab.id.uuidString.lowercased()])) == ["Member"])
-        #expect(try listed(harness, VMListQuery(networks: ["SHARED"])) == ["Shared"])
+        #expect(try listed(harness, VMListQuery(networks: ["NAT"])) == ["Shared"])
         #expect(
-            try listed(harness, VMListQuery(networks: ["Lab", "shared", "None"])) == ["Member", "Shared", "Offline"])
+            try listed(harness, VMListQuery(networks: ["Lab", "nat", "None"])) == ["Member", "Shared", "Offline"])
 
         guard case .itemNotFoundOnHost(let item)? = refusal(harness, VMListQuery(networks: ["Nowhere"])) else {
             Issue.record("expected a not-found refusal")
@@ -197,13 +197,13 @@ struct VMCommandCoreListingTests {
     @Test("A text naming both a mode and a named network is refused with the identifier that picks the network")
     func ambiguousNetworkTextIsRefused() throws {
         let harness = makeHarness()
-        let shadow = try harness.core.createNetwork(name: "Shared", kind: .hostOnly)
+        let shadow = try harness.core.createNetwork(name: "NAT", kind: .hostOnly)
         makeInstance(in: harness, name: "Member") {
             $0.applyNetworkMode(.hostOnly)
             $0.networkMembership = .network(shadow.id)
         }
 
-        guard case .invalidArgument(let message)? = refusal(harness, VMListQuery(networks: ["shared"])) else {
+        guard case .invalidArgument(let message)? = refusal(harness, VMListQuery(networks: ["nat"])) else {
             Issue.record("expected an invalid-argument refusal")
             return
         }
@@ -215,10 +215,10 @@ struct VMCommandCoreListingTests {
     func unlistedNetworkMatches() throws {
         let harness = makeHarness()
         makeInstance(in: harness, name: "Stray") {
-            $0.applyNetworkMode(.shared)
+            $0.applyNetworkMode(.nat)
             $0.networkMembership = .network(UUID())
         }
-        makeInstance(in: harness, name: "Common") { $0.applyNetworkMode(.shared) }
+        makeInstance(in: harness, name: "Common") { $0.applyNetworkMode(.nat) }
 
         #expect(try listed(harness, VMListQuery(filter: VMLibraryFilter(networks: [.unlisted]))) == ["Stray"])
     }

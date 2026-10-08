@@ -308,8 +308,8 @@ public struct USBPairingSummary: Codable, Sendable, Hashable {
 
 /// The mode every virtual machine on a named network runs in.
 public enum NetworkKind: String, Codable, Sendable, Hashable, CaseIterable {
-    /// Shared Network: the guests reach the internet through this Mac.
-    case shared
+    /// NAT: the guests reach the internet through this Mac.
+    case nat
     /// Host Only: the guests reach this Mac and each other, nothing else.
     case hostOnly
 }

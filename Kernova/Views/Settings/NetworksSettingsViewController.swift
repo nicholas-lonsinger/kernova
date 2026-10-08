@@ -49,7 +49,7 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// The kinds of network this build can attach a named network of, in the
     /// order the New Network sheet lists them — empty in a build that can
-    /// attach none, which offers no Networks pane.
+    /// attach none, which offers no Networks pane (``SettingsPane/isOffered(by:)``).
     static func creatableKinds(_ entitlements: EntitlementService) -> [VmnetNetworkKind] {
         VMNamedNetwork.kindsInCreationOrder.filter {
             entitlements.canAttach(.vmnet(VmnetNetworkID(kind: $0, scope: .named(UUID()))))
@@ -63,7 +63,7 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// How the list names a network's kind.
     static func kindTitle(_ kind: NetworkKind) -> String {
-        NetworkModeChoice.kindTitle(VmnetNetworkKind(kind))
+        VmnetNetworkKind(kind).mode.title
     }
 
     /// The question Delete asks before `network` goes, naming the VMs on it.
@@ -129,6 +129,18 @@ final class NetworksSettingsViewController: NSViewController {
         editor.stopObserving()
     }
 
+    /// Selects the row of the network `id` identifies, when the library lists
+    /// it — before the pane first appears as well, which keeps the selection.
+    func reveal(_ id: UUID) {
+        loadViewIfNeeded()
+        editor.reload()
+        editor.select(id)
+    }
+
+    #if DEBUG
+    var selectedNetworkIDForTesting: UUID? { editor.selectedID }
+    #endif
+
     /// Asks for the new network's name and kind.
     private func presentNewNetworkSheet() {
         guard let window = view.window else { return }
@@ -141,7 +153,7 @@ final class NetworksSettingsViewController: NSViewController {
         nameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let kindPopUp = NSPopUpButton()
         for kind in kinds {
-            kindPopUp.addItem(withTitle: NetworkModeChoice.kindTitle(kind))
+            kindPopUp.addItem(withTitle: kind.mode.title)
             kindPopUp.lastItem?.representedObject = kind
         }
         let grid = NSGridView(views: [

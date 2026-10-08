@@ -94,7 +94,7 @@ struct EntitlementService: Sendable {
     /// recovers, observes, refuses or offers a network reads.
     ///
     /// Without `com.apple.vm.networking` the only attachment is system NAT,
-    /// which every Shared guest joins, so it realizes Shared Network's common
+    /// which every NAT guest joins, so it realizes NAT's common
     /// network and nothing else.
     func realization(of network: VMJoinedNetwork) -> VMNetworkRealization? {
         switch network {
@@ -102,7 +102,7 @@ struct EntitlementService: Sendable {
             return hasVMNetworking ? .bridged : nil
         case .vmnet(let id):
             guard hasVMNetworking else {
-                return id == .common(.shared) ? .systemNAT : nil
+                return id == .common(.nat) ? .systemNAT : nil
             }
             return .vmnet(VmnetNetworkSelection(id))
         }

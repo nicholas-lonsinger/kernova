@@ -170,7 +170,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("A set onto a network this build cannot attach is refused naming the build, and writes nothing")
     func setOntoAnUnattachableNetworkIsRefused() throws {
         let harness = makeHarness(entitlements: .unentitled)
-        let instance = makeInstance(in: harness) { $0.applyNetworkMode(.shared) }
+        let instance = makeInstance(in: harness) { $0.applyNetworkMode(.nat) }
         let before = instance.configuration
 
         for (key, value, capability) in [
@@ -563,7 +563,7 @@ struct VMCommandCoreConfigurationTests {
         let harness = makeHarness()
         makeInstance(in: harness, phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
 
         do {
@@ -586,7 +586,7 @@ struct VMCommandCoreConfigurationTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
-            $0.networkMode = .shared
+            $0.networkMode = .nat
         }
 
         try harness.core.setConfiguration(
@@ -613,7 +613,7 @@ struct VMCommandCoreConfigurationTests {
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
+                assignments: [ConfigurationEntry(key: "network.mode", value: "nat")],
                 consent: .none)
         }
         #expect(!instance.configuration.networkEnabled)
@@ -985,7 +985,7 @@ struct VMCommandCoreConfigurationTests {
         let instance = makeInstance(in: harness)
         try harness.core.setConfiguration(
             .name("Alpha"),
-            assignments: [ConfigurationEntry(key: "network.mode", value: "shared")],
+            assignments: [ConfigurationEntry(key: "network.mode", value: "nat")],
             consent: .none)
         let before = instance.configuration
         #expect(before.macAddress != nil)
@@ -1025,7 +1025,7 @@ struct VMCommandCoreConfigurationTests {
             .name("Alpha"),
             assignments: [
                 ConfigurationEntry(key: "network.mac", value: ""),
-                ConfigurationEntry(key: "network.mode", value: "shared"),
+                ConfigurationEntry(key: "network.mode", value: "nat"),
             ],
             consent: .none)
 
@@ -1034,7 +1034,7 @@ struct VMCommandCoreConfigurationTests {
         let minted = try #require(configuration.macAddress)
         #expect(instance.configuration == configuration)
         #expect(try value(answered, "network.mac") == minted)
-        #expect(try value(answered, "network.mode") == "shared")
+        #expect(try value(answered, "network.mode") == "nat")
     }
 
     @Test("A batch of configuration keys and a host-state key lands in both files")
@@ -1050,7 +1050,7 @@ struct VMCommandCoreConfigurationTests {
             assignments: [
                 ConfigurationEntry(key: "network.mac", value: ""),
                 ConfigurationEntry(key: "display.preference", value: "popOut"),
-                ConfigurationEntry(key: "network.mode", value: "shared"),
+                ConfigurationEntry(key: "network.mode", value: "nat"),
                 ConfigurationEntry(key: "cpus", value: "3"),
             ],
             consent: .none)

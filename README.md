@@ -84,7 +84,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and its settings while running — settings that apply at boot lock, the rest stay live. |
 | **Input** | Mac or USB keyboard and pointer, picked by guest version or chosen per macOS VM. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
 | **Audio** | Guest audio to the host, on by default. **Microphone** passthrough opt-in per VM, off by default. |
-| **Network** | **Shared Network (NAT)** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout on Shared Network and Host Only — the address this Mac last saw the guest use; a bridged guest's comes from your network, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
+| **Network** | **NAT** · **Bridged** to a chosen interface or Automatic · **Host Only** · None. Live **IP address** readout on NAT and Host Only — the address this Mac last saw the guest use; a bridged guest's comes from your network, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning. |
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]

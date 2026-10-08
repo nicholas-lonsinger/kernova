@@ -43,10 +43,12 @@ extension SidebarViewOptions {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = SidebarViewOptions()
         self.init(
-            filter: try c.decodeIfPresent(VMLibraryFilter.self, forKey: .filter) ?? defaults.filter,
-            sort: try c.decodeIfPresent(VMLibrarySort.self, forKey: .sort) ?? defaults.sort,
-            grouping: try c.decodeIfPresent(SidebarGrouping.self, forKey: .grouping) ?? defaults.grouping,
-            showsDetails: try c.decodeIfPresent(Bool.self, forKey: .showsDetails) ?? defaults.showsDetails)
+            filter: try c.decode(VMLibraryFilter.self, forKey: .filter, default: defaults.filter, in: decoder),
+            sort: try c.decode(VMLibrarySort.self, forKey: .sort, default: defaults.sort, in: decoder),
+            grouping: try c.decode(
+                SidebarGrouping.self, forKey: .grouping, default: defaults.grouping, in: decoder),
+            showsDetails: try c.decode(
+                Bool.self, forKey: .showsDetails, default: defaults.showsDetails, in: decoder))
     }
 }
 

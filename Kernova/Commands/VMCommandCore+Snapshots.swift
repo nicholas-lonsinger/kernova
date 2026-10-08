@@ -502,7 +502,7 @@ extension VMCommandCore {
                 Self.logger, .error,
                 "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
-            throw CommandError.operationFailed(verb: verb, message: error.localizedDescription)
+            throw CommandError.failed(verb: verb, error: error)
         }
     }
 }

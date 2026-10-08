@@ -201,7 +201,7 @@ struct VMScriptingGatewayTests {
         commands.library = [summary]
         commands.infoByID[summary.id] = VMInfo(
             id: summary.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 6,
-            memoryBytes: 8 << 30, diskSizeInGB: 128, networkMode: "shared", networkMembership: "common",
+            memoryBytes: 8 << 30, diskSizeInGB: 128, networkMode: "nat", networkMembership: "common",
             networkName: .named("Lab"),
             macAddress: "aa:bb:cc:dd:ee:ff", ipAddress: .observed("192.168.64.3"),
             agentStatus: "connected", hasSavedState: true, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
@@ -216,7 +216,7 @@ struct VMScriptingGatewayTests {
         #expect(vm.processorCount == 6)
         #expect(vm.memory == 8)
         #expect(vm.diskSize == 128)
-        #expect(vm.networkMode == "shared")
+        #expect(vm.networkMode == "nat")
         #expect(vm.networkMembership == "common")
         #expect(vm.networkName == "Lab")
         #expect(vm.macAddress == "aa:bb:cc:dd:ee:ff")
@@ -236,7 +236,7 @@ struct VMScriptingGatewayTests {
         func networkName(_ name: VMNetworkName) throws -> String? {
             commands.infoByID[summary.id] = VMInfo(
                 id: summary.id, name: "Alpha", status: "stopped", guestOS: "macOS", cpuCount: 2,
-                memoryBytes: 4 << 30, diskSizeInGB: 64, networkMode: "shared",
+                memoryBytes: 4 << 30, diskSizeInGB: 64, networkMode: "nat",
                 networkMembership: UUID().uuidString, networkName: name, macAddress: nil, ipAddress: .notObserved,
                 agentStatus: "connected", hasSavedState: false, isEphemeral: false, snapshotCount: 0,
                 hasSnapshots: false, guestAgent: nil, stateBucket: .stopped, bundlePath: "/VMs/Alpha.kernova",

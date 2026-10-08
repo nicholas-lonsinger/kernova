@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// Which of a bundle's state files one is, by the write path that repairs it.
 enum VMBundleStateFileID: Sendable, Hashable {
@@ -341,6 +342,29 @@ struct VMBundleFiles: Sendable {
             return try reading { files in ReadPass(bundleURL: url, files: files).unreadable }
         } catch {
             return [error]
+        }
+    }
+
+    /// Refuses unless the bundle is still unreadable as `checked`, the file
+    /// that kept it out, was found: a bundle read still refuses it, and the
+    /// file still holds the bytes the check reported — or still none.
+    ///
+    /// Throws ``ConfigFileRepairRefusal/readsNow`` for a bundle a read takes,
+    /// and ``ConfigFileRepairRefusal/changedSinceCheck`` for one whose file
+    /// holds other bytes.
+    func confirmUnreadable(as checked: UnreadableConfigFile) throws {
+        guard case .bundle(_, let id) = checked.location else {
+            assertionFailure("A bundle is kept out only by a file of its own")
+            throw ConfigFileRepairRefusal.changedSinceCheck
+        }
+        try access.reading(url) { files in
+            if case .success = ReadPass(bundleURL: url, files: files).core {
+                throw ConfigFileRepairRefusal.readsNow
+            }
+            let current = (try? files.data(atRelativePath: id.relativePath)).flatMap { $0 }
+            guard current.map(ConfigFileDigest.init(of:)) == checked.checkedDigest else {
+                throw ConfigFileRepairRefusal.changedSinceCheck
+            }
         }
     }
 

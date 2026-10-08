@@ -23,7 +23,7 @@ struct VMCommandEnvelopeTests {
     private var info: VMInfo {
         VMInfo(
             id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "shared", networkMembership: "common",
+            memoryBytes: 8_589_934_592, diskSizeInGB: 64, networkMode: "nat", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.66.2"),
             agentStatus: "current",
@@ -69,7 +69,7 @@ struct VMCommandEnvelopeTests {
                 VMListQuery(
                     filter: VMLibraryFilter(
                         guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
-                        networks: [.unlisted, VMLibraryFilter.Network(.shared) { _, _ in true }],
+                        networks: [.unlisted, VMLibraryFilter.Network(.nat) { _, _ in true }],
                         guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
                     networks: ["Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
                     sort: .dateCreated)),
@@ -275,7 +275,7 @@ struct VMCommandEnvelopeTests {
             .configuration([]),
             .networks([NetworkSummary(id: snapshotID, name: "Lab", kind: .hostOnly, members: [summary])]),
             .networks([]),
-            .network(NetworkSummary(id: snapshotID, name: "Lab", kind: .shared, members: [])),
+            .network(NetworkSummary(id: snapshotID, name: "Lab", kind: .nat, members: [])),
             .groups([
                 GroupSummary(id: snapshotID, name: "Linux Lab", kind: .smartGroup, members: [summary]),
                 GroupSummary(id: diskID, name: "Client Project", kind: .folder, members: []),

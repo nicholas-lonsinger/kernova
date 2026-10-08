@@ -172,18 +172,18 @@ struct DetailContainerLibraryLoadTests {
     @Test("A load that finds an unreadable file brings up the check once a presenter attaches")
     func theCheckWaitsForAPresenter() async throws {
         let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
-        var checks = 0
-        viewModel.onShowConfigCheck = { checks += 1 }
+        var checks: [VMLibraryViewModel.ConfigCheckRequest] = []
+        viewModel.onShowConfigCheck = { checks.append($0) }
 
         await viewModel.loadVMs()
-        #expect(checks == 0)
+        #expect(checks.isEmpty)
 
         let controller = DetailContainerViewController(viewModel: viewModel)
         #expect(viewModel.presenter === controller)
-        #expect(checks == 1)
+        #expect(checks == [.automatic])
 
         // Reported once: a reconcile that finds the same bundle asks for nothing.
         viewModel.reconcileWithDisk()
-        #expect(checks == 1)
+        #expect(checks == [.automatic])
     }
 }

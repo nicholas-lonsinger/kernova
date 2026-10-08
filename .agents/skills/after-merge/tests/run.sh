@@ -20,19 +20,9 @@ fail() { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; }
 tmp="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Pin everything git reads from the environment, so the run reports on the
-# script and not on this machine's identity, global config, or caller.
-#
-# The repo-locating variables come first: git exports GIT_DIR, GIT_WORK_TREE
-# and their companions to a hook's child processes, so a run under `pre-push`
-# inherits them and every fixture command addresses the real checkout — each
-# verdict then reports on that repo, not on the fixture the check built.
-unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_PREFIX \
-    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE \
-    GIT_CEILING_DIRECTORIES GIT_QUARANTINE_PATH GIT_REFLOG_ACTION
-export HOME="$tmp/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-mkdir -p "$HOME"
+# shellcheck source=../../../../Tools/lib/git-isolation.sh
+. "$ROOT/Tools/lib/git-isolation.sh"
+isolate_git "$tmp"
 
 git init -q --bare -b main "$tmp/remote.git"
 git clone -q "$tmp/remote.git" "$tmp/seed" 2>/dev/null

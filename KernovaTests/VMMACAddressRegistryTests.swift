@@ -35,11 +35,11 @@ struct VMMACAddressRegistryTests {
         return conflict
     }
 
-    /// A shared-network configuration on `mac`.
-    private func shared(_ base: VMConfiguration, mac: String?) -> VMConfiguration {
+    /// A NAT configuration on `mac`.
+    private func nat(_ base: VMConfiguration, mac: String?) -> VMConfiguration {
         var config = base
         config.networkEnabled = true
-        config.networkMode = .shared
+        config.networkMode = .nat
         config.macAddress = mac
         return config
     }
@@ -47,14 +47,14 @@ struct VMMACAddressRegistryTests {
     private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
     private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
 
-    /// A VM on the shared network at `mac`, holding `snapshots`.
+    /// A VM on NAT at `mac`, holding `snapshots`.
     private func makeVM(
         _ name: String, mac: String?, snapshots: [VMSnapshot] = [],
         hostState: VMHostState = VMHostState(),
         _ mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let instance = VMInstanceFixture.make(name: name, hostState: hostState) {
-            $0 = shared($0, mac: mac)
+            $0 = nat($0, mac: mac)
             mutate(&$0)
         }
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: snapshots))
@@ -69,7 +69,7 @@ struct VMMACAddressRegistryTests {
         roster.instances = [holder, instance]
 
         let old = instance.configuration
-        let new = shared(old, mac: "AA:BB:CC:DD:EE:01")
+        let new = nat(old, mac: "AA:BB:CC:DD:EE:01")
 
         #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
         #expect(failures.errorTitle == "MAC Address In Use")
@@ -86,7 +86,7 @@ struct VMMACAddressRegistryTests {
         roster.instances = [instance]
 
         let old = instance.configuration
-        let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
+        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
 
         #expect(refuse(registry, on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
@@ -102,7 +102,7 @@ struct VMMACAddressRegistryTests {
         roster.instances = [holder, instance]
 
         let old = instance.configuration
-        let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
+        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
 
         let conflict = registry.macAddressConflict(on: instance, movingFrom: old, to: new)
         #expect(conflict?.other === holder)
@@ -129,7 +129,7 @@ struct VMMACAddressRegistryTests {
         roster.instances = [holder, instance]
 
         let old = instance.configuration
-        let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
+        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
 
         #expect(
             registry.macAddressConflict(on: instance, movingFrom: old, to: new)?.reason
@@ -154,7 +154,7 @@ struct VMMACAddressRegistryTests {
 
         let old = instance.configuration
         let conflict = registry.macAddressConflict(
-            on: instance, movingFrom: old, to: shared(old, mac: "aa:bb:cc:dd:ee:01"))
+            on: instance, movingFrom: old, to: nat(old, mac: "aa:bb:cc:dd:ee:01"))
 
         #expect(conflict?.other === first)
         #expect(
@@ -179,7 +179,7 @@ struct VMMACAddressRegistryTests {
         roster.instances = [instance]
 
         let old = instance.configuration
-        let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
+        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
 
         #expect(refuse(registry, on: instance, movingFrom: old, to: new) == nil)
         #expect(failures.showError == false)
@@ -193,7 +193,7 @@ struct VMMACAddressRegistryTests {
         let instance = VMInstanceFixture.make(name: "Mine")
         roster.instances = [holder, instance]
         let old = instance.configuration
-        let new = shared(old, mac: "aa:bb:cc:dd:ee:01")
+        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
         #expect(registry.macAddressConflict(on: instance, movingFrom: old, to: new) != nil)
 
         var remaining = holder.snapshotManifest
