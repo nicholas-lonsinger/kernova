@@ -223,6 +223,13 @@ final class DetailAlertsPresenter: NSObject {
         revertSnapshotConfig(snapshot, instance)
     }
 
+    /// The delete-snapshot confirmation's rendered copy.
+    func deleteSnapshotAlertForTesting(
+        _ snapshot: VMSnapshot, for instance: VMInstance
+    ) -> AlertConfiguration {
+        deleteSnapshotConfig(snapshot, instance)
+    }
+
     /// The Force Stop / Discard Saved State confirmation's rendered copy, so a
     /// test can assert on what it tells the user will happen.
     func forceStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
@@ -738,12 +745,18 @@ final class DetailAlertsPresenter: NSObject {
             })
     }
 
+    /// The delete-snapshot confirmation — the Ephemeral baseline's own when
+    /// the snapshot is the VM's baseline — whose answer is the consent the
+    /// delete carries.
     private func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        AlertConfiguration(
-            confirming: VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm),
-            confirm: { [weak self] in self?.viewModel.deleteSnapshot(vm, snapshot: snapshot) })
+        let prompt = VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm)
+        return AlertConfiguration(
+            confirming: prompt,
+            confirm: { [weak self] in
+                self?.viewModel.deleteSnapshot(vm, snapshot: snapshot, confirmed: prompt.kind)
+            })
     }
 
     private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {

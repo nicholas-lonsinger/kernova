@@ -698,7 +698,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-            consent: .all)
+            consent: .blanket)
         #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
@@ -711,7 +711,7 @@ struct VMCommandCoreConfigurationTests {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                consent: .all)
+                consent: .blanket)
         }
         #expect(!instance.configuration.clipboardPassthroughEnabled)
 
@@ -721,7 +721,7 @@ struct VMCommandCoreConfigurationTests {
                 ConfigurationEntry(key: "clipboard.passthrough", value: "true"),
                 ConfigurationEntry(key: "clipboard.sharing", value: "true"),
             ],
-            consent: .all)
+            consent: .blanket)
         #expect(instance.configuration.clipboardPassthroughEnabled)
         #expect(instance.configuration.clipboardSharingEnabled)
     }
@@ -831,7 +831,7 @@ struct VMCommandCoreConfigurationTests {
         try harness.core.setConfiguration(
             .name("Alpha"),
             assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-            consent: .all)
+            consent: .blanket)
         #expect(instance.configuration.clipboardPassthroughIsEffective)
     }
 

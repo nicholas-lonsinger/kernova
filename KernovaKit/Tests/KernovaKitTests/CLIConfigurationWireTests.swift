@@ -73,7 +73,7 @@ struct CLIConfigurationWireTests {
 
         #expect(
             exchanged.sent == [
-                .setConfiguration(.idOrName("Alpha"), assignments: passthrough, consent: .all)
+                .setConfiguration(.idOrName("Alpha"), assignments: passthrough, consent: .blanket)
             ])
     }
 

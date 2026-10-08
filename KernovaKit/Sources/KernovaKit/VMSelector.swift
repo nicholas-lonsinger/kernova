@@ -250,8 +250,8 @@ public struct HeldSnapshots: Codable, Sendable, Hashable {
 public struct HeldSnapshot: Codable, Sendable, Hashable {
     /// What the user called it.
     public let name: String
-    /// Whether it is its VM's Ephemeral Mode baseline, which cannot be
-    /// deleted while the mode is on.
+    /// Whether it is its VM's Ephemeral Mode baseline, whose delete turns the
+    /// mode off.
     public let isEphemeralBaseline: Bool
 
     /// Names one snapshot.

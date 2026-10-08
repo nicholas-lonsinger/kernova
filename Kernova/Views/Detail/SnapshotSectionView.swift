@@ -294,8 +294,8 @@ final class SnapshotSectionView: NSView {
     ///
     /// Rename and Edit Notes also wait on `activeEdit`, which a rebuild of the
     /// editing row would destroy. Delete follows `deleteOffer`, which also says
-    /// when the Ephemeral baseline is what bars it — the one bar a user can
-    /// lift, and the only one the row explains.
+    /// when the VM takes deletes but not this one while it runs — the only bar
+    /// the row explains.
     func makeRowMenu(
         for snapshot: VMSnapshot, canRevert: Bool, canRename: Bool, canSetNotes: Bool,
         deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
@@ -318,9 +318,8 @@ final class SnapshotSectionView: NSView {
         // Always confirms, and destructively — so it carries the ellipsis.
         let delete = menuItem("Delete\u{2026}", #selector(menuDelete(_:)), snapshot)
         delete.isEnabled = deleteOffer == .offered
-        if deleteOffer == .barredAsBaseline {
-            delete.toolTip =
-                "This snapshot is the Ephemeral baseline. Turn off Ephemeral Mode to delete it."
+        if case .takesStoppedVM(let change) = deleteOffer {
+            delete.toolTip = change.sentence
         }
         menu.addItem(delete)
         return menu

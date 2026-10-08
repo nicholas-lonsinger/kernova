@@ -1198,23 +1198,29 @@ final class VMLibraryViewModel {
         guard canDeleteSnapshot(instance, snapshot: snapshot) else {
             #log(
                 Self.logger, .notice,
-                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer its delete now"
             )
             return
         }
         presenter?.presentDeleteSnapshot(snapshot, for: instance)
     }
 
-    /// Trashes a snapshot's captured files and drops it from the manifest.
+    /// Trashes a snapshot's captured files and drops it from the manifest,
+    /// under the consent of the `confirmed` confirmation the user answered —
+    /// asking for any other the delete raises, such as the Ephemeral
+    /// baseline's when the mode came to name the snapshot while that one was
+    /// up.
     ///
     /// The returned Task lets tests await the trash.
     @discardableResult
-    func deleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Task<Void, Never> {
+    func deleteSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, confirmed: ConfirmationKind
+    ) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
-            await self.run(on: instance) {
+            await self.runAsking(on: instance) { consent, _ in
                 try await self.commands.deleteSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
+                    .id(instance.id), snapshot: snapshot.id, consent: consent.adding(confirmed))
             }
         }
     }

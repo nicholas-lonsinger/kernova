@@ -157,7 +157,13 @@ extension KernovaCommand.Snapshot {
             abstract: "Delete one of a virtual machine's snapshots.",
             discussion: "The snapshot's captured files are moved to the Trash and the virtual "
                 + "machine is left as it is. Refuses without --yes, because nothing else can "
-                + "return the virtual machine to that state afterwards.")
+                + "return the virtual machine to that state afterwards. Deleting the snapshot "
+                + "Ephemeral Mode returns to also turns Ephemeral Mode off, so it refuses "
+                + "without --\(ephemeralModeFlag) instead, and while the virtual machine runs.")
+
+        /// The flag that consents to deleting an Ephemeral Mode baseline, less
+        /// its dashes.
+        static let ephemeralModeFlag = "turn-off-ephemeral-mode"
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -167,8 +173,21 @@ extension KernovaCommand.Snapshot {
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         var snapshot: String
 
+        /// The consent to delete the VM's Ephemeral Mode baseline, which
+        /// `--yes` does not give.
+        @Flag(
+            name: .customLong(ephemeralModeFlag),
+            help: "Delete the snapshot Ephemeral Mode returns to, turning Ephemeral Mode off.")
+        var turnOffEphemeralMode = false
+
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
+
+        /// What the delete carries: `--yes`, and the baseline's own consent.
+        var consent: Consent {
+            turnOffEphemeralMode
+                ? options.consent.adding(.deleteEphemeralBaseline) : options.consent
+        }
 
         /// Deletes the snapshot.
         func run() throws {
@@ -178,7 +197,7 @@ extension KernovaCommand.Snapshot {
             let target = try KernovaCommand.Snapshot.resolve(
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
             _ = try client.send(
-                .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
+                .deleteSnapshot(selector, snapshot: target.id, consent: consent)
             ).payload()
         }
     }

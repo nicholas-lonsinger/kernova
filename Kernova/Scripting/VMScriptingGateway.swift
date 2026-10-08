@@ -255,7 +255,8 @@ final class VMScriptingGateway {
     }
 
     /// Runs `verb` with the consent a script's `with confirmation` gives:
-    /// every confirmation it asks for, or none.
+    /// every confirmation a blanket consent covers
+    /// (``ConfirmationKind/isGivenByBlanketConsent``), or none.
     ///
     /// The round trip is ``VMConsentPolicy``'s, with nothing to present: a
     /// script has already said whether it consents, so each prompt the core
@@ -266,7 +267,9 @@ final class VMScriptingGateway {
     ) async throws {
         try await VMConsentPolicy.run(
             prompting: { prompt in
-                guard confirmation else { throw CommandError.confirmationRequired(prompt) }
+                guard confirmation, prompt.kind.isGivenByBlanketConsent else {
+                    throw CommandError.confirmationRequired(prompt)
+                }
             },
             verb)
     }

@@ -983,7 +983,7 @@ struct VMCommandCoreTests {
         #expect(!harness.core.capabilities.accepts(.stop, on: instance))
         #expect(harness.core.capabilities.accepts(.discardSavedState, on: instance))
 
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .blanket)
         // A discard sends the guest nothing: there is no guest.
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(!instance.hasSaveFile)
@@ -1195,7 +1195,7 @@ struct VMCommandCoreTests {
         try await core.start(.id(instance.id), recovery: false, consent: .none)
         for await _ in installService.installStartedStream { break }
 
-        try core.cancelGuestSetup(.id(instance.id), consent: .all)
+        try core.cancelGuestSetup(.id(instance.id), consent: .blanket)
         installService.release()
         await instance.setupOperationTask?.value
 
@@ -1278,13 +1278,13 @@ struct VMCommandCoreTests {
         return (live, twin)
     }
 
-    @Test("With the override off, a shared machine ID is refused even with every consent given")
+    @Test("With the override off, a shared machine ID is refused even with a blanket consent")
     func duplicateMachineIDRefusesAConfirmedStartWhileTheOverrideIsOff() async throws {
         let harness = makeHarness()
         let (_, twin) = machineIdentityTwins(in: harness)
 
         let error = try #require(
-            await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .all) })
+            await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .blanket) })
 
         #expect(error.isConflict)
         #expect(harness.virtualization.startCallCount == 0)
@@ -1398,14 +1398,14 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             await commandError {
-                try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .all)
+                try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .blanket)
             })
         #expect(error.isConflict)
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(restarting.status == .running)
     }
 
-    @Test("Resume-then-shut-down with every consent restores beside a shared machine ID while the override is on")
+    @Test("Resume-then-shut-down with a blanket consent restores beside a shared machine ID while the override is on")
     func resumeFirstStopTakesAConfirmedOverride() async throws {
         let harness = makeHarness()
         preferences.allowsDuplicateMachineIDOverride = true
@@ -1413,7 +1413,7 @@ struct VMCommandCoreTests {
         try VMInstanceFixture.writeSaveFile(for: twin)
 
         try await harness.core.stop(
-            .id(twin.id), disposition: .resumeThenShutDown, consent: .all, timeout: nil)
+            .id(twin.id), disposition: .resumeThenShutDown, consent: .blanket, timeout: nil)
 
         #expect(harness.virtualization.startCallCount == 1)
         #expect(harness.virtualization.stopCallCount == 1)
@@ -1438,7 +1438,7 @@ struct VMCommandCoreTests {
         }
 
         let error = try #require(
-            await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .all) })
+            await commandError { try await harness.core.start(.id(twin.id), recovery: false, consent: .blanket) })
         let prompt = try #require(error.macAddressRemedyPrompt)
         #expect(prompt.vm.id == twin.id)
         #expect(harness.virtualization.startCallCount == 0)
@@ -1493,7 +1493,7 @@ struct VMCommandCoreTests {
             await commandError {
                 try await harness.core.revertToSnapshot(
                     .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    consent: .blanket)
             })
 
         let prompt = try #require(error.macAddressRemedyPrompt)
@@ -1592,7 +1592,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.stop(
-                    .id(twin.id), disposition: .resumeThenShutDown, consent: .all,
+                    .id(twin.id), disposition: .resumeThenShutDown, consent: .blanket,
                     timeout: nil)
             })
 
@@ -1633,7 +1633,7 @@ struct VMCommandCoreTests {
         #expect(prompt.alternatives.map(\.isDestructive) == [false])
         #expect(harness.virtualization.forceStopCallCount == 0)
 
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .blanket)
         #expect(harness.virtualization.forceStopCallCount == 1)
     }
 
@@ -1657,7 +1657,7 @@ struct VMCommandCoreTests {
 
         // Nothing is live to terminate, and the verb still performs the discard
         // the slot admits.
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .blanket)
         #expect(harness.virtualization.forceStopCallCount == 0)
         #expect(!instance.hasSaveFile)
         #expect(instance.phase == .stopped)
@@ -1686,7 +1686,7 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.stopCallCount == 0)
 
         // Confirming takes the graceful route the guest can only receive awake.
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .blanket)
         #expect(harness.virtualization.resumeCallCount == 1)
         #expect(harness.virtualization.stopCallCount == 1)
     }
@@ -1710,7 +1710,7 @@ struct VMCommandCoreTests {
         #expect(prompt.confirmTitle == "Discard")
         #expect(harness.virtualization.stopCallCount == 0)
 
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .blanket)
         // A discard sends the guest nothing: there is no guest.
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(!instance.hasSaveFile)
@@ -1743,7 +1743,7 @@ struct VMCommandCoreTests {
         #expect(prompt.message.contains("is ephemeral, so it returns to"))
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .blanket)
         #expect(harness.virtualization.revertedSnapshots.map(\.id) == [baseline.id])
     }
 
@@ -1761,7 +1761,7 @@ struct VMCommandCoreTests {
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .blanket)
         }
         await harness.virtualization.waitUntilSuspended()
 
@@ -1769,7 +1769,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.delete(
-                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
             })
         #expect(error.isBusy)
         #expect(harness.storage.deleteVMBundleCallCount == 0)
@@ -1926,7 +1926,7 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotManifest.snapshots.count == 1)
 
         try await harness.core.deleteSnapshot(
-            .id(instance.id), snapshot: snapshot.id, consent: .all)
+            .id(instance.id), snapshot: snapshot.id, consent: .blanket)
         #expect(instance.snapshotManifest.isEmpty)
     }
 
@@ -1967,7 +1967,7 @@ struct VMCommandCoreTests {
         #expect(prompt.confirmTitle == "Cancel Clone")
         #expect(arrival.stage == .writing)
 
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
+        try harness.core.cancelPreparing(.id(arrival.id), consent: .blanket)
         #expect(arrival.stage == .cancelling)
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
 
@@ -2004,7 +2004,7 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             commandError {
-                try harness.core.cancelPreparing(.id(instance.id), consent: .all)
+                try harness.core.cancelPreparing(.id(instance.id), consent: .blanket)
             })
 
         #expect(error.isInvalidState)
@@ -2024,7 +2024,7 @@ struct VMCommandCoreTests {
 
         let error = try #require(
             commandError {
-                try harness.core.cancelPreparing(.id(instance.id), consent: .all)
+                try harness.core.cancelPreparing(.id(instance.id), consent: .blanket)
             })
 
         #expect(error.isInvalidState)
@@ -2088,13 +2088,13 @@ struct VMCommandCoreTests {
             await commandError {
                 try await harness.core.revertToSnapshot(
                     .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    consent: .blanket)
             })
         #expect(revert.isBusy)
         let delete = try #require(
             await commandError {
                 try await harness.core.deleteSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, consent: .all)
+                    .id(instance.id), snapshot: snapshot.id, consent: .blanket)
             })
         #expect(delete.isBusy)
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Clean install"])
@@ -2217,7 +2217,7 @@ struct VMCommandCoreTests {
 
         _ = await commandError {
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .blanket)
         }
 
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
@@ -2231,7 +2231,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.deleteSnapshot(
-                    .id(instance.id), snapshot: UUID(), consent: .all)
+                    .id(instance.id), snapshot: UUID(), consent: .blanket)
             })
         // A refusal, not a failure: the verb never ran, so it answers the way
         // an unknown VM name does.
@@ -2243,8 +2243,10 @@ struct VMCommandCoreTests {
         #expect(item.hasPrefix("snapshot with the identifier"))
     }
 
-    @Test("The Ephemeral baseline is refused a delete even with consent")
-    func ephemeralBaselineCannotBeDeleted() async throws {
+    @Test(
+        "The Ephemeral baseline's delete asks for its own consent, which neither --yes nor the plain delete's gives",
+        arguments: [Consent.none, .blanket, Consent([.deleteSnapshot])])
+    func ephemeralBaselineDeleteAsksForItsOwnConsent(consent: Consent) async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
@@ -2253,14 +2255,129 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.deleteSnapshot(
-                    .id(instance.id), snapshot: baseline.id, consent: .all)
+                    .id(instance.id), snapshot: baseline.id, consent: consent)
             })
-        guard case .unsupported(let capability) = error else {
-            Issue.record("expected an unsupported refusal, got \(error)")
-            return
+
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .deleteEphemeralBaseline)
+        #expect(prompt.title == "Delete \u{201C}Clean install\u{201D}?")
+        #expect(
+            prompt.message
+                == "\u{201C}Clean install\u{201D} is the snapshot Ephemeral Mode returns "
+                + "\u{201C}Core VM\u{201D} to. Deleting it turns Ephemeral Mode off for this virtual "
+                + "machine, so later power-offs keep their changes. Its saved state and disk "
+                + "copies move to the Trash.")
+        #expect(prompt.confirmTitle == "Delete")
+        #expect(prompt.dismissTitle == "Cancel")
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [baseline.id])
+        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+    }
+
+    @Test(
+        "Confirming the Ephemeral baseline's delete turns the mode off and trashes the snapshot",
+        arguments: [VMLifecyclePhase.stopped, .suspended])
+    func ephemeralBaselineDeleteTurnsTheModeOff(phase: VMLifecyclePhase) async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
+        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
+
+        try await harness.core.deleteSnapshot(
+            .id(instance.id), snapshot: baseline.id, consent: Consent([.deleteEphemeralBaseline]))
+
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [later.id])
+        #expect(instance.manifestOnDisk == instance.snapshotManifest)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(instance.hostState.ephemeralBaselineSnapshotID == nil)
+        #expect(instance.fixtureBundleFiles.hostState(at: instance.bundleURL) == instance.hostState)
+        #expect(harness.snapshots.discardedIDs == [baseline.id])
+        #expect(instance.phase == phase)
+    }
+
+    @Test(
+        "While a guest runs, the Ephemeral baseline's delete is refused with the reason, consent or not",
+        arguments: [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())])
+    func ephemeralBaselineDeleteIsRefusedWhileLive(phase: VMLifecyclePhase) async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
+
+        for consent in [Consent.none, Consent([.deleteEphemeralBaseline])] {
+            let error = try #require(
+                await commandError {
+                    try await harness.core.deleteSnapshot(
+                        .id(instance.id), snapshot: baseline.id, consent: consent)
+                })
+            guard case .changeTakesStoppedVM(_, _, let change) = error else {
+                Issue.record("expected a stopped-VM refusal, got \(error)")
+                return
+            }
+            #expect(change == .ephemeralBaselineDelete)
+            #expect(
+                error.message
+                    == "\u{201C}Core VM\u{201D} is \(instance.status.phrase(heldByAnotherCopy: false)). "
+                    + "Deleting a virtual machine\u{2019}s Ephemeral Mode baseline needs it shut down or suspended.")
         }
-        #expect(capability.contains("Ephemeral"))
-        #expect(instance.snapshotManifest.snapshots.count == 1)
+        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+
+        // Every other snapshot deletes as it always has, the mode untouched.
+        try await harness.core.deleteSnapshot(
+            .id(instance.id), snapshot: later.id, consent: Consent([.deleteSnapshot]))
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [baseline.id])
+        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+    }
+
+    @Test("A manifest write that fails after the mode turned off leaves the mode off and the snapshot listed")
+    func failedBaselineUnlistLeavesTheModeOffAndTheSnapshotListed() async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        instance.fixtureBundleFiles.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.snapshotManifestRelativePath)
+
+        let error = try #require(
+            await commandError {
+                try await harness.core.deleteSnapshot(
+                    .id(instance.id), snapshot: baseline.id,
+                    consent: Consent([.deleteEphemeralBaseline]))
+            })
+
+        #expect(error.confirmationPrompt == nil)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(instance.fixtureBundleFiles.hostState(at: instance.bundleURL) == instance.hostState)
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [baseline.id])
+        #expect(instance.manifestOnDisk == instance.snapshotManifest)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+    }
+
+    @Test("A host-state write that fails leaves the mode on and the baseline listed")
+    func failedModeOffLeavesTheBaselineInPlace() async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        instance.fixtureBundleFiles.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.hostStateRelativePath)
+
+        _ = try #require(
+            await commandError {
+                try await harness.core.deleteSnapshot(
+                    .id(instance.id), snapshot: baseline.id,
+                    consent: Consent([.deleteEphemeralBaseline]))
+            })
+
+        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+        #expect(instance.manifestOnDisk == instance.snapshotManifest)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
     }
 
     @Test("Renaming and annotating a snapshot writes through to the manifest")
@@ -2439,7 +2556,7 @@ struct VMCommandCoreTests {
         let deleteError = try #require(
             await commandError {
                 try await harness.core.delete(
-                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
             })
         guard case .busy(let vm, let operation) = deleteError else {
             Issue.record("expected a busy refusal, got \(deleteError)")
@@ -2458,7 +2575,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Doomed")
 
         try await harness.core.delete(
-            .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+            .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
 
         #expect(harness.library.instances.isEmpty)
         #expect(harness.storage.deleteVMBundleCallCount == 1)
@@ -2474,7 +2591,7 @@ struct VMCommandCoreTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
         }
 
         // The bundle — and the slot inside it — is still on disk, so a VM that
@@ -2491,11 +2608,11 @@ struct VMCommandCoreTests {
         let instance = makeInstance(in: harness, name: "Doomed")
 
         try await harness.core.delete(
-            .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+            .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
         let error = try #require(
             await commandError {
                 try await harness.core.delete(
-                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
             })
 
         #expect(error.isNotFound)
@@ -2510,7 +2627,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.delete(
-                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                    .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
             })
 
         #expect(error.isInvalidState)
@@ -2541,7 +2658,7 @@ struct VMCommandCoreTests {
         }
 
         try await harness.core.delete(
-            .id(target.id), permanently: false, alsoRemoving: [sharedID], consent: .all)
+            .id(target.id), permanently: false, alsoRemoving: [sharedID], consent: .blanket)
 
         #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(harness.fileSystem.removedURLs.isEmpty)
@@ -2563,7 +2680,7 @@ struct VMCommandCoreTests {
         }
 
         try await harness.core.delete(
-            .id(instance.id), permanently: true, alsoRemoving: [diskID], consent: .all)
+            .id(instance.id), permanently: true, alsoRemoving: [diskID], consent: .blanket)
 
         #expect(harness.fileSystem.removedURLs.map(\.path) == [externalPath])
         #expect(harness.fileSystem.trashedURLs.isEmpty)
@@ -2599,14 +2716,14 @@ struct VMCommandCoreTests {
         fail(CocoaError(.fileNoSuchFile))
         try await harness.core.delete(
             .id(ghostly.id), permanently: permanently, alsoRemoving: [disk.id, media.id],
-            consent: .all)
+            consent: .blanket)
 
         let target = makeInstance(in: harness, name: "Target", mutate: setUp)
         fail(CocoaError(.fileWriteNoPermission))
         let failure = await commandError {
             try await harness.core.delete(
                 .id(target.id), permanently: permanently, alsoRemoving: [disk.id, media.id],
-                consent: .all)
+                consent: .blanket)
         }
 
         // The VM went; one failed file never stops the next from being tried.
@@ -2937,7 +3054,7 @@ struct VMCommandCoreTests {
             await commandError {
                 try await harness.core.revertToSnapshot(
                     .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    consent: .blanket)
             })
 
         #expect(error.isOperationFailure)
@@ -2961,7 +3078,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.stop(
-                    .id(instance.id), disposition: .graceful, consent: .all)
+                    .id(instance.id), disposition: .graceful, consent: .blanket)
             })
 
         #expect(error.isOperationFailure)
@@ -3497,7 +3614,7 @@ struct VMCommandCoreTests {
             .id(instance.id), password: "analytical-engine")
 
         try await harness.core.delete(
-            .id(instance.id), permanently: permanently, alsoRemoving: [], consent: .all)
+            .id(instance.id), permanently: permanently, alsoRemoving: [], consent: .blanket)
 
         #expect(harness.library.instances.isEmpty)
         #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
@@ -3542,7 +3659,7 @@ struct VMCommandCoreTests {
 
         // Taken before the write has had a turn, so the cancel is what the
         // write finds when it finishes.
-        try harness.core.cancelPreparing(.id(summary.id), consent: .all)
+        try harness.core.cancelPreparing(.id(summary.id), consent: .blanket)
         #expect(await arrival.settle() == nil)
 
         #expect(harness.library.entries.isEmpty)

@@ -149,7 +149,7 @@ struct VMOtherCopyHoldTests {
                     ConfigurationEntry(
                         key: "serial.socket", value: String(!before.serialSocketRelayEnabled))
                 ],
-                consent: .all)
+                consent: .blanket)
             Issue.record("The set was not refused")
         } catch let error as CommandError {
             guard case .heldByAnotherCopy(let vm) = error else {
@@ -497,7 +497,7 @@ struct VMOtherCopyHoldTests {
             try harness.core.setConfiguration(
                 .id(instance.id),
                 assignments: [ConfigurationEntry(key: "serial.socket", value: "true")],
-                consent: .all)
+                consent: .blanket)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -519,7 +519,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .blanket)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -539,7 +539,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")

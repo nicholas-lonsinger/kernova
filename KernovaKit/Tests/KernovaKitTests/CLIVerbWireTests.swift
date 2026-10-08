@@ -93,7 +93,7 @@ struct CLIVerbWireTests {
 
     // MARK: - Lifecycle
 
-    @Test("start crosses carrying --recovery when the line asks for it, and --yes as every consent")
+    @Test("start crosses carrying --recovery when the line asks for it, and --yes as the blanket consent")
     func startSendsItsRecoveryFlag() throws {
         let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted)
         #expect(
@@ -112,7 +112,7 @@ struct CLIVerbWireTests {
         let anyway = try CLIWire.exchange(["start", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
-                .start(.idOrName("Alpha"), recovery: false, consent: .all, macAddressRemedy: nil)
+                .start(.idOrName("Alpha"), recovery: false, consent: .blanket, macAddressRemedy: nil)
             ])
     }
 
@@ -198,7 +198,7 @@ struct CLIVerbWireTests {
             ["stop", "Alpha", "--force", "--yes", "--timeout", "30"], answering: accepted)
         #expect(
             forced.sent == [
-                .stop(.idOrName("Alpha"), disposition: .force, consent: .all, timeout: 30)
+                .stop(.idOrName("Alpha"), disposition: .force, consent: .blanket, timeout: 30)
             ])
 
         let resumeFirst = try CLIWire.exchange(
@@ -226,14 +226,14 @@ struct CLIVerbWireTests {
         #expect(exchanged.sent == [.pause(.idOrName("Alpha"))])
     }
 
-    @Test("resume crosses as the verb that lets a paused guest run again, --yes as every consent")
+    @Test("resume crosses as the verb that lets a paused guest run again, --yes as the blanket consent")
     func resumeSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
             ["resume", "Alpha"], answering: accepted)
         #expect(exchanged.sent == [.resume(.idOrName("Alpha"), consent: .none, macAddressRemedy: nil)])
 
         let anyway = try CLIWire.exchange(["resume", "Alpha", "--yes"], answering: accepted)
-        #expect(anyway.sent == [.resume(.idOrName("Alpha"), consent: .all, macAddressRemedy: nil)])
+        #expect(anyway.sent == [.resume(.idOrName("Alpha"), consent: .blanket, macAddressRemedy: nil)])
     }
 
     @Test("restart crosses with the deadline bounding its shutdown half")
@@ -254,7 +254,7 @@ struct CLIVerbWireTests {
         let anyway = try CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
-                .restart(.idOrName("Alpha"), timeout: nil, consent: .all, macAddressRemedy: nil)
+                .restart(.idOrName("Alpha"), timeout: nil, consent: .blanket, macAddressRemedy: nil)
             ])
     }
 
@@ -282,7 +282,7 @@ struct CLIVerbWireTests {
         #expect(
             trashed.sent == [
                 .delete(
-                    .idOrName("Alpha"), permanently: false, alsoRemoving: [], consent: .all)
+                    .idOrName("Alpha"), permanently: false, alsoRemoving: [], consent: .blanket)
             ])
 
         let permanent = try CLIWire.exchange(

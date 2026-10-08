@@ -205,8 +205,8 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
     public let createdAt: Date
     /// Whether the VM's state descends from this snapshot.
     public let isCurrent: Bool
-    /// Whether this snapshot is the VM's Ephemeral Mode baseline, which cannot
-    /// be deleted while the mode names it.
+    /// Whether this snapshot is the VM's Ephemeral Mode baseline, whose delete
+    /// turns the mode off.
     public let isEphemeralBaseline: Bool
 
     /// Describes one restore point.
@@ -376,6 +376,10 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case deleteVM
     /// Trashing one snapshot's captured files.
     case deleteSnapshot
+    /// Trashing the captured files of a VM's Ephemeral Mode baseline, which
+    /// turns Ephemeral Mode off for that VM — asked in place of
+    /// ``deleteSnapshot``.
+    case deleteEphemeralBaseline
     /// Returning a VM to a snapshot.
     case revertToSnapshot
     /// Stopping a create, clone or import that is still writing.
@@ -391,6 +395,23 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     /// Starting a VM while another one with the same machine identity is
     /// active.
     case startBesideSharedMachineIdentity
+
+    /// Whether a consent given up front for whatever a verb asks — `--yes` —
+    /// gives this one.
+    ///
+    /// Deleting an Ephemeral Mode baseline also turns a setting off, so it
+    /// takes a consent that names that. Exhaustive rather than `default`, so a
+    /// new kind has to choose a side.
+    public var isGivenByBlanketConsent: Bool {
+        switch self {
+        case .deleteEphemeralBaseline:
+            false
+        case .forceStop, .stopPaused, .deleteVM, .deleteSnapshot, .revertToSnapshot,
+            .cancelPreparing, .cancelGuestSetup, .removeAttachment, .enableClipboardPassthrough,
+            .startBesideSharedMachineIdentity:
+            true
+        }
+    }
 }
 
 /// The confirmations a caller has given for one call of a verb.
@@ -409,9 +430,11 @@ public struct Consent: Codable, Sendable, Hashable {
 
     /// No confirmation given.
     public static let none = Consent([])
-    /// Every confirmation given — what a door that consents up front, such as
-    /// `--yes`, answers.
-    public static let all = Consent(Set(ConfirmationKind.allCases))
+    /// Every confirmation a consent given up front covers
+    /// (``ConfirmationKind/isGivenByBlanketConsent``) — what a door that
+    /// consents up front, such as `--yes`, answers.
+    public static let blanket = Consent(
+        Set(ConfirmationKind.allCases.filter(\.isGivenByBlanketConsent)))
 
     /// Whether `kind` was confirmed.
     public func covers(_ kind: ConfirmationKind) -> Bool {
@@ -761,6 +784,10 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
     case cloneWritingOutsideBundle
     /// Snapshotting a VM whose guest can write to a disk outside its bundle.
     case snapshotWritingOutsideBundle
+    /// Deleting a VM's Ephemeral Mode baseline, which turns the mode off — taken
+    /// only while no guest runs, so a session started under the mode is undone
+    /// as it promised.
+    case ephemeralBaselineDelete
 
     /// The rule, as every surface states it.
     public var sentence: String {
@@ -771,6 +798,8 @@ public enum StoppedVMChange: String, Codable, Sendable, Hashable, CaseIterable {
             "Cloning a virtual machine with a writable external disk needs it stopped."
         case .snapshotWritingOutsideBundle:
             "Taking a snapshot of a virtual machine with a writable external disk needs it stopped."
+        case .ephemeralBaselineDelete:
+            "Deleting a virtual machine\u{2019}s Ephemeral Mode baseline needs it shut down or suspended."
         }
     }
 }
@@ -966,8 +995,8 @@ extension CommandErrorDTO {
     /// tells the user: where each VM holds the address, then — only when one
     /// VM holds it and a step it can take certainly frees it — that step.
     ///
-    /// An Ephemeral Mode baseline is named as one and offered no remedy: it
-    /// cannot be deleted while the mode is on.
+    /// An Ephemeral Mode baseline is named as one and offered no remedy: its
+    /// delete is refused while its VM runs, and turns Ephemeral Mode off.
     private static func macAddressInUseMessage(
         _ address: String, vm: String, holder: String, holding: MACAddressHolding,
         otherHolders: [MACAddressHolder]
@@ -1013,7 +1042,7 @@ extension CommandErrorDTO {
     }
 
     /// The step that frees the address from its only holder, or `nil` when a
-    /// snapshot holding it is a baseline no delete will take.
+    /// snapshot holding it is an Ephemeral Mode baseline.
     private static func remedy(
         name: String, holding: MACAddressHolding, destination: String
     ) -> String? {

@@ -372,21 +372,8 @@ extension VMCommandCore {
     func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
-        // Re-checked at the write as well as at the confirmation: the baseline
-        // is what every power-off of this VM needs back, and the mode can be
-        // switched on while a confirmation is up.
-        guard !instance.isEphemeralBaseline(snapshot) else {
-            #log(
-                Self.logger, .notice,
-                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
-            )
-            throw CommandError.unsupported(capability: "deleting a VM's Ephemeral Mode baseline")
-        }
         try require(.deleteSnapshot, on: instance)
-        guard consent.covers(.deleteSnapshot) else {
-            throw CommandError.confirmationRequired(
-                Self.deleteSnapshotPrompt(snapshot, on: instance))
-        }
+        _ = try requireDelete(snapshot, on: instance, consent: consent)
         // Unlisted first, then trashed: a manifest write that fails leaves the
         // snapshot listed with its files in place, and a trash that fails
         // leaves no entry pointing at files that are gone — only an unlisted
@@ -394,7 +381,11 @@ extension VMCommandCore {
         var unlisted = false
         do {
             try await lifecycle.discardSnapshot(instance, snapshotID: id) { permit in
-                try self.commitSnapshotManifest(permit, verb: .deleteSnapshot) { $0.remove(id: id) }
+                // Decided again under the permit: Ephemeral Mode can come to
+                // name this snapshot while a confirmation is up, and a consent
+                // given for the plain delete does not cover turning it off.
+                let delete = try self.requireDelete(snapshot, on: instance, consent: consent)
+                try self.unlist(id, as: delete, permit)
                 unlisted = true
             }
         } catch let failure as CommandError {
@@ -417,18 +408,85 @@ extension VMCommandCore {
         )
     }
 
-    /// The refusal a snapshot delete raises.
+    /// What deleting one snapshot writes besides the manifest.
+    enum SnapshotDelete: Equatable {
+        /// The snapshot alone.
+        case plain
+        /// The VM's Ephemeral Mode baseline: Ephemeral Mode turns off with it.
+        case endingEphemeralMode
+    }
+
+    /// What deleting `snapshot` from `instance` is right now.
+    static func delete(of snapshot: VMSnapshot, on instance: VMInstance) -> SnapshotDelete {
+        instance.isEphemeralBaseline(snapshot) ? .endingEphemeralMode : .plain
+    }
+
+    /// The delete of `snapshot` from `instance` as it stands now — refused
+    /// while a guest runs under the Ephemeral Mode it would turn off
+    /// (``VMInstance/snapshotDeleteRule(_:)``), and without the consent
+    /// ``deleteSnapshotPrompt(_:on:)`` asks for.
+    private func requireDelete(
+        _ snapshot: VMSnapshot, on instance: VMInstance, consent: Consent
+    ) throws -> SnapshotDelete {
+        if let change = instance.snapshotDeleteRule(snapshot) {
+            throw admissionRefusal(.takesStoppedVM(change), on: instance, verb: .deleteSnapshot)
+        }
+        let prompt = Self.deleteSnapshotPrompt(snapshot, on: instance)
+        guard consent.covers(prompt.kind) else {
+            throw CommandError.confirmationRequired(prompt)
+        }
+        return Self.delete(of: snapshot, on: instance)
+    }
+
+    /// Takes snapshot `id` off the manifest of the VM `permit` writes —
+    /// turning Ephemeral Mode off first for the delete of its baseline, so a
+    /// write that fails part-way leaves the mode off with the snapshot still
+    /// listed, never the mode on with its baseline gone.
+    private func unlist(
+        _ id: UUID, as delete: SnapshotDelete, _ permit: borrowing VMEditPermit
+    ) throws {
+        if delete == .endingEphemeralMode {
+            try commitHostState(permit, verb: .deleteSnapshot) {
+                $0.applyEphemeralMode(enabled: false, baseline: nil)
+            }
+            let name = permit.instance.name
+            #log(
+                Self.logger, .notice,
+                "Turned Ephemeral Mode off for '\(name, privacy: .public)' to delete its baseline"
+            )
+        }
+        try commitSnapshotManifest(permit, verb: .deleteSnapshot) { $0.remove(id: id) }
+    }
+
+    /// The confirmation deleting `snapshot` from `instance` asks for right
+    /// now — the one a surface shows before the delete, and the refusal the
+    /// delete raises without its kind in the consent.
     static func deleteSnapshotPrompt(
         _ snapshot: VMSnapshot, on instance: VMInstance
     ) -> ConfirmationPrompt {
-        ConfirmationPrompt(
-            kind: .deleteSnapshot,
-            title: "Delete \u{201C}\(snapshot.name)\u{201D}?",
-            message:
-                "Moves this snapshot's saved state and disk copies to the Trash. "
-                + "\u{201C}\(instance.name)\u{201D} keeps the state it has now.",
-            confirmTitle: "Delete",
-            dismissTitle: "Cancel")
+        let name = "\u{201C}\(snapshot.name)\u{201D}"
+        let vm = "\u{201C}\(instance.name)\u{201D}"
+        return switch delete(of: snapshot, on: instance) {
+        case .plain:
+            ConfirmationPrompt(
+                kind: .deleteSnapshot,
+                title: "Delete \(name)?",
+                message:
+                    "Moves this snapshot's saved state and disk copies to the Trash. "
+                    + "\(vm) keeps the state it has now.",
+                confirmTitle: "Delete",
+                dismissTitle: "Cancel")
+        case .endingEphemeralMode:
+            ConfirmationPrompt(
+                kind: .deleteEphemeralBaseline,
+                title: "Delete \(name)?",
+                message:
+                    "\(name) is the snapshot Ephemeral Mode returns \(vm) to. Deleting it turns "
+                    + "Ephemeral Mode off for this virtual machine, so later power-offs keep "
+                    + "their changes. Its saved state and disk copies move to the Trash.",
+                confirmTitle: "Delete",
+                dismissTitle: "Cancel")
+        }
     }
 
     // MARK: - Metadata
@@ -492,15 +550,33 @@ extension VMCommandCore {
         _ permit: borrowing VMEditPermit, verb: VMVerb,
         _ change: (inout VMSnapshotManifest) -> Void
     ) throws {
-        let instance = permit.instance
-        do {
+        try committing("snapshot manifest", of: permit.instance, verb: verb) {
             try permit.bundle.commitSnapshotManifest(change)
+        }
+    }
+
+    /// ``commitSnapshotManifest(_:verb:_:)`` for the host state.
+    private func commitHostState(
+        _ permit: borrowing VMEditPermit, verb: VMVerb, _ change: (inout VMHostState) -> Void
+    ) throws {
+        try committing("host state", of: permit.instance, verb: verb) {
+            try permit.bundle.commitHostState(change)
+        }
+    }
+
+    /// Runs `commit`, a write of one of `instance`'s state files, refusing
+    /// `verb` with what the write failed with.
+    private func committing(
+        _ file: String, of instance: VMInstance, verb: VMVerb, _ commit: () throws -> Void
+    ) throws {
+        do {
+            try commit()
         } catch let refused as VMAdmissionRefusal {
             throw admissionRefusal(refused.refusal, on: instance, verb: verb)
         } catch {
             #log(
                 Self.logger, .error,
-                "Failed to write the snapshot manifest for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                "Failed to write the \(file, privacy: .public) for '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: verb, error: error)
         }

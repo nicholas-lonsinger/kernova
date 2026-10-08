@@ -148,10 +148,22 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 11)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 10, expected: VMCommandRequest.currentProtocolVersion)))
+    }
+
+    @Test("A request in the vocabulary before the baseline's own consent is refused as another version")
+    func requestOfThePreBaselineConsentVocabularyIsRefused() async throws {
+        let harness = makeHarness()
+        let request = Data(#"{"protocolVersion":11,"verb":{"list":{}}}"#.utf8)
+
+        let response = try await harness.transport.sendRaw(request)
+
+        #expect(VMCommandRequest.currentProtocolVersion == 12)
+        #expect(
+            response.result
+                == .refused(.unsupportedProtocolVersion(peer: 11, expected: VMCommandRequest.currentProtocolVersion)))
     }
 
     @Test("A group action written in the vocabulary before group actions is refused as another version")
@@ -444,7 +456,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.count == 1)
 
         let confirmed = try await harness.transport.send(
-            .delete(.id(instance.id), permanently: false, alsoRemoving: [], consent: .all))
+            .delete(.id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket))
 
         #expect(confirmed.result == .ok)
         #expect(harness.library.instances.isEmpty)
@@ -507,7 +519,7 @@ struct VMCommandEnvelopeRouterTests {
         }
 
         let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
+            .cancelGuestSetup(.id(instance.id), consent: .blanket))
 
         #expect(response.result == .ok)
         for await _ in cancelStream.stream { break }
@@ -519,7 +531,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .stopped)
 
         let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
+            .cancelGuestSetup(.id(instance.id), consent: .blanket))
 
         guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -547,7 +559,7 @@ struct VMCommandEnvelopeRouterTests {
         // The gate covers exactly the setup phase: while the install pipeline
         // is still running, cancelGuestSetup is offered and cancelling it works.
         let firstCancel = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
+            .cancelGuestSetup(.id(instance.id), consent: .blanket))
         #expect(firstCancel.result == .ok)
 
         // Drain the setup operation before asserting or firing the second
@@ -559,7 +571,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.installContext != nil)
 
         let secondCancel = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
+            .cancelGuestSetup(.id(instance.id), consent: .blanket))
         guard case .invalidState? = secondCancel.failure else {
             Issue.record("expected an invalid state, got \(String(describing: secondCancel.failure))")
             return
@@ -604,7 +616,7 @@ struct VMCommandEnvelopeRouterTests {
         // and the gate should already be closed.
         await virtualization.waitUntilSuspended()
 
-        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), consent: .all))
+        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), consent: .blanket))
         guard case .invalidState(_, _, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
             return
@@ -628,7 +640,7 @@ struct VMCommandEnvelopeRouterTests {
 
         for edit: StorageDiskEdit in [
             .create(sizeInGB: 32),
-            .remove(disk: disk, trashFile: true, consent: .all),
+            .remove(disk: disk, trashFile: true, consent: .blanket),
             .rename(disk: disk, newLabel: "Scratch"),
             .setNotes(disk: disk, notes: "the build cache"),
             .setReadOnly(disk: disk, readOnly: true),
@@ -657,7 +669,7 @@ struct VMCommandEnvelopeRouterTests {
         let item = UUID()
 
         for edit: RemovableMediaEdit in [
-            .remove(item: item, trashFile: false, consent: .all),
+            .remove(item: item, trashFile: false, consent: .blanket),
             .eject(item: item),
             .rename(item: item, newLabel: "Installer"),
             .setNotes(item: item, notes: "from the mirror"),
@@ -752,7 +764,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let confirmed = try await harness.transport.send(
             .editStorageDisk(
-                .id(instance.id), .remove(disk: disk.id, trashFile: true, consent: .all)))
+                .id(instance.id), .remove(disk: disk.id, trashFile: true, consent: .blanket)))
         #expect(confirmed.result == .ok)
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
     }
@@ -873,7 +885,7 @@ struct VMCommandEnvelopeRouterTests {
         try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
 
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
+        try harness.core.cancelPreparing(.id(arrival.id), consent: .blanket)
         hold.signal()
         let settled = try await waiting.value
 
@@ -1068,7 +1080,7 @@ struct VMCommandEnvelopeRouterTests {
         let assignments = [ConfigurationEntry(key: "cpus", value: "3")]
         #expect(
             try await transport.send(
-                .setConfiguration(.name("Alpha"), assignments: assignments, consent: .all)
+                .setConfiguration(.name("Alpha"), assignments: assignments, consent: .blanket)
             ).result == .configuration(assignments))
         #expect(double.setConfigurationCalls.map { !$0.consent.kinds.isEmpty } == [true])
         #expect(double.setConfigurationCalls.map(\.assignments) == [assignments])

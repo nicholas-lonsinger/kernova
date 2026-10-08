@@ -635,10 +635,20 @@ final class VMInstance {
         return bundleLayout.saveFileIsCopyOfSnapshot(id: baseline.id)
     }
 
-    /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
-    /// bars deleting it.
+    /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline.
     func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
         ephemeralBaselineSnapshot?.id == snapshot.id
+    }
+
+    /// The rule deleting `snapshot` breaks right now, `nil` when it breaks
+    /// none: deleting the Ephemeral baseline turns the mode off, which no VM
+    /// with a guest in memory takes — that session was started on the promise
+    /// of being undone.
+    ///
+    /// Beside admission rather than in it, so the delete reads it again under
+    /// its own operation's permit.
+    func snapshotDeleteRule(_ snapshot: VMSnapshot) -> StoppedVMChange? {
+        isEphemeralBaseline(snapshot) && hasLiveVirtualMachine ? .ephemeralBaselineDelete : nil
     }
 
     var isInFullscreen: Bool { displayMode == .fullscreen }

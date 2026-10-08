@@ -389,9 +389,9 @@ struct VMCapabilityCatalog {
     enum SnapshotDeleteOffer: Equatable {
         /// The delete is taken now.
         case offered
-        /// The VM's Ephemeral baseline — the restore point its every power-off
-        /// needs, so the mode bars deleting it.
-        case barredAsBaseline
+        /// The VM's state takes a delete, but not this one
+        /// (``VMInstance/snapshotDeleteRule(_:)``).
+        case takesStoppedVM(StoppedVMChange)
         /// The VM's state, or an operation still settling, holds the manifest.
         case unavailable
     }
@@ -402,7 +402,7 @@ struct VMCapabilityCatalog {
         _ snapshot: VMSnapshot, on instance: VMInstance
     ) -> SnapshotDeleteOffer {
         guard isAvailable(.deleteSnapshot, on: instance) else { return .unavailable }
-        return instance.isEphemeralBaseline(snapshot) ? .barredAsBaseline : .offered
+        return instance.snapshotDeleteRule(snapshot).map { .takesStoppedVM($0) } ?? .offered
     }
 
     /// Whether `snapshot` may be deleted.

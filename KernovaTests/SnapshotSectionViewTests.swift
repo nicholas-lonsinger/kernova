@@ -65,8 +65,8 @@ struct SnapshotSectionViewTests {
     }
 
     /// Renders the section with one delete offer per row, the way the panel
-    /// does: `barring`'s row barred as the Ephemeral baseline when one is given,
-    /// `delete` on every other.
+    /// does: `barring`'s row marked as the Ephemeral baseline and barred as a
+    /// running VM bars it when one is given, `delete` on every other.
     private func render(
         _ view: SnapshotSectionView, manifest: VMSnapshotManifest, canTakeSnapshot: Bool,
         canRevert: Bool, delete: VMCapabilityCatalog.SnapshotDeleteOffer = .offered,
@@ -75,7 +75,8 @@ struct SnapshotSectionViewTests {
         let offers = manifest.snapshots.reduce(
             into: [UUID: VMCapabilityCatalog.SnapshotDeleteOffer]()
         ) { offers, snapshot in
-            offers[snapshot.id] = snapshot.id == baseline?.id ? .barredAsBaseline : delete
+            offers[snapshot.id] =
+                snapshot.id == baseline?.id ? .takesStoppedVM(.ephemeralBaselineDelete) : delete
         }
         view.update(
             manifest: manifest, canTakeSnapshot: canTakeSnapshot, canRevert: canRevert,
@@ -315,7 +316,7 @@ struct SnapshotSectionViewTests {
             }.count == 1)
     }
 
-    @Test("The baseline's Delete is disabled while the mode is on")
+    @Test("The baseline's Delete is disabled while the VM runs")
     func baselineDeleteIsDisabled() {
         let (view, _) = makeSection()
         let baseline = makeSnapshot("Clean install")
@@ -334,7 +335,7 @@ struct SnapshotSectionViewTests {
     /// The bar a user can lift is the one the row explains: a VM holding its
     /// manifest says nothing beyond the greying, because there is nothing to do
     /// about it.
-    @Test("Only the baseline's barred Delete carries the reason it is barred")
+    @Test("Only the baseline's Delete barred while the VM runs carries the reason")
     func onlyTheBaselineBarExplainsItself() {
         let (view, _) = makeSection()
         let baseline = makeSnapshot("Clean install")
@@ -346,7 +347,7 @@ struct SnapshotSectionViewTests {
         let barred = view.makeRowMenu(forRowWith: baseline.id)?.items
             .first { $0.title == "Delete\u{2026}" }
         #expect(barred?.isEnabled == false)
-        #expect(barred?.toolTip?.contains("Ephemeral baseline") == true)
+        #expect(barred?.toolTip == StoppedVMChange.ephemeralBaselineDelete.sentence)
 
         render(
             view, manifest: manifest, canTakeSnapshot: false, canRevert: false, delete: .unavailable)

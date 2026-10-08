@@ -1899,7 +1899,7 @@ struct VMLibraryViewModelTests {
 
         let confirmed = viewModel.setConfiguration(
             [VMConfigurationKeyRegistry.clipboardPassthrough.assigning(true)], on: instance,
-            consent: .all)
+            consent: .blanket)
         #expect(confirmed == .applied)
         #expect(instance.configuration.clipboardPassthroughEnabled)
     }

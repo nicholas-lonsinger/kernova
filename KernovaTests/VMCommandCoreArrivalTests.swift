@@ -199,7 +199,7 @@ struct VMCommandCoreArrivalTests {
         }
         try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
+        try harness.core.cancelPreparing(.id(arrival.id), consent: .blanket)
         // The copy cannot be interrupted, so its source stays held until it ends.
         #expect(source.phase.operation?.kind == .copyingOut(.stopped))
         hold.signal()
@@ -245,7 +245,7 @@ struct VMCommandCoreArrivalTests {
         let writeRefusal = #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
                 .id(row.id), assignments: [ConfigurationEntry(key: "name", value: "Renamed")],
-                consent: .all)
+                consent: .blanket)
         }
         #expect(isBusy(writeRefusal))
         #expect(storage.saveConfigurationCallCount == savesBefore)
@@ -294,7 +294,7 @@ struct VMCommandCoreArrivalTests {
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         #expect(arrival.stage == .publishing)
 
-        try harness.core.cancelPreparing(.id(row.id), consent: .all)
+        try harness.core.cancelPreparing(.id(row.id), consent: .blanket)
         #expect(arrival.stage == .withdrawing)
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
         hold.signal()
@@ -377,7 +377,7 @@ struct VMCommandCoreArrivalTests {
         }
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
         let arrival = try #require(harness.library.arrivals.first)
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
+        try harness.core.cancelPreparing(.id(arrival.id), consent: .blanket)
         hold.signal()
 
         let outcome = await waiter.result
@@ -406,7 +406,7 @@ struct VMCommandCoreArrivalTests {
         let arrival = try #require(harness.library.arrivals.first)
         try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
 
-        try harness.core.cancelPreparing(.id(row.id), consent: .all)
+        try harness.core.cancelPreparing(.id(row.id), consent: .blanket)
         hold.signal()
 
         // The bundle the Trash turned down is still in the VMs directory, so
@@ -427,7 +427,7 @@ struct VMCommandCoreArrivalTests {
         #expect(clone.status == VMStatus.stopped.rawValue)
 
         do {
-            try harness.core.cancelPreparing(.id(clone.id), consent: .all)
+            try harness.core.cancelPreparing(.id(clone.id), consent: .blanket)
             Issue.record("expected the cancel to be refused")
         } catch let refusal as CommandError {
             guard case .invalidState = refusal else {

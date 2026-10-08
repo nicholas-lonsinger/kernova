@@ -263,6 +263,50 @@ struct CLIArgumentParsingTests {
         #expect(bare.options.yes)
     }
 
+    @Test("snapshot delete gives the Ephemeral baseline's consent only with its own flag, never with --yes")
+    func snapshotDeleteTakesTheBaselineConsentByItsOwnFlag() throws {
+        func consent(_ flags: [String]) throws -> Consent {
+            try #require(
+                try parse(["snapshot", "delete", "Alpha", "Base"] + flags)
+                    as? KernovaCommand.Snapshot.Delete
+            ).consent
+        }
+
+        #expect(try consent([]) == .none)
+        let yes = try consent(["--yes"])
+        #expect(yes == .blanket)
+        #expect(yes.covers(.deleteSnapshot))
+        #expect(!yes.covers(.deleteEphemeralBaseline))
+        #expect(try consent(["--turn-off-ephemeral-mode"]) == Consent([.deleteEphemeralBaseline]))
+        #expect(
+            try consent(["--turn-off-ephemeral-mode", "--yes"])
+                == Consent.blanket.adding(.deleteEphemeralBaseline))
+    }
+
+    @Test("A refusal for the Ephemeral baseline's consent names its flag, not --yes")
+    func baselineRefusalNamesItsFlag() {
+        let response = VMCommandResponse(
+            result: .failure(
+                .confirmationRequired(
+                    prompt: ConfirmationPrompt(
+                        kind: .deleteEphemeralBaseline, title: "Delete \u{201C}Base\u{201D}?",
+                        message: "Deleting it turns Ephemeral Mode off.", confirmTitle: "Delete",
+                        dismissTitle: "Cancel"))))
+
+        do {
+            _ = try response.payload()
+            Issue.record("expected a confirmation refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(
+                failure.message
+                    == "Deleting it turns Ephemeral Mode off.\n\n"
+                    + "Pass --turn-off-ephemeral-mode to delete it and turn Ephemeral Mode off.")
+        } catch {
+            Issue.record("expected a CLI failure, got \(error)")
+        }
+    }
+
     @Test("Asking for both check-point answers at once is a usage error")
     func revertCheckpointIsExclusive() {
         #expect(throws: (any Error).self) {
@@ -499,7 +543,7 @@ struct CLIArgumentParsingTests {
                 == .setConfiguration(
                     .idOrName("Alpha"),
                     assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                    consent: .all))
+                    consent: .blanket))
     }
 
     @Test("A share is writable unless --read-only says otherwise, and its path is made absolute")

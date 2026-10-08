@@ -123,8 +123,8 @@ enum VMConsentPolicy {
         switch prompt.kind {
         case .stopPaused:
             false
-        case .forceStop, .deleteVM, .deleteSnapshot, .revertToSnapshot, .cancelPreparing,
-            .cancelGuestSetup, .removeAttachment, .enableClipboardPassthrough,
+        case .forceStop, .deleteVM, .deleteSnapshot, .deleteEphemeralBaseline, .revertToSnapshot,
+            .cancelPreparing, .cancelGuestSetup, .removeAttachment, .enableClipboardPassthrough,
             .startBesideSharedMachineIdentity:
             true
         }

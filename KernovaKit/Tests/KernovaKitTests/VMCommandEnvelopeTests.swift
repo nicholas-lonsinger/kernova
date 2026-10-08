@@ -88,14 +88,14 @@ struct VMCommandEnvelopeTests {
                 selector, recovery: false, consent: Consent([.startBesideSharedMachineIdentity]),
                 macAddressRemedy: .ownNetwork),
             .cancelGuestSetup(selector, consent: .none),
-            .cancelGuestSetup(selector, consent: .all),
+            .cancelGuestSetup(selector, consent: .blanket),
             .stop(selector, disposition: .graceful, consent: .none, timeout: nil),
             .stop(selector, disposition: .graceful, consent: .none, timeout: 90),
-            .stop(selector, disposition: .resumeThenShutDown, consent: .all, timeout: nil),
-            .stop(selector, disposition: .force, consent: .all, timeout: 0.5),
+            .stop(selector, disposition: .resumeThenShutDown, consent: .blanket, timeout: nil),
+            .stop(selector, disposition: .force, consent: .blanket, timeout: 0.5),
             .pause(selector),
             .resume(selector, consent: .none, macAddressRemedy: nil),
-            .resume(selector, consent: .all, macAddressRemedy: .newAddress),
+            .resume(selector, consent: .blanket, macAddressRemedy: .newAddress),
             .suspend(selector),
             .restart(selector, timeout: nil, consent: .none, macAddressRemedy: nil),
             .restart(selector, timeout: 120, consent: .none, macAddressRemedy: .noNetwork),
@@ -106,19 +106,19 @@ struct VMCommandEnvelopeTests {
             .showInFinder(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
-                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .all,
+                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .blanket,
                 macAddressRemedy: .newAddress),
-            .deleteSnapshot(selector, snapshot: snapshotID, consent: .all),
+            .deleteSnapshot(selector, snapshot: snapshotID, consent: .blanket),
             .renameSnapshot(selector, snapshot: snapshotID, newName: "Renamed"),
             .setSnapshotNotes(selector, snapshot: snapshotID, notes: "annotated"),
             .clone(selector, outcome: .exactCopy, waitForOutcome: true),
             .clone(selector, outcome: .newMachine, waitForOutcome: false),
             .clone(selector, outcome: nil, waitForOutcome: false),
             .rename(selector, newName: "Beta"),
-            .delete(selector, permanently: true, alsoRemoving: [snapshotID], consent: .all),
+            .delete(selector, permanently: true, alsoRemoving: [snapshotID], consent: .blanket),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova", waitForOutcome: true),
             .importVM(path: "/Users/somebody/Downloads/Alpha.kernova", waitForOutcome: false),
-            .cancelPreparing(selector, consent: .all),
+            .cancelPreparing(selector, consent: .blanket),
             .editStorageDisk(selector, .create(sizeInGB: 32)),
             .editStorageDisk(selector, .remove(disk: diskID, trashFile: true, consent: .none)),
             .editStorageDisk(selector, .rename(disk: diskID, newLabel: "Scratch")),
@@ -126,7 +126,7 @@ struct VMCommandEnvelopeTests {
             .editStorageDisk(selector, .setReadOnly(disk: diskID, readOnly: true)),
             .editStorageDisk(selector, .reorder(order: [diskID, snapshotID])),
             .editRemovableMedia(
-                selector, .remove(item: diskID, trashFile: false, consent: .all)),
+                selector, .remove(item: diskID, trashFile: false, consent: .blanket)),
             .editRemovableMedia(selector, .eject(item: diskID)),
             .editRemovableMedia(selector, .rename(item: diskID, newLabel: "Installer")),
             .editRemovableMedia(selector, .setNotes(item: diskID, notes: "from the mirror")),
@@ -150,7 +150,7 @@ struct VMCommandEnvelopeTests {
             .configuration(selector, keys: ["cpus", "memory"]),
             .setConfiguration(
                 selector, assignments: [ConfigurationEntry(key: "cpus", value: "4")],
-                consent: .all),
+                consent: .blanket),
             .guestAgentDisk(selector, .mount),
             .guestAgentDisk(selector, .unmount),
             .networks,
@@ -540,7 +540,11 @@ struct VMCommandEnvelopeTests {
         #expect(given.covers(.revertToSnapshot))
         #expect(!given.covers(.startBesideSharedMachineIdentity))
         #expect(given.adding(.startBesideSharedMachineIdentity).covers(.startBesideSharedMachineIdentity))
-        #expect(ConfirmationKind.allCases.allSatisfy(Consent.all.covers))
+        // A blanket consent gives every kind but deleting an Ephemeral Mode
+        // baseline, which turns a setting off besides the delete.
+        #expect(
+            ConfirmationKind.allCases.filter { !Consent.blanket.covers($0) }
+                == [.deleteEphemeralBaseline])
         #expect(!ConfirmationKind.allCases.contains(where: Consent.none.covers))
         let decoded = try JSONDecoder().decode(Consent.self, from: JSONEncoder().encode(given))
         #expect(decoded == given)

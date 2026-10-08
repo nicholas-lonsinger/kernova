@@ -51,9 +51,9 @@ struct VMLibraryIntentTests {
 
         _ = try await gateway.clone(vm, outcome: .exactCopy)
         try await gateway.rename(vm, to: "Renamed")
-        try await gateway.delete(vm, consent: .all)
-        try await gateway.cancelPreparing(vm, consent: .all)
-        try await gateway.cancelGuestSetup(vm, consent: .all)
+        try await gateway.delete(vm, consent: .blanket)
+        try await gateway.cancelPreparing(vm, consent: .blanket)
+        try await gateway.cancelGuestSetup(vm, consent: .blanket)
 
         #expect(commands.cloneCalls.map(\.selector) == [.id(vm)])
         #expect(commands.cloneCalls.map(\.outcome) == [.exactCopy])

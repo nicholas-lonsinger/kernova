@@ -619,6 +619,26 @@ struct DetailAlertsPresenterTests {
         #expect(message.contains("the folder itself is not deleted"), "\(reason)")
     }
 
+    @Test("The baseline's delete is confirmed naming the mode turning off; any other as before")
+    func deleteSnapshotAlertNamesTheModeForTheBaseline() {
+        let (presenter, viewModel) = makePresenter()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let later = VMSnapshot(name: "Configured", macAddress: nil)
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let vm = makeInstance(in: viewModel, hostState: hostState)
+        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
+
+        let alert = presenter.deleteSnapshotAlertForTesting(baseline, for: vm)
+        #expect(alert.message == VMCommandCore.deleteSnapshotPrompt(baseline, on: vm).message)
+        #expect(alert.message.contains("turns Ephemeral Mode off"))
+        #expect(alert.buttons.map(\.title) == ["Delete", "Cancel"])
+
+        let plain = presenter.deleteSnapshotAlertForTesting(later, for: vm)
+        #expect(plain.message.hasPrefix("Moves this snapshot's saved state and disk copies"))
+        #expect(!plain.message.contains("Ephemeral"))
+    }
+
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
     func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
         let (presenter, viewModel) = makePresenter()
