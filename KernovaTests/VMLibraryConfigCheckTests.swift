@@ -559,7 +559,7 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.checkRequests.count == 0)
         #expect(instance.status == .running)
 
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .blanket, timeout: nil)
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all, timeout: nil)
         try await waitForChange { instance.status == .stopped }
         #expect(harness.checkRequests.count == 1)
 

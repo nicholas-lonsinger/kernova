@@ -127,9 +127,9 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: picked, takingCheckpoint: true, consent: .blanket,
+            vm, snapshot: picked, takingCheckpoint: true, consent: .all,
             macAddressRemedy: .newAddress)
-        try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .blanket)
+        try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .all)
         try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
         try await gateway.setSnapshotNotes(vm, snapshot: picked, notes: "a note")
 
@@ -160,11 +160,11 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                named, snapshot: stale, takingCheckpoint: false, consent: .blanket,
+                named, snapshot: stale, takingCheckpoint: false, consent: .all,
                 macAddressRemedy: nil)
         }
         await #expect(throws: CommandError.self) {
-            try await gateway.deleteSnapshot(named, snapshot: stale, consent: .blanket)
+            try await gateway.deleteSnapshot(named, snapshot: stale, consent: .all)
         }
         await #expect(throws: CommandError.self) {
             try await gateway.renameSnapshot(named, snapshot: stale, to: "Renamed")
@@ -377,20 +377,18 @@ struct VMSnapshotIntentTests {
         await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
                 vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), takingCheckpoint: true,
-                consent: .blanket, macAddressRemedy: nil)
+                consent: .all, macAddressRemedy: nil)
         }
     }
 
-    @Test(
-        "A snapshot delete asks once, in the words of the consent it needs, and re-issues with it",
-        arguments: [ConfirmationKind.deleteSnapshot, .deleteEphemeralBaseline])
-    func deleteSnapshotConsentRetriesTheVerb(kind: ConfirmationKind) async throws {
+    @Test("A snapshot delete asks once and re-issues with the consent")
+    func deleteSnapshotConsentRetriesTheVerb() async throws {
         let commands = MockVMCommanding()
         let vm = UUID()
         let listed = VMIntentFixtures.snapshot()
         seed(commands, vm: vm, snapshots: [listed])
         commands.deleteSnapshotConsentPrompt = ConfirmationPrompt(
-            kind: kind,
+            kind: .deleteSnapshot,
             title: "Delete?",
             message: "Moves the snapshot's files to the Trash.",
             confirmTitle: "Delete",
@@ -403,8 +401,8 @@ struct VMSnapshotIntentTests {
                 vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), consent: consent)
         }
 
-        #expect(asked.map(\.kind) == [kind])
-        #expect(commands.deleteSnapshotCalls.map(\.consent) == [.none, Consent([kind])])
+        #expect(asked.map(\.kind) == [.deleteSnapshot])
+        #expect(commands.deleteSnapshotCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
     // MARK: - Error Surfacing

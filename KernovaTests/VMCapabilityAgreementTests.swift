@@ -120,7 +120,7 @@ struct VMCapabilityAgreementTests {
         case .editConfiguration:
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "cpus", value: String(instance.configuration.cpuCount + 1))],
-                consent: .blanket)
+                consent: .all)
         case .editLiveConfiguration:
             try core.setConfiguration(
                 vm,
@@ -129,11 +129,11 @@ struct VMCapabilityAgreementTests {
                         key: "serial.socket",
                         value: String(!instance.configuration.serialSocketRelayEnabled))
                 ],
-                consent: .blanket)
+                consent: .all)
         case .switchNetworkMode:
             try core.setConfiguration(
                 vm, assignments: [ConfigurationEntry(key: "network.mode", value: "nat")],
-                consent: .blanket)
+                consent: .all)
         case .switchNetworkMembership:
             try core.setConfiguration(
                 vm,
@@ -143,7 +143,7 @@ struct VMCapabilityAgreementTests {
                         value: instance.configuration.networkMembership == .isolated
                             ? "common" : "isolated")
                 ],
-                consent: .blanket)
+                consent: .all)
         case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)

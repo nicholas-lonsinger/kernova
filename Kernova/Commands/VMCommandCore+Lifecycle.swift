@@ -1094,7 +1094,7 @@ extension VMCommandCore {
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {
-            try await stop(instance, disposition: .graceful, consent: .blanket)
+            try await stop(instance, disposition: .graceful, consent: .all)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has

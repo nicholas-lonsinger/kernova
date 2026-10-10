@@ -92,7 +92,7 @@ struct RevertToSnapshotIntent: AppIntent {
 struct DeleteSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Snapshot"
     static let description: IntentDescription? = IntentDescription(
-        "Moves one snapshot's saved state and disk copies to the Trash, asking first. Deleting the snapshot Ephemeral Mode returns to also turns Ephemeral Mode off.",
+        "Moves one snapshot's saved state and disk copies to the Trash, asking first.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")

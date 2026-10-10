@@ -630,13 +630,17 @@ struct DetailAlertsPresenterTests {
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
 
         let alert = presenter.deleteSnapshotAlertForTesting(baseline, for: vm)
-        #expect(alert.message == VMCommandCore.deleteSnapshotPrompt(baseline, on: vm).message)
-        #expect(alert.message.contains("turns Ephemeral Mode off"))
+        #expect(alert.title == "Delete \u{201C}Clean install\u{201D}?")
+        #expect(
+            alert.message
+                == "\u{201C}Clean install\u{201D} is the snapshot Ephemeral Mode returns "
+                + "\u{201C}\(vm.name)\u{201D} to. Deleting it turns Ephemeral Mode off for this "
+                + "virtual machine, so later power-offs keep their changes. Its saved state and "
+                + "disk copies move to the Trash.")
         #expect(alert.buttons.map(\.title) == ["Delete", "Cancel"])
 
         let plain = presenter.deleteSnapshotAlertForTesting(later, for: vm)
-        #expect(plain.message.hasPrefix("Moves this snapshot's saved state and disk copies"))
-        #expect(!plain.message.contains("Ephemeral"))
+        #expect(plain.message == VMCommandCore.deleteSnapshotPrompt(later, on: vm).message)
     }
 
     @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")

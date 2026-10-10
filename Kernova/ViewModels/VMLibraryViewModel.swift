@@ -1194,29 +1194,45 @@ final class VMLibraryViewModel {
         guard capabilities.isAvailable(.deleteSnapshot, on: instance) else {
             #log(
                 Self.logger, .notice,
-                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer its delete now"
+                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer a delete now"
             )
             return
         }
         presenter?.presentDeleteSnapshot(snapshot, for: instance)
     }
 
-    /// Trashes a snapshot's captured files and drops it from the manifest,
-    /// under the consent of the `confirmed` confirmation the user answered —
-    /// asking for any other the delete raises, such as the Ephemeral
-    /// baseline's when the mode came to name the snapshot while that one was
-    /// up.
+    /// Trashes a snapshot's captured files and drops it from the manifest —
+    /// first turning Ephemeral Mode off when `turningOffEphemeralMode`, the
+    /// confirmation the user answered having been the baseline's.
+    ///
+    /// Two steps through the verbs every other surface takes, in this order:
+    /// the configuration write that turns the mode off, then the delete. A
+    /// write that does not land deletes nothing, and a delete that fails leaves
+    /// the mode off with the snapshot listed. A delete refused because the
+    /// snapshot became the baseline while a plain confirmation was up asks
+    /// again with the baseline's confirmation.
     ///
     /// The returned Task lets tests await the trash.
     @discardableResult
     func deleteSnapshot(
-        _ instance: VMInstance, snapshot: VMSnapshot, confirmed: ConfirmationKind
+        _ instance: VMInstance, snapshot: VMSnapshot, turningOffEphemeralMode: Bool
     ) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
-            await self.runAsking(on: instance) { consent, _ in
+            if turningOffEphemeralMode {
+                let off = self.setConfiguration(
+                    [VMConfigurationKeyRegistry.ephemeral.assigning(false)], on: instance)
+                guard off == .applied else { return }
+            }
+            do {
                 try await self.commands.deleteSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, consent: consent.adding(confirmed))
+                    .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
+            } catch {
+                guard instance.isEphemeralBaseline(snapshot) else {
+                    self.present(error, for: instance)
+                    return
+                }
+                self.presenter?.presentDeleteSnapshot(snapshot, for: instance)
             }
         }
     }

@@ -298,7 +298,7 @@ struct VMIntentGatewayTests {
         let gateway = makeGateway(commands)
 
         try await gateway.start(id, recovery: true, consent: .none, macAddressRemedy: .noNetwork)
-        try await gateway.stop(id, disposition: .force, consent: .blanket)
+        try await gateway.stop(id, disposition: .force, consent: .all)
         try await gateway.pause(id)
         try await gateway.resume(id, consent: .none, macAddressRemedy: .newAddress)
         try await gateway.suspend(id)

@@ -223,9 +223,6 @@ extension VMCommandResponse {
     /// Kernova's sheet as the route — is the whole of what this tool can offer.
     private static func message(for error: CommandErrorDTO) -> String {
         switch error {
-        case .confirmationRequired(let prompt) where prompt.kind == .deleteEphemeralBaseline:
-            error.message + "\n\nPass --\(KernovaCommand.Snapshot.Delete.ephemeralModeFlag) "
-                + "to delete it and turn Ephemeral Mode off."
         case .confirmationRequired:
             error.message + "\n\nPass --yes to do it anyway."
         case .macAddressRemedyRequired(let prompt):

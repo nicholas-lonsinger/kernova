@@ -149,7 +149,7 @@ struct VMOtherCopyHoldTests {
                     ConfigurationEntry(
                         key: "serial.socket", value: String(!before.serialSocketRelayEnabled))
                 ],
-                consent: .blanket)
+                consent: .all)
             Issue.record("The set was not refused")
         } catch let error as CommandError {
             guard case .heldByAnotherCopy(let vm) = error else {
@@ -497,7 +497,7 @@ struct VMOtherCopyHoldTests {
             try harness.core.setConfiguration(
                 .id(instance.id),
                 assignments: [ConfigurationEntry(key: "serial.socket", value: "true")],
-                consent: .blanket)
+                consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -519,7 +519,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .blanket)
+                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -539,7 +539,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], consent: .blanket)
+                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -591,12 +591,12 @@ struct VMOtherCopyHoldTests {
 
     // MARK: - Snapshot delete
 
-    /// Memory reads the snapshot as a plain one, so the delete is admitted on
-    /// the plain consent; taking the run lock re-reads the host state another
-    /// copy wrote, which names it as the Ephemeral baseline — and the decision
-    /// made again under the permit asks for the baseline's own consent.
-    @Test("A snapshot another copy made the Ephemeral baseline is decided again under the permit")
-    func baselineAnotherCopyNamedIsDecidedUnderThePermit() async throws {
+    /// Memory reads the snapshot as a plain one, so the delete is admitted;
+    /// taking the run lock re-reads the host state another copy wrote, which
+    /// names it as the Ephemeral baseline — and the decision made again under
+    /// the permit refuses it.
+    @Test("A snapshot another copy made the Ephemeral baseline is refused under the permit")
+    func baselineAnotherCopyNamedIsRefusedUnderThePermit() async throws {
         let harness = makeCore()
         let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
         let instance = harness.library.registerFixture(
@@ -605,14 +605,15 @@ struct VMOtherCopyHoldTests {
         try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.store)
             .update(.hostState) { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
         #expect(!instance.hostState.ephemeralModeEnabled)
-        #expect(VMCommandCore.deleteSnapshotPrompt(snapshot, on: instance).kind == .deleteSnapshot)
 
-        let error = await #expect(throws: CommandError.self) {
+        await #expect(
+            throws: CommandError.invalidArgument(
+                VMCommandCore.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+        ) {
             try await harness.core.deleteSnapshot(
                 .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
         }
 
-        #expect(error?.confirmationPrompt?.kind == .deleteEphemeralBaseline)
         #expect(instance.ephemeralBaselineSnapshot?.id == snapshot.id)
         #expect(instance.snapshotManifest.snapshots.map(\.id) == [snapshot.id])
         #expect(harness.store.manifest(at: instance.bundleURL)?.snapshots.map(\.id) == [snapshot.id])

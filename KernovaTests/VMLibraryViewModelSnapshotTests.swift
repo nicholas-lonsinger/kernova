@@ -263,7 +263,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(outcome == .refused)
         #expect(other.configuration.macAddress == "aa:bb:cc:dd:ee:07")
         #expect(presenter.errorTitles == ["MAC Address In Use"])
-        // The baseline is named as one, and offered no delete.
+        // The baseline is named as one, and offered no delete it would refuse.
         #expect(
             presenter.errorMessage
                 == "\u{201C}Ephemeral\u{201D} has a snapshot, \u{201C}Baseline\u{201D}, taken with aa:bb:cc:dd:ee:05. "
@@ -683,7 +683,7 @@ struct VMLibraryViewModelSnapshotTests {
             VMSnapshotManifest(
                 snapshots: [snapshot], currentID: snapshot.id))
 
-        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, confirmed: .deleteSnapshot).value
+        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
 
         #expect(harness.snapshots.discardedIDs == [snapshot.id])
         #expect(instance.snapshotManifest.isEmpty)
@@ -700,7 +700,7 @@ struct VMLibraryViewModelSnapshotTests {
             VMStorageError.bundleNotFound(URL(filePath: "/tmp")),
             for: VMBundleLayout.snapshotManifestRelativePath)
 
-        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, confirmed: .deleteSnapshot).value
+        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
 
         #expect(instance.snapshotManifest.snapshots == [snapshot])
         #expect(instance.manifestOnDisk == instance.snapshotManifest)
@@ -716,7 +716,7 @@ struct VMLibraryViewModelSnapshotTests {
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
         harness.snapshots.discardError = CocoaError(.fileWriteNoPermission)
 
-        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, confirmed: .deleteSnapshot).value
+        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
 
         #expect(instance.snapshotManifest.isEmpty)
         #expect(instance.snapshotManifest.currentID == nil)

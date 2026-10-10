@@ -455,25 +455,38 @@ struct VMLibraryViewModelEphemeralTests {
 
     // MARK: - Baseline delete
 
-    /// Ephemeral Mode is read at power-off, so the session the delete left
-    /// running ends keeping its changes rather than reverting to a baseline
-    /// that is gone.
-    @Test("Deleting the baseline while the VM runs turns the mode off, and its power-off reverts nothing")
-    func runningBaselineDeleteLeavesThePowerOffAlone() async throws {
+    @Test("The baseline's delete is offered while the VM runs")
+    func baselineDeleteIsOfferedWhileRunning() async throws {
         let harness = try await makeHarness()
 
         harness.viewModel.requestDeleteSnapshot(harness.instance, snapshot: harness.baseline)
+
         #expect(presenter.deleteSnapshots == [harness.baseline])
+    }
+
+    /// The baseline confirmation's two steps, through the verbs automation
+    /// takes one at a time: the mode off, then the delete. Ephemeral Mode is
+    /// read at power-off, so the session left running keeps its changes.
+    @Test(
+        "Confirming the baseline's delete turns the mode off, then deletes it; a running session's power-off reverts nothing",
+        arguments: [VMLifecyclePhase.running(sessionID: UUID()), .stopped])
+    func confirmedBaselineDeleteTurnsTheModeOffFirst(phase: VMLifecyclePhase) async throws {
+        let harness = try await makeHarness(phase: phase)
 
         await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, confirmed: .deleteEphemeralBaseline
+            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
         ).value
 
         #expect(!presenter.showError)
         #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
+        #expect(harness.instance.snapshotManifest.snapshots.map(\.id) == [harness.later.id])
         #expect(!harness.instance.hostState.ephemeralModeEnabled)
-        #expect(harness.instance.hasLiveVirtualMachine)
+        #expect(
+            harness.storage.files.hostState(at: harness.instance.bundleURL)?.ephemeralModeEnabled
+                == false)
+        #expect(harness.instance.phase == phase)
 
+        guard phase != .stopped else { return }
         await harness.viewModel.stop(harness.instance)
         await settleEphemeralRevert(harness)
 
@@ -482,74 +495,62 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
     }
 
-    @Test("Confirming the baseline's delete at rest turns Ephemeral Mode off and deletes it")
-    func confirmedBaselineDeleteTurnsTheModeOff() async throws {
+    @Test("A delete that fails after the mode turned off leaves the mode off and the snapshot listed")
+    func failedDeleteLeavesTheModeOffAndTheSnapshot() async throws {
         let harness = try await makeHarness(phase: .stopped)
-
-        harness.viewModel.requestDeleteSnapshot(harness.instance, snapshot: harness.baseline)
-        #expect(presenter.deleteSnapshots == [harness.baseline])
+        harness.storage.files.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.snapshotManifestRelativePath)
 
         await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, confirmed: .deleteEphemeralBaseline
+            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
         ).value
 
-        #expect(presenter.confirmationRequests.isEmpty)
-        #expect(!presenter.showError)
-        #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
-        #expect(harness.instance.snapshotManifest.snapshots.map(\.id) == [harness.later.id])
+        #expect(presenter.showError)
         #expect(!harness.instance.hostState.ephemeralModeEnabled)
         #expect(
-            harness.storage.files.hostState(at: harness.instance.bundleURL)?.ephemeralModeEnabled
-                == false)
+            harness.instance.snapshotManifest.snapshots.map(\.id)
+                == [harness.baseline.id, harness.later.id])
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+    }
+
+    @Test("A mode-off write that fails deletes nothing")
+    func failedModeOffDeletesNothing() async throws {
+        let harness = try await makeHarness(phase: .stopped)
+        harness.storage.files.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.hostStateRelativePath)
+
+        await harness.viewModel.deleteSnapshot(
+            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
+        ).value
+
+        #expect(presenter.showError)
+        #expect(harness.instance.ephemeralBaselineSnapshot?.id == harness.baseline.id)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
     }
 
     /// The plain confirmation was answered before the mode came to name the
-    /// snapshot: its consent covers a plain delete only, so the delete asks
-    /// again in the baseline's own words rather than acting on it.
-    @Test("A delete confirmed before the mode named the snapshot asks for the baseline's own consent")
-    func staleConsentAsksForTheBaselineConsent() async throws {
+    /// snapshot: the core refuses the delete, and the app asks again with the
+    /// baseline's confirmation rather than reporting the refusal.
+    @Test("A plain delete of a snapshot that became the baseline asks again with the baseline's confirmation")
+    func plainDeleteOfTheBaselineAsksAgain() async throws {
         let harness = try await makeHarness(phase: .stopped)
-        presenter.confirmationAnswer = .answered(false)
 
         await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, confirmed: .deleteSnapshot
+            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: false
         ).value
 
-        #expect(presenter.confirmationRequests.map(\.prompt.kind) == [.deleteEphemeralBaseline])
+        #expect(presenter.deleteSnapshots == [harness.baseline])
         #expect(!presenter.showError)
         #expect(harness.snapshots.discardedIDs.isEmpty)
         #expect(harness.instance.ephemeralBaselineSnapshot?.id == harness.baseline.id)
-
-        presenter.confirmationAnswer = .answered(true)
-        await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, confirmed: .deleteSnapshot
-        ).value
-
-        #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
-        #expect(!harness.instance.hostState.ephemeralModeEnabled)
     }
 
-    @Test("Turning the mode off makes the baseline a plain snapshot to delete")
-    func turningTheModeOffReleasesTheBaseline() async throws {
-        let harness = try await makeHarness()
-        harness.viewModel.library.editHostState(of: harness.instance) {
-            $0.applyEphemeralMode(enabled: false, baseline: nil)
-        }
-
-        await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, confirmed: .deleteSnapshot
-        ).value
-
-        #expect(presenter.confirmationRequests.isEmpty)
-        #expect(harness.snapshots.discardedIDs == [harness.baseline.id])
-    }
-
-    @Test("A non-baseline snapshot is still deletable while the mode is on, and leaves it on")
+    @Test("A non-baseline snapshot deletes as before while the mode is on, and leaves it on")
     func otherSnapshotsStayDeletable() async throws {
         let harness = try await makeHarness()
 
         await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.later, confirmed: .deleteSnapshot
+            harness.instance, snapshot: harness.later, turningOffEphemeralMode: false
         ).value
 
         #expect(harness.snapshots.discardedIDs == [harness.later.id])

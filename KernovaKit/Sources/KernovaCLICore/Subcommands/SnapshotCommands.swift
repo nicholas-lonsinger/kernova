@@ -157,13 +157,7 @@ extension KernovaCommand.Snapshot {
             abstract: "Delete one of a virtual machine's snapshots.",
             discussion: "The snapshot's captured files are moved to the Trash and the virtual "
                 + "machine is left as it is. Refuses without --yes, because nothing else can "
-                + "return the virtual machine to that state afterwards. Deleting the snapshot "
-                + "Ephemeral Mode returns to also turns Ephemeral Mode off, so it refuses "
-                + "without --\(ephemeralModeFlag) instead.")
-
-        /// The flag that consents to deleting an Ephemeral Mode baseline, less
-        /// its dashes.
-        static let ephemeralModeFlag = "turn-off-ephemeral-mode"
+                + "return the virtual machine to that state afterwards.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -173,21 +167,8 @@ extension KernovaCommand.Snapshot {
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         var snapshot: String
 
-        /// The consent to delete the VM's Ephemeral Mode baseline, which
-        /// `--yes` does not give.
-        @Flag(
-            name: .customLong(ephemeralModeFlag),
-            help: "Delete the snapshot Ephemeral Mode returns to, turning Ephemeral Mode off.")
-        var turnOffEphemeralMode = false
-
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
-
-        /// What the delete carries: `--yes`, and the baseline's own consent.
-        var consent: Consent {
-            turnOffEphemeralMode
-                ? options.consent.adding(.deleteEphemeralBaseline) : options.consent
-        }
 
         /// Deletes the snapshot.
         func run() throws {
@@ -196,9 +177,31 @@ extension KernovaCommand.Snapshot {
             defer { client.close() }
             let target = try KernovaCommand.Snapshot.resolve(
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            _ = try client.send(
-                .deleteSnapshot(selector, snapshot: target.id, consent: consent)
-            ).payload()
+            do {
+                _ = try client.send(
+                    .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
+                ).payload()
+            } catch let failure as CLIFailure {
+                throw Self.explained(failure, deleting: target, of: vm)
+            }
+        }
+
+        /// `failure`, plus the command that takes the step it names when it is
+        /// the refusal to delete `vm`'s Ephemeral Mode baseline.
+        static func explained(
+            _ failure: CLIFailure, deleting target: SnapshotSummary, of vm: String
+        ) -> CLIFailure {
+            guard failure.code == .usage, target.isEphemeralBaseline else { return failure }
+            return CLIFailure(failure.code, failure.message + "\n\n" + ephemeralModeOffHint(vm))
+        }
+
+        /// The command that turns `vm`'s Ephemeral Mode off, with `vm` as a
+        /// shell reads it.
+        static func ephemeralModeOffHint(_ vm: String) -> String {
+            let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+            let bare = !vm.isEmpty && vm.unicodeScalars.allSatisfy(wordCharacters.contains)
+            let word = bare ? vm : "'" + vm.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+            return "Turn Ephemeral Mode off with: kernova set \(word) ephemeral=false"
         }
     }
 

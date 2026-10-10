@@ -314,7 +314,7 @@ struct VMCommandCoreGroupActionTests {
         #expect(readied == ["Pop Out": .unattended, "Paused": .unattended])
 
         // The same VM started on its own is attended.
-        try await harness.core.stop(.id(popOut.id), disposition: .force, consent: .blanket, timeout: nil)
+        try await harness.core.stop(.id(popOut.id), disposition: .force, consent: .all, timeout: nil)
         readied = [:]
         try await harness.core.start(.id(popOut.id), recovery: false, consent: .none)
         #expect(readied == ["Pop Out": .attended])
@@ -457,7 +457,7 @@ struct VMCommandCoreGroupActionTests {
         let (first, second) = try makePair(in: harness)
 
         let report = try await startPair(in: harness) {
-            try await harness.core.delete(.id(second.id), permanently: true, alsoRemoving: [], consent: .blanket)
+            try await harness.core.delete(.id(second.id), permanently: true, alsoRemoving: [], consent: .all)
         }
 
         #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .removed)])

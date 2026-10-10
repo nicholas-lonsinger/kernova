@@ -449,7 +449,7 @@ struct VMCommandCoreMACAddressRemedyTests {
         let error = try #require(
             await refusal {
                 try await harness.core.revertToSnapshot(
-                    .id(a.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .blanket)
+                    .id(a.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
             })
 
         let prompt = try #require(error.macAddressRemedyPrompt)
@@ -491,7 +491,7 @@ struct VMCommandCoreMACAddressRemedyTests {
             await refusal {
                 try await harness.core.revertToSnapshot(
                     .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .blanket, macAddressRemedy: .ownNetwork)
+                    consent: .all, macAddressRemedy: .ownNetwork)
             })
 
         #expect(error.macAddressRemedyPrompt == nil)
@@ -527,7 +527,7 @@ struct VMCommandCoreMACAddressRemedyTests {
             await refusal {
                 try await harness.core.revertToSnapshot(
                     .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .blanket)
+                    consent: .all)
             })
         let prompt = try #require(error.macAddressRemedyPrompt)
         #expect(prompt.verb == .revertToSnapshot)
@@ -535,7 +535,7 @@ struct VMCommandCoreMACAddressRemedyTests {
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.revertToSnapshot(
-            .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .blanket,
+            .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all,
             macAddressRemedy: .ownNetwork)
 
         #expect(harness.virtualization.revertedSnapshots.count == 1)
