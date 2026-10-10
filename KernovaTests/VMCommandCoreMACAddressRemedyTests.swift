@@ -194,13 +194,13 @@ struct VMCommandCoreMACAddressRemedyTests {
     }
 
     @Test("A bring-up nobody can be asked about is refused with no offers")
-    func standingStartIsRefusedWithoutOffers() async throws {
+    func unaskableStartIsRefusedWithoutOffers() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness)
 
         do {
-            try harness.core.startNow(vm, policy: .standing)
-            Issue.record("the standing start was admitted")
+            try harness.core.startNow(vm, policy: .command(.unavailable))
+            Issue.record("the unaskable start was admitted")
         } catch let refused as VMAdmissionRefusal {
             guard case .identityConflict(let conflict) = refused.refusal else {
                 Issue.record("refused as \(refused.refusal)")

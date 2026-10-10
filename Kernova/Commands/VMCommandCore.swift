@@ -811,7 +811,15 @@ final class VMCommandCore: VMCommanding {
     }
 
     /// Reports work the app ran with nobody awaiting it, putting the failure on
-    /// the event stream when the model it left behind cannot.
+    /// the event stream when the model it left behind cannot
+    /// (``broadcastFailure(_:on:)``).
+    func reportUnattendedFailure(_ failure: CommandError, on instance: VMInstance) {
+        broadcastFailure(failure, on: instance)
+        report(failure, on: instance)
+    }
+
+    /// Puts `failure` on the event stream when the model it left behind
+    /// cannot.
     ///
     /// ``emitLibraryChanges()`` reports a failure for a VM whose new status is
     /// the error status, reading the message off the phase. A transient failure
@@ -822,13 +830,11 @@ final class VMCommandCore: VMCommanding {
     /// status is left to the diff, so either way exactly one failure is
     /// reported. A refusal raised before the work ran gets none: nothing about
     /// the VM moved, and a caller waiting on a state is still owed its wait.
-    func reportUnattendedFailure(_ failure: CommandError, on instance: VMInstance) {
-        if failure.isOperationFailure, instance.status != .error {
-            broadcaster.emit([
-                .failure(id: instance.instanceID, name: instance.name, message: failure.message)
-            ])
-        }
-        report(failure, on: instance)
+    func broadcastFailure(_ failure: CommandError, on instance: VMInstance) {
+        guard failure.isOperationFailure, instance.status != .error else { return }
+        broadcaster.emit([
+            .failure(id: instance.instanceID, name: instance.name, message: failure.message)
+        ])
     }
 
     /// Puts an arrival's failure on the event stream, waited or not, while its

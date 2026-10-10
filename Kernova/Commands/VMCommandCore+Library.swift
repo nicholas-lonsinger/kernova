@@ -140,7 +140,7 @@ extension VMCommandCore {
         let autoStart: @MainActor (VMInstance) -> [VMFollowUp] = { [weak self] instance in
             guard let self else { return [] }
             #log(Self.logger, .notice, "Auto-starting new VM '\(name, privacy: .public)'")
-            return [self.startFollowUp(instance, policy: .command(.unavailable))]
+            return [self.startFollowUp(instance, identity: .unavailable)]
         }
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,

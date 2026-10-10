@@ -48,12 +48,12 @@ struct StatusMenuStartFailureSectionTests {
 
     @Test("One failure titles the line in the singular")
     func titleForOne() {
-        #expect(StatusMenuStartFailureSection.title(count: 1) == "1 VM Failed to Start\u{2026}")
+        #expect(StatusMenuStartFailureSection.title(count: 1) == "1 VM Didn\u{2019}t Start\u{2026}")
     }
 
     @Test("Several failures title the line in the plural, counted")
     func titleForSeveral() {
-        #expect(StatusMenuStartFailureSection.title(count: 4) == "4 VMs Failed to Start\u{2026}")
+        #expect(StatusMenuStartFailureSection.title(count: 4) == "4 VMs Didn\u{2019}t Start\u{2026}")
     }
 
     // MARK: - Rebuild
@@ -71,7 +71,7 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "2 VMs Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "2 VMs Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
         #expect(menu.items[1].target === target)
         #expect(menu.items[1].isEnabled)
@@ -97,7 +97,7 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "1 VM Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "1 VM Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
         #expect(menu.items[1].target === target)
     }
@@ -110,7 +110,7 @@ struct StatusMenuStartFailureSectionTests {
         section.sync(to: 2, after: anchor)
 
         #expect(menu.items[1] === line)
-        #expect(line.title == "2 VMs Failed to Start\u{2026}")
+        #expect(line.title == "2 VMs Didn\u{2019}t Start\u{2026}")
     }
 
     @Test("Draining the failures removes the line")
@@ -131,7 +131,7 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "1 VM Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "1 VM Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
     }
 }
