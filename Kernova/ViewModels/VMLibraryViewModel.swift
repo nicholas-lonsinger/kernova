@@ -230,10 +230,6 @@ final class VMLibraryViewModel {
     /// what decides whether the USB Device menu exists at all.
     var supportsUSBAccessories: Bool { library.supportsUSBAccessories }
 
-    func canDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Bool {
-        capabilities.canDeleteSnapshot(snapshot, on: instance)
-    }
-
     func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
             return try await commands.snapshotSizes(of: .id(instance.id))
@@ -1195,26 +1191,48 @@ final class VMLibraryViewModel {
 
     /// Opens the delete-snapshot confirmation.
     func requestDeleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) {
-        guard canDeleteSnapshot(instance, snapshot: snapshot) else {
+        guard capabilities.isAvailable(.deleteSnapshot, on: instance) else {
             #log(
                 Self.logger, .notice,
-                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': '\(instance.name, privacy: .public)' does not offer a delete now"
             )
             return
         }
         presenter?.presentDeleteSnapshot(snapshot, for: instance)
     }
 
-    /// Trashes a snapshot's captured files and drops it from the manifest.
+    /// Trashes a snapshot's captured files and drops it from the manifest —
+    /// first turning Ephemeral Mode off when `turningOffEphemeralMode`, the
+    /// confirmation the user answered having been the baseline's.
+    ///
+    /// Two steps through the verbs every other surface takes, in this order:
+    /// the configuration write that turns the mode off, then the delete. A
+    /// write that does not land deletes nothing, and a delete that fails leaves
+    /// the mode off with the snapshot listed. A delete refused because the
+    /// snapshot became the baseline while a plain confirmation was up asks
+    /// again with the baseline's confirmation.
     ///
     /// The returned Task lets tests await the trash.
     @discardableResult
-    func deleteSnapshot(_ instance: VMInstance, snapshot: VMSnapshot) -> Task<Void, Never> {
+    func deleteSnapshot(
+        _ instance: VMInstance, snapshot: VMSnapshot, turningOffEphemeralMode: Bool
+    ) -> Task<Void, Never> {
         Task { [weak self] in
             guard let self else { return }
-            await self.run(on: instance) {
+            if turningOffEphemeralMode {
+                let off = self.setConfiguration(
+                    [VMConfigurationKeyRegistry.ephemeral.assigning(false)], on: instance)
+                guard off == .applied else { return }
+            }
+            do {
                 try await self.commands.deleteSnapshot(
                     .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
+            } catch {
+                guard instance.isEphemeralBaseline(snapshot) else {
+                    self.present(error, for: instance)
+                    return
+                }
+                self.presenter?.presentDeleteSnapshot(snapshot, for: instance)
             }
         }
     }

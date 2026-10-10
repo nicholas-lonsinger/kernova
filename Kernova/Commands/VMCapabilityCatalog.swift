@@ -384,32 +384,6 @@ struct VMCapabilityCatalog {
             ? .changesSharingDevice : .unavailable(capability)
     }
 
-    /// Whether one snapshot's delete is offered, and what bars it when it is
-    /// not.
-    enum SnapshotDeleteOffer: Equatable {
-        /// The delete is taken now.
-        case offered
-        /// The VM's Ephemeral baseline — the restore point its every power-off
-        /// needs, so the mode bars deleting it.
-        case barredAsBaseline
-        /// The VM's state, or an operation still settling, holds the manifest.
-        case unavailable
-    }
-
-    /// What `snapshot`'s delete is offered as — the one derivation a row renders
-    /// both its enablement and the reason behind it from.
-    func snapshotDeleteOffer(
-        _ snapshot: VMSnapshot, on instance: VMInstance
-    ) -> SnapshotDeleteOffer {
-        guard isAvailable(.deleteSnapshot, on: instance) else { return .unavailable }
-        return instance.isEphemeralBaseline(snapshot) ? .barredAsBaseline : .offered
-    }
-
-    /// Whether `snapshot` may be deleted.
-    func canDeleteSnapshot(_ snapshot: VMSnapshot, on instance: VMInstance) -> Bool {
-        snapshotDeleteOffer(snapshot, on: instance) == .offered
-    }
-
     /// Where bringing one VM in front of the user lands.
     enum RevealSurface: Equatable {
         /// The VM's own display window — the pop-out or fullscreen host.

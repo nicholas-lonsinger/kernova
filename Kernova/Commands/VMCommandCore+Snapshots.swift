@@ -372,16 +372,7 @@ extension VMCommandCore {
     func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
-        // Re-checked at the write as well as at the confirmation: the baseline
-        // is what every power-off of this VM needs back, and the mode can be
-        // switched on while a confirmation is up.
-        guard !instance.isEphemeralBaseline(snapshot) else {
-            #log(
-                Self.logger, .notice,
-                "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
-            )
-            throw CommandError.unsupported(capability: "deleting a VM's Ephemeral Mode baseline")
-        }
+        try requireNotEphemeralBaseline(snapshot, on: instance)
         try require(.deleteSnapshot, on: instance)
         guard consent.covers(.deleteSnapshot) else {
             throw CommandError.confirmationRequired(
@@ -394,6 +385,10 @@ extension VMCommandCore {
         var unlisted = false
         do {
             try await lifecycle.discardSnapshot(instance, snapshotID: id) { permit in
+                // Decided again under the permit: taking the run lock re-reads
+                // the host state, which another copy of Kernova may have
+                // written to name this snapshot as the baseline.
+                try self.requireNotEphemeralBaseline(snapshot, on: instance)
                 try self.commitSnapshotManifest(permit, verb: .deleteSnapshot) { $0.remove(id: id) }
                 unlisted = true
             }
@@ -415,6 +410,29 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Deleted snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
+    }
+
+    /// Refuses deleting `instance`'s Ephemeral Mode baseline, naming the step
+    /// that comes first: every power-off of the VM returns it to that
+    /// snapshot, so the delete is taken only once the mode is off.
+    private func requireNotEphemeralBaseline(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) throws {
+        guard instance.isEphemeralBaseline(snapshot) else { return }
+        #log(
+            Self.logger, .notice,
+            "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
+        )
+        throw CommandError.stepRequired(Self.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+    }
+
+    /// Why deleting `snapshot`, `instance`'s Ephemeral Mode baseline, is
+    /// refused, and the step that lifts it.
+    static func ephemeralBaselineDeleteRefusal(
+        _ snapshot: VMSnapshot, on instance: VMInstance
+    ) -> String {
+        "\u{201C}\(snapshot.name)\u{201D} is \u{201C}\(instance.name)\u{201D}\u{2019}s Ephemeral Mode "
+            + "baseline. Turn Ephemeral Mode off first, then delete it."
     }
 
     /// The refusal a snapshot delete raises.

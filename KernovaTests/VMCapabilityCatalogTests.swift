@@ -561,23 +561,15 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: running))
     }
 
-    @Test("An Ephemeral baseline is undeletable, and every other snapshot is not")
-    func canDeleteSnapshotProtectsTheEphemeralBaseline() {
+    @Test("The snapshot delete is offered to a running Ephemeral VM, whose baseline it takes too")
+    func deleteSnapshotIsOfferedWhileRunning() {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let later = VMSnapshot(name: "Configured", macAddress: nil)
         let instance = makeInstance(
-            in: harness, snapshots: [baseline, later],
+            in: harness, phase: .running(sessionID: UUID()), snapshots: [baseline],
             hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
 
-        #expect(!harness.catalog.canDeleteSnapshot(baseline, on: instance))
-        #expect(harness.catalog.canDeleteSnapshot(later, on: instance))
-
-        // Turning the mode off releases the baseline: nothing needs it back.
-        harness.library.editHostState(of: instance) {
-            $0.applyEphemeralMode(enabled: false, baseline: nil)
-        }
-        #expect(harness.catalog.canDeleteSnapshot(baseline, on: instance))
+        #expect(harness.catalog.isAvailable(.deleteSnapshot, on: instance))
     }
 
     @Test("No snapshot is deletable in a state the manifest cannot be edited in")
@@ -587,29 +579,6 @@ struct VMCapabilityCatalogTests {
         let instance = makeInstance(in: harness, phase: Self.reverting, snapshots: [snapshot])
 
         #expect(!harness.catalog.isAvailable(.deleteSnapshot, on: instance))
-        #expect(!harness.catalog.canDeleteSnapshot(snapshot, on: instance))
-    }
-
-    /// A row renders its Delete's enablement and its explanation from this one
-    /// answer, so the baseline's bar has to be distinguishable from every other
-    /// reason the delete is off.
-    @Test("The delete offer names the baseline bar apart from an unavailable manifest")
-    func snapshotDeleteOfferNamesWhatBarsIt() {
-        let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let later = VMSnapshot(name: "Configured", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, snapshots: [baseline, later],
-            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
-
-        #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .barredAsBaseline)
-        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .offered)
-
-        // A state the manifest cannot be edited in takes both rows, and says so
-        // as the state rather than as the mode.
-        instance.activity.placeForTesting(Self.reverting)
-        #expect(harness.catalog.snapshotDeleteOffer(baseline, on: instance) == .unavailable)
-        #expect(harness.catalog.snapshotDeleteOffer(later, on: instance) == .unavailable)
     }
 
     @Test("A USB accessory edit exists only in a build that can pass one through")

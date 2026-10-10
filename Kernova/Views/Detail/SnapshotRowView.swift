@@ -10,9 +10,7 @@ struct SnapshotRowModel: Identifiable, Equatable {
     let canRevert: Bool
     let canRename: Bool
     let canSetNotes: Bool
-    /// What this row's Delete is offered as, which decides both its enablement
-    /// and the tooltip explaining a bar.
-    let deleteOffer: VMCapabilityCatalog.SnapshotDeleteOffer
+    let canDelete: Bool
 
     var id: UUID { snapshot.id }
 

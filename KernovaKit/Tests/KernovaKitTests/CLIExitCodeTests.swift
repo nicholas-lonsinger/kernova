@@ -55,6 +55,8 @@ struct CLIExitCodeTests {
                 .refusedByState
             ),
             (.invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."), .usage),
+            // A well-formed request the VM's state refuses until a step comes first.
+            (.stepRequired(message: "Turn Ephemeral Mode off first, then delete it."), .refusedByState),
             (.busy(vm: vm, operation: "starting"), .busy),
             (.heldByAnotherCopy(vm: vm), .busy),
             (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),

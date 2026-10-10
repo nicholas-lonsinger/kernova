@@ -263,6 +263,35 @@ struct CLIArgumentParsingTests {
         #expect(bare.options.yes)
     }
 
+    @Test("A refused delete of the Ephemeral baseline gains the command that turns the mode off")
+    func baselineDeleteRefusalNamesTheCommand() {
+        func summary(baseline: Bool) -> SnapshotSummary {
+            SnapshotSummary(
+                id: UUID(), name: "Base", notes: "", kind: "warm", createdAt: Date(),
+                isCurrent: false, isEphemeralBaseline: baseline)
+        }
+        let refusal = CLIFailure(
+            .refusedByState,
+            "\u{201C}Base\u{201D} is \u{201C}My VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
+                + "Turn Ephemeral Mode off first, then delete it.")
+
+        #expect(
+            KernovaCommand.Snapshot.Delete.explained(refusal, deleting: summary(baseline: true), of: "My VM")
+                == CLIFailure(
+                    .refusedByState,
+                    refusal.message
+                        + "\n\nTurn Ephemeral Mode off with: kernova set 'My VM' ephemeral=false"))
+        #expect(
+            KernovaCommand.Snapshot.Delete.explained(refusal, deleting: summary(baseline: false), of: "My VM")
+                == refusal)
+        #expect(
+            KernovaCommand.Snapshot.Delete.ephemeralModeOffHint("Alpha")
+                == "Turn Ephemeral Mode off with: kernova set Alpha ephemeral=false")
+        #expect(
+            KernovaCommand.Snapshot.Delete.ephemeralModeOffHint("Bob's VM")
+                == #"Turn Ephemeral Mode off with: kernova set 'Bob'\''s VM' ephemeral=false"#)
+    }
+
     @Test("Asking for both check-point answers at once is a usage error")
     func revertCheckpointIsExclusive() {
         #expect(throws: (any Error).self) {

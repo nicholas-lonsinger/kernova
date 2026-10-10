@@ -589,12 +589,44 @@ struct VMOtherCopyHoldTests {
         #expect(capture.holdTransitions.last == "Another copy of Kernova no longer holds '\(name)'")
     }
 
+    // MARK: - Snapshot delete
+
+    /// Memory reads the snapshot as a plain one, so the delete is admitted;
+    /// taking the run lock re-reads the host state another copy wrote, which
+    /// names it as the Ephemeral baseline — and the decision made again under
+    /// the permit refuses it.
+    @Test("A snapshot another copy made the Ephemeral baseline is refused under the permit")
+    func baselineAnotherCopyNamedIsRefusedUnderThePermit() async throws {
+        let harness = makeCore()
+        let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = harness.library.registerFixture(
+            snapshots: VMSnapshotManifest(snapshots: [snapshot]))
+        // Another process's write, which this copy's memory has not seen.
+        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.store)
+            .update(.hostState) { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
+        #expect(!instance.hostState.ephemeralModeEnabled)
+
+        await #expect(
+            throws: CommandError.stepRequired(
+                VMCommandCore.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+        ) {
+            try await harness.core.deleteSnapshot(
+                .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
+        }
+
+        #expect(instance.ephemeralBaselineSnapshot?.id == snapshot.id)
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [snapshot.id])
+        #expect(harness.store.manifest(at: instance.bundleURL)?.snapshots.map(\.id) == [snapshot.id])
+        #expect(harness.machineFiles.discardedIDs.isEmpty)
+    }
+
     // MARK: - Harness
 
     private struct CoreHarness {
         let core: VMCommandCore
         let library: VMLibrary
         let store: InMemoryVMBundleFiles
+        let machineFiles: MockVMBundleMachineFiles
         let preferences: AppPreferences
     }
 
@@ -603,13 +635,16 @@ struct VMOtherCopyHoldTests {
         let fileSystem = MockFileSystem()
         let preferences = makeTestPreferences()
         let lifecycle = makeTestLifecycle(fileSystem: fileSystem)
+        let machineFiles = MockVMBundleMachineFiles(files: storage.files)
         let library = makeWiredLibrary(
-            storage: storage, lifecycle: lifecycle, fileSystem: fileSystem, preferences: preferences)
+            storage: storage, machineFiles: machineFiles, lifecycle: lifecycle, fileSystem: fileSystem,
+            preferences: preferences)
         let core = VMCommandCore(
             library: library, lifecycle: lifecycle, storageService: storage,
             diskImageService: MockDiskImageService(), fileSystem: fileSystem,
             preferences: preferences)
         return CoreHarness(
-            core: core, library: library, store: storage.files, preferences: preferences)
+            core: core, library: library, store: storage.files, machineFiles: machineFiles,
+            preferences: preferences)
     }
 }

@@ -636,7 +636,7 @@ final class VMInstance {
     }
 
     /// `true` when `snapshot` is pinned as this VM's Ephemeral baseline, which
-    /// bars deleting it.
+    /// the snapshot delete refuses until the mode is off.
     func isEphemeralBaseline(_ snapshot: VMSnapshot) -> Bool {
         ephemeralBaselineSnapshot?.id == snapshot.id
     }

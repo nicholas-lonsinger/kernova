@@ -177,9 +177,31 @@ extension KernovaCommand.Snapshot {
             defer { client.close() }
             let target = try KernovaCommand.Snapshot.resolve(
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            _ = try client.send(
-                .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
-            ).payload()
+            do {
+                _ = try client.send(
+                    .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
+                ).payload()
+            } catch let failure as CLIFailure {
+                throw Self.explained(failure, deleting: target, of: vm)
+            }
+        }
+
+        /// `failure`, plus the command that takes the step it names when it is
+        /// the refusal to delete `vm`'s Ephemeral Mode baseline.
+        static func explained(
+            _ failure: CLIFailure, deleting target: SnapshotSummary, of vm: String
+        ) -> CLIFailure {
+            guard failure.code == .refusedByState, target.isEphemeralBaseline else { return failure }
+            return CLIFailure(failure.code, failure.message + "\n\n" + ephemeralModeOffHint(vm))
+        }
+
+        /// The command that turns `vm`'s Ephemeral Mode off, with `vm` as a
+        /// shell reads it.
+        static func ephemeralModeOffHint(_ vm: String) -> String {
+            let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+            let bare = !vm.isEmpty && vm.unicodeScalars.allSatisfy(wordCharacters.contains)
+            let word = bare ? vm : "'" + vm.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
+            return "Turn Ephemeral Mode off with: kernova set \(word) ephemeral=false"
         }
     }
 

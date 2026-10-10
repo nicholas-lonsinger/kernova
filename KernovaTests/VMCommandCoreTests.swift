@@ -2243,24 +2243,65 @@ struct VMCommandCoreTests {
         #expect(item.hasPrefix("snapshot with the identifier"))
     }
 
-    @Test("The Ephemeral baseline is refused a delete even with consent")
-    func ephemeralBaselineCannotBeDeleted() async throws {
+    /// Automation takes single steps: the delete names turning the mode off
+    /// as the one that comes first, in the same words on every door.
+    @Test(
+        "The Ephemeral baseline's delete is refused on every door, naming the step that comes first",
+        arguments: [VMLifecyclePhase.stopped, .running(sessionID: UUID())])
+    func ephemeralBaselineDeleteNamesTheFirstStep(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(in: harness, hostState: .ephemeral(baseline: baseline.id))
+        let instance = makeInstance(
+            in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        let refusal = CommandError.stepRequired(
+            "\u{201C}Clean install\u{201D} is \u{201C}Core VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
+                + "Turn Ephemeral Mode off first, then delete it.")
+
+        await #expect(throws: refusal) {
+            try await harness.core.deleteSnapshot(
+                .id(instance.id), snapshot: baseline.id, consent: .all)
+        }
+        let router = VMCommandEnvelopeRouter(commands: harness.core)
+        let response = await router.respond(
+            to: VMCommandRequest(
+                verb: .deleteSnapshot(.id(instance.id), snapshot: baseline.id, consent: .all)))
+        #expect(response.result == .failure(refusal.dto))
+        let intents = VMIntentGateway(
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
+        await #expect(throws: refusal) {
+            try await intents.deleteSnapshot(
+                instance.id, snapshot: SnapshotEntityID(vm: instance.id, snapshot: baseline.id),
+                consent: .all)
+        }
+
+        #expect(instance.snapshotManifest.snapshots.map(\.id) == [baseline.id])
+        #expect(instance.ephemeralBaselineSnapshot?.id == baseline.id)
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+    }
+
+    /// The two single steps the app's baseline confirmation takes, in order.
+    @Test(
+        "Turning Ephemeral Mode off makes the baseline a plain snapshot to delete, running or not",
+        arguments: [VMLifecyclePhase.stopped, .running(sessionID: UUID())])
+    func modeOffThenDeleteTakesTheBaseline(phase: VMLifecyclePhase) async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
 
-        let error = try #require(
-            await commandError {
-                try await harness.core.deleteSnapshot(
-                    .id(instance.id), snapshot: baseline.id, consent: .all)
-            })
-        guard case .unsupported(let capability) = error else {
-            Issue.record("expected an unsupported refusal, got \(error)")
-            return
-        }
-        #expect(capability.contains("Ephemeral"))
-        #expect(instance.snapshotManifest.snapshots.count == 1)
+        try harness.core.setConfiguration(
+            .id(instance.id), assignments: [ConfigurationEntry(key: "ephemeral", value: "false")],
+            consent: .none)
+        try await harness.core.deleteSnapshot(
+            .id(instance.id), snapshot: baseline.id, consent: Consent([.deleteSnapshot]))
+
+        #expect(instance.snapshotManifest.isEmpty)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(harness.snapshots.discardedIDs == [baseline.id])
+        #expect(instance.phase == phase)
     }
 
     @Test("Renaming and annotating a snapshot writes through to the manifest")

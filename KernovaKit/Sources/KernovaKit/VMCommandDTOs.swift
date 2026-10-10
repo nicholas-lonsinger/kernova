@@ -723,6 +723,9 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// An argument named something the verb does not offer, or carried a value
     /// it cannot use. `message` is the whole refusal.
     case invalidArgument(message: String)
+    /// The VM's current state refuses the verb until a step of its own is
+    /// taken first. `message` is the whole refusal, naming that step.
+    case stepRequired(message: String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// This build cannot do what was asked: the cause is the build, whatever
@@ -806,7 +809,7 @@ extension CommandErrorDTO {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
             .unsupported, .unsupportedByBuild, .invalidState, .changeTakesStoppedVM, .timedOut,
-            .invalidArgument, .terminating:
+            .invalidArgument, .stepRequired, .terminating:
             "Error"
         case .confirmationRequired(let prompt):
             prompt.title
@@ -878,7 +881,7 @@ extension CommandErrorDTO {
             Self.conflictMessage(
                 vm: prompt.vm.name, other: prompt.other.name,
                 otherHeldByAnotherCopy: prompt.other.heldByAnotherCopy, reason: .macAddress)
-        case .invalidArgument(let message):
+        case .invalidArgument(let message), .stepRequired(let message):
             message
         case .unsupported(let capability):
             "This virtual machine does not support \(capability)."

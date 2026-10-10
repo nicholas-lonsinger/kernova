@@ -17,7 +17,8 @@ extension CommandError {
             Int(errAETypeError)
         case .timedOut:
             Int(errAETimeout)
-        case .invalidState, .changeTakesStoppedVM, .unsupported, .unsupportedByBuild, .conflict,
+        case .invalidState, .changeTakesStoppedVM, .stepRequired, .unsupported, .unsupportedByBuild,
+            .conflict,
             .confirmationRequired, .guestAccountPasswordRequired, .macAddressRemedyRequired, .busy,
             .heldByAnotherCopy,
             .terminating, .operationFailed, .filesKept:

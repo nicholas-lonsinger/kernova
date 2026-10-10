@@ -223,6 +223,13 @@ final class DetailAlertsPresenter: NSObject {
         revertSnapshotConfig(snapshot, instance)
     }
 
+    /// The delete-snapshot confirmation's rendered copy.
+    func deleteSnapshotAlertForTesting(
+        _ snapshot: VMSnapshot, for instance: VMInstance
+    ) -> AlertConfiguration {
+        deleteSnapshotConfig(snapshot, instance)
+    }
+
     /// The Force Stop / Discard Saved State confirmation's rendered copy, so a
     /// test can assert on what it tells the user will happen.
     func forceStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
@@ -738,12 +745,37 @@ final class DetailAlertsPresenter: NSObject {
             })
     }
 
+    /// The delete-snapshot confirmation; for the VM's Ephemeral baseline, one
+    /// that also turns Ephemeral Mode off, which the delete then does first.
     private func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
-        AlertConfiguration(
-            confirming: VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm),
-            confirm: { [weak self] in self?.viewModel.deleteSnapshot(vm, snapshot: snapshot) })
+        let turningOffEphemeralMode = vm.isEphemeralBaseline(snapshot)
+        return AlertConfiguration(
+            confirming: turningOffEphemeralMode
+                ? Self.deleteEphemeralBaselinePrompt(snapshot, on: vm)
+                : VMCommandCore.deleteSnapshotPrompt(snapshot, on: vm),
+            confirm: { [weak self] in
+                self?.viewModel.deleteSnapshot(
+                    vm, snapshot: snapshot, turningOffEphemeralMode: turningOffEphemeralMode)
+            })
+    }
+
+    /// The confirmation that turns Ephemeral Mode off and deletes `snapshot`,
+    /// the baseline it returns `vm` to.
+    static func deleteEphemeralBaselinePrompt(
+        _ snapshot: VMSnapshot, on vm: VMInstance
+    ) -> ConfirmationPrompt {
+        let name = "\u{201C}\(snapshot.name)\u{201D}"
+        return ConfirmationPrompt(
+            kind: .deleteSnapshot,
+            title: "Delete \(name)?",
+            message:
+                "\(name) is the snapshot Ephemeral Mode returns \u{201C}\(vm.name)\u{201D} to. "
+                + "Deleting it turns Ephemeral Mode off for this virtual machine, so later "
+                + "power-offs keep their changes. Its saved state and disk copies move to the Trash.",
+            confirmTitle: "Delete",
+            dismissTitle: "Cancel")
     }
 
     private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
