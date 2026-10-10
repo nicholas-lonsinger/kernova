@@ -607,7 +607,7 @@ struct VMOtherCopyHoldTests {
         #expect(!instance.hostState.ephemeralModeEnabled)
 
         await #expect(
-            throws: CommandError.invalidArgument(
+            throws: CommandError.stepRequired(
                 VMCommandCore.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
         ) {
             try await harness.core.deleteSnapshot(

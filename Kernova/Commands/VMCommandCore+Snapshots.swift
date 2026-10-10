@@ -423,7 +423,7 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
         )
-        throw CommandError.invalidArgument(Self.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+        throw CommandError.stepRequired(Self.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
     }
 
     /// Why deleting `snapshot`, `instance`'s Ephemeral Mode baseline, is

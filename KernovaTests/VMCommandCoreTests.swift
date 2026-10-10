@@ -2254,7 +2254,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-        let refusal = CommandError.invalidArgument(
+        let refusal = CommandError.stepRequired(
             "\u{201C}Clean install\u{201D} is \u{201C}Core VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
                 + "Turn Ephemeral Mode off first, then delete it.")
 

@@ -759,12 +759,16 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState.ephemeralBaselineSnapshotID == snapshot.id)
     }
 
-    @Test("A VM with nothing to fall back to cannot be made ephemeral")
+    @Test("A VM with nothing to fall back to is refused Ephemeral Mode, naming the step that comes first")
     func ephemeralNeedsASnapshot() throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
 
-        #expect(throws: CommandError.self) {
+        #expect(
+            throws: CommandError.stepRequired(
+                "Ephemeral Mode returns the virtual machine to a snapshot, and this one has none. "
+                    + "Take a snapshot first.")
+        ) {
             try harness.core.setConfiguration(
                 .name("Alpha"),
                 assignments: [ConfigurationEntry(key: "ephemeral", value: "true")],

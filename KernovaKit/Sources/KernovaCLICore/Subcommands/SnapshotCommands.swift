@@ -191,7 +191,7 @@ extension KernovaCommand.Snapshot {
         static func explained(
             _ failure: CLIFailure, deleting target: SnapshotSummary, of vm: String
         ) -> CLIFailure {
-            guard failure.code == .usage, target.isEphemeralBaseline else { return failure }
+            guard failure.code == .refusedByState, target.isEphemeralBaseline else { return failure }
             return CLIFailure(failure.code, failure.message + "\n\n" + ephemeralModeOffHint(vm))
         }
 

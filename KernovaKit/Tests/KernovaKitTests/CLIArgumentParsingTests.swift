@@ -271,14 +271,14 @@ struct CLIArgumentParsingTests {
                 isCurrent: false, isEphemeralBaseline: baseline)
         }
         let refusal = CLIFailure(
-            .usage,
+            .refusedByState,
             "\u{201C}Base\u{201D} is \u{201C}My VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
                 + "Turn Ephemeral Mode off first, then delete it.")
 
         #expect(
             KernovaCommand.Snapshot.Delete.explained(refusal, deleting: summary(baseline: true), of: "My VM")
                 == CLIFailure(
-                    .usage,
+                    .refusedByState,
                     refusal.message
                         + "\n\nTurn Ephemeral Mode off with: kernova set 'My VM' ephemeral=false"))
         #expect(

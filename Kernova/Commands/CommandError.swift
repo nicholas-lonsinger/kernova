@@ -64,6 +64,10 @@ enum CommandError: Error, Sendable, Equatable {
     /// key that is not in the keyspace — or carried a value it cannot use.
     /// The string is the whole refusal, in the words the user reads.
     case invalidArgument(String)
+    /// The VM's current state refuses the verb until a step of its own is
+    /// taken first. The string is the whole refusal, naming that step, in the
+    /// words the user reads.
+    case stepRequired(String)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// This build cannot do what was asked: the cause is the build, whatever
@@ -174,6 +178,8 @@ extension CommandError {
             .macAddressRemedyRequired(prompt: prompt)
         case .invalidArgument(let message):
             .invalidArgument(message: message)
+        case .stepRequired(let message):
+            .stepRequired(message: message)
         case .unsupported(let capability):
             .unsupported(capability: capability)
         case .unsupportedByBuild(let capability):
