@@ -84,10 +84,11 @@ worktree_field() {
 # ---- abandoned worktrees -------------------------------------------------------
 #
 # A registered worktree directly under worktrees_root is abandoned when no live
-# Claude Code session owns it, it holds no uncommitted work, and its HEAD's
-# content is already on default_ref. Every answer these checks cannot reach
-# reads as "keep". Whether a process still uses it is asked separately
-# (holders.sh), so a held worktree can be reported with its holders.
+# Claude Code session owns it — none holds its lock and none runs inside it —,
+# it holds no uncommitted work, and its HEAD's content is already on
+# default_ref. Every answer these checks cannot reach reads as "keep". Whether
+# any other process still uses it is asked separately (holders.sh), so a held
+# worktree can be reported with its holders.
 
 default_ref=refs/remotes/origin/main
 
@@ -220,13 +221,35 @@ worktree_abandoned() {
     abandoned_head=$head
 }
 
-# abandoned_worktrees <own> — one line per registered worktree that is
-# abandoned.
+# claude_session_in <worktree> — whether, in the last holders snapshot, a
+# process named `claude` has its working directory inside <worktree>. That is a
+# live Claude Code session whether or not it locked the worktree: a Claude
+# desktop app session runs in one it never locked.
+claude_session_in() {
+    local real
+    real=$(cd "$1" 2>/dev/null && pwd -P) || real=$1
+    DIR=$1 REAL=$real awk -F '\t' '
+        function under(p, d) { return p == d || index(p, d "/") == 1 }
+        $2 == "claude" && $3 == "cwd" && (under($4, ENVIRON["DIR"]) || under($4, ENVIRON["REAL"])) { f = 1 }
+        END { exit !f }
+    ' <<<"${holder_files:-}"
+}
+
+# abandoned_worktrees <own> — sets abandoned to the registered worktrees that
+# are abandoned. When any worktree passes worktree_abandoned, it takes the
+# holders snapshot that rules out a running session, and leaves it for the
+# caller's holder queries.
 abandoned_worktrees() {
-    local wt
+    local wt candidates=()
+    abandoned=()
     while IFS= read -r wt; do
-        [ -n "$wt" ] && worktree_abandoned "$wt" "$1" && printf '%s\n' "$wt"
+        [ -n "$wt" ] && worktree_abandoned "$wt" "$1" && candidates+=("$wt")
     done <<<"$worktree_paths"
+    [ "${#candidates[@]}" -gt 0 ] || return 0
+    refresh_holders "$worktrees_root"
+    for wt in "${candidates[@]}"; do
+        claude_session_in "$wt" || abandoned+=("$wt")
+    done
 }
 
 # worktree_admin_dir <worktree> — git's administrative directory for
@@ -250,13 +273,13 @@ worktree_admin_dir() {
 # report_abandoned_worktrees <checkout> <fix> <holders> <dispose> — the ghosts
 # report's section, scanning from <checkout>, which is never itself removed.
 # Names each abandoned worktree; one the <holders> command claims (called with
-# its path after refresh_holders, printing why it is held, or nothing — as
-# holder_blocked_lines does) is named with those lines and kept. With
-# <fix> = 1 the rest go through remove_abandoned_worktree. Prints through the
+# its path against abandoned_worktrees' snapshot, printing why it is held, or
+# nothing — as holder_blocked_lines does) is named with those lines and kept.
+# With <fix> = 1 the rest go through remove_abandoned_worktree. Prints through the
 # caller's pass/warn/ghost/fixed/detail/pretty_path. Without default_ref there
 # is nothing to judge content against, so it warns and names nothing.
 report_abandoned_worktrees() {
-    local checkout=$1 fix=$2 holders_of=$3 dispose=$4 own wt held line stopped=0 abandoned=()
+    local checkout=$1 fix=$2 holders_of=$3 dispose=$4 own wt held line stopped=0 abandoned
     if ! own=$(git -C "$checkout" rev-parse --show-toplevel 2>/dev/null) || [ -z "$own" ] ||
         ! read_worktree_layout "$checkout"; then
         warn 'Skipped the abandoned-worktree check: `git worktree list` could not be read'
@@ -266,14 +289,11 @@ report_abandoned_worktrees() {
         warn "Skipped the abandoned-worktree check: ${default_ref#refs/remotes/} does not resolve"
         return 0
     fi
-    while IFS= read -r wt; do
-        abandoned+=("$wt")
-    done < <(abandoned_worktrees "$own")
+    abandoned_worktrees "$own"
     if [ "${#abandoned[@]}" -eq 0 ]; then
         pass 'No abandoned worktrees under .claude/worktrees/'
         return 0
     fi
-    refresh_holders "$worktrees_root"
     for wt in "${abandoned[@]}"; do
         held=$("$holders_of" "$wt")
         if [ -n "$held" ]; then
