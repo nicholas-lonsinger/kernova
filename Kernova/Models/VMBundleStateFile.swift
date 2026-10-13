@@ -52,8 +52,6 @@ struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
 
     var relativePath: String { id.relativePath }
 
-    var fileName: String { (relativePath as NSString).lastPathComponent }
-
     /// The file's value as `files`, the bundle at `bundleURL`, holds it.
     /// `owner` names the file should it be unreadable; `nil` takes the VM its
     /// own `$.name` names.

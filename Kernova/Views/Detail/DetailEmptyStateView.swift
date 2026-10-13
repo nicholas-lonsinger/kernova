@@ -39,8 +39,6 @@ final class DetailEmptyStateView: NSView {
         fatalError("DetailEmptyStateView does not support NSCoder")
     }
 
-    var title: String { titleLabel.stringValue }
-
     func setTitle(_ title: String) {
         titleLabel.stringValue = title
     }

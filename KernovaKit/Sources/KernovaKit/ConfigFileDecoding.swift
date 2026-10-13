@@ -83,7 +83,7 @@ extension KeyedDecodingContainer {
     /// A set of entries, decoded as the list of entries above is and
     /// gathered into a set.
     public func decode<Element: Codable & Hashable>(
-        _ type: Set<Element>.Type, forKey key: Key, default defaultValue: @autoclosure () -> Set<Element>,
+        _: Set<Element>.Type, forKey key: Key, default defaultValue: @autoclosure () -> Set<Element>,
         in decoder: any Decoder
     ) throws -> Set<Element> {
         Set(try decode([Element].self, forKey: key, default: Array(defaultValue()), in: decoder))
