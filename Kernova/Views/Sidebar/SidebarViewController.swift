@@ -1115,7 +1115,7 @@ extension SidebarViewController {
         viewModel.requestCancelPreparing(arrival)
     }
 
-    @objc private func menuCheckConfigFiles(_ sender: NSMenuItem) {
+    @objc private func menuCheckConfigFiles(_: NSMenuItem) {
         viewModel.showConfigCheck()
     }
 

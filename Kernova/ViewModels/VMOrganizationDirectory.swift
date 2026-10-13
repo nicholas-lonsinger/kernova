@@ -317,11 +317,6 @@ final class VMOrganizationDirectory {
         folders?.first { $0.id == id }
     }
 
-    /// The tag `id` identifies, `nil` when the library defines none.
-    func tag(withID id: UUID) -> VMTag? {
-        tags?.first { $0.id == id }
-    }
-
     /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
     /// named — what a new one's name field starts from. `base` itself while
     /// the file cannot be read, where creating one is refused anyway.
