@@ -133,7 +133,8 @@ expect_abandoned() {
         fail "$name: layout unreadable from $checkout"
         return
     fi
-    check "$name" "$(abandoned_worktrees "$checkout")" "$(printf '%s\n' "$@")"
+    abandoned_worktrees "$checkout"
+    check "$name" "$(printf '%s\n' ${abandoned[@]+"${abandoned[@]}"})" "$(printf '%s\n' "$@")"
 }
 
 # commit_file <dir> <file> <content> — commit one file change in <dir>.
@@ -217,6 +218,21 @@ git -C "$ab" worktree add -q --detach "$abw/held"
 (cd "$abw/held" && exec sleep 600) &
 holder=$!
 children+=("$holder")
+
+# Otherwise abandoned, but a Claude Code session runs inside it without having
+# locked it. The process name is what identifies a session, so the fixture runs
+# a re-signed copy of sleep named `claude`.
+git -C "$ab" worktree add -q --detach "$abw/session"
+mkdir -p "$tmp/bin"
+cp /bin/sleep "$tmp/bin/claude"
+codesign -f -s - "$tmp/bin/claude" 2>/dev/null
+(cd "$abw/session" && exec "$tmp/bin/claude" 600) &
+session=$!
+children+=("$session")
+# A `claude` process with only a file open inside a worktree does not run in it.
+git -C "$ab" worktree add -q --detach "$abw/open-file"
+(cd "$tmp" && exec "$tmp/bin/claude" 600 <"$abw/open-file/base.txt") &
+children+=("$!")
 
 git -C "$ab" worktree add -q --detach "$abw/other-lock"
 git -C "$ab" worktree lock --reason 'claude agent' "$abw/other-lock"
@@ -332,13 +348,13 @@ else
     pass
 fi
 
-abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
+abandoned_set=("$abw/detached" "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock")
 expect_abandoned "abandoned, from the primary" "$ab" "${abandoned_set[@]}"
 expect_abandoned "abandoned, from a linked worktree" "$abw/dirty" "${abandoned_set[@]}"
 # The checkout the layout is read from is never abandoned: removing it would
 # delete the script reading it.
 expect_abandoned "abandoned, from an abandoned worktree" "$abw/detached" \
-    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
+    "$abw/edited-after" "$abw/feature" "$abw/held" "$abw/ignored" "$abw/open-file" "$abw/reused-pid" "$abw/squashed" "$abw/stale-lock"
 
 # A default_ref that does not resolve keeps everything.
 git -C "$ab" update-ref -d "$default_ref"
@@ -387,6 +403,12 @@ detail: quit it (or reboot), then re-run"
 read_worktree_layout "$ab"
 if remove_abandoned_worktree "$ab" "$ab" "$abw/held" holder_blocked_lines to_fixture_trash; then fail "in use: removed"; else pass; fi
 if [ -d "$abw/held" ]; then pass; else fail "in use: directory gone"; fi
+
+# A worktree a session runs inside is not reported at all, nor removable.
+check "session: report" "$(printf '%s\n' "$report" | grep -cF "$abw/session")" 0
+read_worktree_layout "$ab"
+if remove_abandoned_worktree "$ab" "$ab" "$abw/session" holder_blocked_lines to_fixture_trash; then fail "session: removed"; else pass; fi
+if [ -d "$abw/session" ]; then pass; else fail "session: directory gone"; fi
 
 # A holders command that claims every worktree keeps every worktree, even in
 # repair mode.
@@ -457,7 +479,7 @@ read_worktree_layout "$ab"
 if remove_abandoned_worktree "$ab" "$ab" "$tmp/outside" holder_blocked_lines to_fixture_trash; then fail "outside: removed"; else pass; fi
 if [ -d "$tmp/outside" ]; then pass; else fail "outside: directory gone"; fi
 
-expect_abandoned "after removal" "$ab" "$abw/held"
+expect_abandoned "after removal" "$ab" "$abw/held" "$abw/open-file"
 
 # ---- holders ---------------------------------------------------------------------
 

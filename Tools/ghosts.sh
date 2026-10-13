@@ -29,9 +29,10 @@
 #     worktree's path after `git worktree remove` recreates the directory,
 #     and git, holding no registration for it, never lists it again
 #   - Registered worktrees under .claude/worktrees/ that are abandoned: no
-#     live Claude Code session or subagent holds their lock, nothing is
-#     uncommitted, and their content is already on origin/main — PRs merge by
-#     squash, so a finished branch never reads as merged by ancestry
+#     live Claude Code session or subagent holds their lock, no session runs
+#     inside them, nothing is uncommitted, and their content is already on
+#     origin/main — PRs merge by squash, so a finished branch never reads as
+#     merged by ancestry
 #     (Tools/lib/worktrees.sh has the criteria); one a process still uses is
 #     reported with its holders and never removed
 #   - LIVE on-disk Kernova.app copies (Trash, DerivedData) whose
