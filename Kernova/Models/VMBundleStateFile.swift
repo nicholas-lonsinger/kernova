@@ -113,7 +113,7 @@ struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
     /// A file in the `config.json` coding whose bytes decode as `Record`,
     /// which `assemble` turns into the value; absence reads as `empty()`, or
     /// as no file at all when `empty` is `nil`.
-    private static func coded<Record: Codable>(
+    private static func coded<Record: Codable & Sendable>(
         _ id: VMBundleStateFileID, as record: Record.Type, empty: (@Sendable () -> Value)?,
         assemble: @escaping @Sendable (Record, any VMBundleFileReading) -> Value,
         encode: @escaping @Sendable (Value) -> Record
@@ -159,7 +159,7 @@ extension VMBundleStateFile where Value == VMConfiguration {
 /// A snapshot's `config.json`: the configuration it was taken under, whose
 /// network device is read as the facts ``VMCapturedNetwork`` holds as well —
 /// so the check lists an unrecognized one as a problem no default repairs.
-private struct VMSnapshotConfigurationRecord: Codable {
+private struct VMSnapshotConfigurationRecord: Codable, Sendable {
     let configuration: VMConfiguration
 
     init(configuration: VMConfiguration) {

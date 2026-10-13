@@ -83,7 +83,7 @@ enum SettingsPaneMetrics {
     /// on a screen; `nil` with no screen at all.
     ///
     /// A pane taller than this scrolls; below it, the window follows the pane.
-    static func maxHeight(in window: NSWindow?) -> CGFloat? {
+    @MainActor static func maxHeight(in window: NSWindow?) -> CGFloat? {
         let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
         if let window, let screen = window.screen {
             return maxHeight(windowTop: window.frame.maxY, visibleFrame: screen.visibleFrame, chrome: chrome)
