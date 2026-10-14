@@ -9,6 +9,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     let context: VMSettingsPanelContext
     let category = VMSettingsCategory.sharing
     private var lockRegistry = VMSettingsLockRegistry()
+    /// The Shared Directories lock, held apart from ``lockRegistry``: a running
+    /// guest whose shares ride one device still takes some share edits, so this
+    /// section locks on its own offers rather than on the pane's read-only state.
+    private var sharesLockRegistry = VMSettingsLockRegistry()
 
     private let panelStack = NSStackView()
 
@@ -40,6 +44,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
+        sharesLockRegistry.removeAll()
 
         var sections = [
             buildSharedDirectoriesSection(),
@@ -76,7 +81,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     }
 
     func refresh() {
-        lockRegistry.apply(isReadOnly: !canEditSharedDirectories)
+        lockRegistry.apply(isReadOnly: isReadOnly)
+        sharesLockRegistry.apply(isReadOnly: !shownShareOffers.contains(where: \.isOffered))
         refreshGuestAgent()
         refreshClipboard()
         refreshSharedList()
@@ -98,14 +104,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         fileMonitorLoop = observeRecurring(
             track: { [monitor = context.fileMonitor] in _ = monitor.existsByPath },
             apply: { [weak self] in self?.refreshSharedList() })
-    }
-
-    /// Whether this VM takes a write of its shared-directory list right now,
-    /// at rest or as a live swap.
-    private var canEditSharedDirectories: Bool {
-        [VMCapability.editSharedDirectories, .editLiveSharedDirectories].contains {
-            viewModel.capabilities.isAvailable($0, on: instance)
-        }
     }
 
     /// What `edit` of this VM's shared-directory list is offered as.
@@ -168,7 +166,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
         // Read on each click: the guest's macOS version, which decides the
         // resume note, arrives with the agent after the panel is built.
-        let header = lockRegistry.makeHeader("Shared Directories", editableWhen: .stopped) { [weak self] in
+        let header = sharesLockRegistry.makeHeader("Shared Directories", editableWhen: .stopped) { [weak self] in
             guard let self else { return [] }
             return Self.sharedDirectoriesInfoParagraphs(for: self.instance.effectiveConfiguration)
         }
@@ -414,13 +412,17 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             control: clipboardPassthroughSwitch)
     }
 
-    /// Whether a control the first-or-last-share rule disables is on screen:
-    /// Add always, and a Remove or read-only switch only beside a share.
+    /// The offers of the share controls on screen: Add always, and a Remove or
+    /// read-only switch only beside a share.
+    private var shownShareOffers: [VMCapabilityCatalog.SharedDirectoriesOffer] {
+        let edits: [SharedDirectoryListEdit] =
+            currentSharedDirectories.isEmpty ? [.add] : [.add, .change, .remove]
+        return edits.map(sharesOffer)
+    }
+
+    /// Whether a control the first-or-last-share rule disables is on screen.
     private var showsSharingDeviceRule: Bool {
-        let shownOffers =
-            currentSharedDirectories.isEmpty
-            ? [sharesOffer(.add)] : [sharesOffer(.add), sharesOffer(.change), sharesOffer(.remove)]
-        return shownOffers.contains(.changesSharingDevice)
+        shownShareOffers.contains(.changesSharingDevice)
     }
 
     private func refreshSharedList() {
