@@ -18,7 +18,8 @@ struct VMDisplayViewSettings: Equatable {
 /// the inline detail content by `DetailContainerViewController`.
 @MainActor
 final class VMDisplayBackingView: NSView {
-    private(set) var machineView = VZVirtualMachineView()
+    private(set) var machineView = DragSpyMachineView()
+    private lazy var dragOutSpike = DragOutSpike(hostView: self, machineView: machineView)
 
     /// Called when the user taps the resume button on the pause overlay.
     var onResume: (() -> Void)?
@@ -139,6 +140,11 @@ final class VMDisplayBackingView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        dragOutSpike.windowChanged(to: window)
     }
 
     // MARK: - State Updates
