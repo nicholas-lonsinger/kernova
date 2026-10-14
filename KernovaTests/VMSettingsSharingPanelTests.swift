@@ -446,7 +446,8 @@ struct VMSettingsSharingPanelTests {
         remove.sendAction(remove.action, to: remove.target)
         #expect(instance.configuration.sharedDirectories?.count == 1)
 
-        // With no share, the first is what the rule holds.
+        // With no share, the first is what the rule holds, and nothing in the
+        // section takes an edit, so it shows as locked.
         let (emptyVC, _) = makeSharingController(
             [], phase: .running(sessionID: UUID()), guestOS: .macOS)
         let emptyPanel = try #require(emptyVC.panelForTesting(.sharing))
@@ -454,6 +455,7 @@ struct VMSettingsSharingPanelTests {
             firstSubview(NSButton.self, in: emptyPanel) { $0.title == "Add Shared Directory…" })
         #expect(!emptyAdd.isEnabled)
         #expect(visibleLabel(caption, in: emptyPanel))
+        #expect(settingsLockHints(in: emptyPanel).filter { !$0.isHidden }.count == 1)
     }
 
     @Test("A live read-only change the folder refuses is presented, and the switch shows what is committed")
