@@ -134,6 +134,41 @@ struct VMCommandCoreNetworkTests {
         #expect(requirement.routes.flatMap(\.steps).map(\.vm.id) == [member.instanceID])
     }
 
+    @Test("A member that cannot move refuses the delete with its own refusal, offering no route")
+    func aMemberThatCannotMoveRefusesWithoutARoute() throws {
+        let harness = makeHarness()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
+        let stopped = makeInstance(in: harness, name: "Stopped") {
+            $0.networkMode = .hostOnly
+            $0.networkMembership = .network(lab.id)
+        }
+        // A suspended Host Only VM's saved state is not known to restore on
+        // another network, so its membership is pinned.
+        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
+            $0.networkMode = .hostOnly
+            $0.networkMembership = .network(lab.id)
+        }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+
+        let error = try #require(
+            { () -> CommandError? in
+                do { try harness.core.deleteNetwork("Lab") } catch let error as CommandError {
+                    return error
+                } catch { return nil }
+                return nil
+            }())
+
+        guard case .invalidState(let vm, _, _, let settings) = error else {
+            Issue.record("expected the member's own refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == suspended.instanceID)
+        #expect(settings == [ConfigurationEntry(key: "network.membership", value: "isolated")])
+        #expect(error.stepRequirement == nil)
+        #expect(try harness.core.networks().map(\.id) == [lab.id])
+        #expect(stopped.configuration.networkMembership == .network(lab.id))
+    }
+
     @Test("A build that cannot attach a named network refuses to create one")
     func anUnentitledBuildCreatesNone() {
         let harness = makeHarness(entitlements: .unentitled)

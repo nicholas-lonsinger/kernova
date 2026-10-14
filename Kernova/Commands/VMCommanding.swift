@@ -541,11 +541,12 @@ protocol VMCommanding: AnyObject {
 
     /// Stops listing the network `network` names.
     ///
-    /// Refuses with ``CommandError/stepRequired(_:)`` while a VM is set to
-    /// join it and its state takes a change of membership, routing each such
-    /// VM to a network of its own, which narrows what it reaches and widens
-    /// nothing (docs/NETWORKING.md). A VM whose state takes no such change,
-    /// and a snapshot taken on the network, keep naming it, unlisted.
+    /// Refuses while a VM is set to join it: with the VM's own refusal when a
+    /// member's state takes no change of membership, else with
+    /// ``CommandError/stepRequired(_:)``, routing each VM to a network of its
+    /// own, which narrows what it reaches and widens nothing
+    /// (docs/NETWORKING.md). An inert VM whose state takes no such change, and
+    /// a snapshot taken on the network, keep naming it, unlisted.
     func deleteNetwork(_ network: String) throws
 
     // MARK: - Guest Agent Disk

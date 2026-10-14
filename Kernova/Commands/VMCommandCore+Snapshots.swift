@@ -67,7 +67,6 @@ extension VMCommandCore {
     /// The capture itself, listed in the manifest inside the same capture
     /// operation, answering the snapshot that landed; `alsoRecord` writes
     /// beside that listing under the same permit.
-    ///
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String,
         alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }

@@ -1846,10 +1846,14 @@ struct VMLibraryViewModelTests {
         #expect(beta.configuration.networkMembership == .isolated)
     }
 
-    @Test("A move the VM's state refuses deletes nothing")
-    func deleteNetworkStopsAtARefusedMove() throws {
+    @Test("A member that cannot move refuses the delete with its own refusal, and nothing moves")
+    func deleteNetworkMovesNothingWhenAMemberCannotMove() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let lab = try viewModel.networks.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
+        let alpha = viewModel.library.admitFixture(name: "Alpha") {
+            $0.applyNetworkMode(.hostOnly)
+            $0.networkMembership = .network(lab.id)
+        }
         // A suspended Host Only VM's saved state is not known to restore on
         // another network, so its membership is pinned.
         let suspended = viewModel.library.admitFixture(name: "Suspended", phase: .suspended) {
@@ -1858,9 +1862,22 @@ struct VMLibraryViewModelTests {
         }
         try VMInstanceFixture.writeSaveFile(for: suspended)
 
-        #expect(throws: CommandError.self) { try viewModel.deleteNetwork(lab.id) }
+        let error = try #require(
+            { () -> CommandError? in
+                do { try viewModel.deleteNetwork(lab.id) } catch let error as CommandError {
+                    return error
+                } catch { return nil }
+                return nil
+            }())
 
+        guard case .invalidState(let vm, _, _, _) = error else {
+            Issue.record("expected the member's own refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == suspended.id)
+        #expect(error.stepRequirement == nil)
         #expect(viewModel.networks.state.listed?.map(\.id) == [lab.id])
+        #expect(alpha.configuration.networkMembership == .network(lab.id))
         #expect(suspended.configuration.networkMembership == .network(lab.id))
     }
 

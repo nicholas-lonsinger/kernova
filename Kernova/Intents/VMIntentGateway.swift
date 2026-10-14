@@ -415,7 +415,7 @@ final class VMIntentGateway {
         }
     }
 
-    /// Deletes the network, moving each VM on it to a network of its own.
+    /// Deletes the network; refused while a VM is set to join it.
     func deleteNetwork(_ id: UUID) async throws {
         try await perform(.deleteNetwork, on: id) {
             try self.commands.deleteNetwork(id.uuidString)

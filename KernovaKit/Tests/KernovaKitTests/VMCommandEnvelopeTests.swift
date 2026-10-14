@@ -327,6 +327,22 @@ struct VMCommandEnvelopeTests {
             .busy(vm: summary, operation: "taking snapshot"),
             .heldByAnotherCopy(vm: summary),
             .confirmationRequired(prompt: prompt),
+            .stepRequired(
+                requirement: StepRequirement(
+                    title: "Duplicate MAC Address",
+                    message: "Change \u{201C}Alpha\u{201D}\u{2019}s network first.",
+                    routes: [
+                        StepRoute(title: "Resume", steps: [.resume(vm: summary)]),
+                        StepRoute(
+                            title: "Use a New MAC Address",
+                            steps: [
+                                .discardSavedState(vm: summary),
+                                .setConfiguration(
+                                    vm: summary,
+                                    assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
+                            ]),
+                    ])),
+            .stepRequired(requirement: StepRequirement(message: "Take a snapshot first.")),
             .unsupported(capability: "starting in macOS Recovery"),
             .conflict(vm: summary, with: summary, reason: .machineIdentity),
             .conflict(vm: summary, with: summary, reason: .macAddress),

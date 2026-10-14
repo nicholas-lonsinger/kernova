@@ -58,8 +58,21 @@ extension VMCommandCore {
         // Bridged, or no device — moves only where its state takes the write,
         // since nothing it reaches changes either way; the rest keep naming it,
         // unlisted.
+        let members = naming.filter { library.networks.network(joinedBy: $0.configuration) == network }
+        // A member that cannot move refuses the delete with its own refusal, so
+        // a route is offered only when every step in it would be taken.
+        for instance in members
+        where !capabilities.isAvailable(key, writing: isolated, on: instance) {
+            try requireGates(for: [(key: key, value: isolated)], on: instance)
+            var settings = instance.settings
+            try key.apply(
+                isolated, to: &settings,
+                context: VMConfigurationWriteContext(
+                    instance, entitlements: library.entitlements,
+                    networks: library.networks.state))
+        }
         let joining = naming.filter { instance in
-            library.networks.network(joinedBy: instance.configuration) == network
+            members.contains { $0 === instance }
                 || capabilities.isAvailable(key, writing: isolated, on: instance)
         }
         if !joining.isEmpty {

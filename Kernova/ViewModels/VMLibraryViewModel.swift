@@ -196,11 +196,13 @@ final class VMLibraryViewModel {
     }
 
     /// Deletes the network `id` identifies, first moving each VM set to join
-    /// it to a network of its own — the route the delete's refusal names, taken
-    /// one move at a time, then the delete again.
+    /// it to a network of its own — the route the delete's refusal names, then
+    /// the delete again.
     ///
-    /// A move that is refused throws, deleting nothing; a move already made
-    /// stays made.
+    /// The core offers that route only once every move in it passes its
+    /// gates, and the moves and the delete run in one main-actor turn, so
+    /// every VM moves and the network goes, or nothing changes; only a failed
+    /// save can leave a move made.
     func deleteNetwork(_ id: UUID) throws {
         do {
             try commands.deleteNetwork(id.uuidString)
