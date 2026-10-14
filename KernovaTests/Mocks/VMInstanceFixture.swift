@@ -1,6 +1,5 @@
 import KernovaKit
 import Foundation
-import KernovaTestSupport
 @testable import Kernova
 
 /// A `VMInstance` whose bundle is read from `files`, with nothing wired into a

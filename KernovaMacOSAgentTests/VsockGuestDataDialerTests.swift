@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 import Testing
 
 /// The dialler every clipboard and drop transfer opens its data connection

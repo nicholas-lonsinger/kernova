@@ -90,7 +90,7 @@ public func makeDropReleaseFrame(generation: UInt64) -> Frame {
 
 /// A `ClipboardRequest` asking the peer to dial one representation's data
 /// connection.
-public func makeRequestFrame(
+func makeRequestFrame(
     generation: UInt64, transferID: UInt64, uti: String, maxAcceptByteCount: UInt64 = .max
 ) -> Frame {
     .clipboardRequest(

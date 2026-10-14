@@ -2,7 +2,6 @@ import Testing
 import Foundation
 import Darwin
 import KernovaKit
-import KernovaTestSupport
 @testable import Kernova
 
 @Suite("VsockControlService", .caseScoped)

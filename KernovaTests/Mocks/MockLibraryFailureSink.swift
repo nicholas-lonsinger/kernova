@@ -1,5 +1,4 @@
 import Foundation
-import KernovaTestSupport
 
 /// Records what `VMLibrary` hands to its `onFailure` hook, so tests can assert
 /// which alert the library asked for with no presenter in the picture.

@@ -2,18 +2,11 @@ import AppKit
 import Darwin
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 import Testing
 import Virtualization
 
 @testable import Kernova
 
-// Bundle-specific test helpers for KernovaTests. The event-driven/poll wait
-// primitives (`AsyncGate`, `waitUntil`, `TestFailure`), the in-memory
-// `UserDefaults` double (`MemoryUserDefaults`, `makeTestDefaults`), and the
-// blocking-bridge GCD hop (`offCooperativePool`) live in the shared
-// `KernovaTestSupport` package product — see its doc comments.
-//
 // `waitForChange` below is KernovaTests-only: it is built on the app's
 // `waitForObservedChange`, and only this bundle's tests wait on `@Observable`
 // production state — the GuestAgent/KernovaKit bundles' predicates read

@@ -45,7 +45,6 @@ let package = Package(
         // logging call site resolved.
         .library(name: "KernovaLogging", type: .static, targets: ["KernovaLogging"]),
         .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
-        .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
@@ -106,6 +105,10 @@ let package = Package(
             ],
             swiftSettings: sharedSwiftSettings
         ),
+        // No product: the Kernova.xcodeproj test bundles compile this folder. Linked
+        // into the app-hosted KernovaTests, a product puts a second KernovaKit in the
+        // test process; Xcode then builds KernovaKit as a framework in test builds only,
+        // and `-I Products/<config>` resolves the stale static module ahead of it.
         .target(
             name: "KernovaTestSupport",
             dependencies: ["KernovaKit", "KernovaLogging"],

@@ -1,6 +1,5 @@
 import Testing
 import AppKit
-import KernovaTestSupport
 @testable import Kernova
 
 /// `SheetPresenter` exposes a thin lifecycle API around `NSWindow.beginSheet`.
