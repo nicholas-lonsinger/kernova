@@ -84,8 +84,8 @@ enum VMConsentPolicy {
     ///
     /// A ``CommandError/guestAccountPasswordRequired(_:)`` out of `body` goes to
     /// `prompting`, which both asks and supplies the answer — through
-    /// ``VMCommanding/provideGuestAccountPassword(_:password:)`` or
-    /// ``VMCommanding/skipGuestAccount(_:)`` — and `body` is then run again,
+    /// ``VMCommandCore/provideGuestAccountPassword(_:password:)`` or
+    /// ``VMCommandCore/skipGuestAccount(_:)`` — and `body` is then run again,
     /// finding the VM answered for. Every other failure is rethrown untouched —
     /// as is whatever `prompting` throws, which is how a door with nobody to ask,
     /// and a user who walked away from the question, both say the start is not

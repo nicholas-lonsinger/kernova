@@ -106,6 +106,22 @@ extension VMCommandCore {
 
     // MARK: - Create
 
+    /// Writes a new VM's bundle and disk image, answering the row the write
+    /// fills.
+    ///
+    /// `startAfterCreate` boots the VM once its bundle is on disk; a failed
+    /// write starts nothing.
+    ///
+    /// `guestAccountPassword` answers for the macOS account `configuration`
+    /// names, and is held for the VM as
+    /// ``provideGuestAccountPassword(_:password:)`` holds one — whether or not
+    /// anything is started, so a Start taken later in the session asks nothing
+    /// either. A parameter rather than a call the caller makes afterwards
+    /// because the chained start is this verb's own, and one it refused would
+    /// reach the user as a failure nobody asked for.
+    ///
+    /// Refuses what that verb refuses: a password macOS will not take, and one
+    /// given for a configuration naming no account.
     @discardableResult
     func create(
         configuration: VMConfiguration, startAfterCreate: Bool,
@@ -171,6 +187,15 @@ extension VMCommandCore {
 
     // MARK: - Clone
 
+    /// Copies the VM's bundle into a new one, as `outcome` — `nil` follows the
+    /// app's clone preference (``AppPreferences/cloneOutcome(for:)``). New
+    /// Machine is refused for a VM that does not offer it
+    /// (``VMConfiguration/offersNewMachineClone``).
+    ///
+    /// `waitForOutcome` answers the VM the copy became, throwing the copy's
+    /// failure to this call alone; without it the arrival's row is answered at
+    /// once, and a failure reaches ``onFailure``. Either way the arrival is
+    /// registered before this call first suspends.
     @discardableResult
     func clone(
         _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
@@ -180,6 +205,10 @@ extension VMCommandCore {
             try await awaitOutcome(of: registerClone(selector, outcome: outcome)))
     }
 
+    /// The clone nobody waits on, which never suspends: the arrival is
+    /// registered and its row answered in the caller's own turn.
+    /// ``clone(_:outcome:waitForOutcome:)`` without `waitForOutcome`
+    /// is this.
     @discardableResult
     func beginClone(
         _ selector: VMSelector, outcome: CloneOutcome?
@@ -463,6 +492,8 @@ extension VMCommandCore {
     /// Copies one `.kernova` bundle into the library — answering the existing
     /// VM when the source is already in the library by identifier, and joining
     /// the arrival already importing it when one is.
+    ///
+    /// `waitForOutcome` is ``clone(_:outcome:waitForOutcome:)``'s.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
         let start = try registerImports(from: [sourceURL], intoFolder: nil).starts[0].get()
@@ -481,6 +512,12 @@ extension VMCommandCore {
         }
     }
 
+    /// The imports nobody waits on, of each bundle at `urls`, which never
+    /// suspend — so a batch's destinations, and two overlapping triggers', are
+    /// reserved against each other's arrivals — put in the folder `folder`
+    /// identifies, if any, in one write, the batch's first entry selected
+    /// there. ``importVM(from:waitForOutcome:)`` without `waitForOutcome` is
+    /// this for one bundle and no folder.
     func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
         let registered = registerImports(from: urls, intoFolder: folder)
         // A joined import's own initiating call already routes its outcome.
@@ -658,6 +695,11 @@ extension VMCommandCore {
 
     // MARK: - Delete
 
+    /// Deletes the VM's bundle and the external files named in `alsoRemoving`.
+    ///
+    /// `permanently` bypasses the Trash. Files shared with another VM are never
+    /// deleted even when their id is passed. Once the VM is gone, any named file
+    /// that stayed throws ``CommandError/filesKept(_:)``.
     func delete(
         _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws {
@@ -827,6 +869,7 @@ extension VMCommandCore {
             .filter { $0.kind.isOfferedOnVMDelete && $0.path != agentPath }
     }
 
+    /// ``externalAttachments(for:)`` of the VM `selector` names.
     func externalAttachments(of selector: VMSelector) async throws -> [ExternalAttachment] {
         await externalAttachments(for: try resolve(selector))
     }
@@ -874,6 +917,8 @@ extension VMCommandCore {
         }.value
     }
 
+    /// ``sharingVMNames(forPath:bookmark:excluding:)`` excluding the VM
+    /// `selector` names.
     func sharingVMNames(_ selector: VMSelector, path: String, bookmark: Data?) async throws
         -> [String]
     {
@@ -931,4 +976,14 @@ extension VMCommandCore {
                 name: other.name, references: other.configuration.externalFileReferences)
         }
     }
+}
+
+/// What ``VMCommandCore/beginImports(from:intoFolder:)`` answered.
+struct VMImportBatch {
+    /// Each bundle's import, in the order given: the VM or arrival it
+    /// answers, or why it was refused.
+    let imports: [Result<VMSummary, any Error>]
+    /// Why the folder couldn't take the batch, when it couldn't — no import's
+    /// failure: every import it names runs on outside the folder.
+    let membershipFailure: (any Error)?
 }

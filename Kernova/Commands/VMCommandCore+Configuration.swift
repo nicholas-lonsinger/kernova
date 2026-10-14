@@ -13,12 +13,23 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Keys
 
+    /// Every configuration key `configuration` and `setConfiguration` address,
+    /// in presentation order.
+    ///
+    /// Addresses no VM: the keyspace is the same for all of them, and which
+    /// keys a particular VM answers for is what ``configuration(_:keys:)``
+    /// reports.
     func configurationKeys() -> [ConfigurationKeyDescriptor] {
         VMConfigurationKeyRegistry.keys.map(\.descriptor)
     }
 
     // MARK: - Read
 
+    /// The VM's values for `keys`, or for every key that applies to it when
+    /// `keys` is `nil`.
+    ///
+    /// Each value is written the way ``setConfiguration(_:assignments:consent:)``
+    /// parses it back.
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
         instance.activity.refreshFromBundle()
@@ -40,6 +51,15 @@ extension VMCommandCore {
 
     /// Applies every assignment or none, in the order given, answering the
     /// values the assigned keys ended up holding.
+    ///
+    /// Each key's gate and value is checked before anything is written, so a
+    /// batch naming one key the VM's state will not take, or one value it
+    /// cannot parse, changes nothing. A configuration key's assignment that
+    /// leaves its value where it is is taken in any state; a host-state key's
+    /// gate is asked whether its value moves or not, so naming one is refused
+    /// wherever that key is pinned, a snapshot capture among them.
+    /// `consent` supplies what the one assignment that asks for it needs —
+    /// turning automatic clipboard passthrough on.
     ///
     /// A gate that refuses names every assignment it refused. Each gate names
     /// an edit class (``VMConfigurationKey/editClasses(writing:for:)``); the
@@ -305,7 +325,9 @@ extension VMCommandCore {
     }
 
     /// Shares the folder at `path` with the guest, leaving a folder the VM
-    /// already shares as it is.
+    /// already shares as it is — on the wire where
+    /// ``addSharedDirectories(_:paths:)`` is not, so named by path rather than
+    /// by pick.
     ///
     /// Resolve, gate, then grant: the VM and its state decide the answer before
     /// the authority is consulted, so a selector no VM answers to and a VM that

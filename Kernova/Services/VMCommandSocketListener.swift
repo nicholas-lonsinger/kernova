@@ -7,7 +7,7 @@ import KernovaLogging
 /// carrying length-prefixed `VMCommandRequest`/`VMCommandResponse` frames.
 ///
 /// The out-of-process twin of the App Intents front door — same verbs, same
-/// refusals, same consent semantics, because both reach ``VMCommanding``
+/// refusals, same consent semantics, because both reach ``VMCommandCore``
 /// through ``VMCommandEnvelopeRouter`` and neither adds a vocabulary of its
 /// own.
 ///

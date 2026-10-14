@@ -21,7 +21,7 @@ extension VMLibraryViewModel {
     /// Takes `action` on every VM in `group`, then puts one account of every VM
     /// it left undone on screen.
     ///
-    /// Through ``VMCommanding`` rather than the in-app ``start(_:bootIntoRecovery:)``:
+    /// Through ``VMCommandCore`` rather than the in-app ``start(_:bootIntoRecovery:)``:
     /// a group action selects and focuses nothing, and raises no question
     /// per VM — the VMs whose own verb would ask are in that one account.
     func performGroupAction(_ action: VMGroupAction, on group: VMGroupReference) async {

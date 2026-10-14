@@ -13,14 +13,10 @@ import Testing
 @Suite("VM Network Intent Tests", .caseScoped)
 @MainActor
 struct VMNetworkIntentTests {
-    private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
+    private func makeGateway(over harness: WiredCommandCore) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: {}),
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
-    }
-
-    private func makeSummary(name: String) -> VMSummary {
-        VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     // MARK: - Entity
@@ -70,29 +66,31 @@ struct VMNetworkIntentTests {
 
     @Test("The networks list in the core's order, each VM on one read in full")
     func networksReadTheirMembersInFull() async throws {
-        let commands = MockVMCommanding()
-        let alpha = makeSummary(name: "Alpha")
-        commands.library = [alpha, makeSummary(name: "Beta")]
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [alpha])
-        let test = NetworkSummary(id: UUID(), name: "Test", kind: .hostOnly, members: [])
-        commands.networksToReturn = [lab, test]
+        let harness = WiredCommandCore()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
+        let test = try harness.core.createNetwork(name: "Test", kind: .hostOnly)
+        let alpha = harness.register(name: "Alpha") {
+            $0.networkMembership = .network(lab.id)
+            $0.applyNetworkMode(.nat)
+        }
+        harness.register(name: "Beta")
 
-        let networks = try await makeGateway(commands).networks()
+        let networks = try await makeGateway(over: harness).networks()
 
         #expect(networks.map(\.id) == [lab.id, test.id])
         #expect(networks.map(\.kind) == [.nat, .hostOnly])
         #expect(networks[0].members.map(\.id) == [alpha.id])
         #expect(networks[0].members.map(\.name) == ["Alpha"])
+        #expect(networks[0].members.map(\.networkName) == ["Lab"])
         #expect(networks[1].members.isEmpty)
     }
 
     @Test("Resolving by identifier, or by a typed name, answers only the networks asked for")
     func lookupFilters() async throws {
-        let commands = MockVMCommanding()
-        let lab = NetworkSummary(id: UUID(), name: "Lab", kind: .nat, members: [])
-        let test = NetworkSummary(id: UUID(), name: "Test Lab", kind: .hostOnly, members: [])
-        commands.networksToReturn = [lab, test]
-        let gateway = makeGateway(commands)
+        let harness = WiredCommandCore()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
+        let test = try harness.core.createNetwork(name: "Test Lab", kind: .hostOnly)
+        let gateway = makeGateway(over: harness)
 
         #expect(try await gateway.networks(withIDs: [test.id, UUID()]).map(\.id) == [test.id])
         #expect(try await gateway.networks(matching: "lab").map(\.id) == [lab.id, test.id])
@@ -103,43 +101,46 @@ struct VMNetworkIntentTests {
 
     @Test("A create reaches the core with the name and kind, and answers the network it listed")
     func createReachesTheCore() async throws {
-        let commands = MockVMCommanding()
+        let harness = WiredCommandCore()
 
-        let created = try await makeGateway(commands).createNetwork(name: "Lab", kind: .hostOnly)
+        let created = try await makeGateway(over: harness).createNetwork(name: "Lab", kind: .hostOnly)
 
-        #expect(commands.createNetworkCalls.map(\.name) == ["Lab"])
-        #expect(commands.createNetworkCalls.map(\.kind) == [.hostOnly])
         #expect(created.name == "Lab")
         #expect(created.kind == .hostOnly)
-        #expect(commands.networksToReturn.map(\.id) == [created.id])
+        let listed = try harness.core.networks()
+        #expect(listed.map(\.id) == [created.id])
+        #expect(listed.map(\.name) == ["Lab"])
+        #expect(listed.map(\.kind) == [.hostOnly])
     }
 
     @Test("A rename and a delete address the network by identifier, never by name")
     func editsAddressByIdentifier() async throws {
-        let commands = MockVMCommanding()
-        let gateway = makeGateway(commands)
-        let id = UUID()
+        let harness = WiredCommandCore()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
+        let spare = try harness.core.createNetwork(name: "Spare", kind: .nat)
+        let gateway = makeGateway(over: harness)
 
-        try await gateway.renameNetwork(id, to: "Lab")
-        try await gateway.deleteNetwork(id)
+        try await gateway.renameNetwork(lab.id, to: "Bench")
+        #expect(try harness.core.networks().map(\.id) == [lab.id, spare.id])
+        #expect(try harness.core.networks().map(\.name) == ["Bench", "Spare"])
 
-        #expect(commands.renameNetworkCalls.map(\.network) == [id.uuidString])
-        #expect(commands.renameNetworkCalls.map(\.newName) == ["Lab"])
-        #expect(commands.deleteNetworkCalls == [id.uuidString])
+        // Addressed by the identifier a rename leaves in place.
+        try await gateway.deleteNetwork(lab.id)
+        #expect(try harness.core.networks().map(\.id) == [spare.id])
     }
 
     @Test("A refusal from the core reaches the caller unchanged")
     func refusalsPassThrough() async {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.invalidArgument("A network needs a name.")
-        commands.networkError = refusal
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(over: WiredCommandCore())
+        let missing = UUID()
 
-        await #expect(throws: refusal) {
+        await #expect(throws: CommandError.invalidArgument("A network needs a name.")) {
             try await gateway.createNetwork(name: " ", kind: .nat)
         }
-        await #expect(throws: refusal) {
-            try await gateway.deleteNetwork(UUID())
+        await #expect(
+            throws: CommandError.itemNotFoundOnHost(item: "network named \u{201C}\(missing.uuidString)\u{201D}")
+        ) {
+            try await gateway.deleteNetwork(missing)
         }
     }
 }

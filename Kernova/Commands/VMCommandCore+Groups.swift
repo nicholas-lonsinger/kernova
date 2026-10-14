@@ -72,11 +72,17 @@ extension VMResolvedGroup {
 extension VMCommandCore {
     // MARK: - Reads
 
+    /// The VMs `selection` admits, in its order — each one the sidebar would
+    /// list under the same filter, an arrival included. ``VMLibrarySelection/all``
+    /// is every VM in library order.
     func list(_ selection: VMLibrarySelection) -> [VMSummary] {
         library.refreshFromOtherCopies()
         return entries(in: selection).map(summary)
     }
 
+    /// The library's smart groups, then its folders, each in the order the
+    /// sidebar lists them, with their members — in library order, a folder's
+    /// in its own.
     func groups() throws -> [GroupSummary] {
         library.refreshFromOtherCopies()
         let organization = try readOrganization(verb: .groups)
@@ -114,6 +120,12 @@ extension VMCommandCore {
         return selection.sort.ordered(admitted).compactMap(\.addressable)
     }
 
+    /// `query` with every name in it resolved.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a network or
+    ///   group `query` names that the library does not list, and
+    ///   ``CommandError/invalidArgument(_:)`` for a network text naming both a
+    ///   mode and a named network.
     func selection(for query: VMListQuery, verb: VMVerb) throws -> VMLibrarySelection {
         var filter = query.filter
         if !query.networks.isEmpty { library.networks.reload() }

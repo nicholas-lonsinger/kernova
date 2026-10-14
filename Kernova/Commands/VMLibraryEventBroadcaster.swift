@@ -2,7 +2,7 @@ import Foundation
 import KernovaKit
 
 /// Fans one batch of ``VMLibraryEvent`` values out to every stream
-/// ``VMCommanding/events()`` handed out.
+/// ``VMCommandCore/events()`` handed out.
 ///
 /// Continuations are held on the main actor and dropped when their stream ends,
 /// so a consumer that stops iterating stops costing anything.

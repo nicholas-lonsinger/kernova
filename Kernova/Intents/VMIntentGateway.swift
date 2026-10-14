@@ -4,7 +4,7 @@ import KernovaKit
 import KernovaLogging
 
 /// The App Intents front door: everything Shortcuts and Spotlight ask of
-/// Kernova passes through here and reaches ``VMCommanding``.
+/// Kernova passes through here and reaches ``VMCommandCore``.
 ///
 /// Two things every intent needs, in one place. **Readiness:** an intent can be
 /// delivered while the app's first library read is still in flight, and a verb
@@ -20,7 +20,7 @@ import KernovaLogging
 final class VMIntentGateway {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
 
-    private let commands: any VMCommanding
+    private let commands: VMCommandCore
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
     /// Where the library is written for Spotlight to match a searched name in.
@@ -40,7 +40,7 @@ final class VMIntentGateway {
     private var pendingRemove: Set<UUID> = []
 
     init(
-        commands: any VMCommanding,
+        commands: VMCommandCore,
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         record: VMIndexRecord = VMIndexRecord(),
@@ -194,7 +194,7 @@ final class VMIntentGateway {
     /// Shows the library searched for `term`, once the library has landed.
     ///
     /// An adapter closure rather than a verb: no VM is addressed, so there is
-    /// nothing for ``VMCommanding`` to resolve or refuse.
+    /// nothing for ``VMCommandCore`` to resolve or refuse.
     func showSearchResults(for term: String) async {
         await ready()
         showSearchResults(term)

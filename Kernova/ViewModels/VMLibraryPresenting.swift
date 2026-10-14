@@ -27,8 +27,8 @@ enum TakeSnapshotPurpose: Equatable, Sendable {
 /// get the VM running again.
 ///
 /// Never built for a bundle-internal storage disk: no verb re-creates an
-/// internal entry — ``VMCommanding/attachStorageDisks(_:paths:)`` adds external
-/// paths and ``VMCommanding/createStorageDisk(_:sizeInGB:)`` writes a new file
+/// internal entry — ``VMCommandCore/attachStorageDisks(_:paths:)`` adds external
+/// paths and ``VMCommandCore/createStorageDisk(_:sizeInGB:)`` writes a new file
 /// under a new identity — so removing one cannot be undone, whatever the user
 /// does with the file afterwards.
 struct StartFailedAttachment: Equatable, Sendable {

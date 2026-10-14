@@ -63,53 +63,62 @@ struct VMURLGatewayTests {
         try #require(URL(string: text))
     }
 
-    /// A gateway whose library read has already landed, over a seeded mock.
+    /// A gateway over `wired`'s core, whose library read has already landed
+    /// unless `awaitReady` holds it.
     private func makeGateway(
-        _ commands: MockVMCommanding,
+        _ wired: WiredCommandCore,
         trace: Trace,
         awaitReady: @escaping @Sendable () async -> Void = {}
     ) -> VMURLGateway {
         VMURLGateway(
-            commands: commands,
+            commands: wired.core,
             readiness: LibraryReadiness(awaitReady: awaitReady),
             prepareToSurface: { trace.record(.prepared) },
             summonLibrary: { trace.record(.summoned) },
             present: { trace.record(.presented($0)) })
     }
 
-    private func makeSummary(name: String = "Sonoma", id: UUID = UUID()) -> VMSummary {
-        VMSummary(id: id, name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+    /// A VM with a display to put in front of the user, which the open verb
+    /// accepts.
+    @discardableResult
+    private func registerRunning(in wired: WiredCommandCore, name: String = "Sonoma") -> VMInstance {
+        wired.register(name: name, phase: .running(sessionID: UUID()))
     }
 
     // MARK: - Routes
 
     @Test("An open link runs the open verb on the VM it names")
     func openLinkRunsTheOpenVerb() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        let sonoma = registerRunning(in: wired)
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
 
-        #expect(commands.openSelectors == [.idOrName("Sonoma")])
-        #expect(commands.revealSelectors.isEmpty)
+        #expect(wired.surfacedDisplays == [sonoma.id])
+        #expect(wired.revealedInLibrary.isEmpty)
         #expect(trace.presented.isEmpty)
     }
 
+    /// A stopped VM tells the two verbs apart: open refuses it, and reveal
+    /// lands on its library row.
     @Test("A reveal link runs the reveal verb on the VM it names")
     func revealLinkRunsTheRevealVerb() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        let sonoma = wired.register(name: "Sonoma")
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://reveal/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://reveal/Sonoma"))
 
-        #expect(commands.revealSelectors == [.idOrName("Sonoma")])
-        #expect(commands.openSelectors.isEmpty)
+        #expect(wired.revealedInLibrary == [sonoma.id])
+        #expect(wired.surfacedDisplays.isEmpty)
         #expect(trace.presented.isEmpty)
     }
 
     @Test("A link that runs readies the app to surface and summons nothing")
     func aLinkThatRunsSummonsNothing() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        registerRunning(in: wired)
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
 
         // The verb opens exactly the surface the link asked for; a library
         // window behind it is one nobody asked for.
@@ -119,82 +128,97 @@ struct VMURLGatewayTests {
     /// Readied once, for the alert: the refused verb itself surfaced nothing.
     @Test("A verb refusal readies the app once and summons the library before it is shown")
     func aVerbRefusalSummonsTheLibraryBeforePresenting() async throws {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.notFound(.idOrName("Sonoma"))
-        commands.openError = refusal
+        let wired = WiredCommandCore()
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
 
-        #expect(trace.steps == [.prepared, .summoned, .presented(refusal)])
+        #expect(
+            trace.steps == [.prepared, .summoned, .presented(.notFound(.idOrName("Sonoma")))])
     }
 
     @Test("The verb waits for the app's first library read")
     func theVerbWaitsForTheFirstLibraryRead() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        let sonoma = registerRunning(in: wired)
         let trace = Trace()
         let readiness = ReadinessGate()
         let gateway = makeGateway(
-            commands, trace: trace, awaitReady: { await readiness.wait() })
+            wired, trace: trace, awaitReady: { await readiness.wait() })
 
         let link = try url("kernova://open/Sonoma")
         let handled = Task { await gateway.handle(link) }
         try await readiness.awaitWaiting()
-        #expect(commands.openSelectors.isEmpty)
+        #expect(wired.surfacedDisplays.isEmpty)
         #expect(trace.steps.isEmpty)
 
         readiness.open()
         await handled.value
-        #expect(commands.openSelectors == [.idOrName("Sonoma")])
+        #expect(wired.surfacedDisplays == [sonoma.id])
     }
 
     // MARK: - Refusals the core raises
 
     @Test("A name several VMs answer to is shown in the app")
     func anAmbiguousNameIsShownInTheApp() async throws {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.ambiguous(
-            selector: .idOrName("Sonoma"),
-            candidates: [makeSummary(), makeSummary()])
-        commands.openError = refusal
+        let wired = WiredCommandCore()
+        let first = registerRunning(in: wired)
+        let second = registerRunning(in: wired)
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
 
-        #expect(trace.presented == [refusal])
+        let presented = try #require(trace.presented.first)
+        #expect(trace.presented.count == 1)
+        guard case .ambiguous(let selector, let candidates) = presented else {
+            Issue.record("expected an ambiguity refusal, got \(presented)")
+            return
+        }
+        #expect(selector == .idOrName("Sonoma"))
+        #expect(Set(candidates.map(\.id)) == [first.id, second.id])
+        #expect(wired.surfacedDisplays.isEmpty)
     }
 
     @Test("A name no VM answers to is shown in the app")
     func aNameNoVMAnswersToIsShownInTheApp() async throws {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.notFound(.idOrName("Ghost"))
-        commands.revealError = refusal
+        let wired = WiredCommandCore()
+        wired.register(name: "Sonoma")
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://reveal/Ghost"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://reveal/Ghost"))
 
-        #expect(trace.presented == [refusal])
+        #expect(trace.presented == [.notFound(.idOrName("Ghost"))])
+        #expect(wired.revealedInLibrary.isEmpty)
     }
 
     @Test("A VM whose state admits no open refuses the open route, in the app")
     func aStoppedVMRefusesTheOpenRoute() async throws {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.invalidState(
-            vm: makeSummary(), current: .stopped, allowed: [.start, .reveal])
-        commands.openError = refusal
+        let wired = WiredCommandCore()
+        let sonoma = wired.register(name: "Sonoma")
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
 
-        #expect(trace.presented == [refusal])
+        let presented = try #require(trace.presented.first)
+        #expect(trace.presented.count == 1)
+        guard case .invalidState(let vm, let current, let allowed, _) = presented else {
+            Issue.record("expected an invalid-state refusal, got \(presented)")
+            return
+        }
+        #expect(vm.id == sonoma.id)
+        #expect(current == .stopped)
+        #expect(!allowed.contains(.open))
+        #expect(wired.surfacedDisplays.isEmpty)
     }
 
     // MARK: - Refusals the link itself earns
 
     @Test("A route Kernova does not offer is refused without running any verb")
     func anUnknownRouteIsRefusedWithoutCallingAnyVerb() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        let sonoma = wired.register(name: "Sonoma")
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://start/Sonoma"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://start/Sonoma"))
 
-        #expect(commands.openSelectors.isEmpty)
-        #expect(commands.revealSelectors.isEmpty)
+        #expect(wired.surfacedDisplays.isEmpty)
+        #expect(wired.revealedInLibrary.isEmpty)
+        #expect(sonoma.status == .stopped)
         #expect(
             trace.steps == [
                 .prepared, .summoned,
@@ -204,11 +228,12 @@ struct VMURLGatewayTests {
 
     @Test("A link naming no VM is refused, in the app, like every other refusal")
     func aLinkNamingNoVMIsRefused() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
+        registerRunning(in: wired)
         let trace = Trace()
-        await makeGateway(commands, trace: trace).handle(try url("kernova://open"))
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open"))
 
-        #expect(commands.openSelectors.isEmpty)
+        #expect(wired.surfacedDisplays.isEmpty)
         #expect(
             trace.steps == [
                 .prepared, .summoned,
@@ -218,11 +243,11 @@ struct VMURLGatewayTests {
 
     @Test("A link Kernova cannot read is refused without waiting for the library read")
     func aMalformedLinkIsRefusedWithoutWaitingForTheLibrary() async throws {
-        let commands = MockVMCommanding()
+        let wired = WiredCommandCore()
         let trace = Trace()
         let readiness = ReadinessGate()
         let gateway = makeGateway(
-            commands, trace: trace, awaitReady: { await readiness.wait() })
+            wired, trace: trace, awaitReady: { await readiness.wait() })
 
         // Nothing about the library decides this refusal, so it never parks on
         // a read that a launch may still have in flight.

@@ -23,7 +23,7 @@ public enum VMSelector: Codable, Sendable, Hashable {
     }
 }
 
-/// One command in the facade's vocabulary.
+/// One command in the command core's vocabulary.
 ///
 /// Named rather than described so a refusal can list the verbs a VM's current
 /// state does allow, and so each transport can map a verb to its own naming.

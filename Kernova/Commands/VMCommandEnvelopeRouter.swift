@@ -2,22 +2,20 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Turns a serialized ``VMCommandRequest`` into a facade call and the answer
-/// back into a ``VMCommandResponse``.
+/// Turns a serialized ``VMCommandRequest`` into a ``VMCommandCore`` call and
+/// the answer back into a ``VMCommandResponse``.
 ///
 /// The whole wire boundary: it decodes, dispatches, and encodes, and decides
 /// nothing else — the grant a sandboxed client's named path needs included,
-/// which the verb that acts on the path obtains for itself. It depends on
-/// ``VMCommanding``, never on the concrete core, so a transport can be driven
-/// end to end against a test double.
+/// which the verb that acts on the path obtains for itself.
 @MainActor
 struct VMCommandEnvelopeRouter {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMCommandEnvelopeRouter")
 
-    let commands: any VMCommanding
+    let commands: VMCommandCore
 
-    init(commands: any VMCommanding) {
+    init(commands: VMCommandCore) {
         self.commands = commands
     }
 
@@ -91,7 +89,7 @@ struct VMCommandEnvelopeRouter {
 
     // MARK: - Dispatch
 
-    /// Runs one request against the facade.
+    /// Runs one request against the core.
     ///
     /// A ``CommandError`` becomes a `.failure` result rather than a thrown
     /// error: a refusal is an answer, and every transport has to deliver it.

@@ -2,9 +2,9 @@ import Foundation
 
 /// One VM, as much of it as any refusal or listing needs to name it.
 ///
-/// The facade's own result type, not a serialization mirror of one: the wire
-/// envelope encodes this value directly, so a listing and an ambiguity refusal
-/// describe a VM identically whichever door asked.
+/// The app's command core's own result type, not a serialization mirror of
+/// one: the wire envelope encodes this value directly, so a listing and an
+/// ambiguity refusal describe a VM identically whichever door asked.
 public struct VMSummary: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
     public let id: UUID

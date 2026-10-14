@@ -57,6 +57,10 @@ extension VMCommandCore {
 
     /// Appends `files` to the VM's storage-disk list, skipping paths it already
     /// carries.
+    ///
+    /// Takes files rather than opening a panel: a pick carries a
+    /// security-scoped bookmark only an in-process open panel can mint, which
+    /// is why no wire verb offers this.
     func attachStorageDisks(_ selector: VMSelector, paths files: [PickedFile]) throws {
         let instance = try resolve(selector)
         try require(.editStorageDisks, on: instance)
@@ -117,7 +121,8 @@ extension VMCommandCore {
     /// whichever file backs it: a VM keeps at least one storage disk, an empty
     /// list re-synthesizes `Disk.asif`, and the same exclusion already keeps it
     /// out of the start-failure removal offer. Any disk with a sibling goes,
-    /// `Disk.asif` included.
+    /// `Disk.asif` included. A file that stays once the entry is gone throws
+    /// ``CommandError/filesKept(_:)``.
     func removeStorageDisk(
         _ selector: VMSelector, disk id: UUID, trashFile: Bool, consent: Consent
     ) async throws {
@@ -261,7 +266,8 @@ extension VMCommandCore {
     // MARK: - Removable Media
 
     /// Appends `files` to the VM's removable-media list, skipping paths it
-    /// already carries.
+    /// already carries — off the wire for the reason
+    /// ``attachStorageDisks(_:paths:)`` states.
     func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
@@ -283,6 +289,9 @@ extension VMCommandCore {
     ///
     /// The file is **not** bundle-owned: removing the entry does not trash it,
     /// and cloning the VM references the same path rather than copying it.
+    ///
+    /// Off the wire: the write rides a live save-panel grant, which is also
+    /// what the entry's bookmark is minted from.
     func createRemovableMedia(
         _ selector: VMSelector, sizeInGB: Int, destinationURL: URL
     ) async throws {
@@ -354,7 +363,9 @@ extension VMCommandCore {
     /// it.
     ///
     /// The bundled Guest Agent installer and a file another VM still references
-    /// are never trashed, however `trashFile` is set — only the entry goes.
+    /// are never trashed, however `trashFile` is set — only the entry goes. A
+    /// file that stays once the entry is gone throws
+    /// ``CommandError/filesKept(_:)``.
     func removeRemovableMedia(
         _ selector: VMSelector, item id: UUID, trashFile: Bool, consent: Consent
     ) async throws {
@@ -472,7 +483,8 @@ extension VMCommandCore {
     // MARK: - Shared Directories
 
     /// Appends `files` to the VM's shared-directory list, skipping folders it
-    /// already shares.
+    /// already shares — off the wire for the reason
+    /// ``attachStorageDisks(_:paths:)`` states.
     func addSharedDirectories(_ selector: VMSelector, paths files: [PickedFile]) throws {
         try addSharedDirectories(files, readOnly: false, to: resolve(selector))
     }
@@ -737,15 +749,21 @@ extension VMCommandCore {
 
     // MARK: - Start-Failure Recovery
 
-    /// The removal half of the ``CommandRecovery/removeStartFailedAttachment(_:)``
-    /// a failed bring-up offered, leaving a VM the caller's own Start can bring
-    /// up.
+    /// Removes the entry a failed start or resume named — a storage disk, a
+    /// removable medium, or a shared folder — leaving the file or folder itself
+    /// untouched: the removal half of the
+    /// ``CommandRecovery/removeStartFailedAttachment(_:)`` a failed bring-up
+    /// offered.
     ///
-    /// The entry is checked before anything else, so an entry somebody removed
-    /// meanwhile answers as the no-op
-    /// ``VMCommanding/removeStartFailedAttachment(_:attachment:)`` promises
-    /// rather than as that verb's stale-attachment refusal — and keeps its
-    /// saved state, which a confirmation landing late must not destroy.
+    /// Starts nothing: a caller that wants the VM running follows this with
+    /// ``start(_:recovery:consent:)``.
+    ///
+    /// A VM that has left the library and an entry already gone are both quiet
+    /// no-ops: what the removal was for is already true, so neither is a failure
+    /// to report. The entry is checked before anything else, so an entry
+    /// somebody removed meanwhile answers as that no-op rather than as the
+    /// removal verb's stale-attachment refusal — and keeps its saved state,
+    /// which a confirmation landing late must not destroy.
     ///
     /// Removable media goes as a plain removal, and a saved state stays for
     /// that Start to restore: a save file restores with removable media removed

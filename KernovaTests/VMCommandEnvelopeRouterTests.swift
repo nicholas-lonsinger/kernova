@@ -33,64 +33,46 @@ struct VMCommandEnvelopeRouterTests {
     private let scratch = TestScratchDirectory(prefix: "VMCommandEnvelopeRouterTests")
 
     private struct Harness {
+        let wired: WiredCommandCore
         let transport: TestTransport
-        let core: VMCommandCore
-        let authority: MockSandboxSourceAuthority
-        let library: VMLibrary
-        let storage: MockVMStorageService
-        let virtualization: MockVirtualizationService
-        let snapshots: MockVMBundleMachineFiles
+
+        var core: VMCommandCore { wired.core }
+        var library: VMLibrary { wired.library }
+        var storage: MockVMStorageService { wired.storage }
+        var snapshots: MockVMBundleMachineFiles { wired.machineFiles }
+        var authority: MockSandboxSourceAuthority { wired.authority }
     }
 
-    /// A transport over anything that speaks the facade.
-    private func makeTransport(over commands: any VMCommanding) -> TestTransport {
-        TestTransport(router: VMCommandEnvelopeRouter(commands: commands))
+    private func makeTransport(over core: VMCommandCore) -> TestTransport {
+        TestTransport(router: VMCommandEnvelopeRouter(commands: core))
     }
 
     private func makeHarness(
         installService: any MacOSInstallProviding = MockMacOSInstallService(),
-        virtualization: MockVirtualizationService = MockVirtualizationService(),
+        virtualization: any VirtualizationProviding = MockVirtualizationService(),
+        diskImages: any DiskImageProviding = MockDiskImageService(),
+        usbAccessoryService: MockUSBAccessoryService? = nil,
         clock: any EngineClock = makePlatformEngineClock()
     ) -> Harness {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles()
-        let fileSystem = MockFileSystem()
-        let lifecycle = makeTestLifecycle(
-            virtualization: virtualization,
-            installService: installService,
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage,
-            machineFiles: snapshots,
-            lifecycle: lifecycle,
-            fileSystem: fileSystem,
-            preferences: preferences)
-        let core = VMCommandCore(
-            library: library,
-            lifecycle: lifecycle,
-            storageService: storage,
-            diskImageService: MockDiskImageService(),
-            fileSystem: fileSystem,
-            preferences: preferences,
-            clock: clock
-        )
-        let authority = MockSandboxSourceAuthority()
-        core.sourceAuthority = authority
-        return Harness(
-            transport: makeTransport(over: core),
-            core: core, authority: authority,
-            library: library, storage: storage, virtualization: virtualization,
-            snapshots: snapshots)
+        let wired = WiredCommandCore(
+            virtualization: virtualization, installService: installService,
+            diskImages: diskImages, usbAccessoryService: usbAccessoryService,
+            preferences: preferences, clock: clock)
+        return Harness(wired: wired, transport: makeTransport(over: wired.core))
     }
 
     @discardableResult
     private func makeInstance(
         in harness: Harness, name: String = "Wired", phase: VMLifecyclePhase = .stopped,
-        mutate: (inout VMConfiguration) -> Void = { _ in }
+        guestOS: VMGuestOS = .linux, mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        RegisteredVMInstanceFixture.register(
-            name: name, phase: phase, guestOS: .linux, library: harness.library,
-            preferences: preferences, mutate: mutate)
+        harness.wired.register(name: name, phase: phase, guestOS: guestOS, mutate: mutate)
+    }
+
+    private func externalPath(_ suffix: String) -> String {
+        scratch.url
+            .appendingPathComponent("\(UUID().uuidString)-\(suffix)")
+            .path(percentEncoded: false)
     }
 
     // MARK: - Reads
@@ -205,7 +187,8 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("A group action crosses the wire as one request answered by one report, and an unknown group is refused")
     func groupActionCrossesTheWire() async throws {
-        let harness = makeHarness()
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
         let stopped = makeInstance(in: harness, name: "Stopped")
         let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
         let lab = try harness.library.organization.createFolder(named: "Lab", members: [running.id, stopped.id])
@@ -228,7 +211,7 @@ struct VMCommandEnvelopeRouterTests {
         let unknown = try await harness.transport.send(
             .groupAction(.stop, group: VMGroupReference(.smartGroup, named: "Nope")))
         #expect(unknown.failure == .itemNotFoundOnHost(item: "smart group named \u{201C}Nope\u{201D}"))
-        #expect(harness.virtualization.stopCallCount == 0)
+        #expect(virtualization.stopCallCount == 0)
     }
 
     @Test("An info read crosses the wire whole")
@@ -260,110 +243,112 @@ struct VMCommandEnvelopeRouterTests {
         #expect(response.result == .snapshotSizes([snapshot.id: size]))
     }
 
-    @Test("A VM's shares cross the wire as their own listing")
+    @Test("A VM's shares cross the wire as their own listing, addressed by identifier")
     func theShareListingCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let shares = [SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: true)]
-        double.sharedDirectoriesByVM = [summary.id: shares]
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
+        let harness = makeHarness()
+        let named = makeInstance(in: harness, name: "Stub") {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites", readOnly: true)]
+        }
+        makeInstance(in: harness, name: "Stub") {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Elsewhere")]
+        }
 
-        let listedShares = try await transport.send(.sharedDirectories(selector)).result
-        #expect(listedShares == .sharedDirectories(shares))
+        let listedShares = try await harness.transport.send(.sharedDirectories(.id(named.id))).result
 
-        #expect(double.sharedDirectoriesSelectors == [selector])
+        #expect(
+            listedShares
+                == .sharedDirectories([SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: true)]))
     }
 
     @Test("Both USB listings and the edit cross the wire as their own requests")
     func theUSBVerbsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let held = [
-            USBAccessorySummary(
-                registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
-                vendorID: 0x0403, productID: 0x6001, deviceID: UUID())
-        ]
-        let free = [
-            USBAccessorySummary(
-                registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
-                productID: 0x12A8)
-        ]
-        double.usbAccessoriesByVM = [summary.id: held]
-        double.availableUSBAccessoriesToReturn = free
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
-        let edit = USBAccessoryEdit.attach(accessory: 4_294_967_296)
+        let accessories = MockUSBAccessoryService()
+        let harness = makeHarness(usbAccessoryService: accessories)
+        let instance = makeInstance(in: harness, name: "Stub", phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        let held = MockUSBAccessoryService.accessory(registryID: 4_294_967_296)
+        let free = MockUSBAccessoryService.accessory(registryID: 12, vendorID: 0x05AC, productID: 0x12A8)
+        accessories.accessories = [held, free]
+        let deviceID = UUID()
+        accessories.nextDeviceID = deviceID
+        let selector = VMSelector.id(instance.id)
 
-        let listedHeld = try await transport.send(.usbAccessories(selector)).result
-        #expect(listedHeld == .usbAccessories(held))
+        let attached = try await harness.transport.send(
+            .editUSBAccessory(selector, .attach(accessory: held.registryID))
+        ).result
+        #expect(attached == .ok)
+        #expect(accessories.attachedRegistryIDs == [held.registryID])
+
         // Both listings answer in one payload shape, so a client reads what a
         // guest holds and what nothing holds the same way.
-        let listedFree = try await transport.send(.availableUSBAccessories).result
-        #expect(listedFree == .usbAccessories(free))
-        let attached = try await transport.send(.editUSBAccessory(selector, edit)).result
-        #expect(attached == .ok)
-        let deviceID = UUID()
-        let detached = try await transport.send(
+        let listedHeld = try await harness.transport.send(.usbAccessories(selector)).result
+        guard case .usbAccessories(let heldSummaries) = listedHeld else {
+            Issue.record("expected the guest's accessories, got \(listedHeld)")
+            return
+        }
+        #expect(heldSummaries.map(\.registryID) == [held.registryID])
+        #expect(heldSummaries.map(\.deviceID) == [deviceID])
+        let listedFree = try await harness.transport.send(.availableUSBAccessories).result
+        guard case .usbAccessories(let freeSummaries) = listedFree else {
+            Issue.record("expected the available accessories, got \(listedFree)")
+            return
+        }
+        #expect(freeSummaries.map(\.registryID) == [free.registryID])
+        #expect(freeSummaries.map(\.deviceID) == [nil])
+
+        let detached = try await harness.transport.send(
             .editUSBAccessory(selector, .detach(device: deviceID))
         ).result
         #expect(detached == .ok)
-
-        #expect(double.usbAccessoriesSelectors == [selector])
-        #expect(double.availableUSBAccessoriesCallCount == 1)
-        // The router unpacks the edit onto the facade's two verbs, the way it
-        // does for every other attachment family.
-        #expect(double.attachUSBAccessoryCalls.map(\.selector) == [selector])
-        #expect(double.attachUSBAccessoryCalls.map(\.accessory) == [4_294_967_296])
-        #expect(double.detachUSBAccessoryCalls.map(\.selector) == [selector])
-        #expect(double.detachUSBAccessoryCalls.map(\.device) == [deviceID])
+        #expect(accessories.detachedDeviceIDs == [deviceID])
+        #expect(instance.liveUSBAccessories.isEmpty)
     }
 
     @Test("The remembered-accessory verbs cross the wire, one of them naming no machine")
     func theUSBPairingVerbsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let pairings = [
-            USBPairingSummary(
-                vm: "Stub", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
-                pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
-        ]
-        double.usbPairingsToReturn = pairings
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
-
-        let everyMachine = try await transport.send(.usbPairings(nil)).result
-        #expect(everyMachine == .usbPairings(pairings))
-        let oneMachine = try await transport.send(.usbPairings(selector)).result
-        #expect(oneMachine == .usbPairings(pairings))
-        let forgotten = try await transport.send(
-            .forgetUSBPairing(selector, key: "04e8:6300:0100:0373")
-        ).result
-        #expect(forgotten == .ok)
+        let accessories = MockUSBAccessoryService()
+        let harness = makeHarness(usbAccessoryService: accessories)
+        let first = makeInstance(in: harness, name: "First", phase: .running(sessionID: UUID()))
+        let second = makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
+        let firstAccessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "AAA")
+        let secondAccessory = MockUSBAccessoryService.accessory(registryID: 2, serial: "BBB")
+        for (instance, accessory) in [(first, firstAccessory), (second, secondAccessory)] {
+            instance.beginSessionContextForTesting()
+            accessories.accessories.append(accessory)
+            try await harness.core.attachUSBAccessory(.id(instance.id), accessory: accessory.registryID)
+        }
+        let key = try #require(firstAccessory.identity?.key)
 
         // The listing addresses no machine when the caller named none: a key
         // names at most one VM, so "which" is the answer being read off.
-        #expect(double.usbPairingsSelectors == [nil, selector])
-        #expect(double.forgetUSBPairingCalls.map(\.key) == ["04e8:6300:0100:0373"])
+        let everyMachine = try await harness.transport.send(.usbPairings(nil)).result
+        guard case .usbPairings(let everyPairing) = everyMachine else {
+            Issue.record("expected the library's pairings, got \(everyMachine)")
+            return
+        }
+        #expect(everyPairing.map(\.vm) == ["First", "Second"])
+        let oneMachine = try await harness.transport.send(.usbPairings(.id(first.id))).result
+        guard case .usbPairings(let firstPairings) = oneMachine else {
+            Issue.record("expected one machine's pairings, got \(oneMachine)")
+            return
+        }
+        #expect(firstPairings.map(\.key) == [key])
+
+        let forgotten = try await harness.transport.send(.forgetUSBPairing(.id(first.id), key: key)).result
+        #expect(forgotten == .ok)
+        #expect(first.usbPairings.isEmpty)
+        #expect(second.usbPairings.pairings.count == 1)
     }
 
-    @Test("A listing the facade refuses crosses the wire as that refusal, not as an empty list")
+    @Test("A listing the core refuses crosses the wire as that refusal, not as an empty list")
     func aRefusedListingCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        double.sharedDirectoriesError = CommandError.notFound(.name("Typo"))
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
+        let harness = makeHarness()
+        makeInstance(in: harness, name: "Stub") {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
+        }
 
-        let refusedShares = try await transport.send(.sharedDirectories(selector)).result
+        let refusedShares = try await harness.transport.send(.sharedDirectories(.name("Typo"))).result
+
         #expect(refusedShares == .failure(.notFound(selector: .name("Typo"))))
     }
 
@@ -371,14 +356,15 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("A start crosses the wire and reaches the service")
     func startCrossesTheWire() async throws {
-        let harness = makeHarness()
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
         let instance = makeInstance(in: harness)
 
         let response = try await harness.transport.send(
             .start(.id(instance.id), recovery: false, consent: .none))
 
         #expect(response.result == .ok)
-        #expect(harness.virtualization.startCallCount == 1)
+        #expect(virtualization.startCallCount == 1)
     }
 
     @Test("A stop deadline crosses the wire and comes back as a timeout failure")
@@ -487,8 +473,9 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("A failure that names its own heading crosses the wire carrying it")
     func operationFailureTitleCrossesTheWire() async throws {
-        let harness = makeHarness()
-        harness.virtualization.startError = NSError(
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
+        virtualization.startError = NSError(
             domain: VZError.errorDomain,
             code: VZError.Code.virtualMachineLimitExceeded.rawValue)
         let instance = makeInstance(in: harness, name: "Capped")
@@ -603,26 +590,11 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("The cancelGuestSetup gate clears before the chained auto-boot, not after it")
     func cancelGuestSetupGateClosesBeforeAutoBoot() async throws {
-        let storage = MockVMStorageService()
-        let snapshots = MockVMBundleMachineFiles()
-        let fileSystem = MockFileSystem()
         let virtualization = SuspendingMockVirtualizationService()
-        let lifecycle = makeTestLifecycle(
-            virtualization: virtualization,
-            fileSystem: fileSystem)
-        let library = makeWiredLibrary(
-            storage: storage,
-            machineFiles: snapshots,
-            lifecycle: lifecycle,
-            fileSystem: fileSystem,
-            preferences: preferences)
-        let core = VMCommandCore(
-            library: library, lifecycle: lifecycle, storageService: storage,
-            diskImageService: MockDiskImageService(),
-            fileSystem: fileSystem, preferences: preferences)
-        let transport = makeTransport(over: core)
+        let harness = makeHarness(virtualization: virtualization)
+        let transport = harness.transport
 
-        let instance = library.registerFixture(
+        let instance = harness.library.registerFixture(
             name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
         ) {
             $0.installContext = MacOSInstallContext(
@@ -651,98 +623,97 @@ struct VMCommandEnvelopeRouterTests {
 
     // MARK: - Attachments
 
-    @Test("Each storage-disk edit crosses the wire onto its own facade call")
+    @Test("Each storage-disk edit crosses the wire onto its own verb")
     func storageDiskEditsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
-        let disk = UUID()
+        let diskImages = MockDiskImageService()
+        let harness = makeHarness(diskImages: diskImages)
+        let externalPath = externalPath("external.img")
+        let main = StorageDisk(path: "AdditionalDisks/main.asif", label: "Main", isInternal: true)
+        let target = StorageDisk(path: "AdditionalDisks/target.asif", label: "Target", isInternal: true)
+        let external = StorageDisk(path: externalPath, label: "External", isInternal: false)
+        let instance = makeInstance(in: harness, name: "Stub") { $0.storageDisks = [main, target, external] }
+        let selector = VMSelector.id(instance.id)
 
         for edit: StorageDiskEdit in [
             .create(sizeInGB: 32),
-            .remove(disk: disk, trashFile: true, consent: .all),
-            .rename(disk: disk, newLabel: "Scratch"),
-            .setNotes(disk: disk, notes: "the build cache"),
-            .setReadOnly(disk: disk, readOnly: true),
-            .reorder(order: [disk]),
+            .remove(disk: external.id, trashFile: true, consent: .all),
+            .rename(disk: target.id, newLabel: "Scratch"),
+            .setNotes(disk: target.id, notes: "the build cache"),
+            .setReadOnly(disk: target.id, readOnly: true),
+            .reorder(order: [target.id]),
         ] {
-            #expect(try await transport.send(.editStorageDisk(selector, edit)).result == .ok)
+            #expect(try await harness.transport.send(.editStorageDisk(selector, edit)).result == .ok)
         }
 
-        #expect(double.createStorageDiskCalls.map(\.sizeInGB) == [32])
-        #expect(double.removeStorageDiskCalls.map(\.disk) == [disk])
-        #expect(double.removeStorageDiskCalls.map(\.trashFile) == [true])
-        #expect(double.renameStorageDiskCalls.map(\.newLabel) == ["Scratch"])
-        #expect(double.setStorageDiskNotesCalls.map(\.notes) == ["the build cache"])
-        #expect(double.setStorageDiskReadOnlyCalls.map(\.readOnly) == [true])
-        #expect(double.reorderStorageDisksCalls.map(\.order) == [[disk]])
+        let disks = instance.configuration.storageDisks ?? []
+        #expect(diskImages.lastCreatedSizeInGB == 32)
+        #expect(disks.map(\.label) == ["Scratch", "Main", "32 GB Disk"])
+        #expect(harness.wired.fileSystem.trashedURLs == [URL(fileURLWithPath: externalPath)])
+        let edited = try #require(disks.first { $0.id == target.id })
+        #expect(edited.notes == "the build cache")
+        #expect(edited.readOnly)
     }
 
-    @Test("Each removable-media edit crosses the wire onto its own facade call")
+    @Test("Each removable-media edit crosses the wire onto its own verb")
     func removableMediaEditsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
-        let item = UUID()
+        let harness = makeHarness()
+        let kept = RemovableMediaItem(path: externalPath("kept.iso"), readOnly: true, label: "Kept")
+        let ejected = RemovableMediaItem(path: externalPath("ejected.iso"), readOnly: true, label: "Ejected")
+        let target = RemovableMediaItem(path: externalPath("target.iso"), readOnly: true, label: "Target")
+        let instance = makeInstance(in: harness, name: "Stub") { $0.removableMedia = [kept, ejected, target] }
+        let selector = VMSelector.id(instance.id)
 
         for edit: RemovableMediaEdit in [
-            .remove(item: item, trashFile: false, consent: .all),
-            .eject(item: item),
-            .rename(item: item, newLabel: "Installer"),
-            .setNotes(item: item, notes: "from the mirror"),
-            .setReadOnly(item: item, readOnly: false),
+            .remove(item: kept.id, trashFile: false, consent: .all),
+            .eject(item: ejected.id),
+            .rename(item: target.id, newLabel: "Installer"),
+            .setNotes(item: target.id, notes: "from the mirror"),
+            .setReadOnly(item: target.id, readOnly: false),
         ] {
-            #expect(try await transport.send(.editRemovableMedia(selector, edit)).result == .ok)
+            #expect(try await harness.transport.send(.editRemovableMedia(selector, edit)).result == .ok)
         }
 
-        #expect(double.removeRemovableMediaCalls.map(\.trashFile) == [false])
-        #expect(double.ejectRemovableMediaCalls.map(\.item) == [item])
-        #expect(double.renameRemovableMediaCalls.map(\.newLabel) == ["Installer"])
-        #expect(double.setRemovableMediaNotesCalls.map(\.notes) == ["from the mirror"])
-        #expect(double.setRemovableMediaReadOnlyCalls.map(\.readOnly) == [false])
+        let media = instance.configuration.removableMedia ?? []
+        #expect(media.map(\.id) == [target.id])
+        #expect(media.first?.label == "Installer")
+        #expect(media.first?.notes == "from the mirror")
+        #expect(media.first?.readOnly == false)
+        #expect(harness.wired.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("Each shared-directory edit crosses the wire onto its own facade call")
+    @Test("Each shared-directory edit crosses the wire onto its own verb")
     func sharedDirectoryEditsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
-        let directory = UUID()
+        let harness = makeHarness()
+        let going = SharedDirectory(path: externalPath("going"))
+        let flipped = SharedDirectory(path: externalPath("flipped"))
+        let instance = makeInstance(in: harness, name: "Stub") { $0.sharedDirectories = [going, flipped] }
+        let selector = VMSelector.id(instance.id)
 
         for edit: SharedDirectoryEdit in [
-            .remove(directory: directory),
-            .setReadOnly(directory: directory, readOnly: true),
+            .remove(directory: going.id),
+            .setReadOnly(directory: flipped.id, readOnly: true),
         ] {
-            #expect(try await transport.send(.editSharedDirectory(selector, edit)).result == .ok)
+            #expect(try await harness.transport.send(.editSharedDirectory(selector, edit)).result == .ok)
         }
 
-        #expect(double.removeSharedDirectoryCalls.map(\.directory) == [directory])
-        #expect(double.setSharedDirectoryReadOnlyCalls.map(\.readOnly) == [true])
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [flipped.id])
+        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [true])
     }
 
     @Test("Both guest-agent-disk edits cross the wire")
     func guestAgentDiskEditsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let transport = makeTransport(over: double)
-        let selector = VMSelector.id(summary.id)
+        let installerPath = try #require(KernovaMacOSAgentInfo.installerDiskImageURL)
+            .path(percentEncoded: false)
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Stub", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        let selector = VMSelector.id(instance.id)
 
-        #expect(try await transport.send(.guestAgentDisk(selector, .mount)).result == .ok)
-        #expect(try await transport.send(.guestAgentDisk(selector, .unmount)).result == .ok)
+        #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount)).result == .ok)
+        #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
 
-        #expect(double.mountGuestAgentDiskSelectors == [selector])
-        #expect(double.unmountGuestAgentDiskSelectors == [selector])
+        #expect(try await harness.transport.send(.guestAgentDisk(selector, .unmount)).result == .ok)
+        #expect(instance.configuration.removableMedia == nil)
     }
 
     @Test("A running VM refuses a disk edit over the wire and names what it does take")
@@ -794,34 +765,37 @@ struct VMCommandEnvelopeRouterTests {
 
     // MARK: - Import
 
-    @Test("An import crosses the wire as the path the client named")
+    @Test("An import crosses the wire as the path the client named, answered at once")
     func importCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
+        let source = try scratch.importSource(name: "Named").url
+        let path = source.path(percentEncoded: false)
 
-        let response = try await transport.send(
-            .importVM(path: "/Users/somebody/Desktop/Named.kernova", waitForOutcome: false))
+        let response = try await harness.transport.send(.importVM(path: path, waitForOutcome: false))
 
         guard case .summary(let summary) = response.result else {
             Issue.record("expected a summary, got \(response.result)")
             return
         }
         #expect(summary.name == "Named")
-        #expect(
-            double.importURLs.map { $0.path(percentEncoded: false) }
-                == ["/Users/somebody/Desktop/Named.kernova"])
-        #expect(double.importWaits == [false])
+        // Unwaited: the answer is the row still being copied in.
+        #expect(summary.status == VMStatus.preparingWireName)
+        // The grant the path needs belongs to the verb, not to the wire: the
+        // router hands the string over untouched.
+        #expect(harness.authority.requests.map(\.source) == [.vmBundle])
+        #expect(harness.authority.requestedURLs.map { $0.path(percentEncoded: false) } == [path])
+        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
+        await arrival.settle()
     }
 
     @Test("An import nobody granted comes back as the verb's own refusal")
     func importRefusalCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        double.importError = CommandError.operationFailed(
+        let harness = makeHarness()
+        harness.authority.error = CommandError.operationFailed(
             verb: .importVM,
             message: "Kernova was not given permission to read \u{201C}Named.kernova\u{201D}.")
-        let transport = makeTransport(over: double)
 
-        let response = try await transport.send(
+        let response = try await harness.transport.send(
             .importVM(path: "/Users/somebody/Desktop/Named.kernova", waitForOutcome: false))
 
         guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
@@ -830,6 +804,7 @@ struct VMCommandEnvelopeRouterTests {
         }
         #expect(verb == .importVM)
         #expect(message.contains("was not given permission"))
+        #expect(harness.library.entries.isEmpty)
     }
 
     // MARK: - Arrivals
@@ -856,8 +831,6 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Source")
         harness.storage.cloneVMBundleError = CocoaError(.fileWriteOutOfSpace)
-        var reported: [CommandError] = []
-        harness.core.onFailure = { failure, _ in reported.append(failure) }
 
         let response = try await harness.transport.send(
             .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
@@ -867,7 +840,7 @@ struct VMCommandEnvelopeRouterTests {
             return
         }
         #expect(verb == .clone)
-        #expect(reported.isEmpty)
+        #expect(harness.wired.failures.isEmpty)
         #expect(harness.library.entries.map(\.id) == [instance.id])
     }
 
@@ -981,7 +954,8 @@ struct VMCommandEnvelopeRouterTests {
 
     @Test("Bytes that are not a request are refused before any verb runs")
     func undecodableBytesAreRefused() async throws {
-        let harness = makeHarness()
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
         makeInstance(in: harness)
 
         let response = try await harness.transport.sendRaw(Data("not a request".utf8))
@@ -990,12 +964,13 @@ struct VMCommandEnvelopeRouterTests {
             Issue.record("expected an undecodable-request refusal, got \(response.result)")
             return
         }
-        #expect(harness.virtualization.startCallCount == 0)
+        #expect(virtualization.startCallCount == 0)
     }
 
     @Test("A peer speaking another version of the vocabulary is refused")
     func foreignProtocolVersionIsRefused() async throws {
-        let harness = makeHarness()
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
         let instance = makeInstance(in: harness)
         var request = VMCommandRequest(
             verb: .start(.id(instance.id), recovery: false, consent: .none))
@@ -1009,36 +984,30 @@ struct VMCommandEnvelopeRouterTests {
                     .unsupportedProtocolVersion(
                         peer: VMCommandRequest.currentProtocolVersion + 1,
                         expected: VMCommandRequest.currentProtocolVersion)))
-        #expect(harness.virtualization.startCallCount == 0)
+        #expect(virtualization.startCallCount == 0)
     }
 
-    @Test("A reveal crosses the wire onto the facade's own verb")
+    @Test("A reveal crosses the wire onto the core's own verb")
     func revealCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let summary = VMSummary(
-            id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        double.library = [summary]
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Stub")
 
-        #expect(try await transport.send(.reveal(.id(summary.id))).result == .ok)
+        #expect(try await harness.transport.send(.reveal(.id(instance.id))).result == .ok)
 
-        #expect(double.revealSelectors == [.id(summary.id)])
-        #expect(double.openSelectors.isEmpty)
+        // A stopped VM has no display to surface, so the reveal lands on its row.
+        #expect(harness.wired.revealedInLibrary == [instance.id])
+        #expect(harness.wired.surfacedDisplays.isEmpty)
     }
 
     @Test("A Finder reveal crosses the wire onto the hook that opens the Finder")
     func showInFinderCrossesTheWire() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Filed")
-        var revealed: [UUID] = []
-        var surfaced: [UUID] = []
-        harness.core.revealInFinder = { revealed.append($0.id) }
-        harness.core.surfaceDisplay = { surfaced.append($0.id) }
 
         #expect(try await harness.transport.send(.showInFinder(.id(instance.id))).result == .ok)
 
-        #expect(revealed == [instance.id])
-        #expect(surfaced.isEmpty)
+        #expect(harness.wired.revealedInFinder == [instance.id])
+        #expect(harness.wired.surfacedDisplays.isEmpty)
     }
 
     @Test("A Finder reveal of a bundle still being written is refused")
@@ -1046,8 +1015,6 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let gate = GatedStep()
         let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
-        var revealed: [UUID] = []
-        harness.core.revealInFinder = { revealed.append($0.id) }
 
         let response = try await harness.transport.send(.showInFinder(.id(arrival.id)))
 
@@ -1060,131 +1027,141 @@ struct VMCommandEnvelopeRouterTests {
                         id: arrival.id, name: "Copying", status: "preparing", ipAddress: .unavailable,
                         heldByAnotherCopy: false),
                     operation: "import"))
-        #expect(revealed.isEmpty)
+        #expect(harness.wired.revealedInFinder.isEmpty)
         gate.release()
         await arrival.settle()
     }
 
     @Test("A quit crosses the wire once, and is answered before anything acts on it")
     func quitCrossesTheWire() async throws {
-        // Against the double rather than the core: the core's quit fires the
-        // adapter hook that takes the process down, which no test may reach.
-        let double = MockVMCommanding()
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
 
-        #expect(try await transport.send(.quit).result == .ok)
+        #expect(try await harness.transport.send(.quit).result == .ok)
 
-        #expect(double.quitCallCount == 1)
+        try await harness.wired.quitRequested.wait { harness.wired.quitRequests > 0 }
+        #expect(harness.wired.quitRequests == 1)
     }
 
     // MARK: - Configuration
 
     @Test("The keyspace, a read and a write each cross the wire as their own payload")
     func configurationVerbsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        double.configurationKeyDescriptors = [
-            ConfigurationKeyDescriptor(
-                name: "cpus", summary: "Virtual CPU cores.",
-                editableWhileRunning: ["macOS": false, "linux": false])
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha") {
+            $0.cpuCount = 4
+            $0.clipboardSharingEnabled = true
+        }
+
+        #expect(
+            try await harness.transport.send(.configurationKeys).result
+                == .configurationKeys(VMConfigurationKeyRegistry.keys.map(\.descriptor)))
+
+        #expect(
+            try await harness.transport.send(.configuration(.name("Alpha"), keys: ["cpus"])).result
+                == .configuration([ConfigurationEntry(key: "cpus", value: "4")]))
+
+        let assignments = [
+            ConfigurationEntry(key: "cpus", value: "3"),
+            ConfigurationEntry(key: "clipboard.passthrough", value: "true"),
         ]
-        double.configurationEntries = [ConfigurationEntry(key: "cpus", value: "4")]
-        let transport = makeTransport(over: double)
+        // The consent travels with the write: without it, the passthrough the
+        // batch turns on is refused and nothing is written.
+        let refused = try await harness.transport.send(
+            .setConfiguration(.name("Alpha"), assignments: assignments, consent: .none))
+        guard case .confirmationRequired(let prompt)? = refused.failure else {
+            Issue.record("expected a consent refusal, got \(String(describing: refused.failure))")
+            return
+        }
+        #expect(prompt.kind == .enableClipboardPassthrough)
+        #expect(instance.configuration.cpuCount == 4)
 
         #expect(
-            try await transport.send(.configurationKeys).result
-                == .configurationKeys(double.configurationKeyDescriptors))
-        #expect(double.configurationKeysCallCount == 1)
-
-        #expect(
-            try await transport.send(.configuration(.name("Alpha"), keys: ["cpus"])).result
-                == .configuration(double.configurationEntries))
-        #expect(double.configurationCalls.map(\.keys) == [["cpus"]])
-
-        let assignments = [ConfigurationEntry(key: "cpus", value: "3")]
-        #expect(
-            try await transport.send(
+            try await harness.transport.send(
                 .setConfiguration(.name("Alpha"), assignments: assignments, consent: .all)
             ).result == .configuration(assignments))
-        #expect(double.setConfigurationCalls.map { !$0.consent.kinds.isEmpty } == [true])
-        #expect(double.setConfigurationCalls.map(\.assignments) == [assignments])
+        #expect(instance.configuration.cpuCount == 3)
+        #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
     @Test("A configuration refusal comes back as the refusal, not as a failed operation")
     func configurationRefusalsCrossTheWire() async throws {
-        let double = MockVMCommanding()
-        double.setConfigurationError = CommandError.invalidArgument("There is no setting called \u{201C}cpu\u{201D}.")
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha") { $0.cpuCount = 4 }
 
-        let response = try await transport.send(
+        let unknown = try await harness.transport.send(
             .setConfiguration(
                 .name("Alpha"), assignments: [ConfigurationEntry(key: "cpu", value: "3")],
                 consent: .none))
-
         #expect(
-            response.failure
+            unknown.failure
                 == .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."))
+
+        // A key the guest cannot have is refused as unsupported.
+        let inapplicable = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "input.devices", value: "usb")],
+                consent: .none))
+        #expect(inapplicable.failure == .unsupported(capability: "the input.devices setting"))
+        #expect(instance.configuration.cpuCount == 4)
     }
 
     @Test("A share add crosses the wire as the path the client named and its flag")
     func shareAddCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha")
+        let folder = externalPath("Asked")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
 
         #expect(
-            try await transport.send(
-                .editSharedDirectory(
-                    .name("Alpha"), .add(path: "/Users/somebody/Asked", readOnly: true))
+            try await harness.transport.send(
+                .editSharedDirectory(.name("Alpha"), .add(path: folder, readOnly: true))
             ).result == .ok)
 
         // The grant the path needs belongs to the verb, not to the wire: the
         // router hands the string over untouched.
-        #expect(double.addSharedDirectoryCalls.map(\.path) == ["/Users/somebody/Asked"])
-        #expect(double.addSharedDirectoryCalls.map(\.readOnly) == [true])
+        #expect(harness.authority.requests.map(\.source) == [.sharedDirectory])
+        // A URL for an existing folder spells it with a trailing separator, so
+        // the paths compare as folders.
+        let asked = harness.authority.requestedURLs.map {
+            VMCommandCore.comparablePath($0.path(percentEncoded: false))
+        }
+        #expect(asked == [folder])
+        #expect(instance.configuration.sharedDirectories?.map { VMCommandCore.comparablePath($0.path) } == [folder])
+        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [true])
     }
 
     @Test("A share nobody granted comes back as the verb's own refusal")
     func shareAddRefusalCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        double.sharedDirectoryEditError = CommandError.operationFailed(
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha")
+        harness.authority.error = CommandError.operationFailed(
             verb: .editSharedDirectory, message: "Kernova was not given permission.")
-        let transport = makeTransport(over: double)
 
-        let response = try await transport.send(
+        let response = try await harness.transport.send(
             .editSharedDirectory(
                 .name("Alpha"), .add(path: "/Users/somebody/Asked", readOnly: false)))
 
-        #expect(response.failure != nil)
+        guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
+            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
+            return
+        }
+        #expect(verb == .editSharedDirectory)
+        #expect(message == "Kernova was not given permission.")
+        #expect(instance.configuration.sharedDirectories == nil)
     }
 
     @Test("A share removal names the folder by path")
     func shareRemovalByPathCrossesTheWire() async throws {
-        let double = MockVMCommanding()
-        let transport = makeTransport(over: double)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha") {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
+        }
 
         #expect(
-            try await transport.send(
+            try await harness.transport.send(
                 .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites"))
             ).result == .ok)
 
-        #expect(double.removeSharedDirectoryPathCalls.map(\.path) == ["/Users/somebody/Sites"])
-    }
-
-    @Test("The router drives anything that speaks the facade, not just the core")
-    func routerDependsOnTheFacadeAlone() async throws {
-        // Compiling at all is the assertion: the router takes `any VMCommanding`,
-        // so a double with no library, no lifecycle coordinator and no VM behind
-        // it answers the same envelope the core does.
-        let double = MockVMCommanding()
-        double.library = [
-            VMSummary(id: UUID(), name: "Stub", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        ]
-        double.pauseError = CommandError.unsupported(capability: "pausing")
-        let transport = makeTransport(over: double)
-
-        let listed = try await transport.send(.list())
-        #expect(listed.result == .summaries(double.library))
-
-        let refused = try await transport.send(.pause(.name("Anything")))
-        #expect(refused.failure == .unsupported(capability: "pausing"))
+        #expect(instance.configuration.sharedDirectories == nil)
     }
 }

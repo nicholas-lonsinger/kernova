@@ -5,8 +5,7 @@
 #   1. No file under Kernova/Commands imports AppKit, Cocoa or SwiftUI. That
 #      keeps the core's own sources UI-free; it does not make the core headless,
 #      because its collaborators still reach AppKit transitively.
-#   2. The wire router names neither the AppKit adapter nor the concrete core,
-#      only the facade it is meant to depend on.
+#   2. The wire router does not name the AppKit adapter.
 
 set -uo pipefail
 
@@ -54,12 +53,7 @@ if grep -q 'VMLibraryViewModel' "$router"; then
     status=1
 fi
 
-if grep -q 'VMCommandCore' "$router"; then
-    echo "check-headless-core: $router names the concrete core, not the facade" >&2
-    status=1
-fi
-
 if [ "$status" -eq 0 ]; then
-    pass "headless core: Kernova/Commands imports no UI framework and the router names only the facade"
+    pass "headless core: Kernova/Commands imports no UI framework and the router does not reach the AppKit adapter"
 fi
 exit "$status"

@@ -7,6 +7,30 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Start
 
+    /// Starts the VM, running whatever guest setup it still owes first.
+    ///
+    /// A VM already coming up is not refused: the call joins the bring-up in
+    /// flight and answers by its outcome. `recovery` cold-boots a stopped macOS
+    /// guest into macOS Recovery, and asks for a different guest than a boot
+    /// already under way, so it refuses that one as busy rather than joining.
+    ///
+    /// Puts nothing in front of the user: a bring-up is not a request to look
+    /// at the guest, which is what ``open(_:)`` asks for.
+    ///
+    /// A VM still owing its guest the macOS account it was set up with refuses
+    /// with ``CommandError/guestAccountPasswordRequired(_:)``, which each door
+    /// turns into the question it can ask (``VMConsentPolicy``) and answers with
+    /// ``provideGuestAccountPassword(_:password:)`` or
+    /// ``skipGuestAccount(_:)`` before starting again. A recovery boot asks
+    /// nothing: it is not the boot macOS reads an account on.
+    ///
+    /// Another active VM sharing the machine identity refuses it, asking for
+    /// ``ConfirmationKind/startBesideSharedMachineIdentity`` instead where the
+    /// user allows starting one anyway; `consent` carries that answer.
+    ///
+    /// Another active VM using the VM's MAC address on the network it would
+    /// join refuses it with ``CommandError/stepRequired(_:)``, routing through
+    /// the changes to the VM's network it can take first.
     func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
@@ -228,6 +252,19 @@ extension VMCommandCore {
 
     // MARK: - Answering for the Guest Account
 
+    /// Holds `password` as the answer for the macOS account the VM owes its
+    /// guest, so the next start creates it.
+    ///
+    /// Refuses ``CommandError/invalidArgument(_:)`` with Virtualization's own
+    /// wording for a password macOS will not take, and for a VM that owes no
+    /// account — there is nothing for the password to complete. Sets or
+    /// replaces: an answer lost with the start that failed to spend it is
+    /// supplied again the same way.
+    ///
+    /// In process only, as ``skipGuestAccount(_:)`` is: a password crossing a
+    /// transport would be written into whatever the client keeps — a script's
+    /// source, a shortcut's saved parameters, a shell history — so the app's own
+    /// sheet is the one surface that gathers it.
     func provideGuestAccountPassword(_ selector: VMSelector, password: String) throws {
         let instance = try resolve(selector)
         try holdGuestAccountPassword(password, for: instance)
@@ -280,6 +317,12 @@ extension VMCommandCore {
         )
     }
 
+    /// Ends the macOS account the VM owes its guest, so the next start creates
+    /// none and asks nothing.
+    ///
+    /// macOS asks for an account in Setup Assistant instead. Refuses a VM that
+    /// owes none, as ``provideGuestAccountPassword(_:password:)`` does, and is
+    /// in process for the reason stated there: the two are one answer.
     func skipGuestAccount(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
         guard let account = guestAccountToAnswerFor(instance) else {
@@ -588,7 +631,8 @@ extension VMCommandCore {
     /// installer image being fetched or verified.
     ///
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
-    /// bundle is preserved — this is the non-destructive cancel.
+    /// bundle is preserved — this is the non-destructive cancel. A VM with no
+    /// setup in flight refuses.
     func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws {
         let instance = try resolve(selector)
         try require(.cancelGuestSetup, on: instance)
@@ -654,9 +698,22 @@ extension VMCommandCore {
 
     // MARK: - Stop
 
+    /// Stops the VM the way `disposition` names.
+    ///
+    /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
+    /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
+    /// `.force` always asks: it discards unsaved guest state.
+    ///
+    /// `timeout` seconds bounds a wait for the guest to actually power off,
+    /// refusing with ``CommandError/timedOut(vm:verb:seconds:)`` and touching
+    /// nothing when it expires; `nil` returns as soon as the guest has been
+    /// asked to go down. Only a door whose caller is sitting there waiting
+    /// supplies one — the `kernova` tool's `--timeout`, a script's `giving up
+    /// after`: a user watching a window can see the guest is taking its time
+    /// and stop it themselves.
     func stop(
         _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
-        timeout: TimeInterval?
+        timeout: TimeInterval? = nil
     ) async throws {
         try Self.requireUsable(timeout)
         try await stop(
@@ -890,6 +947,9 @@ extension VMCommandCore {
 
     /// A hot resume of a live-paused VM, or the restore of the saved state one
     /// holds — joining a restore already in flight.
+    ///
+    /// Presents nothing, and refuses a shared machine identity and a MAC
+    /// address, as ``start(_:recovery:consent:)`` does.
     func resume(_ selector: VMSelector, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
@@ -944,6 +1004,7 @@ extension VMCommandCore {
         }
     }
 
+    /// Save-suspends the VM to its bundle's suspend slot.
     func suspend(_ selector: VMSelector) async throws {
         try await suspend(try resolve(selector))
     }
@@ -962,7 +1023,8 @@ extension VMCommandCore {
 
     // MARK: - Restart
 
-    /// Shuts the guest down and starts it again once its session has ended.
+    /// Shuts the guest down and starts it again once its session has ended,
+    /// bringing it back up the way ``start(_:recovery:consent:)`` would.
     ///
     /// Composed rather than a VZ operation of its own, so it inherits every
     /// gate and refusal the two verbs already state.
@@ -979,8 +1041,9 @@ extension VMCommandCore {
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
     /// one it is unbounded, matching what a graceful shutdown means. A guest
-    /// whose session is still live when the wait fails is neither restarted
-    /// nor terminated behind the user's back: the owed boot is withdrawn. Once
+    /// whose session is still live when the wait fails refuses with
+    /// ``CommandError/timedOut(vm:verb:seconds:)``, neither restarted nor
+    /// terminated behind the user's back: the owed boot is withdrawn. Once
     /// the session has ended, the boot is owed whatever the wait reported, and
     /// is awaited. A VM deleted in the meantime is refused by the bring-up it
     /// would have got.
@@ -1082,6 +1145,8 @@ extension VMCommandCore {
 
     // MARK: - Open
 
+    /// Brings the VM's display to the front — the detached window for a
+    /// pop-out or fullscreen VM, else keyboard focus in the inline display.
     func open(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
         try require(.open, on: instance)
@@ -1092,7 +1157,11 @@ extension VMCommandCore {
     // MARK: - Reveal
 
     /// Brings the VM — or the arrival still writing one — in front of the user
-    /// whatever state it is in.
+    /// whatever state it is in: its display where ``open(_:)`` would surface
+    /// one, else its row in the library.
+    ///
+    /// Refuses nothing but a selector no VM answers to — what Spotlight's Open
+    /// on a found VM needs, where the VM is stopped as often as not.
     ///
     /// The branch is the ``VMCapability/open`` gate rather than a display test
     /// of its own, so a VM whose display is not the right thing to surface
@@ -1119,6 +1188,10 @@ extension VMCommandCore {
 
     // MARK: - Show in Finder
 
+    /// Selects the VM's bundle in the Finder.
+    ///
+    /// A create, clone or import still writing its bundle is no VM yet, so it
+    /// refuses.
     func showInFinder(_ selector: VMSelector) throws {
         let instance = try resolve(selector)
         try require(.showInFinder, on: instance)
@@ -1127,6 +1200,12 @@ extension VMCommandCore {
 
     // MARK: - Application
 
+    /// Quits Kernova — the explicit quit every out-of-process door shares,
+    /// save-suspending running and paused VMs on the way out.
+    ///
+    /// Presents nothing and asks nothing: the caller typed the quit, so there
+    /// is no consent left to gather.
+    ///
     /// Fires the quit from a later main-actor turn, so a transport waiting on
     /// this verb has its answer encoded and handed over before the app starts
     /// going down — a client left reading a socket that simply closed cannot

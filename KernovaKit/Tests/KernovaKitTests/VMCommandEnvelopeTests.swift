@@ -5,7 +5,7 @@ import Testing
 @testable import KernovaKit
 
 /// The wire envelope's whole job: every request and every response survives a
-/// round trip unchanged, so a transport carries what the facade said and not an
+/// round trip unchanged, so a transport carries what the core said and not an
 /// approximation of it.
 @Suite("VM Command Envelope Tests", .caseScoped)
 struct VMCommandEnvelopeTests {

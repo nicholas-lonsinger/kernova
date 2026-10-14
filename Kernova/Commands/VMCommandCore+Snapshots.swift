@@ -6,6 +6,8 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Sizes
 
+    /// The size of each of this VM's snapshots, read off the main
+    /// actor — the read walks every file each snapshot holds.
     func snapshotSizes(of selector: VMSelector) async throws -> [UUID: SnapshotSize] {
         await snapshotSizes(for: try resolve(selector))
     }
@@ -17,9 +19,11 @@ extension VMCommandCore {
 
     // MARK: - Take
 
+    /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
+    /// with it as the baseline, written inside the capture.
     @discardableResult
     func takeSnapshot(
-        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool = false
     ) async throws -> SnapshotSummary {
         try await takeSnapshot(
             try resolve(selector), name: name, notes: notes,
@@ -104,6 +108,12 @@ extension VMCommandCore {
 
     // MARK: - Revert
 
+    /// Returns the VM to a snapshot.
+    ///
+    /// A revert that resumes refuses a MAC address another active VM uses on
+    /// the snapshot's network with ``CommandError/stepRequired(_:)`` and no
+    /// route: the revert installs the snapshot's network, overwriting a change
+    /// made before it.
     func revertToSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)

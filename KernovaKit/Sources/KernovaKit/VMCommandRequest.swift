@@ -2,9 +2,10 @@ import Foundation
 
 /// One VM command as it crosses a wire.
 ///
-/// Serialization only: every case maps 1:1 onto a method of the in-process
-/// facade, so a transport translates and decides nothing. A door that can call
-/// the facade directly — the AppKit UI — never builds one of these.
+/// Serialization only: every case maps 1:1 onto a method of the app's
+/// in-process command core, so a transport translates and decides nothing. A
+/// door that can call the core directly — the AppKit UI — never builds one of
+/// these.
 public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
@@ -22,7 +23,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         self.verb = verb
     }
 
-    /// One call on the facade, with its arguments.
+    /// One call on the command core, with its arguments.
     public enum Verb: Codable, Sendable, Hashable {
         /// The VMs `query` admits, in its order.
         case list(VMListQuery = VMListQuery())

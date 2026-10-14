@@ -6,7 +6,7 @@ import Testing
 @testable import Kernova
 
 /// The Settings window's Networks pane: the library's named networks, created,
-/// renamed and deleted through the command facade.
+/// renamed and deleted through the command core.
 @Suite("Networks Settings Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct NetworksSettingsViewControllerTests {
