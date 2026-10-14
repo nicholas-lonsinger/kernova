@@ -370,8 +370,6 @@ public enum VMGroupKind: String, Codable, Sendable, Hashable, CaseIterable {
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {
     /// Terminating a VM immediately, or discarding a suspended session.
     case forceStop
-    /// Shutting down a guest that is paused and cannot receive the request.
-    case stopPaused
     /// Deleting a VM's bundle.
     case deleteVM
     /// Trashing one snapshot's captured files.
@@ -434,8 +432,6 @@ public struct ConfirmationAlternative: Codable, Sendable, Hashable {
     /// The disposition re-issuing the verb with satisfies this alternative,
     /// `nil` when the alternative changes no disposition.
     public let disposition: StopDisposition?
-    /// Whether re-issuing with a checkpoint capture satisfies this alternative.
-    public let takesCheckpoint: Bool
     /// Whether re-issuing without trashing the file behind the attachment
     /// satisfies this alternative.
     public let keepsFile: Bool
@@ -445,13 +441,11 @@ public struct ConfirmationAlternative: Codable, Sendable, Hashable {
         title: String,
         isDestructive: Bool = false,
         disposition: StopDisposition? = nil,
-        takesCheckpoint: Bool = false,
         keepsFile: Bool = false
     ) {
         self.title = title
         self.isDestructive = isDestructive
         self.disposition = disposition
-        self.takesCheckpoint = takesCheckpoint
         self.keepsFile = keepsFile
     }
 }
@@ -598,6 +592,67 @@ public struct MACAddressRemedyPrompt: Codable, Sendable, Hashable {
     }
 }
 
+/// One standalone request a refused verb needs taken first.
+public enum CommandStep: Codable, Sendable, Hashable {
+    /// Resumes the VM.
+    case resume(vm: VMSummary)
+    /// Discards the VM's saved state: a stop with ``ConfirmationKind/forceStop``
+    /// consent on a VM holding one.
+    case discardSavedState(vm: VMSummary)
+    /// Makes `assignments` on the VM's configuration.
+    case setConfiguration(vm: VMSummary, assignments: [ConfigurationEntry])
+
+    /// The VM the step acts on.
+    public var vm: VMSummary {
+        switch self {
+        case .resume(let vm), .discardSavedState(let vm), .setConfiguration(let vm, _): vm
+        }
+    }
+}
+
+/// One way through a ``StepRequirement``: steps taken in order, after which
+/// the refused verb is asked again.
+public struct StepRoute: Codable, Sendable, Hashable {
+    /// The route's action name, in Title Case.
+    public let title: String
+    /// The steps, in the order they are taken.
+    public let steps: [CommandStep]
+
+    /// Describes one route.
+    public init(title: String, steps: [CommandStep]) {
+        self.title = title
+        self.steps = steps
+    }
+
+    /// Whether a step discards the VM's saved state, so a surface tints the
+    /// route and keeps it off the Return key.
+    public var discardsSavedState: Bool {
+        steps.contains { if case .discardSavedState = $0 { true } else { false } }
+    }
+}
+
+/// A refusal until a step of its own is taken, as data.
+///
+/// The message names the step in words for a surface that shows only text;
+/// ``routes`` carry the same steps as requests for a surface that can take or
+/// spell them.
+public struct StepRequirement: Codable, Sendable, Hashable {
+    /// The heading a surface shows the refusal under.
+    public let title: String
+    /// The whole refusal, naming the step.
+    public let message: String
+    /// The ways through, each a list of steps; empty when the step has no
+    /// request of its own.
+    public let routes: [StepRoute]
+
+    /// Describes one refusal.
+    public init(title: String = "Error", message: String, routes: [StepRoute] = []) {
+        self.title = title
+        self.message = message
+        self.routes = routes
+    }
+}
+
 /// A removal that happened, and the files it was asked to take that stayed.
 ///
 /// Neither a success nor a refusal: what the verb was mainly asked to remove
@@ -724,8 +779,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// it cannot use. `message` is the whole refusal.
     case invalidArgument(message: String)
     /// The VM's current state refuses the verb until a step of its own is
-    /// taken first. `message` is the whole refusal, naming that step.
-    case stepRequired(message: String)
+    /// taken first.
+    case stepRequired(requirement: StepRequirement)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// This build cannot do what was asked: the cause is the build, whatever
@@ -809,8 +864,10 @@ extension CommandErrorDTO {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
             .unsupported, .unsupportedByBuild, .invalidState, .changeTakesStoppedVM, .timedOut,
-            .invalidArgument, .stepRequired, .terminating:
+            .invalidArgument, .terminating:
             "Error"
+        case .stepRequired(let requirement):
+            requirement.title
         case .confirmationRequired(let prompt):
             prompt.title
         case .guestAccountPasswordRequired(let prompt):
@@ -881,8 +938,10 @@ extension CommandErrorDTO {
             Self.conflictMessage(
                 vm: prompt.vm.name, other: prompt.other.name,
                 otherHeldByAnotherCopy: prompt.other.heldByAnotherCopy, reason: .macAddress)
-        case .invalidArgument(let message), .stepRequired(let message):
+        case .invalidArgument(let message):
             message
+        case .stepRequired(let requirement):
+            requirement.message
         case .unsupported(let capability):
             "This virtual machine does not support \(capability)."
         case .unsupportedByBuild(let capability):

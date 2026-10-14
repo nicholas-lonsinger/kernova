@@ -15,8 +15,10 @@ import KernovaKit
 /// its guest the macOS account it was set up with refuses with
 /// ``CommandError/guestAccountPasswordRequired(_:)``. The first is answered by
 /// re-issuing the call with the consent it takes as a parameter, the second by
-/// the verb that supplies the answer and then a plain start. Implementations
-/// present nothing.
+/// the verb that supplies the answer and then a plain start. A verb whose
+/// state needs a step of its own taken first refuses with
+/// ``CommandError/stepRequired(_:)``, carrying that step as a request
+/// ``take(_:)`` runs. Implementations present nothing.
 ///
 /// `@MainActor` is a decision, not an accident: library state is UI-adjacent,
 /// all VZ work already runs on per-VM `VMSession` actors, and command traffic is
@@ -160,7 +162,7 @@ protocol VMCommanding: AnyObject {
     /// Stops the VM the way `disposition` names.
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
-    /// there refuses for confirmation and offers the two dispositions that can.
+    /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
     /// `.force` always asks: it discards unsaved guest state.
     ///
     /// `timeout` seconds bounds a wait for the guest to actually power off,
@@ -252,13 +254,12 @@ protocol VMCommanding: AnyObject {
         _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
     ) async throws -> SnapshotSummary
 
-    /// Returns the VM to a snapshot, optionally capturing the current state
-    /// first so the revert is reversible.
+    /// Returns the VM to a snapshot.
     ///
     /// A revert that resumes asks about a MAC address as
     /// ``start(_:recovery:consent:macAddressRemedy:)`` does.
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent,
+        _ selector: VMSelector, snapshot: UUID, consent: Consent,
         macAddressRemedy: MACAddressRemedy?
     ) async throws
 
@@ -538,13 +539,14 @@ protocol VMCommanding: AnyObject {
     /// names its network by identifier, so no VM changes.
     func renameNetwork(_ network: String, to newName: String) throws
 
-    /// Stops listing the network `network` names, first moving each VM on it
-    /// to a network of its own, which narrows what it reaches and widens
-    /// nothing (docs/NETWORKING.md).
+    /// Stops listing the network `network` names.
     ///
-    /// Every move or none: a VM whose state takes no change to its membership
-    /// refuses the whole delete, naming it. A snapshot taken on the network
-    /// still names it, and a revert puts the VM back on it, unlisted.
+    /// Refuses while a VM is set to join it: with the VM's own refusal when a
+    /// member's state takes no change of membership, else with
+    /// ``CommandError/stepRequired(_:)``, routing each VM to a network of its
+    /// own, which narrows what it reaches and widens nothing
+    /// (docs/NETWORKING.md). An inert VM whose state takes no such change, and
+    /// a snapshot taken on the network, keep naming it, unlisted.
     func deleteNetwork(_ network: String) throws
 
     // MARK: - Guest Agent Disk
@@ -591,6 +593,19 @@ extension VMCommanding {
 }
 
 extension VMCommanding {
+    /// Takes one step a ``StepRequirement`` routes through, as the standalone
+    /// request it is, asking nothing.
+    func take(_ step: CommandStep) async throws {
+        switch step {
+        case .resume(let vm):
+            try await resume(.id(vm.id), consent: .none, macAddressRemedy: nil)
+        case .discardSavedState(let vm):
+            try await stop(.id(vm.id), disposition: .graceful, consent: Consent([.forceStop]))
+        case .setConfiguration(let vm, let assignments):
+            _ = try setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
+        }
+    }
+
     @discardableResult
     func takeSnapshot(_ selector: VMSelector, name: String, notes: String) async throws
         -> SnapshotSummary

@@ -163,7 +163,7 @@ final class MockVMCommanding: VMCommanding {
     private(set) var showInFinderSelectors: [VMSelector] = []
     private(set) var cancelGuestSetupCalls: [(selector: VMSelector, consent: Consent)] = []
     private(set) var takeSnapshotCalls: [(selector: VMSelector, name: String, notes: String)] = []
-    private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent)] =
+    private(set) var revertCalls: [(selector: VMSelector, snapshot: UUID, consent: Consent)] =
         []
     private(set) var deleteSnapshotCalls: [(selector: VMSelector, snapshot: UUID, consent: Consent)] =
         []
@@ -566,10 +566,10 @@ final class MockVMCommanding: VMCommanding {
     }
 
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent,
+        _ selector: VMSelector, snapshot: UUID, consent: Consent,
         macAddressRemedy: MACAddressRemedy?
     ) async throws {
-        revertCalls.append((selector, snapshot, takingCheckpoint, consent))
+        revertCalls.append((selector, snapshot, consent))
         revertRemedies.append(macAddressRemedy)
         if let revertError { throw revertError }
         if let revertConsentPrompt, !consent.covers(revertConsentPrompt.kind) {

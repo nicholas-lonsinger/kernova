@@ -107,12 +107,11 @@ struct CommandErrorAppleEventsTests {
         #expect(message.hasSuffix("Add `with confirmation` to do it anyway."))
     }
 
-    @Test("A consent the flag cannot answer promises nothing the flag would do")
-    func aRefusalTheFlagCannotAnswerNamesNoFlag() {
-        // A paused guest cannot receive the shutdown that raised this, so
-        // confirming would substitute a stop nobody asked for — which this
-        // surface refuses with the flag as readily as without it.
-        let refusal = CommandError.confirmationRequired(makePrompt(kind: .stopPaused))
+    @Test("A step refusal promises nothing the flag would do: its message names the step")
+    func aStepRefusalNamesNoFlag() {
+        let refusal = CommandError.stepRequired(
+            StepRequirement(
+                message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request."))
 
         #expect(refusal.appleEventErrorString == refusal.message)
     }

@@ -439,36 +439,25 @@ struct VMIntentGatewayTests {
         #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
     }
 
-    @Test("Only a prompt that confirms to something else is refused for the user")
-    func onlyStopPausedIsRefused() {
-        for kind in ConfirmationKind.allCases {
-            let prompt = ConfirmationPrompt(
-                kind: kind, title: "T", message: "M", confirmTitle: "C", dismissTitle: "D")
-            #expect(VMConsentPolicy.isAnsweredByConfirming(prompt) == (kind != .stopPaused))
-        }
-    }
-
-    @Test("A prompt that confirms to a different verb is refused rather than answered")
-    func consentRefusesToChooseAmongAlternatives() async throws {
+    @Test("A step refusal is never answered by confirming")
+    func consentLeavesAStepRefusalStanding() async throws {
         let commands = MockVMCommanding()
-        commands.stopConsentPrompt = ConfirmationPrompt(
-            kind: .stopPaused,
-            title: "Shut Down Paused Virtual Machine",
-            message: "Resume it first, or force stop it.",
-            confirmTitle: "Resume and Shut Down",
-            dismissTitle: "Cancel",
-            alternatives: [ConfirmationAlternative(title: "Force Stop", disposition: .force)])
+        let refusal = CommandError.stepRequired(
+            StepRequirement(
+                message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request.",
+                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())])]))
+        commands.stopError = refusal
         let gateway = makeGateway(commands)
         var asked = 0
 
-        await #expect(throws: CommandError.self) {
+        await #expect(throws: refusal) {
             try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
                 try await gateway.stop(UUID(), disposition: .graceful, consent: consent)
             }
         }
 
         #expect(asked == 0)
-        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
+        #expect(commands.stopCalls.count == 1)
     }
 
     @Test("A failure that is not a consent refusal is never turned into a question")

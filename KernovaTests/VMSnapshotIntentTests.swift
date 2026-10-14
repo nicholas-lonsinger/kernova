@@ -127,7 +127,7 @@ struct VMSnapshotIntentTests {
         let gateway = makeGateway(commands)
 
         try await gateway.revertToSnapshot(
-            vm, snapshot: picked, takingCheckpoint: true, consent: .all,
+            vm, snapshot: picked, consent: .all,
             macAddressRemedy: .newAddress)
         try await gateway.deleteSnapshot(vm, snapshot: picked, consent: .all)
         try await gateway.renameSnapshot(vm, snapshot: picked, to: "Renamed")
@@ -160,7 +160,7 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: CommandError.self) {
             try await gateway.revertToSnapshot(
-                named, snapshot: stale, takingCheckpoint: false, consent: .all,
+                named, snapshot: stale, consent: .all,
                 macAddressRemedy: nil)
         }
         await #expect(throws: CommandError.self) {
@@ -270,98 +270,34 @@ struct VMSnapshotIntentTests {
         #expect(commands.setSnapshotNotesCalls.map(\.notes) == [""])
     }
 
-    // MARK: - Checkpoint
-
-    /// The confirmation is labelled with the route the action chose, so a user
-    /// confirming a checkpointed revert is not shown the plain one's words.
-    @Test("The revert's confirm action names the route the checkpoint parameter chose")
-    func theRevertConfirmationNamesTheChosenRoute() {
-        let offered = ConfirmationPrompt(
-            kind: .revertToSnapshot, title: "Revert?", message: "Guest changes are lost.",
-            confirmTitle: "Revert", dismissTitle: "Cancel",
-            alternatives: [
-                ConfirmationAlternative(title: "Take Snapshot, Then Revert", takesCheckpoint: true)
-            ])
-
-        #expect(
-            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)?.title
-                == "Take Snapshot, Then Revert")
-        // Capturing first loses nothing, so Shortcuts is not asked to mark it
-        // destructive; the plain revert is.
-        #expect(
-            VMConsentPolicy.revertAction(offered, takingCheckpoint: true)?.isDestructive == false)
-        #expect(VMConsentPolicy.revertAction(offered, takingCheckpoint: false)?.title == "Revert")
-        #expect(
-            VMConsentPolicy.revertAction(offered, takingCheckpoint: false)?.isDestructive == true)
-    }
-
-    /// A VM that can be reverted but can no longer be captured — one that
-    /// failed to start, where reverting is the way out — is offered no
-    /// checkpoint alternative, and that absence is what the intent refuses on
-    /// rather than letting the capture fail after consent.
-    @Test("A checkpoint the VM cannot take has no action to confirm")
-    func aCheckpointThatCannotBeTakenHasNoAction() {
-        let unoffered = ConfirmationPrompt(
-            kind: .revertToSnapshot, title: "Revert?", message: "Guest changes are lost.",
-            confirmTitle: "Revert", dismissTitle: "Cancel")
-
-        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: true) == nil)
-        #expect(VMConsentPolicy.revertAction(unoffered, takingCheckpoint: false)?.title == "Revert")
-    }
-
     // MARK: - Consent
 
-    @Test("A revert's other consent is confirmed with its own words, whatever the checkpoint choice")
-    func aRevertsOtherConsentIgnoresTheCheckpointChoice() {
-        let resumeBeside = ConfirmationPrompt(
-            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Alpha\u{201D} Anyway?",
-            message: "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Beta\u{201D}, which is active.",
-            confirmTitle: "Resume Anyway", dismissTitle: "Cancel")
+    @Test("A revert asks once, then re-issues with the consent")
+    func revertConsentRetriesTheVerb() async throws {
+        let commands = MockVMCommanding()
+        let vm = UUID()
+        let listed = VMIntentFixtures.snapshot()
+        let snapshot = SnapshotEntityID(vm: vm, snapshot: listed.id)
+        seed(commands, vm: vm, snapshots: [listed])
+        commands.revertConsentPrompt = ConfirmationPrompt(
+            kind: .revertToSnapshot,
+            title: "Revert?",
+            message: "Guest changes since then are lost.",
+            confirmTitle: "Revert",
+            dismissTitle: "Cancel")
+        let gateway = makeGateway(commands)
+        var asked: [ConfirmationPrompt] = []
 
-        for takingCheckpoint in [true, false] {
-            let action = VMConsentPolicy.revertAction(resumeBeside, takingCheckpoint: takingCheckpoint)
-            #expect(action?.title == "Resume Anyway")
-            #expect(action?.isDestructive == true)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.revertToSnapshot(
+                vm, snapshot: snapshot, consent: consent, macAddressRemedy: nil)
         }
+
+        #expect(asked.map(\.kind) == [.revertToSnapshot])
+        #expect(commands.revertCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
-    @Test("A revert asks once, then re-issues carrying the checkpoint that was chosen")
-    func revertConsentCarriesTheCheckpointChoice() async throws {
-        for takingCheckpoint in [true, false] {
-            let commands = MockVMCommanding()
-            let vm = UUID()
-            let listed = VMIntentFixtures.snapshot()
-            let snapshot = SnapshotEntityID(vm: vm, snapshot: listed.id)
-            seed(commands, vm: vm, snapshots: [listed])
-            commands.revertConsentPrompt = ConfirmationPrompt(
-                kind: .revertToSnapshot,
-                title: "Revert?",
-                message: "Guest changes since then are lost.",
-                confirmTitle: "Revert",
-                dismissTitle: "Cancel",
-                alternatives: [
-                    ConfirmationAlternative(
-                        title: "Take Snapshot, Then Revert", takesCheckpoint: true)
-                ])
-            let gateway = makeGateway(commands)
-            var asked: [ConfirmationPrompt] = []
-
-            try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-                try await gateway.revertToSnapshot(
-                    vm, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
-                    consent: consent, macAddressRemedy: nil)
-            }
-
-            #expect(asked.map(\.kind) == [.revertToSnapshot])
-            #expect(commands.revertCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
-            #expect(
-                commands.revertCalls.map(\.takingCheckpoint) == [takingCheckpoint, takingCheckpoint]
-            )
-        }
-    }
-
-    /// The core captures the checkpoint after the confirmation lands, so the
-    /// revert can still fail once consent is in — and the caller is told,
+    /// The revert can still fail once consent is in — and the caller is told,
     /// rather than getting a success for a rollback that did not happen.
     @Test("A revert that fails after consent refuses rather than reporting success")
     func revertSurfacesAFailureAfterConsent() async throws {
@@ -376,8 +312,8 @@ struct VMSnapshotIntentTests {
 
         await #expect(throws: refusal) {
             try await gateway.revertToSnapshot(
-                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), takingCheckpoint: true,
-                consent: .all, macAddressRemedy: nil)
+                vm, snapshot: SnapshotEntityID(vm: vm, snapshot: listed.id), consent: .all,
+                macAddressRemedy: nil)
         }
     }
 

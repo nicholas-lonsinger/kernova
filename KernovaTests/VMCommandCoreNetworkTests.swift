@@ -66,19 +66,41 @@ struct VMCommandCoreNetworkTests {
         #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Bench"))
     }
 
-    @Test("Deleting a network moves every VM naming it to a network of its own")
-    func deleteMovesMembersToNetworksOfTheirOwn() throws {
+    @Test("Deleting a network refuses with a route moving each VM set to join it, and deletes once they have moved")
+    func deleteRoutesEachJoinerToANetworkOfItsOwn() async throws {
         let harness = makeHarness()
         let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
         let member = makeInstance(in: harness, name: "Member") {
             $0.networkMembership = .network(lab.id)
         }
+        // Inert — Bridged — but its state takes the write, so it moves too.
         let bridged = makeInstance(in: harness, name: "Bridged") {
             $0.networkMode = .bridged
             $0.networkMembership = .network(lab.id)
         }
         let bystander = makeInstance(in: harness, name: "Bystander")
 
+        let isolated = [ConfigurationEntry(key: "network.membership", value: "isolated")]
+        let refusal = CommandError.stepRequired(
+            StepRequirement(
+                message:
+                    "\u{201C}Member\u{201D} and \u{201C}Bridged\u{201D} are set to join \u{201C}Lab\u{201D}. "
+                    + "Move each to another network first, then delete \u{201C}Lab\u{201D}.",
+                routes: [
+                    StepRoute(
+                        title: "Move Each to a Network of Its Own",
+                        steps: [
+                            .setConfiguration(vm: harness.core.summary(member), assignments: isolated),
+                            .setConfiguration(vm: harness.core.summary(bridged), assignments: isolated),
+                        ])
+                ]))
+        #expect(throws: refusal) { try harness.core.deleteNetwork(lab.id.uuidString) }
+        #expect(try harness.core.networks().map(\.id) == [lab.id])
+        #expect(member.configuration.networkMembership == .network(lab.id))
+
+        for step in try #require(refusal.stepRequirement?.routes.first).steps {
+            try await harness.core.take(step)
+        }
         try harness.core.deleteNetwork(lab.id.uuidString)
 
         #expect(try harness.core.networks().isEmpty)
@@ -88,8 +110,32 @@ struct VMCommandCoreNetworkTests {
         #expect(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
     }
 
-    @Test("A member whose state takes no move refuses the whole delete")
-    func aRefusedMoveKeepsTheNetwork() throws {
+    @Test("One VM set to join a network is named alone")
+    func deleteNamesASingleJoiner() throws {
+        let harness = makeHarness()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
+        let member = makeInstance(in: harness, name: "Member") {
+            $0.networkMembership = .network(lab.id)
+        }
+
+        let error = try #require(
+            { () -> CommandError? in
+                do { try harness.core.deleteNetwork("Lab") } catch let error as CommandError {
+                    return error
+                } catch { return nil }
+                return nil
+            }())
+        let requirement = try #require(error.stepRequirement)
+        #expect(
+            requirement.message
+                == "\u{201C}Member\u{201D} is set to join \u{201C}Lab\u{201D}. Move it to another network first, then delete \u{201C}Lab\u{201D}."
+        )
+        #expect(requirement.routes.map(\.title) == ["Move to a Network of Its Own"])
+        #expect(requirement.routes.flatMap(\.steps).map(\.vm.id) == [member.instanceID])
+    }
+
+    @Test("A member that cannot move refuses the delete with its own refusal, offering no route")
+    func aMemberThatCannotMoveRefusesWithoutARoute() throws {
         let harness = makeHarness()
         let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
         let stopped = makeInstance(in: harness, name: "Stopped") {
@@ -104,7 +150,21 @@ struct VMCommandCoreNetworkTests {
         }
         try VMInstanceFixture.writeSaveFile(for: suspended)
 
-        #expect(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
+        let error = try #require(
+            { () -> CommandError? in
+                do { try harness.core.deleteNetwork("Lab") } catch let error as CommandError {
+                    return error
+                } catch { return nil }
+                return nil
+            }())
+
+        guard case .invalidState(let vm, _, _, let settings) = error else {
+            Issue.record("expected the member's own refusal, got \(error)")
+            return
+        }
+        #expect(vm.id == suspended.instanceID)
+        #expect(settings == [ConfigurationEntry(key: "network.membership", value: "isolated")])
+        #expect(error.stepRequirement == nil)
         #expect(try harness.core.networks().map(\.id) == [lab.id])
         #expect(stopped.configuration.networkMembership == .network(lab.id))
     }

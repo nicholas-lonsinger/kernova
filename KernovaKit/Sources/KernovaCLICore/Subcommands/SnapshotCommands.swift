@@ -106,10 +106,8 @@ extension KernovaCommand.Snapshot {
         static let configuration = CommandConfiguration(
             commandName: "revert",
             abstract: "Return a virtual machine to one of its snapshots.",
-            discussion: "The state the virtual machine is in now is captured as a check-point "
-                + "first, so the revert is undoable; --no-checkpoint discards it instead. A "
-                + "virtual machine that cannot take a snapshot now refuses the check-point. "
-                + "Refuses without --yes, because everything since the snapshot goes.")
+            discussion: "Refuses without --yes, because everything since the snapshot goes; "
+                + "`kernova snapshot take` first keeps the state the virtual machine is in now.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
@@ -118,15 +116,6 @@ extension KernovaCommand.Snapshot {
         /// Which snapshot, by name or identifier.
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         var snapshot: String
-
-        /// Whether to capture the current state before rolling back.
-        ///
-        /// Exclusive rather than last-wins, for the reason `stop`'s methods
-        /// are: a line asking for both has not said which one it meant.
-        @Flag(
-            inversion: .prefixedNo, exclusivity: .exclusive,
-            help: "Capture the current state as a snapshot before reverting.")
-        var checkpoint = true
 
         /// The change a MAC address conflict takes, for a revert that resumes.
         @OptionGroup var macConflict: MACConflictOption
@@ -143,8 +132,8 @@ extension KernovaCommand.Snapshot {
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
             _ = try client.send(
                 .revertToSnapshot(
-                    selector, snapshot: target.id, takingCheckpoint: checkpoint,
-                    consent: options.consent, macAddressRemedy: macConflict.remedy)
+                    selector, snapshot: target.id, consent: options.consent,
+                    macAddressRemedy: macConflict.remedy)
             ).payload()
         }
     }
@@ -177,31 +166,9 @@ extension KernovaCommand.Snapshot {
             defer { client.close() }
             let target = try KernovaCommand.Snapshot.resolve(
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            do {
-                _ = try client.send(
-                    .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
-                ).payload()
-            } catch let failure as CLIFailure {
-                throw Self.explained(failure, deleting: target, of: vm)
-            }
-        }
-
-        /// `failure`, plus the command that takes the step it names when it is
-        /// the refusal to delete `vm`'s Ephemeral Mode baseline.
-        static func explained(
-            _ failure: CLIFailure, deleting target: SnapshotSummary, of vm: String
-        ) -> CLIFailure {
-            guard failure.code == .refusedByState, target.isEphemeralBaseline else { return failure }
-            return CLIFailure(failure.code, failure.message + "\n\n" + ephemeralModeOffHint(vm))
-        }
-
-        /// The command that turns `vm`'s Ephemeral Mode off, with `vm` as a
-        /// shell reads it.
-        static func ephemeralModeOffHint(_ vm: String) -> String {
-            let wordCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
-            let bare = !vm.isEmpty && vm.unicodeScalars.allSatisfy(wordCharacters.contains)
-            let word = bare ? vm : "'" + vm.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
-            return "Turn Ephemeral Mode off with: kernova set \(word) ephemeral=false"
+            _ = try client.send(
+                .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
+            ).payload()
         }
     }
 

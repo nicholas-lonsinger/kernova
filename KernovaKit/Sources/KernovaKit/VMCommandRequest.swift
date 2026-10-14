@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 12
+    public static let currentProtocolVersion = 13
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -84,7 +84,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
 
         case takeSnapshot(VMSelector, name: String, notes: String)
         case revertToSnapshot(
-            VMSelector, snapshot: UUID, takingCheckpoint: Bool, consent: Consent,
+            VMSelector, snapshot: UUID, consent: Consent,
             macAddressRemedy: MACAddressRemedy?)
         case deleteSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
@@ -126,8 +126,8 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case createNetwork(name: String, kind: NetworkKind)
         /// Renames the network `network` names, by identifier or by name.
         case renameNetwork(network: String, newName: String)
-        /// Stops listing the network `network` names, moving each virtual
-        /// machine on it to a network of its own.
+        /// Stops listing the network `network` names; refused while a virtual
+        /// machine is set to join it.
         case deleteNetwork(network: String)
 
         /// Quits Kernova the way the status item's Quit does, save-suspending

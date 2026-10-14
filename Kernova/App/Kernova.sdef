@@ -25,7 +25,6 @@
 
 		<enumeration name="VM stop method" code="KvSM" description="How a stop reaches a powered-off guest.">
 			<enumerator name="shut down" code="KmSd" description="Ask the guest to power itself off."/>
-			<enumerator name="resume then shut down" code="KmRs" description="Resume a paused or suspended guest, then ask it to power off."/>
 			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
 		</enumeration>
 
@@ -115,7 +114,7 @@
 			</property>
 		</class>
 
-		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a NAT network unless kind names another. Deleting one first moves each virtual machine on it to a network of its own.">
+		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a NAT network unless kind names another. Deleting one is refused while a virtual machine is set to join it; setting that machine's network membership to isolated moves it to a network of its own.">
 			<cocoa class="VMNetworkScriptObject"/>
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a virtual machine's network membership names.">
 				<cocoa key="uniqueID"/>

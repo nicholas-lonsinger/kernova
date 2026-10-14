@@ -216,7 +216,8 @@ extension VMCommandResponse {
     }
 
     /// A verb's refusal, plus what a terminal can do about it that an alert's
-    /// buttons would have offered.
+    /// buttons would have offered — a step a refusal routes through, as the
+    /// command line that takes it.
     ///
     /// A guest-account refusal gets no flag hint: the wire's `start` carries no
     /// way to answer for the account, so the core's own message — naming
@@ -227,6 +228,8 @@ extension VMCommandResponse {
             error.message + "\n\nPass --yes to do it anyway."
         case .macAddressRemedyRequired(let prompt):
             error.message + "\n\n" + macAddressRemedyHint(prompt)
+        case .stepRequired(let requirement) where !requirement.routes.isEmpty:
+            error.message + "\n\n" + CommandLineSpelling.routes(of: requirement)
         default:
             error.message
         }

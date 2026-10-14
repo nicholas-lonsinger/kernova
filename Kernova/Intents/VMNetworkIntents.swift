@@ -57,7 +57,7 @@ struct RenameNetworkIntent: AppIntent {
 struct DeleteNetworkIntent: AppIntent {
     static let title: LocalizedStringResource = "Delete Network"
     static let description: IntentDescription? = IntentDescription(
-        "Deletes a named network, first moving each virtual machine on it to a network of its own.",
+        "Deletes a named network. It is refused while a virtual machine is set to join it; Change Virtual Machine Setting moves one, setting network.membership to isolated.",
         categoryName: "Networks")
 
     @Parameter(title: "Network")

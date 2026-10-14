@@ -898,28 +898,6 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.forceStopCallCount == 0)
     }
 
-    @Test("A paused Ephemeral VM's stop refusal names the baseline both its routes end at")
-    func stopPausedOnAnEphemeralVMNamesTheBaseline() async throws {
-        let harness = makeHarness()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = makeInstance(
-            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()),
-            hostState: .ephemeral(baseline: baseline.id))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-
-        let error = try #require(
-            await commandError {
-                try await harness.core.stop(
-                    .id(instance.id), disposition: .graceful, consent: .none)
-            })
-
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.kind == .stopPaused)
-        // Resume-and-shut-down and force-stop both power the VM off, and a
-        // power-off is the revert.
-        #expect(prompt.message.contains("Clean install"))
-    }
-
     /// A Recovery boot is a cold boot, and a bundle holding a slot takes the
     /// restore that slot names instead — so offering Recovery there would name
     /// an outcome the bring-up will not produce, and would leave the sidebar's
@@ -1405,20 +1383,6 @@ struct VMCommandCoreTests {
         #expect(restarting.status == .running)
     }
 
-    @Test("Resume-then-shut-down with every consent restores beside a shared machine ID while the override is on")
-    func resumeFirstStopTakesAConfirmedOverride() async throws {
-        let harness = makeHarness()
-        preferences.allowsDuplicateMachineIDOverride = true
-        let (_, twin) = machineIdentityTwins(in: harness, twinPhase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: twin)
-
-        try await harness.core.stop(
-            .id(twin.id), disposition: .resumeThenShutDown, consent: .all, timeout: nil)
-
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(harness.virtualization.stopCallCount == 1)
-    }
-
     @Test(
         "A shared MAC address on one network is refused even with the override on and confirmed, offering only changes to the network"
     )
@@ -1492,8 +1456,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    .id(reverting.id), snapshot: snapshot.id, consent: .all)
             })
 
         let prompt = try #require(error.macAddressRemedyPrompt)
@@ -1508,8 +1471,8 @@ struct VMCommandCoreTests {
         #expect(holder.status == .running)
     }
 
-    @Test("A revert that resumes beside a shared machine ID asks before its check-point, then reverts")
-    func revertThatResumesAsksBeforeItsCheckpoint() async throws {
+    @Test("A revert that resumes beside a shared machine ID asks, then reverts once confirmed")
+    func revertThatResumesAsksBeforeReverting() async throws {
         let harness = makeHarness()
         preferences.allowsDuplicateMachineIDOverride = true
         let identity = Data([6, 6, 6])
@@ -1526,18 +1489,16 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: true,
+                    .id(reverting.id), snapshot: snapshot.id,
                     consent: Consent([.revertToSnapshot]))
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
         #expect(prompt.title == "Resume \u{201C}Reverting\u{201D} Anyway?")
-        // Asked before the check-point, which the confirmed re-issue takes once.
-        #expect(reverting.snapshotManifest.snapshots.count == 1)
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.revertToSnapshot(
-            .id(reverting.id), snapshot: snapshot.id, takingCheckpoint: false,
+            .id(reverting.id), snapshot: snapshot.id,
             consent: Consent([.revertToSnapshot, .startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.revertedSnapshots.count == 1)
     }
@@ -1576,40 +1537,6 @@ struct VMCommandCoreTests {
         #expect(prompt.vm.id == pending.id)
         #expect(prompt.other.id == holder.id)
     }
-
-    @Test("Resume-then-shut-down of a suspended VM onto a live identity is refused")
-    func resumeThenShutDownOfASuspendedVMOntoALiveIdentityIsRefused() async throws {
-        let harness = makeHarness()
-        let identity = Data([7, 7, 7])
-        let live = makeInstance(in: harness, name: "Live", phase: .running(sessionID: UUID())) {
-            $0.genericMachineIdentifierData = identity
-        }
-        let twin = makeInstance(in: harness, name: "Twin", phase: .suspended) {
-            $0.genericMachineIdentifierData = identity
-        }
-        try VMInstanceFixture.writeSaveFile(for: twin)
-
-        let error = try #require(
-            await commandError {
-                try await harness.core.stop(
-                    .id(twin.id), disposition: .resumeThenShutDown, consent: .all,
-                    timeout: nil)
-            })
-
-        guard case .conflict(_, let other, let reason) = error else {
-            Issue.record("expected a conflict refusal, got \(error)")
-            return
-        }
-        #expect(other.id == live.id)
-        #expect(reason == .machineIdentity)
-        // Refused at admission: the restore never reached the service.
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(harness.virtualization.stopCallCount == 0)
-        #expect(twin.phase == .suspended)
-        #expect(twin.hasSaveFile)
-    }
-
-    // MARK: - Consent
 
     @Test("A force stop with no consent refuses, describing what confirming does")
     func forceStopAsksForConsent() async throws {
@@ -1651,8 +1578,7 @@ struct VMCommandCoreTests {
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.title == "Discard the Saved State of \u{201C}Suspended\u{201D}?")
         #expect(prompt.confirmTitle == "Discard")
-        // A paused VM routes its graceful stop through the stop-paused refusal,
-        // so this one offers no shutdown alternative.
+        // Nothing is live to receive a shutdown, so none is offered.
         #expect(prompt.alternatives.isEmpty)
 
         // Nothing is live to terminate, and the verb still performs the discard
@@ -1663,32 +1589,64 @@ struct VMCommandCoreTests {
         #expect(instance.phase == .stopped)
     }
 
-    @Test("A graceful stop of a live-paused VM refuses with both ways out")
-    func stopPausedAsksWhichWayOut() async throws {
+    @Test("A graceful stop of a live-paused VM refuses as a step naming the resume, whatever the consent")
+    func stopOfAPausedVMRequiresTheResume() async throws {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
 
+        // `.all` is what `--yes` sends: no consent names a resume, so none
+        // can ask for one.
         let error = try #require(
             await commandError {
                 try await harness.core.stop(
-                    .id(instance.id), disposition: .graceful, consent: .none)
+                    .id(instance.id), disposition: .graceful, consent: .all)
             })
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.kind == .stopPaused)
-        #expect(prompt.title == "Stop \u{201C}Paused\u{201D}?")
-        #expect(prompt.confirmTitle == "Resume and Shut Down")
-        // Confirming resumes and shuts the guest down cleanly; only the
-        // alternative terminates it where it stands.
-        #expect(!prompt.confirmIsDestructive)
-        #expect(prompt.alternatives.map(\.disposition) == [.force])
-        #expect(prompt.alternatives.map(\.isDestructive) == [true])
+        #expect(
+            error.stepRequirement
+                == StepRequirement(
+                    message:
+                        "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+                    routes: [
+                        StepRoute(
+                            title: "Resume", steps: [.resume(vm: harness.core.summary(instance))])
+                    ]))
+        #expect(harness.virtualization.resumeCallCount == 0)
         #expect(harness.virtualization.stopCallCount == 0)
+        #expect(instance.status == .paused)
+    }
 
-        // Confirming takes the graceful route the guest can only receive awake.
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+    @Test("A wire stop carrying every consent — `kernova stop --yes` — leaves a paused VM paused, refused as a step")
+    func wireStopWithEveryConsentLeavesAPausedVMPaused() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
+        let router = VMCommandEnvelopeRouter(commands: harness.core)
+
+        let response = await router.respond(
+            to: VMCommandRequest(
+                verb: .stop(.id(instance.id), disposition: .graceful, consent: .all, timeout: nil)))
+
+        #expect(
+            response.result
+                == .failure(.stepRequired(requirement: harness.core.pausedStopRefusal(instance))))
+        #expect(harness.virtualization.resumeCallCount == 0)
+        #expect(harness.virtualization.stopCallCount == 0)
+        #expect(instance.status == .paused)
+    }
+
+    @Test("A restart of a paused VM resumes it, shuts it down, and boots it")
+    func restartOfAPausedVMStillRestarts() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(
+            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
+
+        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+
         #expect(harness.virtualization.resumeCallCount == 1)
         #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
     }
 
     @Test("A suspended VM's graceful stop asks the consent its force path does")
@@ -1761,7 +1719,7 @@ struct VMCommandCoreTests {
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, consent: .all)
         }
         await harness.virtualization.waitUntilSuspended()
 
@@ -1930,7 +1888,7 @@ struct VMCommandCoreTests {
         #expect(instance.snapshotManifest.isEmpty)
     }
 
-    @Test("A revert with no consent refuses, and offers the check-pointed path")
+    @Test("A revert with no consent refuses, offering no other route")
     func revertAsksForConsent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, name: "Reverter", phase: .stopped)
@@ -1941,13 +1899,12 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .none)
+                    .id(instance.id), snapshot: snapshot.id, consent: .none)
             })
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .revertToSnapshot)
         #expect(prompt.confirmTitle == "Revert")
-        #expect(prompt.alternatives.map(\.takesCheckpoint) == [true])
+        #expect(prompt.alternatives.isEmpty)
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
@@ -2087,8 +2044,7 @@ struct VMCommandCoreTests {
         let revert = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    .id(instance.id), snapshot: snapshot.id, consent: .all)
             })
         #expect(revert.isBusy)
         let delete = try #require(
@@ -2169,9 +2125,9 @@ struct VMCommandCoreTests {
     }
 
     @Test(
-        "A revert of a VM whose guest can write an external disk offers no check-point, and refuses one before consent",
+        "A revert of a VM whose guest can write an external disk does not name taking a snapshot first",
         arguments: [VMLifecyclePhase.suspended, .running(sessionID: UUID())])
-    func writableExternalDiskRevertTakesNoCheckPoint(phase: VMLifecyclePhase) async throws {
+    func writableExternalDiskRevertNamesNoSnapshotFirst(phase: VMLifecyclePhase) async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: phase) {
             $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
@@ -2182,45 +2138,7 @@ struct VMCommandCoreTests {
         harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
 
         let prompt = VMCommandCore.revertPrompt(snapshot, on: instance)
-        #expect(prompt.alternatives.isEmpty)
         #expect(!prompt.message.contains("take a snapshot first"))
-
-        // Refused with no consent at all: the check-point is decided before
-        // the confirmation, so no surface confirms a revert it then refuses.
-        let error = try #require(
-            await commandError {
-                try await harness.core.revertToSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .none)
-            })
-        guard case .operationFailed(.revertToSnapshot, _, let message, _) = error else {
-            Issue.record("expected the check-point refusal, got \(error)")
-            return
-        }
-        #expect(
-            message
-                == "\u{201C}Core VM\u{201D} is \(instance.status.phrase(heldByAnotherCopy: false)). "
-                + "Taking a snapshot of a virtual machine with a writable external disk needs it stopped. "
-                + "Revert without taking a snapshot first to go back anyway; everything changed "
-                + "inside the guest since the snapshot will be lost.")
-        #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Clean"])
-    }
-
-    @Test("A revert taking a check-point aborts rather than reverting when the capture fails")
-    func checkPointedRevertAbortsOnCaptureFailure() async throws {
-        let harness = makeHarness()
-        harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        let snapshot = VMSnapshot(name: "Clean", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
-
-        _ = await commandError {
-            try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: true, consent: .all)
-        }
-
-        #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
     @Test("A snapshot the manifest no longer lists refuses by name")
@@ -2255,8 +2173,19 @@ struct VMCommandCoreTests {
             in: harness, phase: phase, hostState: .ephemeral(baseline: baseline.id))
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         let refusal = CommandError.stepRequired(
-            "\u{201C}Clean install\u{201D} is \u{201C}Core VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
-                + "Turn Ephemeral Mode off first, then delete it.")
+            StepRequirement(
+                message:
+                    "\u{201C}Clean install\u{201D} is \u{201C}Core VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
+                    + "Turn Ephemeral Mode off first, then delete it.",
+                routes: [
+                    StepRoute(
+                        title: "Turn Off Ephemeral Mode",
+                        steps: [
+                            .setConfiguration(
+                                vm: harness.core.summary(instance),
+                                assignments: [ConfigurationEntry(key: "ephemeral", value: "false")])
+                        ])
+                ]))
 
         await #expect(throws: refusal) {
             try await harness.core.deleteSnapshot(
@@ -2977,8 +2906,7 @@ struct VMCommandCoreTests {
         let error = try #require(
             await commandError {
                 try await harness.core.revertToSnapshot(
-                    .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false,
-                    consent: .all)
+                    .id(instance.id), snapshot: snapshot.id, consent: .all)
             })
 
         #expect(error.isOperationFailure)

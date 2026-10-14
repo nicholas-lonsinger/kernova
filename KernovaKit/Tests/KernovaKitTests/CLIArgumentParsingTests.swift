@@ -244,59 +244,53 @@ struct CLIArgumentParsingTests {
         #expect(outright.options.yes)
     }
 
-    @Test("A revert check-points by default, and --no-checkpoint is how that is given up")
-    func revertParsesItsCheckpoint() throws {
-        let safe = try #require(
-            try parse(["snapshot", "revert", "Alpha", "Base"]) as? KernovaCommand.Snapshot.Revert)
-        #expect(safe.checkpoint)
-        #expect(safe.snapshot == "Base")
-
-        let asked = try #require(
-            try parse(["snapshot", "revert", "Alpha", "Base", "--checkpoint"])
+    @Test("A revert takes no snapshot of its own, so --no-checkpoint is no flag of it")
+    func revertTakesNoCheckpointFlag() throws {
+        let revert = try #require(
+            try parse(["snapshot", "revert", "Alpha", "Base", "--yes"])
                 as? KernovaCommand.Snapshot.Revert)
-        #expect(asked.checkpoint)
-
-        let bare = try #require(
-            try parse(["snapshot", "revert", "Alpha", "Base", "--no-checkpoint", "--yes"])
-                as? KernovaCommand.Snapshot.Revert)
-        #expect(!bare.checkpoint)
-        #expect(bare.options.yes)
+        #expect(revert.snapshot == "Base")
+        #expect(revert.options.yes)
+        for flag in ["--checkpoint", "--no-checkpoint"] {
+            #expect(throws: (any Error).self, "\(flag)") {
+                try parse(["snapshot", "revert", "Alpha", "Base", flag])
+            }
+        }
     }
 
-    @Test("A refused delete of the Ephemeral baseline gains the command that turns the mode off")
-    func baselineDeleteRefusalNamesTheCommand() {
-        func summary(baseline: Bool) -> SnapshotSummary {
-            SnapshotSummary(
-                id: UUID(), name: "Base", notes: "", kind: "warm", createdAt: Date(),
-                isCurrent: false, isEphemeralBaseline: baseline)
+    @Test("A refusal's routes render as the command lines that take each step")
+    func stepRoutesRenderAsCommandLines() {
+        func vm(_ name: String) -> VMSummary {
+            VMSummary(
+                id: UUID(), name: name, status: "paused", ipAddress: .unavailable, heldByAnotherCopy: false)
         }
-        let refusal = CLIFailure(
-            .refusedByState,
-            "\u{201C}Base\u{201D} is \u{201C}My VM\u{201D}\u{2019}s Ephemeral Mode baseline. "
-                + "Turn Ephemeral Mode off first, then delete it.")
-
         #expect(
-            KernovaCommand.Snapshot.Delete.explained(refusal, deleting: summary(baseline: true), of: "My VM")
-                == CLIFailure(
-                    .refusedByState,
-                    refusal.message
-                        + "\n\nTurn Ephemeral Mode off with: kernova set 'My VM' ephemeral=false"))
+            CommandLineSpelling.routes(
+                of: StepRequirement(
+                    message: "",
+                    routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm("My VM"))])]))
+                == "Resume with: kernova resume 'My VM'")
         #expect(
-            KernovaCommand.Snapshot.Delete.explained(refusal, deleting: summary(baseline: false), of: "My VM")
-                == refusal)
+            CommandLineSpelling.routes(
+                of: StepRequirement(
+                    message: "",
+                    routes: [
+                        StepRoute(
+                            title: "Use a New MAC Address",
+                            steps: [
+                                .discardSavedState(vm: vm("Alpha")),
+                                .setConfiguration(
+                                    vm: vm("Alpha"),
+                                    assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
+                            ])
+                    ]))
+                == "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new")
         #expect(
-            KernovaCommand.Snapshot.Delete.ephemeralModeOffHint("Alpha")
-                == "Turn Ephemeral Mode off with: kernova set Alpha ephemeral=false")
-        #expect(
-            KernovaCommand.Snapshot.Delete.ephemeralModeOffHint("Bob's VM")
-                == #"Turn Ephemeral Mode off with: kernova set 'Bob'\''s VM' ephemeral=false"#)
-    }
-
-    @Test("Asking for both check-point answers at once is a usage error")
-    func revertCheckpointIsExclusive() {
-        #expect(throws: (any Error).self) {
-            try parse(["snapshot", "revert", "Alpha", "Base", "--checkpoint", "--no-checkpoint"])
-        }
+            CommandLineSpelling.line(
+                for: .setConfiguration(
+                    vm: vm("Bob's VM"),
+                    assignments: [ConfigurationEntry(key: "ephemeral", value: "false")]))
+                == #"kernova set 'Bob'\''s VM' ephemeral=false"#)
     }
 
     @Test("A capture takes its name and note, and leaves both to Kernova when unnamed")
@@ -593,10 +587,7 @@ struct CLIArgumentParsingTests {
 
         let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
         #expect(forced.method.disposition == .force)
-
-        let resumed = try #require(
-            try parse(["stop", "Alpha", "--resume-first"]) as? KernovaCommand.Stop)
-        #expect(resumed.method.disposition == .resumeThenShutDown)
+        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--resume-first"]) }
     }
 
     @Test("stop takes --timeout, and waits for nothing without one")
@@ -614,7 +605,7 @@ struct CLIArgumentParsingTests {
         // The deadline bounds the wait for the guest to actually power off,
         // which every disposition has to travel — a force stop simply gets
         // there in one step.
-        for method in ["--force", "--graceful", "--resume-first"] {
+        for method in ["--force", "--graceful"] {
             let stop = try #require(
                 try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
             #expect(stop.timeout == 5)

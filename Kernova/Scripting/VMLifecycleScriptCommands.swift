@@ -9,7 +9,6 @@ import KernovaLogging
 /// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
 enum VMScriptStopMethod: CaseIterable {
     case shutDown
-    case resumeThenShutDown
     case force
 
     /// The way of stopping `disposition` names. Exhaustive, so a new
@@ -17,7 +16,6 @@ enum VMScriptStopMethod: CaseIterable {
     init(_ disposition: StopDisposition) {
         switch disposition {
         case .graceful: self = .shutDown
-        case .resumeThenShutDown: self = .resumeThenShutDown
         case .force: self = .force
         }
     }
@@ -33,7 +31,6 @@ enum VMScriptStopMethod: CaseIterable {
     var term: String {
         switch self {
         case .shutDown: "shut down"
-        case .resumeThenShutDown: "resume then shut down"
         case .force: "force"
         }
     }
@@ -42,7 +39,6 @@ enum VMScriptStopMethod: CaseIterable {
     var code: FourCharCode {
         switch self {
         case .shutDown: FourCharCode(scriptingCode: "KmSd")
-        case .resumeThenShutDown: FourCharCode(scriptingCode: "KmRs")
         case .force: FourCharCode(scriptingCode: "KmFo")
         }
     }
@@ -51,7 +47,6 @@ enum VMScriptStopMethod: CaseIterable {
     var disposition: StopDisposition {
         switch self {
         case .shutDown: .graceful
-        case .resumeThenShutDown: .resumeThenShutDown
         case .force: .force
         }
     }

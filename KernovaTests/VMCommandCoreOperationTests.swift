@@ -171,7 +171,7 @@ struct VMCommandCoreOperationTests {
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, consent: .all)
         }
         // Parked before the revert ends the session it holds: the stop window.
         await virtualization.waitUntilSuspended()
@@ -223,7 +223,7 @@ struct VMCommandCoreOperationTests {
 
         let revert = Task { @MainActor in
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, consent: .all)
         }
         await virtualization.waitUntilSuspended()
         #expect(instance.isHeldByRevert)

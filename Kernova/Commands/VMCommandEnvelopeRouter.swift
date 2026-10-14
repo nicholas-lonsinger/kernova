@@ -196,11 +196,9 @@ struct VMCommandEnvelopeRouter {
 
         case .takeSnapshot(let selector, let name, let notes):
             return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
-        case .revertToSnapshot(
-            let selector, let snapshot, let takingCheckpoint, let consent, let remedy):
+        case .revertToSnapshot(let selector, let snapshot, let consent, let remedy):
             try await commands.revertToSnapshot(
-                selector, snapshot: snapshot, takingCheckpoint: takingCheckpoint,
-                consent: consent, macAddressRemedy: remedy)
+                selector, snapshot: snapshot, consent: consent, macAddressRemedy: remedy)
             return .ok
         case .deleteSnapshot(let selector, let snapshot, let consent):
             try await commands.deleteSnapshot(selector, snapshot: snapshot, consent: consent)

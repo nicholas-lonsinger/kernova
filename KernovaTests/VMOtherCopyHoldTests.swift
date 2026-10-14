@@ -519,7 +519,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(throws: CommandError.self) {
             try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: false, consent: .all)
+                .id(instance.id), snapshot: snapshot.id, consent: .all)
         }
 
         #expect(capture.refusals.count == 1, "\(capture.messages)")
@@ -608,7 +608,7 @@ struct VMOtherCopyHoldTests {
 
         await #expect(
             throws: CommandError.stepRequired(
-                VMCommandCore.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+                harness.core.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
         ) {
             try await harness.core.deleteSnapshot(
                 .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))

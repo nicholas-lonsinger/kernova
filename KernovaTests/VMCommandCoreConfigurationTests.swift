@@ -827,8 +827,9 @@ struct VMCommandCoreConfigurationTests {
 
         #expect(
             throws: CommandError.stepRequired(
-                "Ephemeral Mode returns the virtual machine to a snapshot, and this one has none. "
-                    + "Take a snapshot first.")
+                StepRequirement(
+                    message: "Ephemeral Mode returns the virtual machine to a snapshot, and this "
+                        + "one has none. Take a snapshot first."))
         ) {
             try harness.core.setConfiguration(
                 .name("Alpha"),

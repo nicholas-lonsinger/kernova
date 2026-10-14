@@ -236,6 +236,11 @@ final class DetailAlertsPresenter: NSObject {
         forceStopConfig(instance)
     }
 
+    /// The paused VM's Stop sheet, so a test can assert its copy and layout.
+    func pausedStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
+        pausedStopConfig(instance)
+    }
+
     /// The start-failed removal offer's rendered copy and buttons, so a test can
     /// assert what each case states and that nothing destructive takes Return.
     func startFailedAttachmentAlertForTesting(
@@ -397,7 +402,7 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     func presentStopPaused(for instance: VMInstance) {
-        enqueue { $0.present($0.stopPausedConfig(instance)) }
+        enqueue { $0.present($0.pausedStopConfig(instance)) }
     }
 
     func presentCancelPreparing(for arrival: VMArrival) {
@@ -723,26 +728,31 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     /// The revert confirmation.
-    ///
-    /// Which actions exist, and every word of the copy, come from the refusal
-    /// the core raises; this only draws them.
     private func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
         AlertConfiguration(
-            confirming: VMCommandCore.revertPrompt(snapshot, on: vm),
+            confirming: Self.revertPrompt(snapshot, on: vm),
             confirm: { [weak self] in
                 guard let self else { return }
                 Task { await self.viewModel.revert(vm, to: snapshot) }
             },
-            alternative: { [weak self] alternative in
+            alternative: { [weak self] _ in
                 guard let self else { return }
-                guard alternative.takesCheckpoint else {
-                    Self.reportUnhandledAlternative(alternative, on: "revert")
-                    return
-                }
-                Task { await self.viewModel.revert(vm, to: snapshot, takingCheckpoint: true) }
+                Task { await self.viewModel.revert(vm, to: snapshot, takingSnapshotFirst: true) }
             })
+    }
+
+    /// The core's revert confirmation, with Take Snapshot, Then Revert beside
+    /// it wherever Take Snapshot is admitted: the app chains the two verbs.
+    static func revertPrompt(_ snapshot: VMSnapshot, on vm: VMInstance) -> ConfirmationPrompt {
+        let prompt = VMCommandCore.revertPrompt(snapshot, on: vm)
+        guard vm.snapshotCaptureMode != nil else { return prompt }
+        return ConfirmationPrompt(
+            kind: prompt.kind, title: prompt.title, message: prompt.message,
+            confirmTitle: prompt.confirmTitle, confirmIsDestructive: prompt.confirmIsDestructive,
+            dismissTitle: prompt.dismissTitle,
+            alternatives: [ConfirmationAlternative(title: "Take Snapshot, Then Revert")])
     }
 
     /// The delete-snapshot confirmation; for the VM's Ephemeral baseline, one
@@ -809,24 +819,34 @@ final class DetailAlertsPresenter: NSObject {
             ])
     }
 
-    private func stopPausedConfig(_ vm: VMInstance) -> AlertConfiguration {
-        // This alert is the confirmation, so both buttons call the facade
-        // directly: `requestForceStop` presents its own alert, which would stack
-        // on top of this one.
-        AlertConfiguration(
-            confirming: VMCommandCore.stopPausedPrompt(vm),
-            confirm: { [weak self] in
-                guard let self else { return }
-                Task { await self.viewModel.resumeAndStop(vm) }
-            },
-            alternative: { [weak self] alternative in
-                guard let self else { return }
-                guard alternative.disposition == .force else {
-                    Self.reportUnhandledAlternative(alternative, on: "stop paused")
-                    return
-                }
-                Task { await self.viewModel.forceStop(vm) }
-            })
+    /// The Stop a paused VM offers: the guest takes the shutdown request only
+    /// awake, so the app resumes it and then stops it, or force stops it.
+    private func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+        // Both choices end in a power-off, and an Ephemeral VM's power-off is
+        // a revert, so the outcome the mode produces belongs here as much as in
+        // the force-stop refusal.
+        let ephemeralReturn =
+            vm.ephemeralBaselineSnapshot.map {
+                " Either way it is ephemeral, so it returns to \u{201C}\($0.name)\u{201D}."
+            } ?? ""
+        // This alert is the confirmation, so both actions call the view model
+        // directly: `requestForceStop` presents its own alert, which would
+        // stack on top of this one.
+        return AlertConfiguration(
+            title: "Stop \u{201C}\(vm.name)\u{201D}?",
+            message:
+                "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
+            buttons: [
+                AlertButton("Resume and Shut Down", role: .default) { [weak self] in
+                    guard let self else { return }
+                    Task { await self.viewModel.resumeAndStop(vm) }
+                },
+                AlertButton("Cancel", role: .cancel),
+                AlertButton("Force Stop", role: .destructive) { [weak self] in
+                    guard let self else { return }
+                    Task { await self.viewModel.forceStop(vm) }
+                },
+            ])
     }
 
     private func errorConfig(_ message: String, title: String) -> AlertConfiguration {

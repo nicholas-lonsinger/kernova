@@ -195,6 +195,32 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// Deletes the network `id` identifies, first moving each VM set to join
+    /// it to a network of its own — the route the delete's refusal names, then
+    /// the delete again.
+    ///
+    /// The core offers that route only once every move in it passes its
+    /// gates, and the moves and the delete run in one main-actor turn, so
+    /// every VM moves and the network goes, or nothing changes; only a failed
+    /// save can leave a move made.
+    func deleteNetwork(_ id: UUID) throws {
+        do {
+            try commands.deleteNetwork(id.uuidString)
+        } catch let error as CommandError {
+            guard let route = error.stepRequirement?.routes.first,
+                error.stepRequirement?.routes.count == 1
+            else { throw error }
+            let moves = try route.steps.map { step in
+                guard case .setConfiguration(let vm, let assignments) = step else { throw error }
+                return (vm, assignments)
+            }
+            for (vm, assignments) in moves {
+                try commands.setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
+            }
+            try commands.deleteNetwork(id.uuidString)
+        }
+    }
+
     /// Records the screen `instance`'s display was last full screen on.
     ///
     /// Kernova's own bookkeeping rather than a user's edit, so it takes no key:
@@ -962,9 +988,12 @@ final class VMLibraryViewModel {
     /// said no to it. A question that could not be asked leaves its refusal
     /// standing, and that refusal takes the ordinary error surface like every
     /// other, queued behind whatever is on screen.
+    ///
+    /// Answers whether the verb ran.
+    @discardableResult
     private func runAsking(
         on instance: VMInstance, _ verb: (Consent, MACAddressRemedy?) async throws -> Void
-    ) async {
+    ) async -> Bool {
         do {
             try await VMConsentPolicy.run(
                 prompting: { try await self.askToConfirm($0) },
@@ -974,6 +1003,7 @@ final class VMLibraryViewModel {
                     prompting: { try await self.askForGuestAccount($0) },
                     { try await verb(consent, remedy) })
             }
+            return true
         } catch is GuestAccountPromptDismissed {
             #log(
                 Self.logger, .notice,
@@ -987,6 +1017,7 @@ final class VMLibraryViewModel {
         } catch {
             present(error, for: instance)
         }
+        return false
     }
 
     /// Puts a confirmation on screen and waits for the user's answer.
@@ -1052,21 +1083,34 @@ final class VMLibraryViewModel {
         }
     }
 
+    /// A graceful stop, or — for a live-paused guest, which cannot take one —
+    /// the sheet offering Resume and Shut Down or Force Stop.
+    ///
+    /// The pause is read in the same main-actor turn the core reads it in
+    /// before refusing, so the two cannot disagree.
     func stop(_ instance: VMInstance) async {
-        // Unconfirmed: a live-paused guest cannot take an ACPI shutdown, and
-        // the core says so by refusing — which is what raises the sheet.
+        guard !instance.isLivePaused else {
+            presenter?.presentStopPaused(for: instance)
+            return
+        }
         await run(on: instance) {
             try await self.commands.stop(
                 .id(instance.id), disposition: .graceful, consent: .none)
         }
     }
 
-    /// Resumes a paused VM, or restores a suspended one, then requests a
-    /// graceful ACPI shutdown — the stop-paused sheet's default action.
+    /// Resumes a paused VM, then requests a graceful shutdown — the stop-paused
+    /// sheet's default action, as two verbs. The resume asks what any resume
+    /// asks, and a resume that does not happen stops nothing.
     func resumeAndStop(_ instance: VMInstance) async {
+        let resumed = await runAsking(on: instance) { consent, remedy in
+            try await self.commands.resume(
+                .id(instance.id), consent: consent, macAddressRemedy: remedy)
+        }
+        guard resumed else { return }
         await run(on: instance) {
             try await self.commands.stop(
-                .id(instance.id), disposition: .resumeThenShutDown, consent: .none)
+                .id(instance.id), disposition: .graceful, consent: .none)
         }
     }
 
@@ -1176,15 +1220,28 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Reverts to `snapshot`, optionally check-pointing the current state
-    /// first — the revert confirmation's two actions, which already gave the
-    /// revert's own consent.
+    /// Reverts to `snapshot`, first taking a snapshot of the current state
+    /// when `takingSnapshotFirst` — the revert confirmation's two actions,
+    /// which already gave the revert's own consent.
+    ///
+    /// Two verbs: a capture that fails reverts nothing, and the capture sits
+    /// outside the revert's own questions, so a revert asked again never
+    /// captures twice.
     func revert(
-        _ instance: VMInstance, to snapshot: VMSnapshot, takingCheckpoint: Bool = false
+        _ instance: VMInstance, to snapshot: VMSnapshot, takingSnapshotFirst: Bool = false
     ) async {
+        if takingSnapshotFirst {
+            do {
+                try await commands.takeSnapshot(
+                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "")
+            } catch {
+                present(error, for: instance)
+                return
+            }
+        }
         await runAsking(on: instance) { consent, remedy in
             try await self.commands.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, takingCheckpoint: takingCheckpoint,
+                .id(instance.id), snapshot: snapshot.id,
                 consent: consent.adding(.revertToSnapshot), macAddressRemedy: remedy)
         }
     }
@@ -1759,10 +1816,8 @@ final class VMLibraryViewModel {
 
     /// Opens the sheet that gathers the consent a refusal is asking for.
     ///
-    /// Two refusals open one, both raised by a Stop the user asked for that
-    /// only the core can tell is destructive: a live-paused guest that cannot
-    /// receive the request, and a suspended Ephemeral VM whose stop discards
-    /// its suspended session. A start beside a VM sharing its machine identity
+    /// A Stop the user asked for that only the core can tell is destructive
+    /// opens one: a suspended VM whose stop discards its saved state. A start beside a VM sharing its machine identity
     /// arrives here only when it could not be asked (``runAsking(on:_:)``),
     /// and is shown as the refusal it stands for. Every other confirmation is
     /// raised by the `request…` method that opens its own sheet and knows the
@@ -1771,8 +1826,6 @@ final class VMLibraryViewModel {
     private func presentConfirmation(_ prompt: ConfirmationPrompt, for instance: VMInstance?) {
         guard let instance else { return }
         switch prompt.kind {
-        case .stopPaused:
-            presenter?.presentStopPaused(for: instance)
         case .forceStop:
             presenter?.presentForceStop(for: instance)
         case .startBesideSharedMachineIdentity:

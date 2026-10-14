@@ -200,15 +200,34 @@ struct CLIVerbWireTests {
             forced.sent == [
                 .stop(.idOrName("Alpha"), disposition: .force, consent: .all, timeout: 30)
             ])
+    }
 
-        let resumeFirst = try CLIWire.exchange(
-            ["stop", "Alpha", "--resume-first"], answering: accepted)
+    @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
+    func stopOfAPausedGuestNamesTheResume() throws {
+        let vm = VMSummary(
+            id: UUID(), name: "My VM", status: "paused", ipAddress: .unavailable,
+            heldByAnotherCopy: false)
+        let refusal = StepRequirement(
+            message:
+                "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+            routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)])])
+        let exchanged = try CLIWire.exchange(
+            ["stop", "My VM", "--yes"],
+            answering: VMCommandResponse(result: .failure(.stepRequired(requirement: refusal))))
+
+        // --yes is every consent, and no consent names the resume.
         #expect(
-            resumeFirst.sent == [
-                .stop(
-                    .idOrName("Alpha"), disposition: .resumeThenShutDown, consent: .none,
-                    timeout: nil)
+            exchanged.sent == [
+                .stop(.idOrName("My VM"), disposition: .graceful, consent: .all, timeout: nil)
             ])
+        do {
+            _ = try exchanged.answer.payload()
+            Issue.record("expected a step refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(failure.code.rawValue == 5)
+            #expect(failure.message == refusal.message + "\n\nResume with: kernova resume 'My VM'")
+        }
     }
 
     @Test("suspend crosses as the verb that saves the session")

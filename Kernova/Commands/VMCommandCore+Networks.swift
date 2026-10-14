@@ -54,10 +54,13 @@ extension VMCommandCore {
         let naming = library.instances.filter {
             $0.configuration.networkMembership == .network(network.id)
         }
-        // The VMs on it move or the delete is refused. A VM naming it whose
-        // membership is inert — Bridged, or no device — moves only where its
-        // state takes the write, since nothing it reaches changes either way.
+        // Every member moves first. A VM naming it whose membership is inert —
+        // Bridged, or no device — moves only where its state takes the write,
+        // since nothing it reaches changes either way; the rest keep naming it,
+        // unlisted.
         let members = naming.filter { library.networks.network(joinedBy: $0.configuration) == network }
+        // A member that cannot move refuses the delete with its own refusal, so
+        // a route is offered only when every step in it would be taken.
         for instance in members
         where !capabilities.isAvailable(key, writing: isolated, on: instance) {
             try requireGates(for: [(key: key, value: isolated)], on: instance)
@@ -68,13 +71,28 @@ extension VMCommandCore {
                     instance, entitlements: library.entitlements,
                     networks: library.networks.state))
         }
-        let inert = naming.filter { instance in
-            !members.contains { $0 === instance }
-                && capabilities.isAvailable(key, writing: isolated, on: instance)
+        let joining = naming.filter { instance in
+            members.contains { $0 === instance }
+                || capabilities.isAvailable(key, writing: isolated, on: instance)
         }
-        for instance in members + inert {
-            try setConfiguration(
-                .id(instance.instanceID), assignments: [key.assigning(isolated)], consent: .none)
+        if !joining.isEmpty {
+            let names = DataFormatters.quotedList(joining.map(\.name))
+            let message =
+                joining.count == 1
+                ? "\(names) is set to join \u{201C}\(network.name)\u{201D}. Move it to another network first, then delete \u{201C}\(network.name)\u{201D}."
+                : "\(names) are set to join \u{201C}\(network.name)\u{201D}. Move each to another network first, then delete \u{201C}\(network.name)\u{201D}."
+            throw CommandError.stepRequired(
+                StepRequirement(
+                    message: message,
+                    routes: [
+                        StepRoute(
+                            title: joining.count == 1
+                                ? "Move to a Network of Its Own" : "Move Each to a Network of Its Own",
+                            steps: joining.map {
+                                .setConfiguration(
+                                    vm: summary($0), assignments: [key.assigning(isolated)])
+                            })
+                    ]))
         }
         // A filter naming the network keeps naming it, and admits no VM from
         // here on: one naming a network the library does not list is on
@@ -82,7 +100,7 @@ extension VMCommandCore {
         try library.networks.remove(network.id, verb: .deleteNetwork)
         #log(
             Self.logger, .notice,
-            "Deleted the network \(network.id.uuidString, privacy: .public), moving \(members.count + inert.count, privacy: .public) VMs to networks of their own"
+            "Deleted the network \(network.id.uuidString, privacy: .public)"
         )
     }
 }

@@ -25,17 +25,10 @@ struct FindSnapshotsIntent: AppIntent {
 }
 
 /// Returns a VM to a snapshot.
-///
-/// The checkpoint is an explicit parameter rather than the alternative the
-/// core's confirmation offers: a Shortcut says up front which of the two it
-/// means, so confirming performs exactly what was asked. It defaults on, the
-/// same safe path the app's own alert makes the default button — and because
-/// the choice is made before the confirmation is raised, the confirmation is
-/// labelled with the route that was chosen rather than the core's default.
 struct RevertToSnapshotIntent: AppIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"
     static let description: IntentDescription? = IntentDescription(
-        "Returns a virtual machine to a snapshot, taking one of its current state first unless you turn that off.",
+        "Returns a virtual machine to a snapshot, asking first. Take a snapshot before it to keep the current state.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -44,48 +37,19 @@ struct RevertToSnapshotIntent: AppIntent {
     @Parameter(title: "Snapshot")
     var snapshot: SnapshotEntity
 
-    @Parameter(title: "Take Snapshot First", default: true)
-    var takeCheckpoint: Bool
-
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Revert \(\.$vm) to \(\.$snapshot)") {
-            \.$takeCheckpoint
-        }
+        Summary("Revert \(\.$vm) to \(\.$snapshot)")
     }
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runBringUpWithConsent(asking: checkpointAwareConfirmation) { consent, remedy in
+        try await runBringUpWithConsent { consent, remedy in
             try await gateway.revertToSnapshot(
-                vm.id, snapshot: snapshot.id, takingCheckpoint: takeCheckpoint,
-                consent: consent, macAddressRemedy: remedy)
+                vm.id, snapshot: snapshot.id, consent: consent, macAddressRemedy: remedy)
         }
         return .result()
-    }
-
-    /// The confirmation's accept action, or a refusal for a prompt that offers
-    /// no checkpoint when this action was configured to take one.
-    ///
-    /// The core refuses a checkpoint Take Snapshot would refuse before it asks
-    /// (``VMCommandCore``'s `checkpointRefusal(on:)`), naming the reason; this
-    /// names the toggle for any prompt that still arrives without one.
-    private func checkpointAwareConfirmation(
-        _ prompt: ConfirmationPrompt
-    ) throws -> (title: String, isDestructive: Bool) {
-        guard
-            let action = VMConsentPolicy.revertAction(prompt, takingCheckpoint: takeCheckpoint)
-        else {
-            throw CommandError.operationFailed(
-                verb: .revertToSnapshot,
-                message:
-                    "\u{201C}\(vm.name)\u{201D} cannot take a snapshot in its current state, so it "
-                    + "cannot be reverted with Take Snapshot First turned on. Turn that off to "
-                    + "revert without one."
-            )
-        }
-        return action
     }
 }
 

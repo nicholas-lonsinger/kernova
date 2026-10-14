@@ -735,14 +735,9 @@ extension VMCommandCore {
             try require(anyOf: [.stop, .discardSavedState], on: instance)
             // VZ rejects `requestStop()` on a paused VM ("Invalid virtual
             // machine state"), so a live-paused guest has to be resumed first
-            // or terminated — which is a choice, not a detail.
+            // or terminated — each a request of its own.
             if instance.isLivePaused {
-                guard consent.covers(.stopPaused) else {
-                    throw CommandError.confirmationRequired(Self.stopPausedPrompt(instance))
-                }
-                try await resumeThenShutDown(
-                    instance, identity: VMIdentityOverride(consent).unattended)
-                return
+                throw CommandError.stepRequired(pausedStopRefusal(instance))
             }
             guard consent.covers(.forceStop) || !instance.holdsSuspendedSession else {
                 throw CommandError.confirmationRequired(Self.forceStopPrompt(instance))
@@ -757,15 +752,6 @@ extension VMCommandCore {
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
-        case .resumeThenShutDown:
-            // Decided with the identity the restore will claim under, which
-            // the `.resume` capability's gate would decide without.
-            let identity = VMIdentityOverride(consent).unattended
-            switch instance.activity.decide(.resume, posture: .commit, identity: identity) {
-            case .admit, .join: break
-            case .refuse(let reason): throw admissionRefusal(reason, on: instance, verb: .resume)
-            }
-            try await resumeThenShutDown(instance, identity: identity)
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -789,49 +775,28 @@ extension VMCommandCore {
         }
     }
 
-    /// Resumes a paused VM, or restores a suspended one, then requests a
-    /// graceful ACPI shutdown.
-    ///
-    /// A restore beside a VM sharing the machine identity is asked about by no
-    /// one — the caller asked for a stop — so `identity` is unattended.
-    private func resumeThenShutDown(
-        _ instance: VMInstance, identity: VMIdentityOverride
-    ) async throws {
-        do {
-            try await resumeOrRestore(instance, policy: .command(identity))
-            try await lifecycle.requestStop(instance)
-        } catch {
-            #log(
-                Self.logger, .error,
-                "Failed to resume-and-stop '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw failure(error, verb: .stop, on: instance)
-        }
+    /// The refusal a paused VM's graceful stop raises: the guest receives the
+    /// shutdown request only awake, so it takes a resume first, or a force
+    /// stop instead.
+    func pausedStopRefusal(_ instance: VMInstance) -> StepRequirement {
+        StepRequirement(
+            message:
+                "\u{201C}\(instance.name)\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+            routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))])])
     }
 
-    /// The two-choice refusal a paused VM's graceful stop raises: confirming
-    /// takes the graceful route the guest can only receive awake, and the
-    /// alternative terminates it where it stands.
-    static func stopPausedPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
-        // Both choices end in a power-off, and an Ephemeral VM's power-off is
-        // a revert, so the outcome the mode produces belongs here as much as in
-        // the force-stop refusal.
-        let ephemeralReturn =
-            instance.ephemeralBaselineSnapshot.map {
-                " Either way it is ephemeral, so it returns to \u{201C}\($0.name)\u{201D}."
-            } ?? ""
-        return ConfirmationPrompt(
-            kind: .stopPaused,
-            title: "Stop \u{201C}\(instance.name)\u{201D}?",
-            message:
-                "\u{201C}\(instance.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
-            confirmTitle: "Resume and Shut Down",
-            confirmIsDestructive: false,
-            dismissTitle: "Cancel",
-            alternatives: [
-                ConfirmationAlternative(
-                    title: "Force Stop", isDestructive: true, disposition: .force)
-            ])
+    /// Requests a graceful shutdown of a live guest, resuming it first when it
+    /// is paused: restart's own stop, which the caller asked of a running VM
+    /// whatever its pause.
+    private func shutDown(_ instance: VMInstance) async throws {
+        do {
+            if instance.isLivePaused {
+                try await lifecycle.resume(instance)
+            }
+            try await lifecycle.requestStop(instance)
+        } catch {
+            throw failure(error, verb: .stop, on: instance)
+        }
     }
 
     /// The refusal a force stop raises, worded for what it actually discards.
@@ -891,8 +856,8 @@ extension VMCommandCore {
             // consequence the message names rather than the command.
             confirmTitle = "Force Stop"
         }
-        // A paused VM routes through the stop-paused refusal instead, so
-        // offering the graceful shutdown here would chain one onto the other.
+        // A paused VM's graceful stop is refused until it resumes, so offering
+        // it here would offer a refusal.
         let alternatives =
             instance.activity.decide(.sessionAction(.requestStop), posture: .commit) == .admit
                 && !instance.isLivePaused
@@ -1094,7 +1059,7 @@ extension VMCommandCore {
         }
         instance.activity.follow(boot, whenSessionEnds: sessionID)
         do {
-            try await stop(instance, disposition: .graceful, consent: .all)
+            try await shutDown(instance)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has
