@@ -138,16 +138,6 @@ public final class ClipboardInboundOffers {
     /// re-check that decides whether to cache it, so a test can drive a newer
     /// offer or a teardown into that exact gap.
     public var afterInboundPullForTesting: (@MainActor () async -> Void)?
-
-    /// Waiters sharing the pull for `(generation, repIndex)` — a preview loop and
-    /// a paste fire on the one transfer read as 2.
-    nonisolated public func inboundPullWaiterCountForTesting(
-        generation: UInt64, repIndex: Int
-    ) -> Int {
-        coordinator.waiterCountForTesting(
-            ClipboardTransferID.make(
-                generation: generation, repIndex: repIndex, hostMinted: session.role == .host))
-    }
     #endif
 
     nonisolated private static let logger = KernovaLogger(
@@ -1093,7 +1083,7 @@ public final class ClipboardInboundOffers {
     /// Deferred rather than written inline: the fire's own wait runs the main
     /// event loop, so an offer that landed inside it is live and pastable and
     /// must not be relabelled with the previous offer's failure.
-    private func recordRefusal(_ code: ClipboardErrorCode, generation: UInt64) {
+    func recordRefusal(_ code: ClipboardErrorCode, generation: UInt64) {
         MainActorBridge.async {
             guard self.currentGeneration == generation else { return }
             // The ceiling is read now: a peer that raises it after this refusal
@@ -1103,13 +1093,6 @@ public final class ClipboardInboundOffers {
                     code, limitBytes: code == .pasteTooLarge ? self.maxPasteBytes() : nil))
         }
     }
-
-    #if DEBUG
-    /// Test seam for the refusal hop's staleness check.
-    public func recordRefusalForTesting(_ code: ClipboardErrorCode, generation: UInt64) {
-        recordRefusal(code, generation: generation)
-    }
-    #endif
 
     /// Whether a refusal for `entry` may be reported now, opening the burst
     /// window when it may.

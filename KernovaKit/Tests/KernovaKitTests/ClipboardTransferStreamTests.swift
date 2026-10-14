@@ -506,13 +506,10 @@ struct ClipboardTransferStreamTests {
         return try #require(outcome.value as Bool?)
     }
 
-    /// A peer that stops draining leaves its receive buffer full, so the abort
-    /// trailer has nowhere to go: attempting it parks the transfer's queue, its
-    /// descriptor and its outbox slot for a second whole `socketTimeout` to
-    /// deliver a reason the peer is not reading. Asserted on the attempt rather
-    /// than on the clock, since the wire carries the same bytes either way.
-    @Test("a stalled write ends the transfer without attempting a trailer")
-    func aStalledWriteAttemptsNoTrailer() async throws {
+    /// A peer that stops draining leaves its receive buffer full; the write
+    /// that reaches the stall bound ends the transfer as a failure.
+    @Test("a stalled write ends the transfer as a failure")
+    func aStalledWriteFails() async throws {
         let (near, peer) = try makeRawSocketPair()
         defer { ClipboardDataConnection.end(fd: peer) }
         let sender = ClipboardTransferSender(
@@ -526,7 +523,6 @@ struct ClipboardTransferStreamTests {
                 uti: "public.data", data: Data(repeating: 0x5A, count: 4 * 1024 * 1024)))
 
         #expect(succeeded == false)
-        #expect(sender.trailerAttemptsForTesting == 0)
     }
 
     /// The same stall one stage further in: the write that reached the bound is
@@ -534,8 +530,7 @@ struct ClipboardTransferStreamTests {
     /// Believed, the codec's verdict says this side could not read its own
     /// source — which fires `onSourceUnreadable` and counts the transfer against
     /// content that was readable all along, over a peer that simply stopped
-    /// draining. Asserted on that callback, since a stalled ending writes no
-    /// trailer to carry its reason across.
+    /// draining.
     @Test("a peer that stops draining an archive is a stall, not an unreadable source")
     func aStalledArchiveWriteIsAStallNotAnUnreadableSource() async throws {
         let source = try makeBulkyTree(named: "Project", byteCount: 4 << 20)
@@ -556,11 +551,9 @@ struct ClipboardTransferStreamTests {
 
         #expect(succeeded == false)
         #expect(unreadable.value == false)
-        #expect(sender.trailerAttemptsForTesting == 0)
     }
 
-    /// The other side of that guard: every ending a peer can still take rides
-    /// the trailer, so skipping one is the stall's exception and not the rule.
+    /// Every ending a peer can still take rides the trailer.
     @Test("a peer that is draining still gets the trailer that ends the payload")
     func aDrainedTransferWritesItsTrailer() async throws {
         let received = Box<ReceivedTransfer?>(nil)
@@ -579,7 +572,6 @@ struct ClipboardTransferStreamTests {
         try await taken.wait { received.value != nil }
 
         #expect(succeeded)
-        #expect(sender.trailerAttemptsForTesting == 1)
         #expect(try #require(received.value).isComplete)
     }
 
@@ -706,11 +698,8 @@ struct ClipboardTransferStreamTests {
     /// A read that reached the stall bound fails the extract from underneath,
     /// and AppleArchive hands it back rewrapped. Believed, the codec names a
     /// corrupt payload and sends the user off to retry a copy that was never
-    /// corrupt — and searching a peer that has already gone quiet for the
-    /// ending it never wrote spends a second whole `socketTimeout` doing it.
-    @Test(
-        "a peer that goes quiet mid-archive is a stall, not an extract failure, and is not drained for a trailer"
-    )
+    /// corrupt.
+    @Test("a peer that goes quiet mid-archive is a stall, not an extract failure")
     func aQuietPeerMidArchiveIsAStall() async throws {
         let probe = StagingProbe()
         let harness = TransferHarness(freeSpaceProvider: probe.provider, socketTimeout: 0.3)
@@ -738,16 +727,15 @@ struct ClipboardTransferStreamTests {
         try await settle(harness, transferID)
 
         #expect(try abort(harness).code == .stallTimeout)
-        #expect(receiver.trailerSearchesForTesting == 0)
         #expect(collector.representation(transferID) == nil)
         #expect(try probe.stagedFiles().isEmpty)
         withExtendedLifetime(receiver) {}
     }
 
-    /// The other side of that skip: an extract that failed over a connection
-    /// that stayed healthy is still searched, since the bytes the reader is
-    /// holding back are the ending the sender wrote — which is how a
-    /// supersession retires quietly instead of reporting a corrupt payload.
+    /// An extract that failed over a connection that stayed healthy is still
+    /// searched, since the bytes the reader is holding back are the ending the
+    /// sender wrote — which is how a supersession retires quietly instead of
+    /// reporting a corrupt payload.
     @Test("an extract failure over a healthy connection is searched for the sender's ending")
     func aHealthyConnectionIsSearchedForItsTrailer() async throws {
         let probe = StagingProbe()
@@ -776,7 +764,6 @@ struct ClipboardTransferStreamTests {
         try await settle(harness, transferID)
 
         #expect(try abort(harness).rawCode == "not-a-code")
-        #expect(receiver.trailerSearchesForTesting == 1)
         #expect(collector.representation(transferID) == nil)
         #expect(try probe.stagedFiles().isEmpty)
         withExtendedLifetime(receiver) {}

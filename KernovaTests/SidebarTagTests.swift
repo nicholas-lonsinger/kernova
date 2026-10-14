@@ -151,7 +151,7 @@ struct SidebarTagTests {
             storage.hostStates[original.bundleURL] = original.hostState
 
             viewModel.cloneVM(original, as: outcome)
-            await viewModel.awaitArrivalsForTesting()
+            await viewModel.awaitArrivals()
 
             let clone = try #require(viewModel.instances.first { $0.id != original.id }, "\(outcome)")
             #expect(library.tags(of: clone) == [work], "\(outcome)")
@@ -187,7 +187,7 @@ struct SidebarTagTests {
             #expect(subject.hasSnapshots == (outcome == .exactCopy), "\(outcome)")
             // The tag filter lists it, so registering it selects it.
             #expect(viewModel.selectedID == arrival.id, "\(outcome)")
-            await viewModel.awaitArrivalsForTesting()
+            await viewModel.awaitArrivals()
         }
     }
 
@@ -220,7 +220,7 @@ struct SidebarTagTests {
         #expect(subject.hasSnapshots)
         // The tag filter lists it, so the import selects it.
         #expect(viewModel.selectedID == arrival.id)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
     }
 
     @Test("An import keeps every assignment, one this library does not define inert")
@@ -234,7 +234,7 @@ struct SidebarTagTests {
             .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
 
         #expect(viewModel.importVMs(fromDroppedURLs: [source.url]))
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let imported = try #require(viewModel.instances.first { $0.id == source.config.id })
         #expect(imported.hostState.tags == [work.id, foreign])

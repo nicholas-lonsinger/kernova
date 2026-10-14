@@ -542,15 +542,6 @@ extension VMSettingsViewController {
         passthroughSetting.set(.passthrough(isOn), confirmingIn: view.window)
     }
 
-    #if DEBUG
-    /// Drives the confirmation outcomes without a window/sheet, so tests exercise
-    /// the real enable-commit and cancel-revert paths.
-    func confirmPassthroughEnableForTesting(_ change: ClipboardPassthroughSetting.Change) {
-        passthroughSetting.confirm(change)
-    }
-    func cancelPassthroughEnableForTesting() { passthroughSetting.cancel() }
-    #endif
-
     @objc private func appDidBecomeActive() {
         panelContext.overview.rereadMicPermission()
         apply()

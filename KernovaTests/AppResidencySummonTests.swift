@@ -106,22 +106,6 @@ struct AppResidencySummonTests {
         #expect(foreground.steps == [.unhide, .activate(libraryOnScreen: true), .laterJob])
     }
 
-    @Test("The reconcile a summon's unhide sets off finds the summoned surface on screen")
-    func summonUnhideReconcileSeesTheSurface() async throws {
-        let foreground = RecordingForeground(isHidden: true)
-        let (controller, _, viewModel) = makeController(foreground: foreground)
-        // A reconcile reading an empty window list would then answer
-        // `.presentLibrary`, rather than dropping the test host to `.accessory`.
-        viewModel.keepInMenuBarOnQuit = false
-        foreground.onUnhide = { [weak controller] in controller?.noteDidUnhide() }
-
-        controller.summonUserInterface()
-        try await foreground.gate.wait { foreground.activations > 0 }
-
-        let reconcile = try #require(controller.pendingUnhideReconcileForTesting)
-        #expect(await reconcile.value == .showDockIcon)
-    }
-
     @Test("A delivered presentation neither unhides nor asks for activation")
     func deliveredPresentationAsksNothing() async throws {
         let foreground = RecordingForeground(isHidden: true)

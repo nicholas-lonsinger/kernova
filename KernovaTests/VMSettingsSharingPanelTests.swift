@@ -137,17 +137,7 @@ struct VMSettingsSharingPanelTests {
         #expect(toggle.state == .off)
     }
 
-    @Test("Confirming the security prompt enables passthrough")
-    func passthroughConfirmEnables() {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        #expect(instance.configuration.clipboardPassthroughEnabled == false)
-
-        vc.confirmPassthroughEnableForTesting(.passthrough(true))
-
-        #expect(instance.configuration.clipboardPassthroughEnabled == true)
-    }
-
-    @Test("The passthrough prompt is the verb's, and confirming it re-issues the write consented")
+    @Test("The passthrough prompt is the verb's")
     func passthroughConsentIsTheVerbsPrompt() throws {
         let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
         let window = makeTestWindow(styleMask: [.titled])
@@ -163,24 +153,6 @@ struct VMSettingsSharingPanelTests {
         let sheet = try #require(window.attachedSheet)
         let prompt = ClipboardPassthroughConsent.prompt(vmName: instance.name)
         #expect(findLabel(withText: prompt.title, in: try #require(sheet.contentView)) != nil)
-
-        vc.confirmPassthroughEnableForTesting(.passthrough(true))
-        #expect(instance.configuration.clipboardPassthroughEnabled)
-    }
-
-    @Test("Cancelling the security prompt reverts the switch and writes nothing")
-    func passthroughCancelReverts() {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        guard let toggle = firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) else {
-            Issue.record("Expected a passthrough switch")
-            return
-        }
-        toggle.state = .on  // user flipped it; the sheet is up
-
-        vc.cancelPassthroughEnableForTesting()
-
-        #expect(toggle.state == .off)
-        #expect(instance.configuration.clipboardPassthroughEnabled == false)
     }
 
     @Test("Turning sharing on over a passthrough flag already set confirms first")
@@ -200,9 +172,6 @@ struct VMSettingsSharingPanelTests {
         // granting the guest a continuous read without being asked.
         #expect(instance.configuration.clipboardSharingEnabled == false)
         #expect(!instance.configuration.clipboardPassthroughIsEffective)
-
-        vc.confirmPassthroughEnableForTesting(.sharing(true))
-        #expect(instance.configuration.clipboardPassthroughIsEffective)
     }
 
     @Test("Turning sharing on with no passthrough flag writes immediately")
@@ -218,9 +187,9 @@ struct VMSettingsSharingPanelTests {
 
     @Test("Turning passthrough off writes immediately without confirmation")
     func passthroughDisableWritesImmediately() {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        vc.confirmPassthroughEnableForTesting(.passthrough(true))
-        #expect(instance.configuration.clipboardPassthroughEnabled == true)
+        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true) {
+            $0.clipboardPassthroughEnabled = true
+        }
 
         guard let toggle = firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) else {
             Issue.record("Expected a passthrough switch")

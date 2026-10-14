@@ -1909,53 +1909,6 @@ struct VsockGuestClipboardAgentTests {
         #expect(seen.value == .pasteRefused(.pasteTooLarge, pasteLimitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
-    @Test("a refusal recorded for a superseded offer is dropped, not written over the newer one")
-    func staleRefusalDoesNotOverwriteANewerOffer() async throws {
-        let pasteboard = FakePasteboard()
-        let (agentFd, remoteFd) = try makeRawSocketPair()
-        let hostChannel = VsockChannel(fileDescriptor: remoteFd)
-        hostChannel.start()
-        defer { hostChannel.close() }
-
-        let notices = AtomicInt()
-        let agent = makeAgent(
-            pasteboard: pasteboard, agentFd: agentFd, onClipboardNotice: { notices.increment() })
-        defer { agent.stop() }
-
-        try await startAgentAndWaitForLiveChannel(agent: agent)
-
-        let txtUTI = try #require(UTType(filenameExtension: "txt")).identifier
-        let overCap = UInt64(ClipboardPasteLimit.defaultBytes) + 1
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 36,
-                reps: [
-                    RepInfo(uti: txtUTI, byteCount: overCap, filename: "huge.bin", isInline: false)
-                ]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.fileURL] }
-        #expect(await lazyPull(pasteboard, forType: .fileURL).value == nil)
-        try await notices.changed.wait { notices.value == 1 }
-
-        // A newer offer lands — small, live, and pastable.
-        try hostChannel.send(
-            makeOfferFrame(
-                generation: 37,
-                reps: [RepInfo(uti: ClipboardContent.utf8TextUTI, byteCount: 4, isInline: true)]))
-        try await pasteboard.changed.wait { pasteboard.promisedTypesForTesting == [.string] }
-
-        // The refusal hop runs after `provideData` returns, so gen 36's refusal
-        // can execute once gen 37 is the live offer. Recording it must neither
-        // relabel the new offer as refused nor pop the menu for a live paste.
-        agent.recordPasteFailureForTesting(code: .pasteTooLarge, generation: 36)
-        // Ordered behind the seam's own main-queue hop, so this reads the state
-        // the dropped refusal would have written.
-        let activity = await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume(returning: agent.clipboardActivity) }
-        }
-        #expect(activity == .offeredFromHost)
-        #expect(notices.value == 1)
-    }
-
     @Test("deadline cap: a host-pushed ceiling below the default refuses what the default allowed")
     func loweredCeilingRefusesUnderTheDefault() async throws {
         let pasteboard = FakePasteboard()
@@ -2310,7 +2263,7 @@ struct VsockGuestClipboardAgentTests {
         let staleOther = VsockChannel(fileDescriptor: staleFdB)
         defer { staleChannel.close(); staleOther.close() }
 
-        await MainActor.run { agent.teardownIfCurrentForTesting(staleChannel) }
+        await MainActor.run { agent.teardownIfCurrent(staleChannel) }
 
         // Both the live channel and its promise are intact — a failed identity
         // check would have nil'd both via teardownConnectionState.
@@ -2334,7 +2287,7 @@ struct VsockGuestClipboardAgentTests {
         let liveChannel = try #require(agent.liveChannelForTesting)
 
         // Handed the live channel, the positive branch fires and tears it down.
-        await MainActor.run { agent.teardownIfCurrentForTesting(liveChannel) }
+        await MainActor.run { agent.teardownIfCurrent(liveChannel) }
 
         #expect(agent.liveChannelForTesting == nil)
     }

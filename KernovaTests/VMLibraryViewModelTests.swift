@@ -3495,7 +3495,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeAccountCreationWizard(name: "Provisioned VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let created = try #require(viewModel.instances.first)
         // The four non-secret values are the bundle's; the password is not, so
@@ -3514,7 +3514,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Plain VM", startAfterCreate: false)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let created = try #require(viewModel.instances.first)
         #expect(created.configuration.pendingGuestAccount == nil)
@@ -3540,7 +3540,7 @@ struct VMLibraryViewModelTests {
         #expect(storage.createVMBundleCallCount == 0)
         #expect(diskService.createDiskImageCallCount == 0)
 
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
     }
 
     @Test("createVM settles its arrival into a real VM")
@@ -3549,7 +3549,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "New Linux VM", startAfterCreate: false)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 1)
         let created = try #require(viewModel.instances.first)
@@ -3572,7 +3572,7 @@ struct VMLibraryViewModelTests {
 
         #expect(viewModel.entries.count == 1)
 
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 1)
     }
@@ -3586,7 +3586,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Fail VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         // The failed write never left staging, so that is what is discarded —
@@ -3607,7 +3607,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Disk Fail VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // The half-written bundle goes with the row, and it never left staging,
         // so nothing the watcher can enumerate held a disk-less VM.
@@ -3624,7 +3624,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Auto Start VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         // The start is chained off its own Task, so it can land after the
         // arrival the settle awaited.
         try await waitForChange { viewModel.instances.first?.status == .running }
@@ -3638,7 +3638,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Manual Start VM", startAfterCreate: false)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(virtService.startCallCount == 0)
         #expect(viewModel.instances.first?.status != .running)
@@ -3663,7 +3663,7 @@ struct VMLibraryViewModelTests {
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
 
         diskService.resumeCreateDiskImage()
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         // Cancelled before publication, so the staged tree is the whole of it.
@@ -3695,7 +3695,7 @@ struct VMLibraryViewModelTests {
                 == VMBundleLayout(bundleURL: staged).diskImageURL)
 
         diskService.resumeCreateDiskImage()
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(storage.bundles[destination] != nil)
         #expect(try storage.listVMBundles().contains(destination))
@@ -3736,7 +3736,7 @@ struct VMLibraryViewModelTests {
 
         try viewModel.createVM(from: wizard)
         let destination = try #require(viewModel.arrivals.first).destinationURL
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         #expect(storage.bundles[destination] == nil)
@@ -3777,7 +3777,7 @@ struct VMLibraryViewModelTests {
         wizard.confirmOverwrite()
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let instance = try #require(viewModel.instances.first)
         let context = try #require(instance.configuration.installContext)
@@ -3804,7 +3804,7 @@ struct VMLibraryViewModelTests {
         wizard.ipswDownloadPath = destination.path(percentEncoded: false)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let instance = try #require(viewModel.instances.first)
         let context = try #require(instance.configuration.installContext)
@@ -3971,7 +3971,7 @@ struct VMLibraryViewModelTests {
         wizard.selectLinuxCatalogEntry(entry)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let created = viewModel.instances.first
         #expect(catalogEntry(of: created?.configuration.linuxInstallContext) == entry)
@@ -3991,7 +3991,7 @@ struct VMLibraryViewModelTests {
         wizard.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let created = viewModel.instances.first
         #expect(created?.configuration.linuxInstallContext == nil)
@@ -5084,7 +5084,7 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Imported VM", storage: storage)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 1)
         let imported = viewModel.instances.first
@@ -5109,7 +5109,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let imported = try #require(viewModel.instances.first)
         #expect(imported.hostState.startsAutomaticallyOnLaunch == false)
@@ -5131,7 +5131,7 @@ struct VMLibraryViewModelTests {
         ]
 
         _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
         // rejected the rest with a "preparing operation in progress" error.
@@ -5150,7 +5150,7 @@ struct VMLibraryViewModelTests {
         let second = try makeImportSource(name: "Same Name", storage: storage)
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, second.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // The second bundle's destination must not collide with the first's — reservation consults
         // in-flight arrivals in `entries`, not just on-disk state, so the not-yet-copied first
@@ -5173,7 +5173,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[source.url] = existing.configuration
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 1)
     }
@@ -5190,7 +5190,7 @@ struct VMLibraryViewModelTests {
             preferences: makeTestPreferences())
 
         _ = viewModel.importVMs(fromDroppedURLs: [bundleURL])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 1)
         #expect(viewModel.selectedID == existing.id)
@@ -5208,7 +5208,7 @@ struct VMLibraryViewModelTests {
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, duplicate.url, third.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // The duplicate is a synchronous no-op (select-existing) that must not stall the batch.
         #expect(viewModel.instances.count == 3)
@@ -5227,7 +5227,7 @@ struct VMLibraryViewModelTests {
         let source = try makeImportSource(name: "Missing Source", storage: storage, createOnDisk: false)
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         #expect(presenter.showError == true)
@@ -5244,7 +5244,7 @@ struct VMLibraryViewModelTests {
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
         let destination = try #require(viewModel.arrivals.first).destinationURL
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // The copy landed in staging, so the reserved destination never existed.
         #expect(viewModel.entries.isEmpty)
@@ -5260,7 +5260,7 @@ struct VMLibraryViewModelTests {
         let third = try makeImportSource(name: "Batch VM 3", storage: storage)
 
         _ = viewModel.importVMs(fromDroppedURLs: [first.url, failing.url, third.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.count == 2)
         let importedIDs = Set(viewModel.instances.map(\.configuration.id))
@@ -5307,7 +5307,7 @@ struct VMLibraryViewModelTests {
         _ = viewModel.importVMs(fromDroppedURLs: firstBatch.map(\.url))
         _ = viewModel.importVMs(fromDroppedURLs: secondBatch.map(\.url))
 
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // The second trigger reserves synchronously against the first trigger's already-registered
         // arrivals in `entries`, so every bundle imports with a distinct destination — no
@@ -5359,7 +5359,7 @@ struct VMLibraryViewModelTests {
         #expect(arrival?.name == "Original Copy")
         #expect(viewModel.selectedID == arrival?.id)
 
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
     }
 
     @Test("cloneVM turns its arrival into a VM on success")
@@ -5370,7 +5370,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.arrivals.isEmpty)
         #expect(viewModel.instances.count == 2)
@@ -5393,7 +5393,7 @@ struct VMLibraryViewModelTests {
         instance.activity.placeForTesting(.stopped)
 
         viewModel.cloneVM(instance, as: .newMachine)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         #expect(clone.hostState == VMHostState())
@@ -5442,7 +5442,7 @@ struct VMLibraryViewModelTests {
         try fm.createDirectory(at: layout.restoreStagingURL, withIntermediateDirectories: true)
 
         viewModel.cloneVM(instance, as: .exactCopy)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         var expectedHostState = sourceHostState
@@ -5488,7 +5488,7 @@ struct VMLibraryViewModelTests {
         // The copy reads its entry's network from the snapshot's own
         // configuration, which it carries with the snapshot's directory.
         viewModel.cloneVM(instance, as: .exactCopy)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         #expect(clone.snapshotManifest.snapshot(id: taken)?.network == network)
@@ -5508,7 +5508,7 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.arrivals.count == 1)
 
         // Wait for its copy to fail
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.map(\.id) == [instance.id])
         #expect(viewModel.selectedID == instance.id)
@@ -5528,7 +5528,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.cloneVM(instance)
         let destination = try #require(viewModel.arrivals.first).destinationURL
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         // Every byte the clone wrote went to staging, so a publication that never
         // happened leaves the clone's own bundle URL untouched.
@@ -5597,7 +5597,7 @@ struct VMLibraryViewModelTests {
         viewModel.cloneVM(instance)
 
         #expect(viewModel.arrivals.first?.name == "VM Copy 2")
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
     }
 
     @Test("A clone's additional in-bundle disk keeps its path and id, and its file is copied")
@@ -5618,7 +5618,7 @@ struct VMLibraryViewModelTests {
         storage.bundles[instance.bundleURL] = instance.configuration
 
         viewModel.cloneVM(instance, as: .newMachine)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         #expect(clone.configuration.storageDisks == instance.configuration.storageDisks)
@@ -5660,7 +5660,7 @@ struct VMLibraryViewModelTests {
     private func clonedMachineID(
         of source: VMInstance, in viewModel: VMLibraryViewModel, guestOS: VMGuestOS
     ) async -> Data? {
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         let clone = viewModel.instances.first { $0.id != source.id }
         return guestOS == .macOS
             ? clone?.configuration.machineIdentifierData
@@ -5751,7 +5751,7 @@ struct VMLibraryViewModelTests {
             to: viewModel, storage: storage, guestOS: .macOS, guestVersion: "12.0.1")
 
         viewModel.cloneVMAsAlternate(source)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.instances.map(\.id) == [source.id])
     }

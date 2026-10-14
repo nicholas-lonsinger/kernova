@@ -58,9 +58,6 @@ final class ClipboardTransferSender: @unchecked Sendable {
     private let queue: DispatchQueue
     private let lock = NSLock()
     private var retiredAs: ClipboardStreamAbortCode?
-    #if DEBUG
-    private var trailerAttemptCount = 0
-    #endif
     /// The first stop this side raised, kept apart from what the archive
     /// reports, since AppleArchive rewraps an error thrown out of a callback.
     private let stopBox = ArchiveRefusalBox()
@@ -270,9 +267,6 @@ final class ClipboardTransferSender: @unchecked Sendable {
                 failure.map {
                     ClipboardTransferTrailer(ending: .aborted(rawCode: $0.code.rawValue))
                 } ?? ClipboardTransferTrailer(ending: .complete(digest: writer.digest()))
-            #if DEBUG
-            lock.withLock { trailerAttemptCount += 1 }
-            #endif
             // Best-effort: a connection that died under the payload cannot carry
             // the reason it died for, and the peer already knows.
             try? ClipboardDataConnection.writeTrailer(trailer, fd: fd)
@@ -493,13 +487,4 @@ final class ClipboardTransferSender: @unchecked Sendable {
         try? ClipboardDataConnection.writeFrame(
             .clipboardTransferRefusal(transferID: transferID, code: code, message: message), fd: fd)
     }
-
-    #if DEBUG
-    /// Trailer writes this transfer attempted.
-    ///
-    /// The only thing separating an ending whose reason crossed from one whose
-    /// reason had nowhere to go: a stalled write leaves the peer's buffer full
-    /// either way, so the wire carries the same bytes for both.
-    var trailerAttemptsForTesting: Int { lock.withLock { trailerAttemptCount } }
-    #endif
 }

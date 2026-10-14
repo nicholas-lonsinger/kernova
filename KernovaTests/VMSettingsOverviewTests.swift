@@ -322,8 +322,8 @@ struct VMSettingsOverviewTests {
         #expect(panelSwitch.state == .on)
     }
 
-    @Test("Cancelling the passthrough confirmation puts the panel's switch back")
-    func cancelledPassthroughRevertsEverySurface() throws {
+    @Test("An enable with no window to confirm in puts the panel's switch back")
+    func unconfirmedPassthroughRevertsEverySurface() throws {
         let (vc, instance, _) = makeController { $0.clipboardSharingEnabled = true }
         vc.showCategory(.sharing)
         let panelToggle = try #require(
@@ -331,9 +331,9 @@ struct VMSettingsOverviewTests {
                 $0.action.map(NSStringFromSelector) == "clipboardPassthroughToggled"
             })
 
-        // The user flipped the panel's switch; the confirmation sheet is up.
+        // The offscreen controller has no window to host the confirmation in.
         panelToggle.state = .on
-        vc.cancelPassthroughEnableForTesting()
+        panelToggle.sendAction(panelToggle.action, to: panelToggle.target)
 
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
         #expect(panelToggle.state == .off)

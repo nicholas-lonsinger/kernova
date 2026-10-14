@@ -82,10 +82,6 @@ final class AppResidencyController: WindowResidencyHosting {
     /// change ``hasVisibleUserWindow`` (``windowCloseAffectsActivationPolicy(_:)``).
     private var globalWindowCloseObserver: Any?
 
-    /// The unhide reconcile deferred to the next runloop tick, carrying the
-    /// outcome it applied.
-    private var pendingUnhideReconcile: Task<UnhideOutcome, Never>?
-
     /// The process-wide calls that take the app out of hiding and ask for it
     /// to be frontmost.
     private let foreground: ForegroundControl
@@ -789,12 +785,12 @@ final class AppResidencyController: WindowResidencyHosting {
     /// A summon's unhide runs this too, and finds the summoned surface already
     /// on screen (``leaveHiddenState()``).
     func noteDidUnhide() {
-        pendingUnhideReconcile = Task { @MainActor in self.reconcileUnhide() }
+        Task { @MainActor in self.reconcileUnhide() }
     }
 
     /// Applies ``unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)`` to the app
-    /// AppKit has just brought back, and reports what it applied.
-    private func reconcileUnhide() -> UnhideOutcome {
+    /// AppKit has just brought back.
+    private func reconcileUnhide() {
         let outcome = Self.unhideOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
             keepInMenuBar: viewModel.keepInMenuBarOnQuit)
@@ -808,7 +804,6 @@ final class AppResidencyController: WindowResidencyHosting {
             #log(Self.logger, .notice, "Unhidden with no window left — showing the library")
             presentSummonedInterface()
         }
-        return outcome
     }
 
     /// Re-runs ``syncActivationPolicy()`` on the next runloop tick — after a
@@ -816,12 +811,6 @@ final class AppResidencyController: WindowResidencyHosting {
     private func scheduleActivationPolicySync() {
         Task { @MainActor in self.syncActivationPolicy() }
     }
-
-    #if DEBUG
-    /// The deferred unhide reconcile, which a test awaits for the outcome it
-    /// applied rather than polling for that outcome's effect.
-    var pendingUnhideReconcileForTesting: Task<UnhideOutcome, Never>? { pendingUnhideReconcile }
-    #endif
 
     /// Sets the activation policy, logging the transition.
     ///
