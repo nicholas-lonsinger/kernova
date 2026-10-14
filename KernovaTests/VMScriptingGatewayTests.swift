@@ -84,6 +84,15 @@ struct VMScriptingGatewayTests {
         return description.createCommandInstance()
     }
 
+    /// Cocoa's own `set`, as the command a property write is answered for.
+    private func makeSetCommand() throws -> NSScriptCommand {
+        let description = try #require(
+            NSScriptSuiteRegistry.shared().commandDescription(
+                withAppleEventClass: FourCharCode(scriptingCode: "core"),
+                andAppleEventCode: FourCharCode(scriptingCode: "setd")))
+        return description.createCommandInstance()
+    }
+
     private func makeContainer() throws -> NSScriptClassDescription {
         try #require(NSScriptClassDescription(for: NSApplication.self))
     }
@@ -258,6 +267,62 @@ struct VMScriptingGatewayTests {
         #expect(vm.networkMode == nil)
         #expect(vm.macAddress == nil)
         #expect(vm.ipAddress == nil)
+    }
+
+    // MARK: - Configuration
+
+    @Test("Setting a VM's network membership, network mode or MAC address writes its key by identifier")
+    func settingANetworkPropertyWritesItsKey() throws {
+        let commands = MockVMCommanding()
+        let alpha = makeSummary(name: "Alpha")
+        commands.library = [alpha]
+        // The object holds its gateway weakly; the app's lives as long as it does.
+        let gateway = makeGateway(commands)
+        let vm = try #require(gateway.virtualMachines().first)
+
+        vm.networkMembership = "isolated"
+        vm.networkMode = "hostOnly"
+        vm.macAddress = "new"
+
+        #expect(commands.setConfigurationCalls.map(\.selector) == Array(repeating: .id(alpha.id), count: 3))
+        #expect(
+            commands.setConfigurationCalls.map(\.assignments) == [
+                [VMConfigurationKeyRegistry.networkMembership.assigning("isolated")],
+                [VMConfigurationKeyRegistry.networkMode.assigning("hostOnly")],
+                [VMConfigurationKeyRegistry.networkMAC.assigning("new")],
+            ])
+        #expect(commands.setConfigurationCalls.allSatisfy { $0.consent == .none })
+    }
+
+    @Test("Setting a VM's network mode to missing value turns its networking off")
+    func missingNetworkModeIsNone() throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Alpha")]
+        let gateway = makeGateway(commands)
+        let vm = try #require(gateway.virtualMachines().first)
+
+        vm.networkMode = nil
+
+        #expect(
+            commands.setConfigurationCalls.map(\.assignments)
+                == [[VMConfigurationKeyRegistry.networkMode.assigning(VMConfigurationKeyRegistry.noNetworkValue)]])
+    }
+
+    @Test("A refused setting is recorded on the set command")
+    func aRefusedSettingIsRecorded() throws {
+        let commands = MockVMCommanding()
+        commands.library = [makeSummary(name: "Alpha")]
+        let refusal = CommandError.invalidArgument("network.membership takes common, isolated, or a network.")
+        commands.setConfigurationError = refusal
+        let gateway = makeGateway(commands)
+        let command = try makeSetCommand()
+        let vm = try #require(gateway.virtualMachines().first)
+        gateway.answeringCommand = command
+
+        vm.networkMembership = "Nowhere"
+
+        #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
+        #expect(command.scriptErrorString == refusal.message)
     }
 
     // MARK: - Verb dispatch

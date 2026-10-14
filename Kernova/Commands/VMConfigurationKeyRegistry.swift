@@ -299,6 +299,10 @@ enum VMConfigurationKeyRegistry {
     /// device at all.
     static let noNetworkValue = "none"
 
+    /// What the MAC address key takes for a fresh address. A read answers the
+    /// address itself, never this.
+    static let newMACAddressValue = "new"
+
     static let keys: [VMConfigurationKey] = [
         cpus, memory, displayWidth, displayHeight, displayHiDPI, displaySizeToWindow,
         displayAutoResize, displayPreference, audioInput, audioOutput, inputDevices,
@@ -599,7 +603,8 @@ enum VMConfigurationKeyRegistry {
     static let networkMAC = VMConfigurationKey(
         name: "network.mac",
         summary:
-            "The guest's MAC address as six colon-separated hex pairs; empty removes it.",
+            "The guest's MAC address as six colon-separated hex pairs, or \(newMACAddressValue) "
+            + "for a fresh one; empty removes it.",
         gate: .atRest,
         read: { $0.macAddress ?? "" },
         write: { value, config, _ in
@@ -608,10 +613,15 @@ enum VMConfigurationKeyRegistry {
                 config.macAddress = nil
                 return
             }
+            guard trimmed.lowercased() != newMACAddressValue else {
+                config.macAddress = GuestMACAddress.random()
+                return
+            }
             guard let normalized = GuestMACAddress.normalized(trimmed) else {
                 throw CommandError.invalidArgument(
                     "\u{201C}\(value)\u{201D} is not a MAC address a guest can send from. "
-                        + "Give six colon-separated hex pairs, unicast and not all zero.")
+                        + "Give six colon-separated hex pairs, unicast and not all zero, "
+                        + "or \(newMACAddressValue) for a fresh one.")
             }
             config.macAddress = normalized
         },

@@ -559,7 +559,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         // whatever was typed, so committing first would only refuse a typed
         // duplicate with an alert about an address no longer in play.
         macAddressField.abortEditing()
-        write(VMConfigurationKeyRegistry.networkMAC.assigning(GuestMACAddress.random()))
+        write(VMConfigurationKeyRegistry.networkMAC.assigning(VMConfigurationKeyRegistry.newMACAddressValue))
         refreshResolved()
         refreshNetwork()
     }

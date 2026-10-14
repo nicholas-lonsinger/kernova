@@ -78,6 +78,9 @@ final class MockVMCommanding: VMCommanding {
     var configurationKeyDescriptors: [ConfigurationKeyDescriptor] = []
     /// What `configuration(_:keys:)` answers with.
     var configurationEntries: [ConfigurationEntry] = []
+    /// What `setConfiguration(_:assignments:consent:)` answers with; the
+    /// assignments themselves when unset.
+    var setConfigurationAnswer: [ConfigurationEntry]?
     /// The settled row a waited clone or import answers with; the row it
     /// registered when unset.
     var outcomeResult: VMSummary?
@@ -285,6 +288,8 @@ final class MockVMCommanding: VMCommanding {
     var cancelPreparingConsentPrompt: ConfirmationPrompt?
     /// The same round trip for `cancelGuestSetup`.
     var cancelGuestSetupConsentPrompt: ConfirmationPrompt?
+    /// The same round trip for `setConfiguration`.
+    var setConfigurationConsentPrompt: ConfirmationPrompt?
     /// The same round trip for a trashing attachment removal.
     var removeAttachmentConsentPrompt: ConfirmationPrompt?
 
@@ -854,7 +859,10 @@ final class MockVMCommanding: VMCommanding {
     ) throws -> [ConfigurationEntry] {
         setConfigurationCalls.append((selector, assignments, consent))
         if let setConfigurationError { throw setConfigurationError }
-        return assignments
+        if let setConfigurationConsentPrompt, !consent.covers(setConfigurationConsentPrompt.kind) {
+            throw CommandError.confirmationRequired(setConfigurationConsentPrompt)
+        }
+        return setConfigurationAnswer ?? assignments
     }
 
     func mountGuestAgentDisk(_ selector: VMSelector) throws -> GuestAgentDiskMountOutcome {

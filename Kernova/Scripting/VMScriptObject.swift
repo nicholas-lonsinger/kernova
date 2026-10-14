@@ -7,20 +7,27 @@ import KernovaLogging
 ///
 /// A snapshot, not a handle: the container rebuilds the whole list on every
 /// specifier evaluation, so a script always reads a VM as it stands now and
-/// nothing here has to be kept current.
+/// nothing here has to be kept current. Its writable properties are
+/// configuration keys: setting one is the `setConfiguration` verb, which the
+/// gateway runs and records a refusal of on the command being answered.
+@MainActor
 @objc(VMScriptObject)
 final class VMScriptObject: NSObject {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptObject")
+    nonisolated private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "VMScriptObject")
 
     /// The read every property answers from.
     private let info: VMInfo
+    /// Where a write runs.
+    private weak var gateway: VMScriptingGateway?
 
-    init(_ info: VMInfo) {
+    init(_ info: VMInfo, gateway: VMScriptingGateway) {
         self.info = info
+        self.gateway = gateway
     }
 
     /// How the command vocabulary addresses the VM this stands for.
-    var selector: VMSelector { .id(info.id) }
+    nonisolated var selector: VMSelector { .id(info.id) }
 
     // MARK: - Properties
 
@@ -54,13 +61,27 @@ final class VMScriptObject: NSObject {
 
     @objc var diskSize: Int { info.diskSizeInGB }
 
-    @objc var networkMode: String? { info.networkMode }
+    /// `missing value` written is networking turned off, as a read answers it.
+    @objc var networkMode: String? {
+        get { info.networkMode }
+        set {
+            write(
+                VMConfigurationKeyRegistry.networkMode,
+                newValue ?? VMConfigurationKeyRegistry.noNetworkValue)
+        }
+    }
 
-    @objc var networkMembership: String? { info.networkMembership }
+    @objc var networkMembership: String? {
+        get { info.networkMembership }
+        set { write(VMConfigurationKeyRegistry.networkMembership, newValue ?? "") }
+    }
 
     @objc var networkName: String? { info.networkName?.title }
 
-    @objc var macAddress: String? { info.macAddress }
+    @objc var macAddress: String? {
+        get { info.macAddress }
+        set { write(VMConfigurationKeyRegistry.networkMAC, newValue ?? "") }
+    }
 
     @objc var ipAddress: String? { info.ipAddress.address }
 
@@ -74,11 +95,15 @@ final class VMScriptObject: NSObject {
 
     @objc var bundlePath: String { info.bundlePath }
 
+    private func write(_ key: VMConfigurationKey, _ value: String) {
+        gateway?.setConfiguration(info.id, key: key, value: value)
+    }
+
     // MARK: - Specifier
 
     /// How a script names this VM back — `virtual machine id "…"` of the
     /// application, which is the one form no rename or reorder invalidates.
-    override var objectSpecifier: NSScriptObjectSpecifier? {
+    nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let application = NSScriptClassDescription(for: NSApplication.self) else {
             #log(Self.logger, .fault, "NSApplication has no scripting class description")
             assertionFailure("NSApplication has no scripting class description")
@@ -88,7 +113,7 @@ final class VMScriptObject: NSObject {
             containerClassDescription: application,
             containerSpecifier: nil,
             key: AppDelegate.virtualMachinesKey,
-            uniqueID: uniqueID)
+            uniqueID: info.id.uuidString)
     }
 }
 

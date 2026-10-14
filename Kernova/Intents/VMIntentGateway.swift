@@ -351,6 +351,28 @@ final class VMIntentGateway {
         }
     }
 
+    // MARK: - Configuration
+
+    /// Every configuration key, in presentation order.
+    func configurationKeys() async -> [ConfigurationKeyDescriptor] {
+        await ready()
+        return commands.configurationKeys()
+    }
+
+    /// Writes `value` to `key` of the VM, answering the value the key ended up
+    /// holding.
+    func setConfiguration(_ id: UUID, key: String, value: String, consent: Consent) async throws -> String {
+        try await perform(.setConfiguration, on: id) {
+            let answered = try self.commands.setConfiguration(
+                .id(id), assignments: [ConfigurationEntry(key: key, value: value)], consent: consent)
+            guard let held = answered.first else {
+                assertionFailure("setConfiguration answered nothing for \(key)")
+                return value
+            }
+            return held.value
+        }
+    }
+
     // MARK: - Networks
 
     /// Every named network, ordered by name, each with the VMs on it read in

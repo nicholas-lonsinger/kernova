@@ -80,7 +80,7 @@ final class VMScriptingGateway {
     func virtualMachine(named name: String) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {
-            return VMScriptObject(try commands.info(.name(name)))
+            return VMScriptObject(try commands.info(.name(name)), gateway: self)
         } catch let refusal as CommandError {
             answering?.refuse(refusal)
             return nil
@@ -97,7 +97,7 @@ final class VMScriptingGateway {
     /// and then fails to read is a programming error, not a race.
     private func object(for id: UUID) -> VMScriptObject? {
         do {
-            return VMScriptObject(try commands.info(.id(id)))
+            return VMScriptObject(try commands.info(.id(id)), gateway: self)
         } catch {
             #log(
                 Self.logger, .fault,
@@ -312,6 +312,19 @@ final class VMScriptingGateway {
         }
     }
 
+    // MARK: - Configuration
+
+    /// Sets `key` of the VM `id` identifies to `value` — a script's `set` of a
+    /// writable `virtual machine` property.
+    ///
+    /// A script's `set` carries no `with confirmation`, so nothing it writes
+    /// is given consent.
+    func setConfiguration(_ id: UUID, key: VMConfigurationKey, value: String) {
+        run(.setConfiguration, on: id) {
+            try commands.setConfiguration(.id(id), assignments: [key.assigning(value)], consent: .none)
+        }
+    }
+
     // MARK: - Networks
 
     /// What a script that asks to make a virtual machine reads back.
@@ -409,7 +422,7 @@ final class VMScriptingGateway {
     /// evaluation, where nothing can suspend — logging and recording any
     /// refusal on the command being answered.
     ///
-    /// `id` names the network the verb addresses, `nil` for a create.
+    /// `id` names the network or VM the verb addresses, `nil` for a create.
     @discardableResult
     private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
         do {
