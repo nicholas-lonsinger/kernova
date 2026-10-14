@@ -699,6 +699,51 @@ struct DetailAlertsPresenterTests {
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
     }
 
+    @Test("A VM whose guest can write an external disk is offered no snapshot-first path")
+    func revertAlertOffersNoSnapshotFirstWhereNoneCanBeTaken() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = viewModel.library.admitFixture {
+            $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
+        }
+        vm.activity.placeForTesting(.running(sessionID: UUID()))
+        let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
+
+        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+
+        #expect(alert.buttons.map(\.title) == ["Revert", "Cancel"])
+    }
+
+    @Test("A paused VM's Stop offers Resume and Shut Down on Return and Force Stop off it")
+    func pausedStopAlertLaysOutBothSteps() {
+        let (presenter, viewModel) = makePresenter()
+        let vm = makeInstance(in: viewModel)
+        vm.activity.placeForTesting(.livePaused(sessionID: UUID()))
+
+        let alert = presenter.pausedStopAlertForTesting(vm)
+
+        #expect(alert.title == "Stop \u{201C}\(vm.name)\u{201D}?")
+        #expect(alert.buttons.map(\.title) == ["Resume and Shut Down", "Cancel", "Force Stop"])
+        #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
+        #expect(!alert.message.contains("ephemeral"))
+    }
+
+    @Test("A paused Ephemeral VM's Stop names the baseline both its actions end at")
+    func pausedStopAlertOnAnEphemeralVMNamesTheBaseline() {
+        let (presenter, viewModel) = makePresenter()
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        var hostState = VMHostState()
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
+        let vm = makeInstance(in: viewModel, hostState: hostState)
+        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        vm.activity.placeForTesting(.livePaused(sessionID: UUID()))
+
+        let alert = presenter.pausedStopAlertForTesting(vm)
+
+        // Resume-and-shut-down and force-stop both power the VM off, and a
+        // power-off is the revert.
+        #expect(alert.message.hasSuffix("Either way it is ephemeral, so it returns to \u{201C}Clean install\u{201D}."))
+    }
+
     @Test("Reverting a live VM to a snapshot taken while stopped says the session ends, powered off")
     func revertAlertOnAColdTargetNamesThePowerOff() {
         let (presenter, viewModel) = makePresenter()

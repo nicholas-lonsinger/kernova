@@ -1828,6 +1828,42 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorTitles.isEmpty)
     }
 
+    @Test("Deleting a network moves each VM set to join it to a network of its own, then deletes it")
+    func deleteNetworkTakesTheRouteThenDeletes() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
+        let alpha = viewModel.library.admitFixture(name: "Alpha") {
+            $0.networkMembership = .network(lab.id)
+        }
+        let beta = viewModel.library.admitFixture(name: "Beta") {
+            $0.networkMembership = .network(lab.id)
+        }
+
+        try viewModel.deleteNetwork(lab.id)
+
+        #expect(viewModel.networks.state == .listed([]))
+        #expect(alpha.configuration.networkMembership == .isolated)
+        #expect(beta.configuration.networkMembership == .isolated)
+    }
+
+    @Test("A move the VM's state refuses deletes nothing")
+    func deleteNetworkStopsAtARefusedMove() throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let lab = try viewModel.networks.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
+        // A suspended Host Only VM's saved state is not known to restore on
+        // another network, so its membership is pinned.
+        let suspended = viewModel.library.admitFixture(name: "Suspended", phase: .suspended) {
+            $0.applyNetworkMode(.hostOnly)
+            $0.networkMembership = .network(lab.id)
+        }
+        try VMInstanceFixture.writeSaveFile(for: suspended)
+
+        #expect(throws: CommandError.self) { try viewModel.deleteNetwork(lab.id) }
+
+        #expect(viewModel.networks.state.listed?.map(\.id) == [lab.id])
+        #expect(suspended.configuration.networkMembership == .network(lab.id))
+    }
+
     @Test("a stopped VM may take the mode a live MAC address twin is on — its start is the guard")
     func stoppedVMMayTakeALiveMACAddressTwinsMode() throws {
         let (viewModel, _, _, _, _) = makeViewModel()
@@ -2989,6 +3025,33 @@ struct VMLibraryViewModelTests {
 
     // MARK: - Stop Paused Confirmation
 
+    @Test("Stop on a paused VM presents the sheet and stops nothing")
+    func stopOnAPausedVMPresentsTheSheet() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
+
+        await viewModel.stop(instance)
+
+        #expect(presenter.instanceToStopPaused === instance)
+        #expect(virtService.resumeCallCount == 0)
+        #expect(virtService.stopCallCount == 0)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("Resume and Shut Down on a paused VM resumes it, then stops it")
+    func resumeAndStopOfAPausedVMTakesBothSteps() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
+
+        await viewModel.resumeAndStop(instance)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.stopCallCount == 1)
+        #expect(presenter.errors.isEmpty)
+    }
+
     @Test("resumeAndStop dispatches resume then stop")
     func resumeAndStopDispatches() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
@@ -3029,7 +3092,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showStopPausedConfirmation == false)
     }
 
-    @Test("resumeAndStop presents error if resume fails")
+    @Test("resumeAndStop presents the resume's failure and stops nothing")
     func resumeAndStopPresentsErrorOnResumeFailure() async {
         let virtService = MockVirtualizationService()
         virtService.resumeError = VirtualizationError.noVirtualMachine

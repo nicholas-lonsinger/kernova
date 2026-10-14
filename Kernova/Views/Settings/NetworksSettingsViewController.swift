@@ -103,7 +103,7 @@ final class NetworksSettingsViewController: NSViewController {
     /// Deletes the network `id` identifies, moving each VM on it to a network
     /// of its own.
     func delete(_ id: UUID) throws {
-        try viewModel.commands.deleteNetwork(id.uuidString)
+        try viewModel.deleteNetwork(id)
         editor.reload()
     }
 

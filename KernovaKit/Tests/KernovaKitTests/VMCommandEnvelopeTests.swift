@@ -91,7 +91,6 @@ struct VMCommandEnvelopeTests {
             .cancelGuestSetup(selector, consent: .all),
             .stop(selector, disposition: .graceful, consent: .none, timeout: nil),
             .stop(selector, disposition: .graceful, consent: .none, timeout: 90),
-            .stop(selector, disposition: .resumeThenShutDown, consent: .all, timeout: nil),
             .stop(selector, disposition: .force, consent: .all, timeout: 0.5),
             .pause(selector),
             .resume(selector, consent: .none, macAddressRemedy: nil),
@@ -106,7 +105,7 @@ struct VMCommandEnvelopeTests {
             .showInFinder(selector),
             .takeSnapshot(selector, name: "Fresh", notes: "a note"),
             .revertToSnapshot(
-                selector, snapshot: snapshotID, takingCheckpoint: true, consent: .all,
+                selector, snapshot: snapshotID, consent: .all,
                 macAddressRemedy: .newAddress),
             .deleteSnapshot(selector, snapshot: snapshotID, consent: .all),
             .renameSnapshot(selector, snapshot: snapshotID, newName: "Renamed"),
@@ -312,14 +311,14 @@ struct VMCommandEnvelopeTests {
     @Test("Every failure round-trips, and reads back as the response's failure")
     func everyFailureRoundTrips() throws {
         let prompt = ConfirmationPrompt(
-            kind: .stopPaused,
-            title: "Stop Paused Virtual Machine",
-            message: "Resume it to send a graceful shutdown, or force stop it.",
-            confirmTitle: "Resume and Shut Down",
+            kind: .forceStop,
+            title: "Force Stop Virtual Machine",
+            message: "Any unsaved data inside the guest will be lost.",
+            confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [
-                ConfirmationAlternative(title: "Force Stop", disposition: .force),
-                ConfirmationAlternative(title: "Take Snapshot, Then Revert", takesCheckpoint: true),
+                ConfirmationAlternative(title: "Shut Down", disposition: .graceful),
+                ConfirmationAlternative(title: "Keep File", keepsFile: true),
             ])
         let failures: [CommandErrorDTO] = [
             .notFound(selector: selector),

@@ -532,7 +532,7 @@ struct VMLibraryViewModelSnapshotTests {
         let target = makeSnapshot()
         seed(harness, instance, [target])
 
-        await harness.viewModel.revert(instance, to: target, takingCheckpoint: true)
+        await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
 
         #expect(harness.virtualization.takenSnapshots.count == 1)
         #expect(harness.virtualization.revertedSnapshots == [target])
@@ -547,7 +547,7 @@ struct VMLibraryViewModelSnapshotTests {
         target.record.kind = .cold
         seed(harness, instance, [target])
 
-        await harness.viewModel.revert(instance, to: target, takingCheckpoint: true)
+        await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
 
         #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
         #expect(harness.virtualization.revertedSnapshots == [target])
@@ -562,7 +562,7 @@ struct VMLibraryViewModelSnapshotTests {
         let target = makeSnapshot()
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [target]))
 
-        await harness.viewModel.revert(instance, to: target, takingCheckpoint: true)
+        await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
 
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
         #expect(presenter.showError)

@@ -115,8 +115,8 @@ extension KernovaCommand.Network {
         static let configuration = CommandConfiguration(
             commandName: "delete",
             abstract: "Delete a named network.",
-            discussion: "Each virtual machine on it moves to a network of its own first. A "
-                + "virtual machine that cannot move refuses the whole delete, and nothing moves.")
+            discussion: "Refused while a virtual machine is set to join it, naming the "
+                + "`kernova set` line that moves each one to a network of its own.")
 
         /// Which network, by name or identifier.
         @Argument(help: "The network's name or identifier.", completion: CompletionSource.network)

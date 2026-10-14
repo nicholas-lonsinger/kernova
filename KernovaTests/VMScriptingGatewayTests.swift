@@ -685,19 +685,22 @@ struct VMScriptingGatewayTests {
         #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
     }
 
-    @Test("A stop a paused guest cannot receive is refused even with confirmation")
-    func aPausedStopIsRefusedEvenWithConfirmation() async throws {
+    @Test("A stop a paused guest cannot receive is refused as a step even with confirmation")
+    func aPausedStopIsRefusedAsAStep() async throws {
         let commands = MockVMCommanding()
-        let prompt = makePrompt(kind: .stopPaused)
-        commands.stopConsentPrompt = prompt
+        let refusal = CommandError.stepRequired(
+            StepRequirement(
+                message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request.",
+                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())])]))
+        commands.stopError = refusal
 
-        // Confirming would substitute a stop that was not asked for, so the
-        // script is told to name the method it means instead.
-        await #expect(throws: CommandError.confirmationRequired(prompt)) {
+        // No confirmation names a resume, so the script is told the step to
+        // take first.
+        await #expect(throws: refusal) {
             try await makeGateway(commands).stop(
                 [.name("Alpha")], method: .graceful, confirmation: true, givingUpAfter: nil)
         }
 
-        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false])
+        #expect(commands.stopCalls.count == 1)
     }
 }

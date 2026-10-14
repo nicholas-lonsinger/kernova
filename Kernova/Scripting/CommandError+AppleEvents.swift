@@ -29,15 +29,11 @@ extension CommandError {
     /// What the script reads back, in the same words every other door shows.
     ///
     /// A consent refusal gains the one thing a script can do about it, as the
-    /// `kernova` tool's own refusal names `--yes` — but only where confirming
-    /// performs the verb that was asked for. A stop a paused guest cannot
-    /// receive is refused with the flag as readily as without it, and the
-    /// core's own message is what names the stop methods that would work. A
-    /// MAC address refusal names the parameter that takes each change it
-    /// offers.
+    /// `kernova` tool's own refusal names `--yes`. A MAC address refusal names
+    /// the parameter that takes each change it offers.
     var appleEventErrorString: String {
         switch self {
-        case .confirmationRequired(let prompt) where VMConsentPolicy.isAnsweredByConfirming(prompt):
+        case .confirmationRequired:
             return message + "\n\nAdd `with confirmation` to do it anyway."
         case .macAddressRemedyRequired(let prompt) where !prompt.offers.isEmpty:
             let terms = prompt.offers.map { "`resolving MAC conflict by \(VMScriptMACConflictRemedy($0.remedy).term)`" }

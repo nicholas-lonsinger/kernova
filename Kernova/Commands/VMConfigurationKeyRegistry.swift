@@ -656,8 +656,9 @@ enum VMConfigurationKeyRegistry {
             let snapshots = context.snapshots
             guard snapshots.defaultEphemeralBaseline(preferring: nil) != nil else {
                 throw CommandError.stepRequired(
-                    "Ephemeral Mode returns the virtual machine to a snapshot, and this one "
-                        + "has none. Take a snapshot first.")
+                    StepRequirement(
+                        message: "Ephemeral Mode returns the virtual machine to a snapshot, and "
+                            + "this one has none. Take a snapshot first."))
             }
             return { hostState in
                 hostState.applyEphemeralMode(

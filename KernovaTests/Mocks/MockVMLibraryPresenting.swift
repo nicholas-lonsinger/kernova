@@ -32,7 +32,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     private(set) var deleteSnapshotInstances: [VMInstance] = []
     private(set) var forceStopInstances: [VMInstance] = []
     private(set) var recoveryBootInstances: [VMInstance] = []
-    private(set) var stopPausedInstances: [VMInstance] = []
+    private(set) var pausedStopInstances: [VMInstance] = []
     private(set) var cancelPreparingArrivals: [VMArrival] = []
     private(set) var installerMountedNames: [String] = []
     private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
@@ -88,7 +88,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     }
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
     func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
-    func presentStopPaused(for instance: VMInstance) { stopPausedInstances.append(instance) }
+    func presentStopPaused(for instance: VMInstance) { pausedStopInstances.append(instance) }
     func presentCancelPreparing(for arrival: VMArrival) { cancelPreparingArrivals.append(arrival) }
     func presentInstallerMounted(
         vmName: String, purpose: GuestAgentInstallerPurpose, delivery: GuestAgentDiskDelivery
@@ -130,8 +130,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting {
     var instanceToForceStop: VMInstance? { forceStopInstances.last }
     var showRecoveryBootConfirmation: Bool { !recoveryBootInstances.isEmpty }
     var instanceToRecoveryBoot: VMInstance? { recoveryBootInstances.last }
-    var showStopPausedConfirmation: Bool { !stopPausedInstances.isEmpty }
-    var instanceToStopPaused: VMInstance? { stopPausedInstances.last }
+    var showStopPausedConfirmation: Bool { !pausedStopInstances.isEmpty }
+    var instanceToStopPaused: VMInstance? { pausedStopInstances.last }
     var showCancelPreparingConfirmation: Bool { !cancelPreparingArrivals.isEmpty }
     var arrivalToCancel: VMArrival? { cancelPreparingArrivals.last }
     var showInstallerMountedAlert: Bool { !installerMountedNames.isEmpty }

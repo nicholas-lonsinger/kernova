@@ -233,14 +233,13 @@ final class VMIntentGateway {
     }
 
     func revertToSnapshot(
-        _ id: UUID, snapshot: SnapshotEntityID, takingCheckpoint: Bool, consent: Consent,
+        _ id: UUID, snapshot: SnapshotEntityID, consent: Consent,
         macAddressRemedy: MACAddressRemedy?
     ) async throws {
         try await perform(.revertToSnapshot, on: id) {
             let listed = try self.listedSnapshot(snapshot, on: id)
             try await self.commands.revertToSnapshot(
-                .id(id), snapshot: listed, takingCheckpoint: takingCheckpoint,
-                consent: consent, macAddressRemedy: macAddressRemedy)
+                .id(id), snapshot: listed, consent: consent, macAddressRemedy: macAddressRemedy)
         }
     }
 

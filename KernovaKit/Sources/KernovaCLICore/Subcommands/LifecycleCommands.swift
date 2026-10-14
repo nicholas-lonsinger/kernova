@@ -7,8 +7,6 @@ extension KernovaCommand {
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
-        /// ``StopDisposition/resumeThenShutDown``.
-        case resumeFirst
         /// Terminate the guest immediately, losing unsaved state.
         case force
 
@@ -16,7 +14,6 @@ extension KernovaCommand {
         var disposition: StopDisposition {
             switch self {
             case .graceful: .graceful
-            case .resumeFirst: .resumeThenShutDown
             case .force: .force
             }
         }
@@ -25,7 +22,6 @@ extension KernovaCommand {
         static func help(for value: StopMethod) -> ArgumentHelp? {
             switch value {
             case .graceful: "Ask the guest to shut down (the default)."
-            case .resumeFirst: "Resume a paused or suspended guest, then ask it to shut down."
             case .force: "Terminate the guest immediately, losing unsaved state."
             }
         }
@@ -109,11 +105,14 @@ extension KernovaCommand {
             abstract: "Stop a virtual machine.",
             discussion: "Returns as soon as the guest has been asked to shut down. --timeout "
                 + "waits for it to power off instead, and exits 7 leaving the virtual machine "
-                + "as it is when the guest is still up; --force is the escalation from there."
+                + "as it is when the guest is still up; --force is the escalation from there. "
+                + "A paused guest can\u{2019}t receive the request, so its stop is refused, "
+                + "naming `kernova resume` as the step to take first."
                 + "\n\nWith --smart-group or --folder, asks each running guest in the group to shut "
                 + "down, one after another, and prints a line for each. A paused or suspended "
-                + "virtual machine is skipped, since stopping it would resume it or discard its "
-                + "saved state, and a group stop exits 10 when it leaves any it could act on undone.")
+                + "virtual machine is skipped, since a paused one takes a resume first and a "
+                + "suspended one\u{2019}s stop discards its saved state, and a group stop exits 10 "
+                + "when it leaves any it could act on undone.")
 
         /// Which virtual machine, by name or identifier; `nil` for a group.
         @Argument(
@@ -144,7 +143,7 @@ extension KernovaCommand {
             try groups.validateTarget(
                 vm: vm,
                 singleVMFlags: [
-                    method == .graceful ? nil : "--\(method == .force ? "force" : "resume-first")",
+                    method == .force ? "--force" : nil,
                     timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
                 ].compactMap(\.self))
         }

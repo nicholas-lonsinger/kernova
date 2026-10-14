@@ -157,8 +157,9 @@ enum VMCapability: CaseIterable, Hashable {
         case .cancelGuestSetup:
             return .cancel(.guestSetup)
         case .stop, .restart:
-            // Virtualization refuses the shutdown request to a paused guest, so
-            // the stop a live-paused VM takes resumes it first.
+            // Virtualization refuses the shutdown request to a paused guest:
+            // restart resumes it first, and the stop verb refuses as a step,
+            // which the app's Stop takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
         case .forceStop:
             return .sessionAction(.forceStop)
@@ -482,7 +483,7 @@ struct VMCapabilityCatalog {
     /// narrow the capabilities. A start that would begin a guest setup is
     /// passed over — the unattended start the action commits refuses one
     /// anyway (``VMCommandCore/StartPolicy/group``). And Stop takes
-    /// running guests only: a paused guest's stop resumes it first, and a
+    /// running guests only: a paused guest's stop takes a resume first, and a
     /// suspended VM's discards its saved state (``discardSavedState``).
     func groupAction(_ action: VMGroupAction, on instance: VMInstance) -> GroupActionStanding {
         var refusal: VMAdmission.Refusal?

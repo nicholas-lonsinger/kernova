@@ -165,9 +165,6 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
 public enum StopDisposition: String, Codable, Sendable, Hashable, CaseIterable {
     /// Request an ACPI shutdown and let the guest power itself off.
     case graceful
-    /// Resume a paused guest, or restore a suspended one, then request the
-    /// graceful shutdown it cannot receive until it runs.
-    case resumeThenShutDown
     /// Terminate the virtual machine immediately, losing unsaved guest state.
     case force
 }

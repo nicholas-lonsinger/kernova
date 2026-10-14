@@ -71,7 +71,7 @@ struct CLICompletionTests {
         #expect(leading?.vm == "Alpha")
 
         let trailing = CompletionLine.vmSubject(
-            in: ["kernova", "snapshot", "revert", "Alpha", "--no-checkpoint", ""], completingAt: 5)
+            in: ["kernova", "snapshot", "revert", "Alpha", "--yes", ""], completingAt: 5)
         #expect(trailing?.vm == "Alpha")
     }
 

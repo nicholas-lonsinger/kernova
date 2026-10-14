@@ -80,7 +80,6 @@ struct CLIGroupActionTests {
             ["start", "--folder", "Lab", "--resolve-mac-conflict", "own-network"],
             ["start", "--folder", "Lab", "--yes"],
             ["stop", "--folder", "Lab", "--force"],
-            ["stop", "--folder", "Lab", "--resume-first"],
             ["stop", "--folder", "Lab", "--timeout", "5"],
             ["suspend", "--folder", "Lab", "--yes"],
         ]

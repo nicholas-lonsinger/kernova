@@ -14,8 +14,6 @@ import KernovaKit
 enum VMStopMethod: String, AppEnum {
     /// Request an ACPI shutdown and let the guest power itself off.
     case shutDown
-    /// ``StopDisposition/resumeThenShutDown``.
-    case resumeThenShutDown
     /// Terminate the virtual machine immediately, losing unsaved guest state.
     case force
 
@@ -23,7 +21,6 @@ enum VMStopMethod: String, AppEnum {
 
     static let caseDisplayRepresentations: [VMStopMethod: DisplayRepresentation] = [
         .shutDown: "Shut Down",
-        .resumeThenShutDown: "Resume and Shut Down",
         .force: "Force Stop",
     ]
 
@@ -31,7 +28,6 @@ enum VMStopMethod: String, AppEnum {
     var disposition: StopDisposition {
         switch self {
         case .shutDown: .graceful
-        case .resumeThenShutDown: .resumeThenShutDown
         case .force: .force
         }
     }
@@ -41,7 +37,6 @@ enum VMStopMethod: String, AppEnum {
         self =
             switch disposition {
             case .graceful: .shutDown
-            case .resumeThenShutDown: .resumeThenShutDown
             case .force: .force
             }
     }

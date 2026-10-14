@@ -68,8 +68,6 @@ extension VMCommandCore {
     /// operation, answering the snapshot that landed; `alsoRecord` writes
     /// beside that listing under the same permit.
     ///
-    /// Throws rather than reporting a nil, so a caller chaining off it (the
-    /// revert's check-point) stops rather than proceeding on a lost checkpoint.
     private func captureSnapshot(
         _ instance: VMInstance, name: String, notes: String,
         alsoRecord: @MainActor (borrowing VMEditPermit, VMSnapshot) -> Void = { _, _ in }
@@ -112,22 +110,17 @@ extension VMCommandCore {
     /// snapshot's saved state — and then starts the VM the way its state
     /// names.
     func revertToSnapshot(
-        _ selector: VMSelector, snapshot id: UUID, takingCheckpoint: Bool, consent: Consent,
+        _ selector: VMSelector, snapshot id: UUID, consent: Consent,
         macAddressRemedy: MACAddressRemedy? = nil
     ) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         try require(.revertToSnapshot, on: instance)
-        if takingCheckpoint, let refusal = checkpointRefusal(on: instance) { throw refusal }
         guard consent.covers(.revertToSnapshot) else {
             throw CommandError.confirmationRequired(
                 Self.revertPrompt(snapshot, on: instance))
         }
         let identity = VMIdentityOverride(consent)
-        // Decided before the check-point, as a start is decided before
-        // anything else: a revert refused — or asking whether to resume beside
-        // a VM sharing its machine identity — refuses before a capture its
-        // re-issue would take a second time.
         let decision = instance.activity.decide(
             .operation(
                 .bringUp(
@@ -140,13 +133,6 @@ extension VMCommandCore {
             holdingSavedState: true, accountFor: false, verb: .revertToSnapshot)
         if remedy == nil, case .refuse(let reason) = decision {
             throw admissionRefusal(reason, on: instance, verb: .revertToSnapshot)
-        }
-        if takingCheckpoint {
-            // Required, not conditional: a VM that stopped being capturable
-            // before the confirm landed aborts rather than falling through to
-            // the destructive revert with no check-point.
-            _ = try await captureSnapshot(
-                instance, name: instance.snapshotManifest.defaultNewName, notes: "")
         }
         // Awaited *and* answered for: a caller that waited on the revert is told
         // whether the rollback happened, rather than getting a success while an
@@ -165,54 +151,22 @@ extension VMCommandCore {
         }
     }
 
-    /// The refusal a revert asked to take a check-point raises when Take
-    /// Snapshot would refuse, naming the check-point as what blocks it —
-    /// raised before consent is asked, so a surface never confirms a revert
-    /// whose check-point is then refused.
-    private func checkpointRefusal(on instance: VMInstance) -> CommandError? {
-        guard instance.snapshotCaptureMode == nil else { return nil }
-        let reason: String
-        if case .refuse(let refusal)? = capabilities.decision(
-            .takeSnapshot, on: instance, posture: .offer),
-            case .takesStoppedVM = refusal
-        {
-            reason = commandError(for: refusal, on: instance).message
-        } else {
-            reason = "\u{201C}\(instance.name)\u{201D} cannot take a snapshot in its current state."
-        }
-        return .operationFailed(
-            verb: .revertToSnapshot,
-            message: reason
-                + " Revert without taking a snapshot first to go back anyway; everything "
-                + "changed inside the guest since the snapshot will be lost.")
-    }
-
     /// The refusal a revert raises, and the copy every surface renders it with.
     static func revertPrompt(_ snapshot: VMSnapshot, on instance: VMInstance) -> ConfirmationPrompt {
-        // The safe path — check-point the current state, then revert — is
-        // offered wherever Take Snapshot is admitted.
-        let alternatives =
-            instance.snapshotCaptureMode != nil
-            ? [
-                ConfirmationAlternative(
-                    title: "Take Snapshot, Then Revert", takesCheckpoint: true)
-            ]
-            : []
-        return ConfirmationPrompt(
+        ConfirmationPrompt(
             kind: .revertToSnapshot,
             title: "Revert \u{201C}\(instance.name)\u{201D} to \u{201C}\(snapshot.name)\u{201D}?",
             message: revertMessage(snapshot, instance),
             confirmTitle: "Revert",
-            dismissTitle: "Cancel",
-            alternatives: alternatives)
+            dismissTitle: "Cancel")
     }
 
     /// What the revert says the user is trading away, by what the target
     /// snapshot holds and what the VM holds now.
     static func revertMessage(_ snapshot: VMSnapshot, _ vm: VMInstance) -> String {
         let taken = SnapshotDateFormat.string(from: snapshot.createdAt)
-        let unlessCheckpoint = vm.snapshotCaptureMode != nil ? " unless you take a snapshot first" : ""
-        let guestLoss = "Everything changed inside the guest since then will be lost\(unlessCheckpoint)."
+        let unlessSnapshotTaken = vm.snapshotCaptureMode != nil ? " unless you take a snapshot first" : ""
+        let guestLoss = "Everything changed inside the guest since then will be lost\(unlessSnapshotTaken)."
 
         switch snapshot.kind {
         case .warm:
@@ -221,7 +175,7 @@ extension VMCommandCore {
             let loss =
                 vm.holdsSuspendedSession
                 ? "The suspended session this VM would resume into is replaced by the snapshot's, "
-                    + "and everything changed inside the guest since then will be lost\(unlessCheckpoint)."
+                    + "and everything changed inside the guest since then will be lost\(unlessSnapshotTaken)."
                 : guestLoss
             return "The VM will return to the state and settings captured \(taken). "
                 + "\(loss) The snapshot itself is kept."
@@ -423,16 +377,27 @@ extension VMCommandCore {
             Self.logger, .notice,
             "Refusing to delete snapshot '\(snapshot.name, privacy: .public)': it is the Ephemeral baseline of '\(instance.name, privacy: .public)'"
         )
-        throw CommandError.stepRequired(Self.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
+        throw CommandError.stepRequired(ephemeralBaselineDeleteRefusal(snapshot, on: instance))
     }
 
     /// Why deleting `snapshot`, `instance`'s Ephemeral Mode baseline, is
     /// refused, and the step that lifts it.
-    static func ephemeralBaselineDeleteRefusal(
+    func ephemeralBaselineDeleteRefusal(
         _ snapshot: VMSnapshot, on instance: VMInstance
-    ) -> String {
-        "\u{201C}\(snapshot.name)\u{201D} is \u{201C}\(instance.name)\u{201D}\u{2019}s Ephemeral Mode "
-            + "baseline. Turn Ephemeral Mode off first, then delete it."
+    ) -> StepRequirement {
+        StepRequirement(
+            message:
+                "\u{201C}\(snapshot.name)\u{201D} is \u{201C}\(instance.name)\u{201D}\u{2019}s Ephemeral Mode "
+                + "baseline. Turn Ephemeral Mode off first, then delete it.",
+            routes: [
+                StepRoute(
+                    title: "Turn Off Ephemeral Mode",
+                    steps: [
+                        .setConfiguration(
+                            vm: summary(instance),
+                            assignments: [VMConfigurationKeyRegistry.ephemeral.assigning(false)])
+                    ])
+            ])
     }
 
     /// The refusal a snapshot delete raises.

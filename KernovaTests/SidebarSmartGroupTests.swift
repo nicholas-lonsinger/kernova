@@ -433,7 +433,7 @@ struct SidebarSmartGroupTests {
         #expect(names(in: viewModel.sidebarLayout.sections[1]) == ["A"])
         #expect(viewModel.groupActionCounts(for: group)?[.start] == 1)
 
-        try viewModel.commands.deleteNetwork(lab.id.uuidString)
+        try viewModel.deleteNetwork(lab.id)
 
         #expect(viewModel.networks.state == .listed([]))
         #expect(
@@ -469,7 +469,7 @@ struct SidebarSmartGroupTests {
             organization: VMOrganizationDirectory(fileURL: organizationURL))
         let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
 
-        try viewModel.commands.deleteNetwork(lab.id.uuidString)
+        try viewModel.deleteNetwork(lab.id)
 
         #expect(VMNetworkDirectory(fileURL: networksURL).state == .listed([]))
         #expect(try Data(contentsOf: organizationURL) == Data("not json".utf8))

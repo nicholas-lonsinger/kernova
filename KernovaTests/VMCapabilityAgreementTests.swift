@@ -100,7 +100,7 @@ struct VMCapabilityAgreementTests {
         case .takeSnapshot: _ = try await core.takeSnapshot(vm, name: "Agreement", notes: "")
         case .revertToSnapshot:
             try await core.revertToSnapshot(
-                vm, snapshot: snapshot.id, takingCheckpoint: false, consent: .none)
+                vm, snapshot: snapshot.id, consent: .none)
         case .deleteSnapshot: try await core.deleteSnapshot(vm, snapshot: snapshot.id, consent: .none)
         case .renameSnapshot: try core.renameSnapshot(vm, snapshot: snapshot.id, to: "Renamed")
         case .setSnapshotNotes: try core.setSnapshotNotes(vm, snapshot: snapshot.id, notes: "Noted")

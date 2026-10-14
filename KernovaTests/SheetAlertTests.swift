@@ -152,10 +152,10 @@ struct SheetAlertTests {
             alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
     }
 
-    /// The inverse — the stop-paused shape, whose confirm is the gentle route.
+    /// The inverse — a confirm that is the gentle route.
     private func safeConfirmPrompt() -> ConfirmationPrompt {
         ConfirmationPrompt(
-            kind: .stopPaused, title: "Stop \u{201C}VM\u{201D}?",
+            kind: .cancelGuestSetup, title: "Stop \u{201C}VM\u{201D}?",
             message: "Resume it first, or terminate it.",
             confirmTitle: "Resume and Shut Down", confirmIsDestructive: false,
             dismissTitle: "Cancel",

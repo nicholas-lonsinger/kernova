@@ -65,9 +65,8 @@ enum CommandError: Error, Sendable, Equatable {
     /// The string is the whole refusal, in the words the user reads.
     case invalidArgument(String)
     /// The VM's current state refuses the verb until a step of its own is
-    /// taken first. The string is the whole refusal, naming that step, in the
-    /// words the user reads.
-    case stepRequired(String)
+    /// taken first.
+    case stepRequired(StepRequirement)
     /// This build, guest, or configuration cannot do what was asked.
     case unsupported(capability: String)
     /// This build cannot do what was asked: the cause is the build, whatever
@@ -137,6 +136,12 @@ extension CommandError {
         return prompt
     }
 
+    /// The step this refusal needs taken first, or `nil` when it needs none.
+    var stepRequirement: StepRequirement? {
+        guard case .stepRequired(let requirement) = self else { return nil }
+        return requirement
+    }
+
     /// The guest account this refusal is asking about, or `nil` when it is not
     /// asking about one.
     var guestAccountPrompt: GuestAccountPrompt? {
@@ -178,8 +183,8 @@ extension CommandError {
             .macAddressRemedyRequired(prompt: prompt)
         case .invalidArgument(let message):
             .invalidArgument(message: message)
-        case .stepRequired(let message):
-            .stepRequired(message: message)
+        case .stepRequired(let requirement):
+            .stepRequired(requirement: requirement)
         case .unsupported(let capability):
             .unsupported(capability: capability)
         case .unsupportedByBuild(let capability):
