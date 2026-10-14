@@ -134,13 +134,10 @@ final class VMBundle {
         return VMBundleRunLock(holder: holder)
     }
 
-    /// Whether another copy of Kernova holds this bundle's run lock; asked
-    /// only while this copy holds none.
-    ///
-    /// A directory that cannot be opened reads as not held: the lock attempt
-    /// that admits any operation opens it again and throws why.
+    /// Whether another copy of Kernova holds this bundle's run lock
+    /// (``VMBundleFiles/isRunLockedElsewhere()``).
     func isRunLockedElsewhere() -> Bool {
-        (try? files.isRunLockedElsewhere()) ?? false
+        files.isRunLockedElsewhere()
     }
 
     /// Reads the state files in one coordinated read and publishes what they

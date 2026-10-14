@@ -141,7 +141,7 @@ struct VMLibraryTests {
         let gate = GatedStep()
         let arrival = library.beginGatedArrival(named: "Arrived Mid-Read", gate: gate)
 
-        await load.value
+        _ = await load.value
 
         // The scan's result must not delete it — its bundle copy is still
         // running, and nothing else would put the row back.

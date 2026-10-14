@@ -454,10 +454,14 @@ struct VMBundleFiles: Sendable {
         try access.lockBundle(at: url)
     }
 
-    /// Whether any holder has the bundle directory's run lock
-    /// (``VMBundleFileAccessing/isBundleLockedElsewhere(at:)``).
-    func isRunLockedElsewhere() throws -> Bool {
-        try access.isBundleLockedElsewhere(at: url)
+    /// Whether another copy of Kernova holds the bundle directory's run lock
+    /// (``VMBundleFileAccessing/isBundleLockedElsewhere(at:)``); asked only
+    /// while this copy holds none.
+    ///
+    /// A directory that cannot be opened reads as not held: the lock attempt
+    /// that admits any operation opens it again and throws why.
+    func isRunLockedElsewhere() -> Bool {
+        (try? access.isBundleLockedElsewhere(at: url)) ?? false
     }
 
     // periphery:ignore:parameters key - an access token: its type admits the caller

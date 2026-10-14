@@ -4,19 +4,19 @@ import Testing
 
 @testable import Kernova
 
-/// Unit tests for `StatusMenuStartFailureSection` — the status-item dropdown's
-/// failed-start line, the one report a headless launch can make.
+/// Unit tests for `StatusMenuUndoneStartSection` — the status-item dropdown's
+/// undone-start line, the one report a headless launch can make.
 ///
 /// `rebuild(count:)` covers the from-scratch path `menuNeedsUpdate` runs on each
 /// open; `sync(to:after:)` covers the in-place edits applied while the menu is
 /// on screen, where the line has to land in its slot under the anchor and keep
 /// its identity across a retitle.
-@Suite("StatusMenuStartFailureSection", .caseScoped)
+@Suite("StatusMenuUndoneStartSection", .caseScoped)
 @MainActor
-struct StatusMenuStartFailureSectionTests {
+struct StatusMenuUndoneStartSectionTests {
     private final class ActionTarget: NSObject {
         private(set) var tapCount = 0
-        @objc func failuresTapped(_: NSMenuItem) { tapCount += 1 }
+        @objc func undoneStartsTapped(_: NSMenuItem) { tapCount += 1 }
     }
 
     /// Builds a menu shaped like the real dropdown — the anchor above, more
@@ -24,13 +24,13 @@ struct StatusMenuStartFailureSectionTests {
     private func makeSection(
         count: Int
     ) -> (
-        menu: NSMenu, section: StatusMenuStartFailureSection, anchor: NSMenuItem,
+        menu: NSMenu, section: StatusMenuUndoneStartSection, anchor: NSMenuItem,
         target: ActionTarget
     ) {
         let menu = NSMenu()
         let target = ActionTarget()
-        let section = StatusMenuStartFailureSection(
-            menu: menu, target: target, action: #selector(ActionTarget.failuresTapped(_:)))
+        let section = StatusMenuUndoneStartSection(
+            menu: menu, target: target, action: #selector(ActionTarget.undoneStartsTapped(_:)))
         let anchor = NSMenuItem(title: "Open Kernova", action: nil, keyEquivalent: "")
         menu.addItem(anchor)
         section.rebuild(count: count)
@@ -41,24 +41,24 @@ struct StatusMenuStartFailureSectionTests {
 
     // MARK: - Title
 
-    @Test("No failures produce no line")
+    @Test("No undone starts produce no line")
     func titleForNone() {
-        #expect(StatusMenuStartFailureSection.title(count: 0) == nil)
+        #expect(StatusMenuUndoneStartSection.title(count: 0) == nil)
     }
 
-    @Test("One failure titles the line in the singular")
+    @Test("One undone start titles the line in the singular")
     func titleForOne() {
-        #expect(StatusMenuStartFailureSection.title(count: 1) == "1 VM Failed to Start\u{2026}")
+        #expect(StatusMenuUndoneStartSection.title(count: 1) == "1 VM Didn\u{2019}t Start\u{2026}")
     }
 
-    @Test("Several failures title the line in the plural, counted")
+    @Test("Several undone starts title the line in the plural, counted")
     func titleForSeveral() {
-        #expect(StatusMenuStartFailureSection.title(count: 4) == "4 VMs Failed to Start\u{2026}")
+        #expect(StatusMenuUndoneStartSection.title(count: 4) == "4 VMs Didn\u{2019}t Start\u{2026}")
     }
 
     // MARK: - Rebuild
 
-    @Test("Rebuild with no failures adds nothing")
+    @Test("Rebuild with no undone starts adds nothing")
     func rebuildEmpty() {
         let (menu, _, _, _) = makeSection(count: 0)
 
@@ -71,7 +71,7 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "2 VMs Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "2 VMs Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
         #expect(menu.items[1].target === target)
         #expect(menu.items[1].isEnabled)
@@ -89,7 +89,7 @@ struct StatusMenuStartFailureSectionTests {
 
     // MARK: - Sync
 
-    @Test("A first failure while the menu is open inserts the line under the anchor")
+    @Test("A first undone start while the menu is open inserts the line under the anchor")
     func syncInsertsTheLine() {
         let (menu, section, anchor, target) = makeSection(count: 0)
 
@@ -97,12 +97,12 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "1 VM Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "1 VM Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
         #expect(menu.items[1].target === target)
     }
 
-    @Test("A further failure retitles the line rather than replacing it")
+    @Test("A further undone start retitles the line rather than replacing it")
     func syncRetitlesInPlace() {
         let (menu, section, anchor, _) = makeSection(count: 1)
         let line = menu.items[1]
@@ -110,10 +110,10 @@ struct StatusMenuStartFailureSectionTests {
         section.sync(to: 2, after: anchor)
 
         #expect(menu.items[1] === line)
-        #expect(line.title == "2 VMs Failed to Start\u{2026}")
+        #expect(line.title == "2 VMs Didn\u{2019}t Start\u{2026}")
     }
 
-    @Test("Draining the failures removes the line")
+    @Test("Draining the undone starts removes the line")
     func syncRemovesTheLine() {
         let (menu, section, anchor, _) = makeSection(count: 3)
 
@@ -131,7 +131,7 @@ struct StatusMenuStartFailureSectionTests {
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "1 VM Failed to Start\u{2026}", "", "Quit Kernova",
+                "Open Kernova", "1 VM Didn\u{2019}t Start\u{2026}", "", "Quit Kernova",
             ])
     }
 }

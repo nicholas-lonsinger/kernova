@@ -164,7 +164,7 @@ struct VMToolbarManagerTests {
         // The resume presents `.paused` while it runs, so the phase it started
         // from still names a capture — one requested now is refused as busy,
         // so the button has to go dim rather than error on click.
-        let resume = Task { @MainActor in try await lifecycle.resume(instance) }
+        let resume = try lifecycle.launchResume(instance)
         await suspending.waitUntilSuspended()
         try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
 
@@ -174,7 +174,7 @@ struct VMToolbarManagerTests {
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
 
         suspending.resumeSuspended()
-        try await resume.value
+        try await resume.value()
     }
 
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")

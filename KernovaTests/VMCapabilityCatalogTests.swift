@@ -399,7 +399,7 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isAvailable(.takeSnapshot, on: instance))
         #expect(harness.catalog.isAvailable(.revertToSnapshot, on: instance))
 
-        let resume = Task { @MainActor in try await harness.lifecycle.resume(instance) }
+        let resume = try harness.lifecycle.launchResume(instance)
         await suspending.waitUntilSuspended()
 
         #expect(harness.catalog.isApplicable(.takeSnapshot, to: instance))
@@ -418,7 +418,7 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.accepts(.setSnapshotNotes, on: instance))
 
         suspending.resumeSuspended()
-        try await resume.value
+        try await resume.value()
     }
 
     // MARK: - During the termination

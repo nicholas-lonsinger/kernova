@@ -362,13 +362,13 @@ struct VMCommandCoreMACConflictTests {
     }
 
     @Test("A bring-up nobody can be asked about is refused with the same routes")
-    func standingStartIsRefusedWithRoutes() async throws {
+    func unaskableStartIsRefusedWithRoutes() async throws {
         let harness = makeHarness()
         let (vm, _) = try makePair(in: harness)
 
         do {
-            try harness.core.startNow(vm, policy: .standing)
-            Issue.record("the standing start was admitted")
+            try harness.core.startNow(vm, policy: .command(.unavailable))
+            Issue.record("the unaskable start was admitted")
         } catch let refused as VMAdmissionRefusal {
             guard case .identityConflict(let conflict) = refused.refusal else {
                 Issue.record("refused as \(refused.refusal)")

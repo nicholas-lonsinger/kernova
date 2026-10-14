@@ -50,6 +50,12 @@ final class VMActivity {
 
     var errorMessage: String? { phase.errorMessage }
 
+    /// The last Start or Resume operation on this VM that failed
+    /// (``VMOperationKind/startOrResumeVerb``), recorded at its ending commit
+    /// whoever asked for it — where the failure stays when the phase it rests
+    /// in carries no message.
+    private(set) var lastStartFailure: VMStartFailure?
+
     /// Whose copy of Kernova holds the VM's bundle run lock, as this copy last
     /// learned it — written only through ``setHold(_:)``.
     @ObservationIgnored private var hold: VMRunLockHold = .none
@@ -831,6 +837,9 @@ final class VMActivity {
         case .failed(let target, let error):
             rest = target
             result = .failure(error)
+            if let verb = operation.kind.startOrResumeVerb, !(error is CancellationError) {
+                lastStartFailure = VMStartFailure(verb: verb, error: error)
+            }
         }
         let resting = resolve(rest, for: operation)
         if let session = operation.session, let stop = session.stopping {
@@ -1587,7 +1596,36 @@ enum VMOperationEnding<T> {
     case failed(VMOperationRest, any Error)
 }
 
+/// A Start or Resume operation that failed, as its ending commit recorded it.
+///
+/// Equal by identity: each failure is recorded once, so a reader comparing two
+/// records tells a new failure from one it already saw.
+struct VMStartFailure: Equatable {
+    let id = UUID()
+    /// The verb whose work failed: ``VMVerb/start`` or ``VMVerb/resume``.
+    let verb: VMVerb
+    let error: any Error
+
+    static func == (lhs: VMStartFailure, rhs: VMStartFailure) -> Bool { lhs.id == rhs.id }
+}
+
 extension VMOperationKind {
+    /// The verb whose work this is when the Start or Resume verb runs it — a
+    /// guest start, a guest setup, or a hot resume — and `nil` for any other
+    /// operation.
+    var startOrResumeVerb: VMVerb? {
+        switch self {
+        case .bringUp(.guestStart(.starting)), .bringUp(.settingUp):
+            .start
+        case .bringUp(.guestStart(.restoringSavedState)), .resuming:
+            .resume
+        case .bringUp(.reverting), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
+            .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping, .discardingSavedState,
+            .deleting, .creatingStorageDisk, .removingStorageDisk, .creatingRemovableMedia, .copyingOut:
+            nil
+        }
+    }
+
     /// Where a body that threw leaves the VM.
     func restAfterFailure(_ error: any Error) -> VMOperationRest {
         let transient = VirtualizationService.isTransientStartError(error)
