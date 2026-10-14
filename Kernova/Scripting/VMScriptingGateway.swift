@@ -3,7 +3,7 @@ import KernovaKit
 import KernovaLogging
 
 /// The Apple event front door: everything Script Editor, Automator, and
-/// `osascript` ask of Kernova passes through here and reaches ``VMCommanding``.
+/// `osascript` ask of Kernova passes through here and reaches ``VMCommandCore``.
 ///
 /// Receiving Apple events needs no entitlement — a sandboxed app keeps the
 /// ability to receive and respond to them, and only *sending* one to another
@@ -26,7 +26,7 @@ import KernovaLogging
 final class VMScriptingGateway {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMScriptingGateway")
 
-    private let commands: any VMCommanding
+    private let commands: VMCommandCore
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
     /// Readies the app to put up a surface something outside the process asked
@@ -48,7 +48,7 @@ final class VMScriptingGateway {
     private let currentCommand: @MainActor () -> NSScriptCommand?
 
     init(
-        commands: any VMCommanding, readiness: LibraryReadiness,
+        commands: VMCommandCore, readiness: LibraryReadiness,
         prepareToSurface: @escaping @MainActor @Sendable () -> Void,
         currentCommand: @escaping @MainActor () -> NSScriptCommand? = { NSScriptCommand.current() }
     ) {

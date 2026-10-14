@@ -7,6 +7,11 @@ import KernovaLogging
 extension VMCommandCore {
     // MARK: - Reads
 
+    /// The library's named networks, ordered by name, each with the VMs on it.
+    ///
+    /// Addresses no VM: a network is the library's, and a VM joins one through
+    /// its `network.membership` key. Refuses while the library's list of
+    /// networks cannot be read, rather than answering none.
     func networks() throws -> [NetworkSummary] {
         library.networks.reload()
         return try library.networks.listedNetworks(verb: .networks).map(summary)
@@ -23,6 +28,9 @@ extension VMCommandCore {
 
     // MARK: - Edits
 
+    /// Lists a new network named `name`, whose VMs run in `kind`. Refuses a
+    /// name another network has, ignoring case, and one a membership value
+    /// already spells.
     @discardableResult
     func createNetwork(name: String, kind: NetworkKind) throws -> NetworkSummary {
         library.networks.reload()
@@ -39,6 +47,8 @@ extension VMCommandCore {
         return summary(network)
     }
 
+    /// Renames the network `network` names, by identifier or by name. A VM
+    /// names its network by identifier, so no VM changes.
     func renameNetwork(_ network: String, to newName: String) throws {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
@@ -46,6 +56,14 @@ extension VMCommandCore {
         #log(Self.logger, .notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
     }
 
+    /// Stops listing the network `network` names.
+    ///
+    /// Refuses while a VM is set to join it: with the VM's own refusal when a
+    /// member's state takes no change of membership, else with
+    /// ``CommandError/stepRequired(_:)``, routing each VM to a network of its
+    /// own, which narrows what it reaches and widens nothing
+    /// (docs/NETWORKING.md). An inert VM whose state takes no such change, and
+    /// a snapshot taken on the network, keep naming it, unlisted.
     func deleteNetwork(_ network: String) throws {
         library.networks.reload()
         let network = try library.networks.requireNetwork(named: network, verb: .deleteNetwork)

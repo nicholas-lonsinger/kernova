@@ -243,8 +243,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     private func rebuildUSBAccessoryMenu(_ menu: NSMenu) {
         guard let host else { return }
         let instance = host.menuCommandTarget(of: nil)
-        // Both listings come from the facade, so the menu offers exactly what
-        // an attach would accept — the held-accessory filter lives at the
+        // Both listings come from the command core, so the menu offers exactly
+        // what an attach would accept — the held-accessory filter lives at the
         // enforcement point, not here.
         let available = (try? viewModel.commands.availableUSBAccessories()) ?? []
         let attached =

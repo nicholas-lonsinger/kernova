@@ -16,7 +16,7 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
     }
 
     /// What a verb can answer with — one payload shape per return type in the
-    /// facade, plus the refusal every verb shares.
+    /// command core, plus the refusal every verb shares.
     public enum Result: Codable, Sendable, Hashable {
         /// The verb succeeded and answers with nothing.
         case ok

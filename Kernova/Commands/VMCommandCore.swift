@@ -13,8 +13,25 @@ enum VMBringUpPresence: Sendable, Equatable {
     case unattended
 }
 
-/// The headless implementation of every VM verb, beneath the AppKit UI and
+/// Every VM verb Kernova offers, typed end to end, beneath the AppKit UI and
 /// every automation surface.
+///
+/// One method per verb, addressing VMs by ``VMSelector`` and refusing with
+/// ``CommandError``. Every front door reaches VMs through this and nothing
+/// else — the AppKit UI in process, a wire client through
+/// ``VMCommandEnvelopeRouter`` — so each inherits identical addressing, state
+/// gates, and consent semantics.
+///
+/// A verb refuses what it needs rather than asking for it, and the refusal says
+/// what that is: a destructive verb called without consent refuses with
+/// ``CommandError/confirmationRequired(_:)``, and a start of a VM still owing
+/// its guest the macOS account it was set up with refuses with
+/// ``CommandError/guestAccountPasswordRequired(_:)``. The first is answered by
+/// re-issuing the call with the consent it takes as a parameter, the second by
+/// the verb that supplies the answer and then a plain start. A verb whose
+/// state needs a step of its own taken first refuses with
+/// ``CommandError/stepRequired(_:)``, carrying that step as a request
+/// ``take(_:)`` runs.
 ///
 /// Holds no VM state of its own — ``VMLibrary`` owns which VMs exist and each
 /// VM's ``VMActivity`` decides what it admits — so it is *not* `@Observable`:
@@ -24,8 +41,18 @@ enum VMBringUpPresence: Sendable, Equatable {
 /// as a thrown ``CommandError`` at the call that caused it, or through
 /// ``onFailure`` when no call is waiting; anything a user has to look at leaves
 /// through ``surfaceDisplay``, ``readyDisplay`` or ``revealInLibrary``.
+///
+/// `@MainActor` because library state is UI-adjacent, all VZ work already runs
+/// on per-VM `VMSession` actors, and command traffic is human-scale.
+///
+/// A verb that completes synchronously is spelled synchronously. A create,
+/// clone or import registers its arrival with no suspension point between
+/// deciding its destination and registering it, whether or not it then waits
+/// — an import named by path awaits its sandbox grant before that decision:
+/// a batch's destination reservations have to see each other's arrivals,
+/// which one suspension point between them would break.
 @MainActor
-final class VMCommandCore: VMCommanding {
+final class VMCommandCore {
     nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
 
     // MARK: - Collaborators
@@ -611,6 +638,21 @@ final class VMCommandCore: VMCommanding {
         return .failed(verb: verb, error: error)
     }
 
+    // MARK: - Steps
+
+    /// Takes one step a ``StepRequirement`` routes through, as the standalone
+    /// request it is, asking nothing.
+    func take(_ step: CommandStep) async throws {
+        switch step {
+        case .resume(let vm):
+            try await resume(.id(vm.id), consent: .none)
+        case .discardSavedState(let vm):
+            try await stop(.id(vm.id), disposition: .graceful, consent: Consent([.forceStop]))
+        case .setConfiguration(let vm, let assignments):
+            _ = try setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
+        }
+    }
+
     // MARK: - Reads
 
     // `list`, `info` and `get` first catch each VM they read up with another
@@ -686,10 +728,12 @@ final class VMCommandCore: VMCommanding {
         )
     }
 
+    /// What the guest's address resolves to on the network its mode joins.
     func ipAddress(of selector: VMSelector) throws -> GuestIPAddress {
         library.guestAddresses.address(for: try resolve(selector))
     }
 
+    /// The VM's named restore points, newest first.
     func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
         let instance = try resolve(selector)
         return instance.snapshotManifest.ordered.map { snapshotSummary($0, on: instance) }
@@ -709,6 +753,11 @@ final class VMCommandCore: VMCommanding {
 
     // MARK: - Observation
 
+    /// A stream of library changes, for callers that cannot observe the model.
+    ///
+    /// Each element is every change one pass over the library found, in the
+    /// order found, so a launch or a batch import lands as one element. Each
+    /// call returns its own stream; ending iteration drops it.
     func events() -> AsyncStream<[VMLibraryEvent]> {
         broadcaster.stream()
     }

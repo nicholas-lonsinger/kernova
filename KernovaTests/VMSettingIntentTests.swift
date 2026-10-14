@@ -13,27 +13,15 @@ import Testing
 @Suite("VM Setting Intent Tests", .caseScoped)
 @MainActor
 struct VMSettingIntentTests {
-    private func makeGateway(_ commands: MockVMCommanding) -> VMIntentGateway {
+    private func makeGateway(over harness: WiredCommandCore) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: {}),
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
-    }
-
-    /// A library of one VM, which every write here addresses.
-    private func seed(_ commands: MockVMCommanding) -> UUID {
-        let id = UUID()
-        commands.library = [
-            VMSummary(id: id, name: "Wired", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-        ]
-        return id
     }
 
     @Test("The settings offered are the registry's keys, in its order, each described by its summary")
     func settingsAreTheRegistryKeys() async throws {
-        let commands = MockVMCommanding()
-        commands.configurationKeyDescriptors = VMConfigurationKeyRegistry.keys.map(\.descriptor)
-
-        let settings = await makeGateway(commands).configurationKeys()
+        let settings = await makeGateway(over: WiredCommandCore()).configurationKeys()
 
         #expect(settings.map(\.id) == VMConfigurationKeyRegistry.keys.map(\.name))
         let mac = try #require(settings.first { $0.id == VMConfigurationKeyRegistry.networkMAC.name })
@@ -44,9 +32,7 @@ struct VMSettingIntentTests {
 
     @Test("Resolving by name, or by a typed fragment, answers only the settings asked for, in registry order")
     func lookupFilters() async throws {
-        let commands = MockVMCommanding()
-        commands.configurationKeyDescriptors = VMConfigurationKeyRegistry.keys.map(\.descriptor)
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(over: WiredCommandCore())
 
         #expect(
             await gateway.configurationKeys(named: ["network.mac", "nonsense", "cpus"]).map(\.id)
@@ -58,59 +44,60 @@ struct VMSettingIntentTests {
 
     @Test("A write assigns the value to the key, addressing the VM by identifier")
     func aWriteAssignsByKey() async throws {
-        let commands = MockVMCommanding()
-        let vm = seed(commands)
+        let harness = WiredCommandCore()
+        // Name twins: a write addressed by name would be refused as ambiguous.
+        let vm = harness.register(name: "Wired")
+        let twin = harness.register(name: "Wired")
 
-        _ = try await makeGateway(commands).setConfiguration(
-            vm, key: "network.membership", value: "isolated", consent: .none)
+        let held = try await makeGateway(over: harness).setConfiguration(
+            vm.id, key: "network.membership", value: "isolated", consent: .none)
 
-        #expect(commands.setConfigurationCalls.map(\.selector) == [.id(vm)])
-        #expect(
-            commands.setConfigurationCalls.map(\.assignments)
-                == [[ConfigurationEntry(key: "network.membership", value: "isolated")]])
+        #expect(held == "isolated")
+        #expect(vm.configuration.networkMembership == .isolated)
+        #expect(twin.configuration.networkMembership == .common)
     }
 
     @Test("A write answers the value the key ended up holding, not the one written")
     func aWriteAnswersTheHeldValue() async throws {
-        let commands = MockVMCommanding()
-        let vm = seed(commands)
-        commands.setConfigurationAnswer = [ConfigurationEntry(key: "network.mac", value: "02:11:22:33:44:55")]
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
 
-        let held = try await makeGateway(commands).setConfiguration(
-            vm, key: "network.mac", value: "new", consent: .none)
+        let held = try await makeGateway(over: harness).setConfiguration(
+            vm.id, key: "network.mac", value: VMConfigurationKeyRegistry.newMACAddressValue, consent: .none)
 
-        #expect(held == "02:11:22:33:44:55")
+        #expect(held != VMConfigurationKeyRegistry.newMACAddressValue)
+        #expect(held == vm.configuration.macAddress)
     }
 
     @Test("Turning clipboard passthrough on asks once, then re-issues the write with the consent")
     func clipboardPassthroughAsks() async throws {
-        let commands = MockVMCommanding()
-        let vm = seed(commands)
-        commands.setConfigurationConsentPrompt = ClipboardPassthroughConsent.prompt(vmName: "Wired")
-        let gateway = makeGateway(commands)
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired") { $0.clipboardSharingEnabled = true }
+        let gateway = makeGateway(over: harness)
         var asked: [ConfirmationPrompt] = []
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
             _ = try await gateway.setConfiguration(
-                vm, key: "clipboard.passthrough", value: "true", consent: consent)
+                vm.id, key: "clipboard.passthrough", value: "true", consent: consent)
         }
 
-        #expect(asked.map(\.kind) == [.enableClipboardPassthrough])
-        #expect(
-            commands.setConfigurationCalls.map { $0.consent.covers(.enableClipboardPassthrough) }
-                == [false, true])
+        #expect(asked == [ClipboardPassthroughConsent.prompt(vmName: "Wired")])
+        #expect(vm.configuration.clipboardPassthroughEnabled)
     }
 
     @Test("A refusal from the core reaches the caller unchanged")
     func refusalsPassThrough() async throws {
-        let commands = MockVMCommanding()
-        let vm = seed(commands)
-        let refusal = CommandError.invalidArgument("network.membership takes common, isolated, or a network.")
-        commands.setConfigurationError = refusal
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
 
-        await #expect(throws: refusal) {
-            _ = try await makeGateway(commands).setConfiguration(
-                vm, key: "network.membership", value: "Nowhere", consent: .none)
+        await #expect(
+            throws: CommandError.invalidArgument(
+                "network.membership takes common, isolated, or a network\u{2019}s name or identifier, "
+                    + "not \u{201C}Nowhere\u{201D}.")
+        ) {
+            _ = try await makeGateway(over: harness).setConfiguration(
+                vm.id, key: "network.membership", value: "Nowhere", consent: .none)
         }
+        #expect(vm.configuration.networkMembership == .common)
     }
 }

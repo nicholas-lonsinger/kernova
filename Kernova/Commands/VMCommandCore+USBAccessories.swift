@@ -15,6 +15,8 @@ extension VMCommandCore {
 
     // MARK: - Reads
 
+    /// The accessories the VM's guest is holding right now, each named by the
+    /// attachment a detach takes back.
     func usbAccessories(of selector: VMSelector) throws -> [USBAccessorySummary] {
         try requireUSBAccessoryService()
         let names = listingNames()
@@ -23,6 +25,11 @@ extension VMCommandCore {
         }
     }
 
+    /// The accessories macOS has assigned to Kernova that no guest is holding.
+    ///
+    /// Addresses no VM: the user assigns an accessory to the app rather than to
+    /// a guest, so which VM could take it is the caller's question, not the
+    /// list's.
     func availableUSBAccessories() throws -> [USBAccessorySummary] {
         let service = try requireUSBAccessoryService()
         let held = library.accessoryHolders.heldRegistryIDs
@@ -32,6 +39,12 @@ extension VMCommandCore {
             .map { summary(of: $0, named: names) }
     }
 
+    /// The accessories one VM takes back automatically, or every VM's when
+    /// `selector` is `nil`.
+    ///
+    /// Unlike the two listings above, these rows describe hardware that is
+    /// usually not plugged in — which is the whole reason they can be listed
+    /// and removed at all.
     func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
         try requireUSBAccessoryService()
         let instances = try selector.map { [try resolve($0)] } ?? library.instances
@@ -53,6 +66,7 @@ extension VMCommandCore {
 
     // MARK: - Edits
 
+    /// Stops the VM taking the accessory `key` names back.
     func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
         try requireUSBAccessoryService()
         let instance = try resolve(selector)
@@ -82,6 +96,8 @@ extension VMCommandCore {
         )
     }
 
+    /// Passes the accessory `registryID` names through to the VM's running
+    /// guest.
     func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
         let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)
         // An accessory macOS has not assigned to Kernova is a miss, not a
@@ -118,6 +134,7 @@ extension VMCommandCore {
         }
     }
 
+    /// Takes the passthrough device `deviceID` names back off the guest.
     func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
         let (instance, sessionID, _) = try admitUSBAccessoryEdit(selector)
         // An identifier no attachment answers to is a refusal, not a quiet

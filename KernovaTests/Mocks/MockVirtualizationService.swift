@@ -14,6 +14,10 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     var startCallCount = 0
     var stopCallCount = 0
+    /// Fires as each shutdown request arrives, after ``stopCallCount`` rises
+    /// — the moment a stop or restart starts waiting on the power-off, which
+    /// changes no state a test can observe.
+    let stopRequested = AsyncGate()
     var forceStopCallCount = 0
     var pauseCallCount = 0
     var resumeCallCount = 0
@@ -111,6 +115,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// reaches the VM as the session event the real guest raises.
     func requestStop(_ instance: VMInstance) async throws {
         stopCallCount += 1
+        stopRequested.notify()
         if let error = stopError { throw error }
         guard !guestIgnoresShutdownRequest, let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)

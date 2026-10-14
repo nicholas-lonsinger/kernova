@@ -14,23 +14,30 @@ import Testing
 @Suite("VM Intent Gateway Tests", .caseScoped)
 @MainActor
 struct VMIntentGatewayTests {
-    private static let stoppedID = UUID()
-
-    private func makeSummary(
-        name: String = "Wired", status: String = "stopped", id: UUID = UUID()
-    ) -> VMSummary {
-        VMSummary(id: id, name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
+    private func makeSummary(name: String) -> VMSummary {
+        VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
-    /// A gateway whose library read has already landed, over a seeded mock.
+    /// A gateway whose library read has already landed, over a real core.
     private func makeGateway(
-        _ commands: MockVMCommanding,
+        over harness: WiredCommandCore,
         record: VMIndexRecord = makeTestIndexRecord(),
         index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: {}), index: index,
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}), index: index,
             record: record)
+    }
+
+    /// A readiness that parks until `release` yields, telling `entered` once
+    /// a caller is waiting on it.
+    private func makeParkedReadiness(
+        entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>
+    ) -> LibraryReadiness {
+        LibraryReadiness(awaitReady: {
+            entered.yield(())
+            for await _ in release { break }
+        })
     }
 
     // MARK: - Entity
@@ -136,25 +143,25 @@ struct VMIntentGatewayTests {
 
     @Test("Resolving by identifier answers only the VMs asked for")
     func lookupFiltersByIdentifier() async throws {
-        let commands = MockVMCommanding()
-        let first = makeSummary(name: "First")
-        let second = makeSummary(name: "Second")
-        commands.library = [first, second]
+        let harness = WiredCommandCore()
+        harness.register(name: "First")
+        let second = harness.register(name: "Second")
 
-        let gateway = makeGateway(commands)
-        let resolved = await gateway.vms(withIDs: [second.id])
+        let gateway = makeGateway(over: harness)
+        let resolved = await gateway.vms(withIDs: [second.id, UUID()])
 
+        #expect(resolved.map(\.id) == [second.id])
         #expect(resolved.map(\.name) == ["Second"])
     }
 
     @Test("A typed name matches case-insensitively, and every VM that answers to it")
     func lookupMatchesNamesCaseInsensitively() async throws {
-        let commands = MockVMCommanding()
-        commands.library = [
-            makeSummary(name: "Sonoma"), makeSummary(name: "Sonoma"), makeSummary(name: "Ubuntu"),
-        ]
+        let harness = WiredCommandCore()
+        harness.register(name: "Sonoma")
+        harness.register(name: "Sonoma")
+        harness.register(name: "Ubuntu")
 
-        let gateway = makeGateway(commands)
+        let gateway = makeGateway(over: harness)
 
         let twins = await gateway.vms(matching: "sonoma")
         let byPrefix = await gateway.vms(matching: "UBUN")
@@ -170,12 +177,16 @@ struct VMIntentGatewayTests {
 
     @Test("The whole library is enumerable, so Shortcuts offers a picker")
     func lookupEnumeratesTheLibrary() async throws {
-        let commands = MockVMCommanding()
-        commands.library = [makeSummary(name: "First"), makeSummary(name: "Second")]
+        let harness = WiredCommandCore()
+        let first = harness.register(name: "First")
+        let second = harness.register(name: "Second", phase: .running(sessionID: UUID()))
 
-        let all = await makeGateway(commands).vms()
+        let all = await makeGateway(over: harness).vms()
 
+        #expect(all.map(\.id) == [first.id, second.id])
         #expect(all.map(\.name) == ["First", "Second"])
+        // Each row is the VM's whole read.
+        #expect(all.map(\.status) == ["stopped", "running"])
     }
 
     // MARK: - Filtering and Sorting
@@ -244,112 +255,151 @@ struct VMIntentGatewayTests {
 
     @Test("No read reaches the core until the app's first library read has landed")
     func readsWaitForTheLibraryRead() async throws {
-        let commands = MockVMCommanding()
-        let late = makeSummary(name: "Late")
-        commands.library = [late]
+        let harness = WiredCommandCore()
         let entered = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         let index = MockVMEntityIndex()
         let gateway = VMIntentGateway(
-            commands: commands,
-            readiness: LibraryReadiness(awaitReady: {
-                entered.continuation.yield(())
-                for await _ in release.stream { break }
-            }),
+            commands: harness.core,
+            readiness: makeParkedReadiness(entered: entered.continuation, release: release.stream),
             index: index, record: makeTestIndexRecord())
 
         let read = Task { await gateway.vms() }
         for await _ in entered.stream { break }
-        #expect(commands.listCallCount == 0)
+        // Registered while the read is parked: a read that had already
+        // reached the core would answer an empty library.
+        let late = harness.register(name: "Late")
+        #expect(index.operations.isEmpty)
 
         release.continuation.yield(())
         release.continuation.finish()
 
-        #expect(await read.value.map(\.name) == ["Late"])
+        #expect(await read.value.map(\.id) == [late.id])
         try await index.awaitOperations(Self.syncedOperations)
         #expect(index.operations == [.index([late.id])])
-        // Two: this read, and the whole-library read the readiness sync makes.
-        #expect(commands.listCallCount == 2)
     }
 
     @Test("The library read is awaited once, however many intents pile onto it")
     func readinessIsMemoized() async throws {
-        let commands = MockVMCommanding()
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
         let awaits = Counter()
         let gateway = VMIntentGateway(
-            commands: commands, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: { await awaits.increment() }),
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
 
         _ = await gateway.vms()
         _ = await gateway.vms()
-        try await gateway.start(UUID(), recovery: false, consent: .none)
+        try await gateway.start(vm.id, recovery: false, consent: .none)
 
         #expect(await awaits.value == 1)
+        #expect(vm.status == .running)
     }
 
     // MARK: - Verb Dispatch
 
     @Test("Every verb addresses its VM by identifier, never by name")
     func verbsAddressByIdentifier() async throws {
-        let commands = MockVMCommanding()
-        let id = Self.stoppedID
-        commands.library = [makeSummary(name: "Twin", id: id)]
-        let gateway = makeGateway(commands)
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        // Name twins: any verb addressed by name would be refused as ambiguous.
+        // macOS guests, since only they boot into Recovery.
+        let vm = harness.register(name: "Twin", guestOS: .macOS)
+        let twin = harness.register(name: "Twin", guestOS: .macOS)
+        let id = vm.id
+        let gateway = makeGateway(over: harness)
 
         try await gateway.start(id, recovery: true, consent: .none)
-        try await gateway.stop(id, disposition: .force, consent: .all)
-        try await gateway.pause(id)
-        try await gateway.resume(id, consent: .none)
-        try await gateway.suspend(id)
-        try await gateway.restart(id, consent: .none)
-        try await gateway.open(id)
-        try await gateway.reveal(id)
-        _ = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
-        _ = try await gateway.ipAddress(of: id)
+        #expect(vm.status == .running)
+        #expect(virtualization.lastStartBootIntoRecovery)
 
-        #expect(commands.startCalls.map(\.selector) == [.id(id)])
-        #expect(commands.startCalls.map(\.recovery) == [true])
-        #expect(commands.stopCalls.map(\.selector) == [.id(id)])
-        #expect(commands.stopCalls.map(\.disposition) == [.force])
-        #expect(commands.pauseSelectors == [.id(id)])
-        #expect(commands.resumeSelectors == [.id(id)])
-        #expect(commands.suspendSelectors == [.id(id)])
-        #expect(commands.restartCalls.map(\.selector) == [.id(id)])
-        // An intent's caller is not sitting there waiting on a deadline.
-        #expect(commands.restartCalls.map(\.timeout) == [nil])
-        // The change a MAC address conflict takes reaches each bring-up as chosen.
-        #expect(commands.openSelectors == [.id(id)])
-        #expect(commands.revealSelectors == [.id(id)])
-        #expect(commands.ipAddressSelectors == [.id(id)])
-        #expect(commands.takeSnapshotCalls.map(\.selector) == [.id(id)])
-        #expect(commands.takeSnapshotCalls.map(\.name) == ["Before"])
-        #expect(commands.takeSnapshotCalls.map(\.notes) == ["a note"])
+        try await gateway.stop(id, disposition: .force, consent: .all)
+        #expect(vm.status == .stopped)
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.stopCallCount == 0)
+
+        try await gateway.start(id, recovery: false, consent: .none)
+        #expect(vm.status == .running)
+        #expect(!virtualization.lastStartBootIntoRecovery)
+
+        try await gateway.open(id)
+        #expect(harness.surfacedDisplays == [id])
+        // A running VM's reveal is its display.
+        try await gateway.reveal(id)
+        #expect(harness.surfacedDisplays == [id, id])
+        #expect(harness.revealedInLibrary.isEmpty)
+        #expect(try await gateway.ipAddress(of: id) == nil)
+
+        let snapshot = try await gateway.takeSnapshot(id, name: "Before", notes: "a note")
+        #expect(snapshot.name == "Before")
+        #expect(snapshot.notes == "a note")
+        #expect(vm.snapshotManifest.ordered.map(\.id) == [snapshot.id])
+
+        try await gateway.pause(id)
+        #expect(vm.status == .paused)
+        try await gateway.resume(id, consent: .none)
+        #expect(vm.status == .running)
+        try await gateway.suspend(id)
+        #expect(vm.status == .suspended)
+
+        #expect(twin.status == .stopped)
+        #expect(twin.snapshotManifest.ordered.isEmpty)
+        #expect(virtualization.startCallCount == 2)
     }
 
-    @Test("The quit verb reaches the facade, addressing no VM")
-    func quitReachesTheFacade() async {
-        let commands = MockVMCommanding()
-        let gateway = makeGateway(commands)
+    /// An intent's caller is not sitting there waiting on a deadline: the
+    /// restart waits out the guest's power-off however long it takes. Only a
+    /// guest slower than the request shows it, since a deadline is armed only
+    /// once the request is sent and the guest is still up.
+    @Test("A restart waits out the guest's power-off with no deadline")
+    func restartWaitsWithoutADeadline() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = WiredCommandCore(virtualization: virtualization, clock: clock)
+        let session = UUID()
+        let vm = harness.register(name: "Rebooting", phase: .running(sessionID: session))
+        let gateway = makeGateway(over: harness)
 
-        await gateway.quit()
+        let restart = Task { try await gateway.restart(vm.id, consent: .none) }
+        try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
+        // The turn that sent the request is the one that arms any deadline, and
+        // a deadline's sleep is queued behind it.
+        await drainMainQueue()
+        #expect(clock.requestedSeconds.isEmpty)
+        #expect(vm.liveSessionID == session)
 
-        #expect(commands.quitCallCount == 1)
+        vm.deliverSessionEvent(.guestDidStop, from: session)
+        try await restart.value
+
+        #expect(vm.status == .running)
+        #expect(vm.liveSessionID != session)
+    }
+
+    @Test("The quit verb reaches the core, addressing no VM")
+    func quitReachesTheCore() async throws {
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired", phase: .running(sessionID: UUID()))
+
+        await makeGateway(over: harness).quit()
+        try await harness.quitRequested.wait { harness.quitRequests == 1 }
+
+        #expect(harness.quitRequests == 1)
+        #expect(vm.status == .running)
     }
 
     // MARK: - Search
 
     @Test("A search term reaches the library's search once the library has landed, addressing no VM")
     func searchFillsTheLibrarySearchOnceReady() async {
-        let commands = MockVMCommanding()
+        let harness = WiredCommandCore()
+        harness.register(name: "Sonoma")
         let entered = AsyncStream<Void>.makeStream()
         let release = AsyncStream<Void>.makeStream()
         var terms: [String] = []
         let gateway = VMIntentGateway(
-            commands: commands,
-            readiness: LibraryReadiness(awaitReady: {
-                entered.continuation.yield(())
-                for await _ in release.stream { break }
-            }),
+            commands: harness.core,
+            readiness: makeParkedReadiness(entered: entered.continuation, release: release.stream),
             index: MockVMEntityIndex(), record: makeTestIndexRecord(),
             showSearchResults: { terms.append($0) })
 
@@ -362,7 +412,8 @@ struct VMIntentGatewayTests {
         await search.value
 
         #expect(terms == ["sonoma"])
-        #expect(commands.revealSelectors.isEmpty)
+        #expect(harness.revealedInLibrary.isEmpty)
+        #expect(harness.surfacedDisplays.isEmpty)
     }
 
     @Test("Spotlight's Open on an indexed VM has an intent to run")
@@ -376,36 +427,36 @@ struct VMIntentGatewayTests {
 
     @Test("A refusal from the core reaches the caller unchanged")
     func refusalsPassThrough() async throws {
-        let commands = MockVMCommanding()
-        commands.startError = CommandError.busy(vm: makeSummary(), operation: "starting")
-        let gateway = makeGateway(commands)
+        let harness = WiredCommandCore()
+        harness.register(name: "Wired")
+        let missing = UUID()
 
-        await #expect(throws: CommandError.self) {
-            try await gateway.start(UUID(), recovery: false, consent: .none)
+        await #expect(throws: CommandError.notFound(.id(missing))) {
+            try await makeGateway(over: harness).start(missing, recovery: false, consent: .none)
         }
     }
 
     // MARK: - Consent
 
+    /// A paused VM's force stop offers no alternative: its graceful stop is
+    /// refused until it resumes.
     @Test("A consent refusal is asked once and the verb re-issued with it")
     func consentRetriesTheVerb() async throws {
-        let commands = MockVMCommanding()
-        let id = UUID()
-        commands.stopConsentPrompt = ConfirmationPrompt(
-            kind: .forceStop,
-            title: "Force Stop Virtual Machine",
-            message: "Unsaved guest state is lost.",
-            confirmTitle: "Force Stop",
-            dismissTitle: "Cancel")
-        let gateway = makeGateway(commands)
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        let vm = harness.register(name: "Paused", phase: .livePaused(sessionID: UUID()))
+        let expected = VMCommandCore.forceStopPrompt(vm)
+        let gateway = makeGateway(over: harness)
         var asked: [ConfirmationPrompt] = []
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-            try await gateway.stop(id, disposition: .force, consent: consent)
+            try await gateway.stop(vm.id, disposition: .force, consent: consent)
         }
 
-        #expect(asked.map(\.kind) == [.forceStop])
-        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
+        #expect(expected.alternatives.isEmpty)
+        #expect(asked == [expected])
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(vm.status == .stopped)
     }
 
     /// A running VM's force stop carries the gentler "Shut Down" alternative
@@ -414,63 +465,65 @@ struct VMIntentGatewayTests {
     /// would leave Force Stop permanently unreachable for a hung guest.
     @Test("Force-stopping a running VM confirms, alternative or not")
     func consentRetriesAForceStopThatOffersShutDown() async throws {
-        let commands = MockVMCommanding()
-        let id = UUID()
-        commands.stopConsentPrompt = ConfirmationPrompt(
-            kind: .forceStop,
-            title: "Force Stop Virtual Machine",
-            message: "\u{201C}Hung\u{201D} will be immediately terminated.",
-            confirmTitle: "Force Stop",
-            dismissTitle: "Cancel",
-            alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
-        let gateway = makeGateway(commands)
-        var asked = 0
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        let vm = harness.register(name: "Hung", phase: .running(sessionID: UUID()))
+        let gateway = makeGateway(over: harness)
+        var asked: [ConfirmationPrompt] = []
 
-        try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
-            try await gateway.stop(id, disposition: .force, consent: consent)
+        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
+            try await gateway.stop(vm.id, disposition: .force, consent: consent)
         }
 
-        #expect(asked == 1)
-        #expect(commands.stopCalls.map { !$0.consent.kinds.isEmpty } == [false, true])
-        #expect(commands.stopCalls.map(\.disposition) == [.force, .force])
+        #expect(asked.map(\.kind) == [.forceStop])
+        #expect(asked.first?.alternatives == [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
+        // Forced both times: the alternative is never taken in its place.
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.stopCallCount == 0)
+        #expect(vm.status == .stopped)
     }
 
     @Test("A step refusal is never answered by confirming")
     func consentLeavesAStepRefusalStanding() async throws {
-        let commands = MockVMCommanding()
-        let refusal = CommandError.stepRequired(
-            StepRequirement(
-                message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request.",
-                routes: [StepRoute(title: "Resume", steps: [.resume(vm: makeSummary())], ending: .refusedVerb)]))
-        commands.stopError = refusal
-        let gateway = makeGateway(commands)
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        let vm = harness.register(name: "Alpha", phase: .livePaused(sessionID: UUID()))
+        let gateway = makeGateway(over: harness)
         var asked = 0
 
-        await #expect(throws: refusal) {
+        await #expect(throws: CommandError.stepRequired(harness.core.pausedStopRefusal(vm))) {
             try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
-                try await gateway.stop(UUID(), disposition: .graceful, consent: consent)
+                try await gateway.stop(vm.id, disposition: .graceful, consent: consent)
             }
         }
 
         #expect(asked == 0)
-        #expect(commands.stopCalls.count == 1)
+        #expect(virtualization.stopCallCount == 0)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(vm.status == .paused)
     }
 
     @Test("A failure that is not a consent refusal is never turned into a question")
     func consentLeavesOtherFailuresAlone() async throws {
-        let commands = MockVMCommanding()
-        commands.stopError = CommandError.busy(vm: makeSummary(), operation: "suspending")
-        let gateway = makeGateway(commands)
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        let vm = harness.register(
+            name: "Busy", phase: .operating(.saving, from: .running(sessionID: UUID())))
+        let gateway = makeGateway(over: harness)
         var asked = 0
+        var failure: CommandError?
 
-        await #expect(throws: CommandError.self) {
+        do {
             try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { consent in
-                try await gateway.stop(UUID(), disposition: .graceful, consent: consent)
+                try await gateway.stop(vm.id, disposition: .graceful, consent: consent)
             }
+        } catch let error as CommandError {
+            failure = error
         }
 
+        #expect(failure?.isBusy == true)
         #expect(asked == 0)
-        #expect(commands.stopCalls.count == 1)
+        #expect(virtualization.stopCallCount == 0)
     }
 
     // MARK: - Error Surfacing
@@ -495,15 +548,27 @@ struct VMIntentGatewayTests {
     /// which every batch assertion counts from: one whole-library write.
     private static let syncedOperations = 1
 
+    /// Reads `events` up to the batch reporting `vm` running.
+    ///
+    /// Every stream the core hands out is fed the same batches in the same
+    /// order, so the gateway's own subscription holds that batch too, ahead of
+    /// anything changed after this returns.
+    private func readUntilRunning(_ vm: VMInstance, on events: AsyncStream<[VMLibraryEvent]>) async {
+        for await batch in events {
+            for event in batch {
+                if case .statusChanged(let id, _, _, let to) = event, id == vm.id, to == "running" { return }
+            }
+        }
+    }
+
     @Test("Readiness writes the whole library, emptying nothing")
     func readinessSyncsTheWholeLibrary() async throws {
-        let commands = MockVMCommanding()
-        let first = makeSummary(name: "First")
-        let second = makeSummary(name: "Second")
-        commands.library = [first, second]
+        let harness = WiredCommandCore()
+        let first = harness.register(name: "First")
+        let second = harness.register(name: "Second")
         let index = MockVMEntityIndex()
         let record = makeTestIndexRecord()
-        let gateway = makeGateway(commands, record: record, index: index)
+        let gateway = makeGateway(over: harness, record: record, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
 
@@ -514,13 +579,12 @@ struct VMIntentGatewayTests {
 
     @Test("Readiness drops only the VMs it recorded indexing that the library no longer holds")
     func readinessPrunesWhatLeftTheLibrary() async throws {
-        let commands = MockVMCommanding()
-        let kept = makeSummary(name: "Kept")
-        commands.library = [kept]
+        let harness = WiredCommandCore()
+        let kept = harness.register(name: "Kept")
         let gone = UUID()
         let record = makeTestIndexRecord([gone, kept.id])
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, record: record, index: index)
+        let gateway = makeGateway(over: harness, record: record, index: index)
 
         // The write lands before the prune, so a process ending between them
         // leaves the library findable rather than nothing at all.
@@ -533,14 +597,13 @@ struct VMIntentGatewayTests {
 
     @Test("A refused whole-library write keeps the recorded VMs, and the next batch re-attempts it")
     func refusedSyncIsRetriedOnTheNextBatch() async throws {
-        let commands = MockVMCommanding()
-        let vm = makeSummary(name: "Wired")
-        commands.library = [vm]
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
         let stale = UUID()
         let record = makeTestIndexRecord([stale])
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
-        let gateway = makeGateway(commands, record: record, index: index)
+        let gateway = makeGateway(over: harness, record: record, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
         #expect(index.operations == [.index([vm.id])])
@@ -549,7 +612,7 @@ struct VMIntentGatewayTests {
         index.indexError = nil
         // A status change shows neither surface anything new, and is still the
         // moment the refused write is re-attempted.
-        commands.emit([.statusChanged(id: vm.id, name: "Wired", from: "stopped", to: "running")])
+        try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
 
         try await index.awaitOperations(Self.syncedOperations + 1)
         #expect(index.operations == [.index([vm.id]), .index([vm.id])])
@@ -559,33 +622,32 @@ struct VMIntentGatewayTests {
 
     @Test("A refused removal is retried on the next batch, and forgotten only once it lands")
     func refusedRemovalIsRetriedOnTheNextBatch() async throws {
-        let commands = MockVMCommanding()
-        let kept = makeSummary(name: "Kept")
-        let gone = makeSummary(name: "Gone")
-        commands.library = [kept, gone]
+        let harness = WiredCommandCore()
+        let gone = harness.register(name: "Gone")
+        let kept = harness.register(name: "Kept")
         let record = makeTestIndexRecord()
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, record: record, index: index)
+        let gateway = makeGateway(over: harness, record: record, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
-        #expect(index.operations == [.index([kept.id, gone.id])])
-        #expect(record.indexedVMIDs == [kept.id, gone.id])
+        #expect(index.operations == [.index([gone.id, kept.id])])
+        #expect(record.indexedVMIDs == [gone.id, kept.id])
 
         index.removeError = CocoaError(.fileWriteUnknown)
-        commands.library = [kept]
-        commands.emit([.removed(id: gone.id, name: "Gone")])
+        harness.storage.files.removeBundle(at: gone.bundleURL)
+        harness.library.reconcileWithDisk()
 
         try await index.awaitOperations(Self.syncedOperations + 1)
-        #expect(index.operations == [.index([kept.id, gone.id]), .remove([gone.id])])
-        #expect(record.indexedVMIDs == [kept.id, gone.id])
+        #expect(index.operations == [.index([gone.id, kept.id]), .remove([gone.id])])
+        #expect(record.indexedVMIDs == [gone.id, kept.id])
 
         index.removeError = nil
-        commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
+        try await harness.core.start(.id(kept.id), recovery: false, consent: .none)
 
         try await index.awaitOperations(Self.syncedOperations + 2)
         #expect(
             index.operations == [
-                .index([kept.id, gone.id]), .remove([gone.id]), .remove([gone.id]),
+                .index([gone.id, kept.id]), .remove([gone.id]), .remove([gone.id]),
             ])
         #expect(record.indexedVMIDs == [kept.id])
         withExtendedLifetime(gateway) {}
@@ -593,16 +655,14 @@ struct VMIntentGatewayTests {
 
     @Test("A batch of additions is written once, however many VMs arrived")
     func aBatchOfAdditionsIsWrittenOnce() async throws {
-        let commands = MockVMCommanding()
-        let arriving = (1...6).map { makeSummary(name: "VM \($0)") }
+        let harness = WiredCommandCore()
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, index: index)
+        let gateway = makeGateway(over: harness, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
 
         // The launch case: one pass over the library reports every VM it holds.
-        commands.library = arriving
-        commands.emit(arriving.map { .added($0) })
+        let arriving = (1...6).map { harness.register(name: "VM \($0)") }
 
         try await index.awaitOperations(Self.syncedOperations + 1)
         #expect(index.operations == [.index([]), .index(arriving.map(\.id))])
@@ -611,49 +671,50 @@ struct VMIntentGatewayTests {
 
     @Test("A batch's removals are dropped and its renames re-indexed; status changes touch neither")
     func indexFollowsTheLibrary() async throws {
-        let commands = MockVMCommanding()
-        let kept = makeSummary(name: "Kept")
-        commands.library = [kept]
-        let gone = UUID()
+        let harness = WiredCommandCore()
+        let gone = harness.register(name: "Gone")
+        let kept = harness.register(name: "Kept")
         let index = MockVMEntityIndex()
-        let gateway = makeGateway(commands, index: index)
+        let gateway = makeGateway(over: harness, index: index)
+        let events = harness.core.events()
 
         try await index.awaitOperations(Self.syncedOperations)
 
         // Ordered through one stream: the status-only batch is drained before
         // the batch whose writes are awaited, so the count proves it wrote
         // nothing.
-        commands.emit([.statusChanged(id: kept.id, name: "Kept", from: "stopped", to: "running")])
-        commands.emit([
-            .removed(id: gone, name: "Gone"),
-            .renamed(id: kept.id, from: "Was", to: "Kept"),
-        ])
+        try await harness.core.start(.id(kept.id), recovery: false, consent: .none)
+        await readUntilRunning(kept, on: events)
+        // One turn, so one batch: the removal and the rename.
+        harness.storage.files.removeBundle(at: gone.bundleURL)
+        harness.library.reconcileWithDisk()
+        try harness.core.rename(.id(kept.id), to: "Renamed")
 
         try await index.awaitOperations(Self.syncedOperations + 2)
         #expect(
-            index.operations == [.index([kept.id]), .remove([gone]), .index([kept.id])])
+            index.operations == [.index([gone.id, kept.id]), .remove([gone.id]), .index([kept.id])])
         withExtendedLifetime(gateway) {}
     }
 
     @Test("A Spotlight refusal is swallowed, leaving the batch behind it indexed")
     func indexRefusalsAreSwallowed() async throws {
-        let commands = MockVMCommanding()
-        let vm = makeSummary(name: "Wired")
-        commands.library = [vm]
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
         let index = MockVMEntityIndex()
         index.indexError = CocoaError(.fileWriteUnknown)
-        let gateway = makeGateway(commands, index: index)
+        let gateway = makeGateway(over: harness, index: index)
 
         try await index.awaitOperations(Self.syncedOperations)
-        commands.emit([.renamed(id: vm.id, from: "Was", to: "Wired")])
+        try harness.core.rename(.id(vm.id), to: "Renamed")
         try await index.awaitOperations(Self.syncedOperations + 1)
 
         index.indexError = nil
-        commands.emit([.added(vm)])
+        let added = harness.register(name: "Added")
 
         try await index.awaitOperations(Self.syncedOperations + 2)
+        // The retried VM and the new one, written together in library order.
         #expect(
-            index.operations == [.index([vm.id]), .index([vm.id]), .index([vm.id])])
+            index.operations == [.index([vm.id]), .index([vm.id]), .index([vm.id, added.id])])
         withExtendedLifetime(gateway) {}
     }
 }

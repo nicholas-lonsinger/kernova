@@ -3,7 +3,7 @@ import KernovaKit
 import KernovaLogging
 
 /// The `kernova:` link front door: everything a clicked link asks of Kernova
-/// passes through here and reaches ``VMCommanding``.
+/// passes through here and reaches ``VMCommandCore``.
 ///
 /// **Readiness:** a link can be delivered while the app's first library read is
 /// still in flight — a cold launch from a link is the ordinary case — and a
@@ -21,7 +21,7 @@ import KernovaLogging
 final class VMURLGateway {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMURLGateway")
 
-    private let commands: any VMCommanding
+    private let commands: VMCommandCore
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
     /// Readies the app to put up a surface something outside the process asked
@@ -35,7 +35,7 @@ final class VMURLGateway {
     private let present: @MainActor (CommandError) -> Void
 
     init(
-        commands: any VMCommanding,
+        commands: VMCommandCore,
         readiness: LibraryReadiness,
         prepareToSurface: @escaping @MainActor @Sendable () -> Void,
         summonLibrary: @escaping @MainActor () -> Void,

@@ -3,12 +3,12 @@ import KernovaKit
 import KernovaLogging
 import Virtualization
 
-/// The AppKit adapter over ``VMCommanding``: the sheets and alerts that gather
+/// The AppKit adapter over ``VMCommandCore``: the sheets and alerts that gather
 /// consent for a verb, the routing of a refused verb to the right surface, and
 /// the inline-rename editing state.
 ///
 /// It runs no verb itself. Each method here does three things and stops: show
-/// the sheet if one is owed, call the facade with explicit consent, and route
+/// the sheet if one is owed, call the core with explicit consent, and route
 /// whatever ``CommandError`` comes back through ``present(_:for:)``.
 ///
 /// Owns the library and the core, routes ``VMLibrary/onFailure`` and the core's
@@ -25,11 +25,7 @@ final class VMLibraryViewModel {
     let library: VMLibrary
 
     /// Every VM verb, headless. The one path from this adapter to a VM.
-    let commands: any VMCommanding
-
-    /// The same object ``commands`` is, kept concretely for the one hook the
-    /// residency controller wires after construction.
-    private let core: VMCommandCore
+    let commands: VMCommandCore
 
     let storageService: any VMStorageProviding
     let diskImageService: any DiskImageProviding
@@ -241,7 +237,7 @@ final class VMLibraryViewModel {
     // MARK: - Command Forwarding
 
     // Headless reads and gates the UI enables its commands from, each
-    // documented on ``VMCommanding``.
+    // documented on ``VMCommandCore``.
     //
     // A read that resolves its VM refuses only with
     // ``CommandError/notFound(_:)``, which a sheet still up while its VM left
@@ -297,7 +293,7 @@ final class VMLibraryViewModel {
     // MARK: - Attachment Forwarding
 
     // The settings pane's Storage and Sharing categories, one forward per
-    // verb, each documented on ``VMCommanding``. The pane gathers the consent
+    // verb, each documented on ``VMCommandCore``. The pane gathers the consent
     // a trashing removal asks for, so the storage and removable-media removals
     // arrive pre-confirmed; a share removal destroys nothing and asks none.
 
@@ -396,7 +392,7 @@ final class VMLibraryViewModel {
     /// Set rather than injected: the panel behind it has to bring the app
     /// forward, which only the residency controller can do.
     func attachSourceAuthority(_ authority: any SandboxSourceAuthorizing) {
-        core.sourceAuthority = authority
+        commands.sourceAuthority = authority
     }
 
     func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
@@ -419,7 +415,7 @@ final class VMLibraryViewModel {
     }
 
     /// Cancels a guest setup from the confirmation `GuestSetupProgressViewController`
-    /// already gathered, so this always calls the facade pre-confirmed.
+    /// already gathered, so this always calls the core pre-confirmed.
     func cancelGuestSetup(_ instance: VMInstance) {
         do {
             try commands.cancelGuestSetup(.id(instance.id), consent: Consent([.cancelGuestSetup]))
@@ -757,7 +753,7 @@ final class VMLibraryViewModel {
             lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
             pairings: library)
         self.usbAccessories = usbAccessories
-        let core = VMCommandCore(
+        let commands = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
             storageService: storageService,
@@ -765,8 +761,7 @@ final class VMLibraryViewModel {
             fileSystem: fileSystem,
             preferences: preferences
         )
-        self.commands = core
-        self.core = core
+        self.commands = commands
 
         library.onFailure = { [weak self] title, message in
             self?.surfaceError(message, title: title)
@@ -784,41 +779,41 @@ final class VMLibraryViewModel {
         }
         // The same routing a call site gets, so a failure nobody awaited still
         // reaches the sheet or the recovery alert its type asks for.
-        core.onFailure = { [weak self] failure, instance in
+        commands.onFailure = { [weak self] failure, instance in
             self?.present(failure, for: instance)
         }
-        core.surfaceDisplay = { [weak self] instance in
+        commands.surfaceDisplay = { [weak self] instance in
             self?.surfaceDisplay(for: instance)
         }
         // Straight through: what a bring-up puts on screen is decided from the
         // app's own posture, which only the delegate can read.
-        core.readyDisplay = { [weak self] instance, presence in
+        commands.readyDisplay = { [weak self] instance, presence in
             self?.onReadyDisplay?(instance, presence)
         }
-        core.revealInLibrary = { [weak self] id in
+        commands.revealInLibrary = { [weak self] id in
             self?.revealInLibrary(id)
         }
-        core.revealInFinder = { [weak self] instance in
+        commands.revealInFinder = { [weak self] instance in
             self?.onRevealInFinder?(instance)
         }
-        core.requestQuit = { [weak self] in
+        commands.requestQuit = { [weak self] in
             self?.onRequestQuit?()
         }
         // Through this adapter rather than handed over, so the core retains
         // neither the view model nor the app delegate behind it.
-        core.displayBootSurface = { [weak self] instance in
+        commands.displayBootSurface = { [weak self] instance in
             self?.displayBootGeometryProvider?.displayBootSurface(for: instance)
         }
         // What the user's own attach and detach mean for what a guest takes
         // back on its own. Both hang off the verb rather than the surface, so
         // the menu, the CLI and the prompt's answer write the same rule.
-        core.onUserAttachedAccessory = { [weak usbAccessories] permit, accessory in
+        commands.onUserAttachedAccessory = { [weak usbAccessories] permit, accessory in
             try usbAccessories?.userAttached(accessory, permit)
         }
-        core.onUserDetachingAccessory = { [weak usbAccessories] _, accessory in
+        commands.onUserDetachingAccessory = { [weak usbAccessories] _, accessory in
             usbAccessories?.userDetaching(accessory)
         }
-        core.onUserReleasedAccessory = { [weak usbAccessories] permit, accessory in
+        commands.onUserReleasedAccessory = { [weak usbAccessories] permit, accessory in
             try usbAccessories?.userReleased(accessory, permit)
         }
         library.onSessionBecameAttachable = { [weak usbAccessories] instance in
@@ -947,7 +942,7 @@ final class VMLibraryViewModel {
     /// the menus, the sidebar's context menu, the display window's Resume — so
     /// the VM becomes the selected one and the keyboard lands in its display,
     /// ahead of the boot rather than at the end of it. A start arriving from
-    /// anywhere else goes through ``VMCommanding`` and moves nothing.
+    /// anywhere else goes through ``VMCommandCore`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Start") { consent in
@@ -1180,7 +1175,7 @@ final class VMLibraryViewModel {
 
     /// Suspends a VM for the termination save pass, throwing on failure.
     func saveForTermination(_ instance: VMInstance) async throws {
-        try await core.suspend(instance, origin: .terminationSave)
+        try await commands.suspend(instance, origin: .terminationSave)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's
@@ -1380,7 +1375,7 @@ final class VMLibraryViewModel {
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
     /// into the folder `folder` identifies, if any
-    /// (``VMCommanding/beginImports(from:intoFolder:)``).
+    /// (``VMCommandCore/beginImports(from:intoFolder:)``).
     ///
     /// Every import reserves its destination and registers its arrival before
     /// this returns, so two overlapping triggers never collide on a
@@ -1638,7 +1633,7 @@ final class VMLibraryViewModel {
     /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
     func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
-        let results = await core.startVMsMarkedToStartAutomatically(marked)
+        let results = await commands.startVMsMarkedToStartAutomatically(marked)
         surfaceStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
     }
 

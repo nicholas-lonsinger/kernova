@@ -882,7 +882,7 @@ struct VMLibraryViewModelTests {
         #expect(quits.count == 1)
     }
 
-    @Test("Showing a VM in the Finder goes through the facade to the delegate's hook")
+    @Test("Showing a VM in the Finder goes through the core to the delegate's hook")
     func showInFinderReachesTheFinderHook() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture(name: "Filed")

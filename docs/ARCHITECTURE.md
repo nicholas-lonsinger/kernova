@@ -25,11 +25,11 @@ The seams between the App-layer owners are protocols: `AppLaunchHosting`,
 
 ## Front doors
 
-Every verb is a `VMCommanding` method, implemented once by `VMCommandCore`
-(`Kernova/Commands/`); `VMAdmission` decides what a VM admits, which
-`VMCapabilityCatalog` reads for every surface and `VMActivity` commits, and
-`VMConfigurationKeyRegistry` names every configuration key. Five surfaces call
-the facade and present its refusals in their own idiom:
+Every verb is a `VMCommandCore` method (`Kernova/Commands/`); `VMAdmission`
+decides what a VM admits, which `VMCapabilityCatalog` reads for every surface
+and `VMActivity` commits, and `VMConfigurationKeyRegistry` names every
+configuration key. Five surfaces call the core and present its refusals in
+their own idiom:
 
 - `VMLibraryViewModel` — AppKit, through `VMLibraryPresenting`.
 - `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool,

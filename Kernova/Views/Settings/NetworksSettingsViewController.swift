@@ -6,7 +6,7 @@ import KernovaLogging
 /// each created, renamed and deleted here and chosen per VM in its Network
 /// settings.
 ///
-/// Every change goes through the command facade, so the pane, the CLI and
+/// Every change goes through ``VMCommandCore``, so the pane, the CLI and
 /// every other surface share one set of refusals. The list is a
 /// ``SettingsNamedListEditor``.
 @MainActor
@@ -20,7 +20,7 @@ final class NetworksSettingsViewController: NSViewController {
 
     private let viewModel: VMLibraryViewModel
 
-    /// The networks the table shows, as the facade reports them.
+    /// The networks the table shows, as the core reports them.
     private(set) var networks: [NetworkSummary] = []
     /// Whether the last read found the list unreadable.
     var isUnreadable: Bool { editor.isUnreadable }

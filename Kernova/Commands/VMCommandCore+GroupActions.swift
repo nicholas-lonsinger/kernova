@@ -17,6 +17,8 @@ extension VMCommandCore {
     /// holds or wrote shows once the library next catches up with it
     /// (``VMLibrary/refreshFromOtherCopies(only:reportingUnreadable:)``), and
     /// the action itself decides each VM afresh.
+    ///
+    /// - Throws: what ``groupAction(_:on:)`` throws before acting on any VM.
     func concernedCounts(in group: VMGroupReference) throws -> [VMGroupAction: Int] {
         let instances = entries(in: try heldGroup(group, verb: .groups).selection).compactMap { entry in
             if case .vm(let instance) = entry { instance } else { nil }
@@ -34,6 +36,13 @@ extension VMCommandCore {
     /// what it did to each — by ``take(_:on:)``, passing over a VM that other
     /// work holds at its turn.
     ///
+    /// Asks nothing and moves nothing on screen: a VM whose own verb would
+    /// raise a question — a confirmation or its account's password — is
+    /// passed by and reported, as is every failure, so the whole of the
+    /// outcome is the report. Which VMs the action acts on is
+    /// ``VMCapabilityCatalog/groupAction(_:on:)``'s rule. Cancelling the
+    /// calling task stops it between VMs, reporting the rest untouched.
+    ///
     /// The members are the ones the group holds once the library has caught
     /// up, when the action begins. A smart group's members stay those: its
     /// filter reads the state the action itself changes. A folder's are
@@ -41,7 +50,9 @@ extension VMCommandCore {
     /// passed over as ``VMGroupActionOutcome/PassOver/leftGroup``.
     ///
     /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
-    ///   library does not list, before any VM is acted on.
+    ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``
+    ///   when the library's groups cannot be read — both before any VM is
+    ///   acted on.
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
         library.refreshFromOtherCopies(reportingUnreadable: false)
         let resolved = try self.group(group, verb: action.verb)
