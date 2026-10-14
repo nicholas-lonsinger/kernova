@@ -57,6 +57,7 @@ SWIFT_FORMAT := xcrun swift-format
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \
+                 Tools/tests/arena-label.sh \
                  Tools/tests/check-config-decoding.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
