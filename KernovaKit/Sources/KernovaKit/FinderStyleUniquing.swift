@@ -30,11 +30,11 @@ public enum FinderStyleUniquing {
     /// `fileExists` follows a symlink's target, so a dangling symlink is treated
     /// as free and the move replaces it — which is what the user asked for.
     public static func uniqueDestination(
-        in directory: URL, filename: String, fileManager: FileManager = .default
+        in directory: URL, filename: String
     ) -> URL {
         let sanitized = sanitizedComponent(filename)
         let candidate = directory.appendingPathComponent(sanitized)
-        guard fileManager.fileExists(atPath: candidate.path) else { return candidate }
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
         let name = sanitized as NSString
         let base = name.deletingPathExtension
         let ext = name.pathExtension
@@ -42,7 +42,7 @@ public enum FinderStyleUniquing {
         while true {
             let suffixed = ext.isEmpty ? "\(base) \(counter)" : "\(base) \(counter).\(ext)"
             let url = directory.appendingPathComponent(suffixed)
-            if !fileManager.fileExists(atPath: url.path) { return url }
+            if !FileManager.default.fileExists(atPath: url.path) { return url }
             counter += 1
         }
     }

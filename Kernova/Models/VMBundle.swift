@@ -30,7 +30,7 @@ final class VMBundle {
 
     @ObservationIgnored private let files: VMBundleFiles
     @ObservationIgnored private let fileWorker: any VMBundleMachineFileWorking
-    @ObservationIgnored fileprivate let configurationPolicy: any VMConfigurationPolicy
+    @ObservationIgnored fileprivate let configurationPolicy: VMLibraryConfigurationPolicy
 
     var url: URL { files.url }
 
@@ -54,7 +54,7 @@ final class VMBundle {
 
     fileprivate init(
         _ read: VMBundleRead, machineFiles: any VMBundleMachineFileWorking,
-        configurationPolicy: any VMConfigurationPolicy
+        configurationPolicy: VMLibraryConfigurationPolicy
     ) {
         files = read.files
         fileWorker = machineFiles
@@ -74,11 +74,11 @@ final class VMBundle {
     /// runs before any bundle is built.
     struct Factory: Sendable {
         private let machineFiles: any VMBundleMachineFileWorking
-        private let configurationPolicy: any VMConfigurationPolicy
+        private let configurationPolicy: VMLibraryConfigurationPolicy
 
         init(
             machineFiles: any VMBundleMachineFileWorking,
-            configurationPolicy: any VMConfigurationPolicy
+            configurationPolicy: VMLibraryConfigurationPolicy
         ) {
             self.machineFiles = machineFiles
             self.configurationPolicy = configurationPolicy
@@ -261,26 +261,6 @@ final class VMBundle {
     }
 }
 
-/// What a configuration commit answers to beyond its permit: the refusals and
-/// the follow-through that span the library a VM belongs to.
-@MainActor
-protocol VMConfigurationPolicy: AnyObject, Sendable {
-    /// Why moving `instance`'s configuration from `old` — what `config.json`
-    /// holds — to `new` under `authority` is refused, or `nil` when it is not.
-    ///
-    /// Runs inside the coordinated write, so it must be pure.
-    func refusal(
-        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration,
-        under authority: VMEditPermit.Authority
-    ) -> (any Error)?
-
-    /// Carries a commit that moved `instance`'s configuration from `old` to
-    /// `new` under `authority` to whatever acts on it.
-    func committed(
-        on instance: VMInstance, from old: VMConfiguration, to new: VMConfiguration,
-        under authority: VMEditPermit.Authority)
-}
-
 extension VMBundle {
     /// One VM's state-file commits — reachable only as ``VMEditPermit/bundle``,
     /// so every write holds a permit admission minted, on that VM's own bundle.
@@ -314,7 +294,7 @@ extension VMBundle {
         private var bundle: VMBundle { owner.bundle }
 
         /// Commits `change` to `config.json`, refused by the field check and
-        /// then by the bundle's ``VMConfigurationPolicy`` inside the write,
+        /// then by the bundle's ``VMLibraryConfigurationPolicy`` inside the write,
         /// and carried to that policy once it moved what memory holds.
         func commitConfiguration(_ change: (inout VMConfiguration) throws -> Void) throws {
             let bundle = bundle

@@ -10,7 +10,7 @@ import KernovaLogging
 /// for minutes past its expiry
 /// (docs/research/2026-09-22-host-arp-table-observes-vmnet-guests.md).
 ///
-/// The table is read every ``defaultPollInterval`` seconds, off the main actor,
+/// The table is read every ``pollInterval`` seconds, off the main actor,
 /// while at least one VM is running on an app-managed network, and not at all
 /// otherwise.
 @MainActor
@@ -20,7 +20,7 @@ final class GuestAddressObserver {
         subsystem: "app.kernova", category: "GuestAddressObserver")
 
     /// How often, in seconds, the table is read while anything is watched.
-    nonisolated static let defaultPollInterval: TimeInterval = 2
+    nonisolated static let pollInterval: TimeInterval = 2
 
     /// A watched VM: its MAC address on the network it joins.
     struct Key: Hashable, Sendable {
@@ -32,12 +32,11 @@ final class GuestAddressObserver {
     private var observedAddresses: [Key: String] = [:]
 
     @ObservationIgnored private let reader: any ARPTableReading
-    @ObservationIgnored private let vmnetNetworks: any VmnetNetworkProviding
+    @ObservationIgnored private let vmnetNetworks: VmnetNetworkService
     /// What this build authorizes: whether the table can be read at all, and
     /// which networks an app-managed vmnet network realizes.
     @ObservationIgnored private let entitlements: EntitlementService
     @ObservationIgnored private let clock: any EngineClock
-    @ObservationIgnored private let pollInterval: TimeInterval
     /// The wall clock the table's expiries are measured against, in Unix
     /// seconds.
     @ObservationIgnored private let now: @Sendable () -> Int
@@ -52,17 +51,15 @@ final class GuestAddressObserver {
 
     init(
         reader: any ARPTableReading,
-        vmnetNetworks: any VmnetNetworkProviding,
+        vmnetNetworks: VmnetNetworkService,
         entitlements: EntitlementService,
         clock: any EngineClock = makePlatformEngineClock(),
-        pollInterval: TimeInterval = GuestAddressObserver.defaultPollInterval,
         now: @escaping @Sendable () -> Int = { Int(Date().timeIntervalSince1970) }
     ) {
         self.reader = reader
         self.vmnetNetworks = vmnetNetworks
         self.entitlements = entitlements
         self.clock = clock
-        self.pollInterval = pollInterval
         self.now = now
     }
 
@@ -97,7 +94,7 @@ final class GuestAddressObserver {
             let keys = watchedKeys()
             guard !keys.isEmpty else { break }
             await read(for: keys)
-            do { try await clock.sleep(for: pollInterval) } catch { break }
+            do { try await clock.sleep(for: Self.pollInterval) } catch { break }
         }
         readTask = nil
         // Nothing running reads these, and a VM that starts again is answered

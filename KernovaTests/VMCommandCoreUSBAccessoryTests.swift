@@ -54,8 +54,7 @@ struct VMCommandCoreUSBAccessoryTests {
             preferences: preferences
         )
         let pairingCoordinator = USBAccessoryCoordinator(
-            lifecycle: lifecycle, roster: library, holders: library.accessoryHolders,
-            pairings: library)
+            lifecycle: lifecycle, library: library)
         core.onUserAttachedAccessory = { [weak pairingCoordinator] permit, accessory in
             try pairingCoordinator?.userAttached(accessory, permit)
         }

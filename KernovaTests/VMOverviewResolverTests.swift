@@ -17,7 +17,7 @@ struct VMOverviewResolverTests {
         instance: VMInstance,
         viewModel: VMLibraryViewModel? = nil,
         entitled: Bool = true,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        vmnetNetworks: VmnetNetworkService = .scripted(),
         interfaces: any BridgedInterfaceProviding = MockBridgedInterfaceProvider(),
         micPermission: AVAuthorizationStatus = .authorized
     ) -> VMOverviewResolver {
@@ -262,12 +262,12 @@ struct VMOverviewResolverTests {
         config.macAddress = "aa:bb:cc:dd:ee:ff"
     }
 
-    @Test("The address is the observer's answer for a running VM, and displaying it materializes nothing")
+    @Test("The address is the observer's answer for a running VM, and displaying it creates no network")
     func addressComesFromTheObserver() async {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.common(.nat): .scripted("192.168.64.0")]
+        let vmnet = ScriptedVmnetNetworks()
+        vmnet.materialize(.common(.nat), on: "192.168.64.0")
         let model = makeSettingsViewModel(
-            preferences: preferences, vmnetNetworks: vmnet,
+            preferences: preferences, vmnetNetworks: vmnet.service,
             arpTable: ScriptedARPTable([
                 .scripted("192.168.64.9", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
             ]))
@@ -279,7 +279,8 @@ struct VMOverviewResolverTests {
         resolver.refresh()
 
         #expect(resolver.resolved.ipAddress == .observed("192.168.64.9"))
-        #expect(vmnet.materializeCount == 0)
+        // The one network created is the one the test stood up.
+        #expect(vmnet.operations.createdKinds == [.nat])
     }
 
     @Test("A running VM not yet seen says so; a stopped one states nothing")

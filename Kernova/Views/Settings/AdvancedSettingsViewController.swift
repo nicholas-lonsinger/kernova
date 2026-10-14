@@ -24,7 +24,7 @@ final class AdvancedSettingsViewController: NSViewController {
     private let duplicateIDOverrideSwitch = NSSwitch()
     private let cloneOutcomePopUp = NSPopUpButton()
 
-    init(preferences: AppPreferences = .shared) {
+    init(preferences: AppPreferences) {
         self.preferences = preferences
         super.init(nibName: nil, bundle: nil)
         title = "Advanced"

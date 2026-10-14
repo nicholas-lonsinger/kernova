@@ -26,7 +26,7 @@ struct ConfigurationBuilder: Sendable {
         /// `configuration` joins — the one the session's attachment recovery
         /// must classify and re-materialize through, and whose life holds the
         /// VM's own networks.
-        let vmnetNetworks: any VmnetSessionNetworking
+        let vmnetNetworks: VmnetSessionNetworks
         /// The answer `configuration`'s network attachment was chosen by — the
         /// one the session's attachment recovery must realize NAT by.
         let entitlements: EntitlementService
@@ -42,7 +42,7 @@ struct ConfigurationBuilder: Sendable {
     var bridgedInterfaces: any BridgedInterfaceProviding = HostBridgedInterfaceProvider()
 
     /// The app-managed vmnet networks behind a Host Only or NAT attachment.
-    let vmnetNetworks: any VmnetNetworkProviding
+    let vmnetNetworks: VmnetNetworkService
 
     let entitlements: EntitlementService
 
@@ -552,7 +552,7 @@ struct ConfigurationBuilder: Sendable {
 
     private func configureNetwork(
         _ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration,
-        vmnetNetworks: any VmnetSessionNetworking
+        vmnetNetworks: VmnetSessionNetworks
     ) throws {
         guard let network = config.joinedNetwork else { return }
         // A configuration that arrived on a network this build cannot attach —
@@ -633,7 +633,7 @@ struct ConfigurationBuilder: Sendable {
     /// one chosen (docs/NETWORKING.md).
     private func vmnetAttachment(
         _ selection: VmnetNetworkSelection, config: VMConfiguration,
-        vmnetNetworks: any VmnetSessionNetworking
+        vmnetNetworks: VmnetSessionNetworks
     ) -> VZNetworkDeviceAttachment? {
         do {
             return try vmnetNetworks.attachment(for: selection)

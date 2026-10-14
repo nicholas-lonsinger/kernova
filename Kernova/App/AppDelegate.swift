@@ -39,22 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppDelegate")
 
-    /// Returns the VM that menu actions should target: the display or clipboard
-    /// window's VM if its window is key, otherwise the sidebar-selected VM.
-    private var activeInstance: VMInstance? {
-        NSApp.keyWindow.flatMap(windows.instance(forKeyWindow:)) ?? viewModel.selectedInstance
-    }
+    /// The VM a menu action acts on with no sender, as the menu bar's validation
+    /// resolves it (``MainMenuController/activeInstance``).
+    private var activeInstance: VMInstance? { mainMenu.activeInstance }
 
-    /// The VM a nil-target action acts on: the one the sending item names, else
-    /// ``activeInstance``.
-    ///
-    /// The sidebar's context menu dispatches its display toggles down the
-    /// responder chain, and its row is not always the key window's VM — naming
-    /// the VM on the item is what keeps the click acting on the row it came
-    /// from. Every other sender carries none and gets the key-window rule.
-    private func target(of sender: Any?) -> VMInstance? {
-        (sender as? NSMenuItem)?.representedObject as? VMInstance ?? activeInstance
-    }
+    /// The VM a nil-target action acts on, as the menu bar's validation
+    /// resolves it (``MainMenuController/target(of:)``).
+    private func target(of sender: Any?) -> VMInstance? { mainMenu.target(of: sender) }
 
     // MARK: - Entry Point
 
@@ -131,14 +122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.windows = windows
         let lifecycle = AppResidencyController(viewModel: viewModel, windows: windows)
         self.lifecycle = lifecycle
-        self.mainMenu = MainMenuController(viewModel: viewModel)
+        self.mainMenu = MainMenuController(viewModel: viewModel, windows: windows)
         self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
 
         super.init()
 
         lifecycle.host = self
         windows.residency = lifecycle
-        mainMenu.host = self
         viewModel.onSurfaceLibrary = { [weak lifecycle] in
             lifecycle?.presentSummonedInterface()
         }
@@ -162,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         viewModel.onShowSettings = { [weak self] destination in
             self?.windows.showSettings(at: destination)
         }
-        viewModel.displayBootGeometryProvider = self
+        viewModel.displayBootSurface = { [weak self] in self?.displayBootSurface(for: $0) }
     }
 
     // MARK: - NSApplicationDelegate
@@ -625,18 +615,10 @@ extension AppDelegate: AppLaunchHosting {
     func requestFullQuit() { termination.requestFullQuit() }
 }
 
-// MARK: - MainMenuHosting
+// MARK: - Display Boot Geometry
 
-extension AppDelegate: MainMenuHosting {
-    func menuCommandTarget(of sender: Any?) -> VMInstance? { target(of: sender) }
-
-    var librarySidebar: SidebarViewController? { windows.librarySidebar }
-}
-
-// MARK: - DisplayBootGeometryProviding
-
-extension AppDelegate: DisplayBootGeometryProviding {
-    func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
+extension AppDelegate {
+    fileprivate func displayBootSurface(for instance: VMInstance) -> DisplayBootSurface? {
         switch instance.hostState.displayPreference {
         case .popOut:
             // `start` opens the display window before consulting this, and

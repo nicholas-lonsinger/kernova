@@ -176,7 +176,7 @@ struct VMSessionContextTests {
             clipboardOutputPipe: Pipe(),
             coldRemovableMedia: coldRemovableMedia,
             directoryShare: nil,
-            vmnetNetworks: MockVmnetNetworkProvider(),
+            vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: UUID()),
             entitlements: .unentitled)
     }
 

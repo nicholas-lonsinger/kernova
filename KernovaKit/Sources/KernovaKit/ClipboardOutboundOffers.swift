@@ -146,7 +146,6 @@ public final class ClipboardOutboundOffers {
     private let peerName: String
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
-    private let dropClaimTimeout: TimeInterval
     /// Runs the unclaimed-drop deadline after a delay — its only trigger, since
     /// by definition nothing arrives to drive it.
     private let dropClaimSchedule:
@@ -209,7 +208,6 @@ public final class ClipboardOutboundOffers {
         peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        dropClaimTimeout: TimeInterval = ClipboardStreamTuning.dropClaimTimeout,
         dropClaimSchedule:
             @escaping @Sendable (
                 TimeInterval, @escaping @MainActor @Sendable () -> Void
@@ -221,7 +219,6 @@ public final class ClipboardOutboundOffers {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
-        self.dropClaimTimeout = dropClaimTimeout
         self.dropClaimSchedule = dropClaimSchedule
         self.nextGenerationStorage = max(1, firstGeneration)
     }
@@ -649,7 +646,7 @@ public final class ClipboardOutboundOffers {
         let generation = entry.generation
         let arming = entry.claimArming
         let activity = entry.activity.count
-        dropClaimSchedule(dropClaimTimeout) { [weak self] in
+        dropClaimSchedule(ClipboardStreamTuning.dropClaimTimeout) { [weak self] in
             self?.claimDeadlineExpired(
                 generation: generation, arming: arming, activityWhenArmed: activity)
         }
@@ -688,7 +685,7 @@ public final class ClipboardOutboundOffers {
         entry.operation?.finish(.failed(wasClaimed ? .timedOut : .unclaimed))
         #log(
             Self.logger, .warning,
-            "Drop to '\(self.peerName, privacy: .public)' \(wasClaimed ? "stopped moving" : "went unclaimed", privacy: .public) for \(self.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
+            "Drop to '\(self.peerName, privacy: .public)' \(wasClaimed ? "stopped moving" : "went unclaimed", privacy: .public) for \(ClipboardStreamTuning.dropClaimTimeout, privacy: .public)s (gen=\(generation, privacy: .public), conn=\(self.session.connectionTag, privacy: .public))"
         )
         armClaimDeadlines()
     }

@@ -52,9 +52,9 @@ struct USBAccessoryPairingRequest {
 final class USBAccessoryCoordinator {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "USBAccessoryCoordinator")
 
-    private let roster: any VMInstanceRoster
-    private let holders: VMAccessoryHolders
-    private let pairings: any USBAccessoryPairingWriting
+    /// The VMs an accessory can go to, what each holds, and the funnel its
+    /// pairings are written through.
+    private let library: VMLibrary
     private let lifecycle: VMLifecycleCoordinator
     private let service: any USBAccessoryProviding
 
@@ -91,15 +91,11 @@ final class USBAccessoryCoordinator {
 
     init?(
         lifecycle: VMLifecycleCoordinator,
-        roster: any VMInstanceRoster,
-        holders: VMAccessoryHolders,
-        pairings: any USBAccessoryPairingWriting
+        library: VMLibrary
     ) {
         guard let service = lifecycle.usbAccessoryService else { return nil }
         self.lifecycle = lifecycle
-        self.roster = roster
-        self.holders = holders
-        self.pairings = pairings
+        self.library = library
         self.service = service
 
         service.accessoriesHeldByGuests = { [weak self] in
@@ -123,7 +119,7 @@ final class USBAccessoryCoordinator {
 
         // Spent by this arrival whatever it then decides, like the token
         // below, so one return owed is one arrival routed.
-        let owedTo = holders.owedReturn(of: identity)
+        let owedTo = library.accessoryHolders.owedReturn(of: identity)
         let owedSessionID = owedTo?.activity.spendOwedReturn(of: identity)
 
         if releasedByUser.remove(identity) != nil {
@@ -139,7 +135,7 @@ final class USBAccessoryCoordinator {
             return
         }
 
-        let claimants = roster.instances.filter {
+        let claimants = library.instances.filter {
             $0.usbPairings.pairing(matching: identity) != nil
         }
         guard let paired = claimants.first else {
@@ -189,7 +185,7 @@ final class USBAccessoryCoordinator {
     /// callback did not arrive.
     private func reconcile(_ info: USBAccessoryInfo) {
         guard let identity = info.identity else { return }
-        for (instance, stale) in holders.attachedEntries where stale.accessory.identity == identity {
+        for (instance, stale) in library.accessoryHolders.attachedEntries where stale.accessory.identity == identity {
             instance.activity.accessoryLeftGuest(deviceID: stale.deviceID)
             #log(
                 Self.logger, .notice,
@@ -207,7 +203,7 @@ final class USBAccessoryCoordinator {
     /// session rather than on every arrival at a live phase.
     func sessionBecameAttachable(_ instance: VMInstance) -> [VMFollowUp] {
         guard let sessionID = instance.attachableSessionID else { return [] }
-        let held = holders.heldRegistryIDs
+        let held = library.accessoryHolders.heldRegistryIDs
         let owed = service.accessories.filter { accessory in
             guard !held.contains(accessory.registryID), let identity = accessory.identity else {
                 return false
@@ -283,7 +279,7 @@ final class USBAccessoryCoordinator {
     /// throws when a pairing write fails or is refused.
     func userAttached(_ accessory: USBAccessoryInfo, _ permit: borrowing VMEditPermit) throws {
         guard let pairing = USBAccessoryPairing.make(for: accessory) else { return }
-        try pairings.pairUSBAccessory(pairing, permit)
+        try library.pairUSBAccessory(pairing, permit)
         let instance = permit.instance
         #log(
             Self.logger, .notice,
@@ -308,7 +304,7 @@ final class USBAccessoryCoordinator {
     /// for.
     func userReleased(_ accessory: USBAccessoryInfo, _ permit: borrowing VMEditPermit) throws {
         guard let identity = accessory.identity else { return }
-        try pairings.updateUSBPairings(permit) { $0.remove(key: identity.key) }
+        try library.updateUSBPairings(permit) { $0.remove(key: identity.key) }
         let instance = permit.instance
         #log(
             Self.logger, .notice,
@@ -342,7 +338,7 @@ final class USBAccessoryCoordinator {
             // Unplugged, handed to another app, or placed on a guest by hand
             // while this waited its turn: there is nothing left to ask about.
             guard let info = service.accessories.first(where: { $0.registryID == registryID }),
-                !holders.heldRegistryIDs.contains(registryID)
+                !library.accessoryHolders.heldRegistryIDs.contains(registryID)
             else {
                 #log(
                     Self.logger, .notice,
@@ -381,7 +377,7 @@ final class USBAccessoryCoordinator {
 
     /// The guests an accessory could be handed to right now.
     private func runningGuests() -> [VMInstance] {
-        roster.instances.filter { $0.attachableSessionID != nil }
+        library.instances.filter { $0.attachableSessionID != nil }
     }
 
     /// One accessory as a prompt names it — qualified by its receptacle where
@@ -410,12 +406,12 @@ final class USBAccessoryCoordinator {
     // MARK: - Support
 
     private func accessoriesHeldByGuests() -> [USBAccessoryInfo] {
-        holders.attachedEntries.map(\.attached.accessory)
+        library.accessoryHolders.attachedEntries.map(\.attached.accessory)
     }
 
     /// How many VMs in the library claim `identity`.
     private func claimantCount(of identity: USBAccessoryIdentity) -> Int {
-        roster.instances.filter { $0.usbPairings.pairing(matching: identity) != nil }.count
+        library.instances.filter { $0.usbPairings.pairing(matching: identity) != nil }.count
     }
 
     /// Whether another accessory Kernova knows about is of the same model as

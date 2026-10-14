@@ -70,7 +70,7 @@ func makeWiredLibrary(
     lifecycle: VMLifecycleCoordinator? = nil,
     fileSystem: MockFileSystem = MockFileSystem(),
     preferences: AppPreferences = makeTestPreferences(),
-    vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+    vmnetNetworks: VmnetNetworkService = .scripted(),
     arpTable: ScriptedARPTable = ScriptedARPTable(),
     entitlements: EntitlementService = .entitled,
     networks: VMNetworkDirectory = VMNetworkDirectory(fileURL: nil),

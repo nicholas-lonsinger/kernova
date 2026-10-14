@@ -5,9 +5,9 @@ import Foundation
 
 /// The write half of an `NSPasteboard`.
 ///
-/// `NSPasteboard` is a class cluster with no public initializer and cannot be
-/// subclassed, so a real one's write can never be made to fail; this is the seam
-/// a test substitutes to exercise the failure path.
+/// The seam a test writes through in place of `.general`, so no test touches
+/// the user's clipboard, and whose write a test can make fail to exercise the
+/// failure path.
 public protocol ClipboardWritePasteboard: AnyObject {
     /// Monotonically increasing count of pasteboard changes — the value right
     /// after a write identifies that write to anything polling the same

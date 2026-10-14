@@ -84,7 +84,7 @@ struct NetworksSettingsViewControllerTests {
             installService: MockMacOSInstallService(), ipswService: MockIPSWService(),
             removableMediaDeviceService: MockRemovableMediaDeviceService(),
             fileSystem: MockFileSystem(), downloadsDirectory: nil, preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(),
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(),
             entitlements: .entitled, networks: VMNetworkDirectory(fileURL: fileURL))
         var checks = 0
         viewModel.onShowConfigCheck = { _ in checks += 1 }

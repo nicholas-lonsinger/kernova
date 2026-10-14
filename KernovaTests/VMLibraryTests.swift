@@ -23,7 +23,7 @@ struct VMLibraryTests {
         linuxImageResolveService: MockLinuxImageResolveService = MockLinuxImageResolveService(),
         downloadService: MockDownloadService = MockDownloadService(),
         downloadsDirectory: URL? = nil,
-        vmnetNetworks: MockVmnetNetworkProvider = MockVmnetNetworkProvider(),
+        vmnetNetworks: VmnetNetworkService = .scripted(),
         arpTable: ScriptedARPTable = ScriptedARPTable(),
         activationCenter: NotificationCenter = NotificationCenter()
     ) -> (VMLibrary, MockVMStorageService, MockVirtualizationService, any RemovableMediaAttaching) {
@@ -526,12 +526,12 @@ struct VMLibraryTests {
 
     @Test("A running VM switched live onto NAT is watched until its address is seen")
     func liveSwitchOntoNATWatchesTheGuest() async throws {
-        let vmnet = MockVmnetNetworkProvider()
-        vmnet.scriptedSubnets = [.common(.nat): .scripted("192.168.64.0")]
+        let vmnet = ScriptedVmnetNetworks()
+        vmnet.materialize(.common(.nat), on: "192.168.64.0")
         let table = ScriptedARPTable([
             .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
         ])
-        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet, arpTable: table)
+        let (library, _, _, _) = makeLibrary(vmnetNetworks: vmnet.service, arpTable: table)
         let instance = library.admitFixture(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
             $0.networkMode = .bridged

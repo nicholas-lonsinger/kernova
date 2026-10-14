@@ -7,7 +7,7 @@ import Virtualization
 @MainActor
 struct VirtualizationServiceTests {
     private let service = VirtualizationService(
-        vmnetNetworks: MockVmnetNetworkProvider(), entitlements: .unentitled)
+        vmnetNetworks: VmnetNetworkService.scripted(), entitlements: .unentitled)
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
     // MARK: - Snapshot capture

@@ -33,7 +33,7 @@ struct SidebarViewPersistenceTests {
             fileSystem: MockFileSystem(),
             downloadsDirectory: nil,
             preferences: preferences,
-            vmnetNetworks: MockVmnetNetworkProvider(), arpTable: ScriptedARPTable(), entitlements: .entitled,
+            vmnetNetworks: VmnetNetworkService.scripted(), arpTable: ScriptedARPTable(), entitlements: .entitled,
             networks: VMNetworkDirectory(fileURL: nil), organization: organization)
         let (macID, linuxID) = (macID, linuxID)
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS) { $0.id = macID }

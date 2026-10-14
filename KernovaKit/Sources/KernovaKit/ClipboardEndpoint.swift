@@ -80,10 +80,8 @@ public final class ClipboardEndpoint {
         public var staging: ClipboardFileStaging?
         /// How long a pull waits without progress before giving up.
         public var lazyPullTimeout: TimeInterval
-        /// How long an offered drop waits for the peer to ask for its first item
-        /// before this side calls it off.
-        public var dropClaimTimeout: TimeInterval
-        /// Runs that deadline after its delay; tests fire it by hand.
+        /// Runs an offered drop's ``ClipboardStreamTuning/dropClaimTimeout``
+        /// deadline after its delay; tests fire it by hand.
         public var dropClaimSchedule: @Sendable (TimeInterval, @escaping @MainActor @Sendable () -> Void) -> Void
         /// How long a transfer runs before its readout surfaces.
         public var progressRevealDelay: TimeInterval
@@ -112,7 +110,6 @@ public final class ClipboardEndpoint {
             maxPasteBytes: @escaping @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes },
             staging: ClipboardFileStaging? = nil,
             lazyPullTimeout: TimeInterval = ClipboardStreamTuning.lazyPullTimeout,
-            dropClaimTimeout: TimeInterval = ClipboardStreamTuning.dropClaimTimeout,
             dropClaimSchedule:
                 @escaping @Sendable (
                     TimeInterval, @escaping @MainActor @Sendable () -> Void
@@ -131,7 +128,6 @@ public final class ClipboardEndpoint {
             self.maxPasteBytes = maxPasteBytes
             self.staging = staging
             self.lazyPullTimeout = lazyPullTimeout
-            self.dropClaimTimeout = dropClaimTimeout
             self.dropClaimSchedule = dropClaimSchedule
             self.progressRevealDelay = progressRevealDelay
             self.progressIdleGap = progressIdleGap
@@ -210,7 +206,6 @@ public final class ClipboardEndpoint {
             session: session, reporter: reporter, peerName: configuration.peerName,
             progressRevealDelay: configuration.progressRevealDelay,
             progressIdleGap: configuration.progressIdleGap,
-            dropClaimTimeout: configuration.dropClaimTimeout,
             dropClaimSchedule: configuration.dropClaimSchedule,
             firstGeneration: configuration.firstGeneration)
         // A send-only connection has no staging and never receives a byte; the

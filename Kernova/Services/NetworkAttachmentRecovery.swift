@@ -89,7 +89,7 @@ extension VMSession: NetworkAttachmentInstalling {}
 @MainActor
 final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     private let session: any NetworkAttachmentInstalling
-    private let vmnetNetworks: any VmnetSessionNetworking
+    private let vmnetNetworks: VmnetSessionNetworks
 
     /// The plan the device is on: what `apply`/`detach` last installed,
     /// cleared when the framework reports the attachment disconnected.
@@ -102,7 +102,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     init(
         session: any NetworkAttachmentInstalling,
         initialPlan: NetworkAttachmentPlan?,
-        vmnetNetworks: any VmnetSessionNetworking
+        vmnetNetworks: VmnetSessionNetworks
     ) {
         self.session = session
         self.appliedPlan = initialPlan
@@ -114,7 +114,7 @@ final class VZNetworkDeviceHandle: NetworkDeviceControlling {
     /// configuration build installed. A network the service does not hold
     /// realizes nothing, so reconciliation replaces it.
     nonisolated static func plan(
-        of attachment: VZNetworkDeviceAttachment, in vmnetNetworks: any VmnetSessionNetworking
+        of attachment: VZNetworkDeviceAttachment, in vmnetNetworks: VmnetSessionNetworks
     ) -> NetworkAttachmentPlan? {
         switch attachment {
         case is VZNATNetworkDeviceAttachment:
@@ -291,7 +291,7 @@ final class NetworkAttachmentCoordinator {
     /// only asynchronously, through another disconnect callback — so it routes
     /// through the retry ladder instead of reattaching immediately, which
     /// would spin at VZ's failure cadence.
-    static let defaultDisconnectBurstWindow: TimeInterval = 1
+    static let disconnectBurstWindow: TimeInterval = 1
 
     /// Reattempt cadence, in seconds, after a failed vmnet materialization
     /// while a Host Only session sits detached. The NetworkSharing daemon
@@ -303,12 +303,11 @@ final class NetworkAttachmentCoordinator {
     private let device: any NetworkDeviceControlling
     private let interfaces: any BridgedInterfaceProviding
     private let linkObserver: any NetworkLinkObserving
-    private let vmnetNetworks: any VmnetSessionNetworking
+    private let vmnetNetworks: VmnetSessionNetworks
     /// What this build authorizes, which decides how each network the user
     /// chooses is attached (``EntitlementService/realization(of:)``).
     private let entitlements: EntitlementService
     private let retryDelays: [TimeInterval]
-    private let disconnectBurstWindow: TimeInterval
     private let vmnetRematerializeDelays: [TimeInterval]
     private let clock: any EngineClock
     private var lastAttachAttemptAt: EngineInstant?
@@ -337,14 +336,13 @@ final class NetworkAttachmentCoordinator {
         device: any NetworkDeviceControlling,
         interfaces: any BridgedInterfaceProviding,
         linkObserver: any NetworkLinkObserving,
-        vmnetNetworks: any VmnetSessionNetworking,
+        vmnetNetworks: VmnetSessionNetworks,
         entitlements: EntitlementService,
         retryDelays: [TimeInterval] = NetworkAttachmentCoordinator.defaultRetryDelays,
-        disconnectBurstWindow: TimeInterval = NetworkAttachmentCoordinator.defaultDisconnectBurstWindow,
         vmnetRematerializeDelays: [TimeInterval] =
             NetworkAttachmentCoordinator.defaultVmnetRematerializeDelays,
         clock: any EngineClock = makePlatformEngineClock(),
-        isEligible: @escaping @MainActor () -> Bool = { true },
+        isEligible: @escaping @MainActor () -> Bool,
         choice: @escaping @MainActor () -> NetworkChoice?,
         onPendingChange: @escaping @MainActor (Bool) -> Void
     ) {
@@ -355,7 +353,6 @@ final class NetworkAttachmentCoordinator {
         self.vmnetNetworks = vmnetNetworks
         self.entitlements = entitlements
         self.retryDelays = retryDelays
-        self.disconnectBurstWindow = disconnectBurstWindow
         self.vmnetRematerializeDelays = vmnetRematerializeDelays
         self.clock = clock
         self.isEligible = isEligible
@@ -397,7 +394,7 @@ final class NetworkAttachmentCoordinator {
         device.attachmentWasDisconnected()
         guard isActive, isEligible() else { return }
         let isFailedAttachReport =
-            lastAttachAttemptAt.map { clock.seconds(since: $0) < disconnectBurstWindow } ?? false
+            lastAttachAttemptAt.map { clock.seconds(since: $0) < Self.disconnectBurstWindow } ?? false
         if isFailedAttachReport {
             // VZ has already nil'd the attachment; reflect that and let the
             // ladder pace the next attempt rather than reattaching in lockstep

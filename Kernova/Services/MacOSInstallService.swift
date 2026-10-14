@@ -10,7 +10,7 @@ final class MacOSInstallService {
 
     private let configBuilder: ConfigurationBuilder
 
-    init(vmnetNetworks: any VmnetNetworkProviding, entitlements: EntitlementService) {
+    init(vmnetNetworks: VmnetNetworkService, entitlements: EntitlementService) {
         configBuilder = ConfigurationBuilder(vmnetNetworks: vmnetNetworks, entitlements: entitlements)
     }
 

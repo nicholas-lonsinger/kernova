@@ -37,11 +37,6 @@ public struct FakePasteboardItem: ClipboardPasteboardItemReading, Sendable {
 }
 
 /// In-memory `ClipboardReadPasteboard` a test stages a snapshot on directly.
-///
-/// `NSPasteboard` is a class cluster with no public initializer, so the only way
-/// to stage one for real is to write to a named board and let the pasteboard
-/// server round-trip the bytes; this stands in for the read half on either end
-/// of the wire.
 public final class FakeReadPasteboard: ClipboardReadPasteboard, @unchecked Sendable {
     private let lock = NSLock()
     private var storedItems: [FakePasteboardItem] = []

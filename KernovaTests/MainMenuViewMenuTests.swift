@@ -8,7 +8,7 @@ import Testing
 /// header menu, set the same options, carry shortcuts nothing else in the
 /// menu bar uses, expand and collapse every section, and route to the
 /// selected row's section.
-@Suite("View menu sidebar items", .serialized, .caseScoped)
+@Suite("View menu sidebar items", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct MainMenuViewMenuTests {
     private let preferences = makeTestPreferences()
@@ -17,9 +17,8 @@ struct MainMenuViewMenuTests {
     @MainActor
     private struct Fixture {
         let controller: MainMenuController
-        let host: StubMenuHost
         let viewModel: VMLibraryViewModel
-        let sidebar: SidebarViewController
+        let windows: AppWindowRegistry
         let mainMenu: NSMenu
         let viewMenu: NSMenu
 
@@ -29,6 +28,18 @@ struct MainMenuViewMenuTests {
             viewMenu.update()
             return viewMenu
         }
+
+        /// Puts the library window on screen, as the app shows it, so its
+        /// sidebar is the one the View menu reads and acts on.
+        func openLibraryWindow() throws {
+            windows.showLibrary(bringToFront: false)
+            adoptAppWindow(try #require(windows.libraryWindow))
+        }
+
+        /// The on-screen library window's sidebar.
+        func sidebar() throws -> SidebarViewController {
+            try #require(windows.librarySidebar)
+        }
     }
 
     private func makeFixture(
@@ -37,15 +48,15 @@ struct MainMenuViewMenuTests {
     ) throws -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences, organization: organization)
         try populate(viewModel)
-        let sidebar = SidebarViewController(viewModel: viewModel)
-        sidebar.loadViewIfNeeded()
-        let controller = MainMenuController(viewModel: viewModel, hasBundledGuestAgentDisk: true)
-        let host = StubMenuHost(librarySidebar: sidebarAttached ? sidebar : nil)
-        controller.host = host
+        let windows = makeWindowRegistry(viewModel)
+        let controller = MainMenuController(
+            viewModel: viewModel, windows: windows, hasBundledGuestAgentDisk: true)
         let mainMenu = controller.makeMainMenu()
-        return Fixture(
-            controller: controller, host: host, viewModel: viewModel, sidebar: sidebar, mainMenu: mainMenu,
+        let fixture = Fixture(
+            controller: controller, viewModel: viewModel, windows: windows, mainMenu: mainMenu,
             viewMenu: try #require(submenu(titled: "View", in: mainMenu)))
+        if sidebarAttached { try fixture.openLibraryWindow() }
+        return fixture
     }
 
     private func item(_ title: String, in menu: NSMenu?) throws -> NSMenuItem {
@@ -127,7 +138,7 @@ struct MainMenuViewMenuTests {
         try pick("Show Details", in: menu)
         #expect(fixture.viewModel.sidebarOptions.showsDetails)
 
-        fixture.host.librarySidebar = fixture.sidebar
+        try fixture.openLibraryWindow()
         #expect(try item("Folder", in: fixture.opened()).isEnabled)
     }
 
@@ -139,7 +150,7 @@ struct MainMenuViewMenuTests {
             viewModel.sidebarOptions = SidebarViewOptions(
                 filter: VMLibraryFilter(guestOSes: [.macOS]), sort: .name, grouping: .state, showsDetails: true)
         }
-        let header = try #require(fixture.sidebar.viewMenu(for: .library))
+        let header = try #require(try fixture.sidebar().viewMenu(for: .library))
         let menu = fixture.opened()
 
         for title in ["Sort By", "Group By", "Show Details", "Clear Filters"] {
@@ -231,7 +242,7 @@ struct MainMenuViewMenuTests {
             shortcutItems.map { "\($0.title) \($0.keyEquivalent)" } == [
                 "Name 1", "Date Created 2", "Last Run 3", "Manual 0",
             ])
-        let headerSort = try item("Sort By", in: fixture.sidebar.viewMenu(for: .library))
+        let headerSort = try item("Sort By", in: try fixture.sidebar().viewMenu(for: .library))
         #expect(rendering(headerSort) == rendering(try item("Sort By", in: fixture.opened())))
     }
 
@@ -266,7 +277,7 @@ struct MainMenuViewMenuTests {
         let fixture = try makeFixture(sidebarAttached: false) { $0.library.admitFixture(name: "A") }
         // As at launch: the menu bar is built before any library window, and
         // the options change after it, with the View menu never opened.
-        fixture.host.librarySidebar = fixture.sidebar
+        try fixture.openLibraryWindow()
         fixture.viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
 
         #expect(fixture.mainMenu.performKeyEquivalent(with: try keyDown("1", [.control, .option, .command])))
@@ -317,8 +328,8 @@ struct MainMenuViewMenuTests {
             viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
             _ = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Linux")
         }
-        let outline = fixture.sidebar.outlineView
-        let sections = fixture.sidebar.tree.sections
+        let outline = try fixture.sidebar().outlineView
+        let sections = try fixture.sidebar().tree.sections
         #expect(sections.count == 3)
 
         try pick("Collapse All Sections", in: fixture.opened())
@@ -365,7 +376,7 @@ struct MainMenuViewMenuTests {
 
         let route = try item("Folder", in: menu)
         #expect(route.isEnabled)
-        let header = try #require(fixture.sidebar.viewMenu(for: .folder(id)))
+        let header = try #require(try fixture.sidebar().viewMenu(for: .folder(id)))
         expectRenderedAlike(route.submenu?.items, header.items)
         #expect(route.submenu?.items.map(\.title).contains("Rename Folder\u{2026}") == true)
         #expect(try item("Smart Group", in: menu).isEnabled == false)
@@ -385,7 +396,7 @@ struct MainMenuViewMenuTests {
         let menu = fixture.opened()
 
         let route = try item("Smart Group", in: menu)
-        let header = try #require(fixture.sidebar.viewMenu(for: .smartGroup(group.id)))
+        let header = try #require(try fixture.sidebar().viewMenu(for: .smartGroup(group.id)))
         expectRenderedAlike(route.submenu?.items, header.items)
         #expect(try item("Folder", in: menu).isEnabled == false)
         for title in ["Guest OS", "Start All", "Suspend All", "Stop All", "Rename Smart Group\u{2026}"] {
