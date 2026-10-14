@@ -140,3 +140,97 @@ struct HostClipboardPublisherCancellationTests {
         #expect(f.pasteboard.data(forType: textType) == Data("lazy bytes".utf8))
     }
 }
+
+/// Maps what `materializeForCopy` hands `HostClipboardPublisher.publish(from:)`,
+/// and what the pasteboard write does, to each terminal outcome.
+@Suite("HostClipboardPublisher outcomes", .caseScoped)
+@MainActor
+struct HostClipboardPublisherOutcomeTests {
+    /// Hands the publisher a fixed `materializeForCopy` result.
+    @MainActor
+    @Observable
+    final class ScriptedService: ClipboardServicing {
+        var clipboardContent = ClipboardContent(text: "buffer bytes")
+        var isConnected = true
+        var supportsBinaryRepresentations = true
+        let copyItems: [CopyToMacItem]
+
+        init(copyItems: [CopyToMacItem]) { self.copyItems = copyItems }
+
+        func stop() {}
+        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
+        func clearBuffer() { clipboardContent = .empty }
+        func materializeForCopy() -> [CopyToMacItem] { copyItems }
+    }
+
+    private let stagingRoot = TestStagingRoot()
+
+    private func publish(
+        _ copyItems: [CopyToMacItem], failWrite: Bool = false
+    ) async throws -> HostPublishOutcome {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let pasteboard = FakeWritePasteboard()
+        if failWrite { pasteboard.failNextWrite() }
+        let publisher = HostClipboardPublisher(
+            writePasteboard: pasteboard, providerRegistry: registry,
+            stagingRoot: stagingRoot.root)
+        return try await publisher.publish(from: ScriptedService(copyItems: copyItems))
+    }
+
+    private static let inline = ClipboardContent.Representation(
+        uti: ClipboardContent.utf8TextUTI, data: Data("note".utf8))
+
+    @Test("Every item dropped serves nothing, carrying the reasons")
+    func everyItemDroppedServesNothing() async throws {
+        let outcome = try await publish([.droppedFile(.overPasteBudget)])
+        guard case .nothingServed(let reasons) = outcome else {
+            Issue.record("Expected .nothingServed, got \(outcome)")
+            return
+        }
+        #expect(reasons == [.overPasteBudget])
+    }
+
+    @Test("No items at all serves nothing, with no reason")
+    func noItemsServesNothing() async throws {
+        let outcome = try await publish([])
+        guard case .nothingServed(let reasons) = outcome else {
+            Issue.record("Expected .nothingServed, got \(outcome)")
+            return
+        }
+        #expect(reasons.isEmpty)
+    }
+
+    @Test("A payload that stages nothing is a staging failure")
+    func unstageablePayloadFailsStaging() async throws {
+        // A file payload whose bytes were never pulled stages no file, so the
+        // publish plans an item and ends up with no pasteboard spec.
+        let unstageable = ClipboardContent.Representation(
+            uti: "public.data", source: .pendingRemote(byteCount: 10), filename: "big.bin")
+        let outcome = try await publish([.resolved(unstageable)])
+        guard case .stagingFailed = outcome else {
+            Issue.record("Expected .stagingFailed, got \(outcome)")
+            return
+        }
+    }
+
+    @Test("A failed pasteboard write is a write failure")
+    func failedWriteIsAWriteFailure() async throws {
+        let outcome = try await publish([.resolved(Self.inline)], failWrite: true)
+        guard case .writeFailed = outcome else {
+            Issue.record("Expected .writeFailed, got \(outcome)")
+            return
+        }
+    }
+
+    @Test("A write beside dropped files carries their reasons")
+    func writtenCarriesDroppedReasons() async throws {
+        let outcome = try await publish([.resolved(Self.inline), .droppedFile(.overPasteBudget)])
+        guard case .written(let count, let dropped, _) = outcome else {
+            Issue.record("Expected .written, got \(outcome)")
+            return
+        }
+        #expect(count == 1)
+        #expect(dropped == [.overPasteBudget])
+    }
+}

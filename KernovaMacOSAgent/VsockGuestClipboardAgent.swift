@@ -313,16 +313,9 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
     }
 
     /// Tears the connection down only if `channel` is still the live one.
-    private func teardownIfCurrent(_ channel: VsockChannel) {
+    func teardownIfCurrent(_ channel: VsockChannel) {
         if liveChannel === channel { teardownConnectionState() }
     }
-
-    #if DEBUG
-    /// Test seam for `teardownIfCurrent`.
-    func teardownIfCurrentForTesting(_ channel: VsockChannel) {
-        teardownIfCurrent(channel)
-    }
-    #endif
 
     // MARK: - Per-connection serve
 
@@ -650,13 +643,6 @@ final class VsockGuestClipboardAgent: @unchecked Sendable {
         // nothing.
         lastPasteboardChangeCount = pasteboard.changeCount
     }
-
-    #if DEBUG
-    /// Test seam for the refusal hop's staleness check.
-    func recordPasteFailureForTesting(code: ClipboardErrorCode, generation: UInt64) {
-        MainActorBridge.sync { endpoint?.recordRefusalForTesting(code, generation: generation) }
-    }
-    #endif
 }
 
 // MARK: - Endpoint delegate

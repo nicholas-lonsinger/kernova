@@ -169,7 +169,7 @@ struct ConfigurationBuilder: Sendable {
     ///
     /// The input arrays carry exactly the one pair ``GuestInputDevices``
     /// resolves for the guest — never both.
-    private func configureMacOSDevices(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
+    func configureMacOSDevices(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
         let graphics = VZMacGraphicsDeviceConfiguration()
         graphics.displays = [
             VZMacGraphicsDisplayConfiguration(
@@ -189,13 +189,6 @@ struct ConfigurationBuilder: Sendable {
             vzConfig.keyboards = [VZUSBKeyboardConfiguration()]
         }
     }
-
-    #if DEBUG
-    /// Test-only access to `configureMacOSDevices`.
-    func configureMacOSDevicesForTesting(_ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration) {
-        configureMacOSDevices(vzConfig, config: config)
-    }
-    #endif
 
     // MARK: - EFI Boot
 

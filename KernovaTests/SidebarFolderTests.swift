@@ -710,7 +710,7 @@ struct SidebarFolderTests {
             drag(
                 [elsewhere.url as NSURL], to: middle(of: row(.library(a.id), in: outline), in: outline),
                 in: outline, fromFinder: true) == .copy)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(Set(viewModel.instances.map(\.id)) == [a.id, dropped.config.id, elsewhere.config.id])
         #expect(members(of: clients, in: viewModel) == [a.id, dropped.config.id])
@@ -727,7 +727,7 @@ struct SidebarFolderTests {
         let clients = try viewModel.library.createFolder(named: "Clients", members: [original.id])
 
         viewModel.cloneVM(original)
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         let clone = try #require(viewModel.instances.first { $0.id != original.id })
         #expect(members(of: clients, in: viewModel) == [original.id])
@@ -748,7 +748,7 @@ struct SidebarFolderTests {
             names(in: try #require(viewModel.sidebarLayout.sections.first { $0.id == .folder(clients.id) })).isEmpty)
 
         _ = viewModel.importVMs(fromDroppedURLs: [imported.url])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         viewModel.library.admitFixture(name: "Put Back") { $0.id = putBack }
 
         let folder = try #require(viewModel.sidebarLayout.sections.first { $0.id == .folder(clients.id) })
@@ -794,7 +794,7 @@ struct SidebarFolderTests {
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url], intoFolder: clients.id)
         #expect(members(of: clients, in: viewModel) == [source.config.id])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         #expect(members(of: clients, in: viewModel) == [source.config.id])
@@ -877,7 +877,7 @@ struct SidebarFolderTests {
 
         #expect(viewModel.library.arrivals.count == 2)
         #expect(presenter.errorTitles == ["Couldn\u{2019}t Add to the Folder"])
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
         #expect(Set(viewModel.instances.map(\.id)) == [first.config.id, second.config.id])
     }
 
@@ -918,7 +918,7 @@ struct SidebarFolderTests {
         #expect(viewModel.sidebarOptions.filter == linuxOnly)
         #expect(viewModel.library.entries.contains { $0.id == mac.id })
         gate.release()
-        await viewModel.awaitArrivalsForTesting()
+        await viewModel.awaitArrivals()
     }
 
     /// The sections a sidebar's first load makes open one after another; a

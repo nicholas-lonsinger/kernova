@@ -1350,7 +1350,7 @@ struct ConfigurationBuilderTests {
         let vz = VZVirtualMachineConfiguration()
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.lastSeenGuestOSVersion = "13.5"
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
@@ -1363,7 +1363,7 @@ struct ConfigurationBuilderTests {
         let vz = VZVirtualMachineConfiguration()
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
@@ -1375,7 +1375,7 @@ struct ConfigurationBuilderTests {
     func macOSInputDevicesMacPairWhenVersionUnknown() {
         let vz = VZVirtualMachineConfiguration()
         let config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZMacTrackpadConfiguration)
@@ -1389,7 +1389,7 @@ struct ConfigurationBuilderTests {
         var config = VMConfiguration(name: "Test macOS", guestOS: .macOS, bootMode: .macOS)
         config.lastSeenGuestOSVersion = "26.0"
         config.inputDeviceMode = .usb
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         #expect(vz.pointingDevices.count == 1)
         #expect(vz.pointingDevices.first is VZUSBScreenCoordinatePointingDeviceConfiguration)
@@ -1404,7 +1404,7 @@ struct ConfigurationBuilderTests {
         config.displayWidth = 2560
         config.displayHeight = 1600
         config.displayPPI = 220
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
         let display = try #require(graphics.displays.first)
@@ -1425,7 +1425,7 @@ struct ConfigurationBuilderTests {
         config.displayWidth = retina.width
         config.displayHeight = retina.height
         config.displayPPI = retina.ppi
-        makeBuilder().configureMacOSDevicesForTesting(vz, config: config)
+        makeBuilder().configureMacOSDevices(vz, config: config)
 
         let graphics = try #require(vz.graphicsDevices.first as? VZMacGraphicsDeviceConfiguration)
         let display = try #require(graphics.displays.first)

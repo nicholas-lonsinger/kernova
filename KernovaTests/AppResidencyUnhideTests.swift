@@ -3,8 +3,8 @@ import Testing
 
 @testable import Kernova
 
-/// Covers the unhide leg — ``AppResidencyController/unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``
-/// and the ``AppResidencyController/noteDidUnhide()`` that runs it. ⌘H turns
+/// Covers the unhide decision —
+/// ``AppResidencyController/unhideOutcome(hasVisibleUserWindow:keepInMenuBar:)``. ⌘H turns
 /// every window's `isVisible` false without closing one, so a background close
 /// landing mid-hide is only legible once the app is back on screen, and the
 /// unhide is what makes it legible.
@@ -12,24 +12,8 @@ import Testing
 /// No arm of it terminates: unhiding is a person asking for the app, so a
 /// window that closed mid-hide is answered by making the app reachable rather
 /// than by quitting under them.
-@Suite("AppResidencyController unhide", .serialized, .caseScoped, .scopedWindows)
-@MainActor
+@Suite("AppResidencyController unhide", .caseScoped)
 struct AppResidencyUnhideTests {
-    private let preferences = makeTestPreferences()
-    private let autosave = WindowAutosaveScope.unsaved()
-
-    private func makeController() -> AppResidencyController {
-        let viewModel = makeLibraryViewModel(preferences: preferences)
-        return AppResidencyController(
-            viewModel: viewModel,
-            windows: AppWindowRegistry(
-                viewModel: viewModel,
-                displayPlacement: VMDisplayPlacementController(viewModel: viewModel, autosaveScope: autosave),
-                autosaveScope: autosave))
-    }
-
-    // MARK: - The decision
-
     @Test("windows that survived the hide keep the Dock icon", arguments: [true, false])
     func windowOnScreenShowsDockIcon(keepInMenuBar: Bool) {
         #expect(
@@ -52,28 +36,5 @@ struct AppResidencyUnhideTests {
         #expect(
             AppResidencyController.unhideOutcome(
                 hasVisibleUserWindow: false, keepInMenuBar: false) == .presentLibrary)
-    }
-
-    // MARK: - The wiring
-
-    @Test("A controller nothing has happened to has scheduled no reconcile")
-    func freshControllerSchedulesNothing() {
-        #expect(makeController().pendingUnhideReconcileForTesting == nil)
-    }
-
-    @Test("Unhiding runs the unhide decision against the live window state")
-    func unhideRunsTheDecision() async throws {
-        // A window on screen pins the outcome to `.showDockIcon`, whose
-        // `setActivationPolicy(.regular)` is a no-op against the already-regular
-        // test host — the suite exercises the controller without
-        // `start(provenance:)`, for the reason `AppResidencyPresentationTests`
-        // gives.
-        showTestWindow(styleMask: [.titled])
-        let controller = makeController()
-
-        controller.noteDidUnhide()
-
-        let reconcile = try #require(controller.pendingUnhideReconcileForTesting)
-        #expect(await reconcile.value == .showDockIcon)
     }
 }

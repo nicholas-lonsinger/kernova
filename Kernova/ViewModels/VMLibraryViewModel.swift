@@ -1403,19 +1403,6 @@ final class VMLibraryViewModel {
         return true
     }
 
-    #if DEBUG
-    /// Test-only seam awaiting every arrival in the library, including any
-    /// registered while an earlier one is awaited.
-    func awaitArrivalsForTesting() async {
-        while let arrival = library.arrivals.first {
-            _ = try? await arrival.settled.value
-            // The row leaves in the same main-actor turn the outcome settles
-            // in; a later turn lets that removal land before looking again.
-            await Task.yield()
-        }
-    }
-    #endif
-
     // MARK: - Show in Finder
 
     /// Selects the VM's bundle in the Finder.

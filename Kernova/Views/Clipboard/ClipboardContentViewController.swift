@@ -382,12 +382,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         applyTransferReport()
     }
 
-    /// Fires after each render of the transfer report.
-    var onTransferReportAppliedForTesting: (@MainActor () -> Void)?
-
-    /// How many finished-operation messages the window has shown.
-    private(set) var finishMessagesShownForTesting = 0
-
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
 
     /// The status line's transient slot — empty unless a message is up.
@@ -411,27 +405,14 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Flips the footer switch as a click would, running the real write path.
     func togglePassthroughSwitchForTesting(_ isOn: Bool) {
-        setPassthroughSwitchForTesting(isOn)
+        passthroughSwitch.state = isOn ? .on : .off
         passthroughToggled()
     }
-
-    /// Moves the switch without writing — the state a raised confirmation sheet
-    /// leaves it in while the user decides.
-    func setPassthroughSwitchForTesting(_ isOn: Bool) {
-        passthroughSwitch.state = isOn ? .on : .off
-    }
-
-    /// Drives the confirmation outcomes without a window/sheet.
-    func confirmPassthroughEnableForTesting() { passthroughSetting?.confirm(.passthrough(true)) }
-    func cancelPassthroughEnableForTesting() { passthroughSetting?.cancel() }
 
     /// The bottom transfer bar's fraction, or `nil` while it is collapsed.
     var transferBarFractionForTesting: Double? {
         transferProgressBar.isHidden ? nil : transferProgressBar.doubleValue
     }
-
-    /// Fires once a "Copy to Mac" publish outcome has been rendered.
-    var onCopyOutcomeForTesting: (@MainActor () -> Void)?
     #endif
 
     // MARK: - Observation
@@ -473,13 +454,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         {
             lastShownFinish = finish
             statusMessage.showTransientMessage(wording.message, style: .error)
-            #if DEBUG
-            finishMessagesShownForTesting += 1
-            #endif
         }
-        #if DEBUG
-        onTransferReportAppliedForTesting?()
-        #endif
     }
 
     /// Shows the bottom transfer bar from `report`; a report with no bar
@@ -682,12 +657,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     /// The message shown when "Copy to Mac" placed nothing on the pasteboard.
-    private func dropMessage(for reasons: [CopyToMacDropReason]) -> String {
+    private static func dropMessage(for reasons: [CopyToMacDropReason], limitBytes: Int) -> String {
         guard reasons.contains(.overPasteBudget) else {
             return "Couldn't fetch the clipboard content to copy"
         }
-        return ClipboardTransferWording.overCopyBudgetMessage(
-            limitBytes: instance.effectiveClipboardMaxPasteBytes)
+        return ClipboardTransferWording.overCopyBudgetMessage(limitBytes: limitBytes)
     }
 
     // MARK: - Actions
@@ -734,34 +708,42 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// Surfaces a "Copy to Mac" publish result as a transient status message.
     private func showCopyOutcome(_ outcome: HostPublishOutcome) {
+        let message = Self.copyOutcomeMessage(
+            for: outcome, limitBytes: instance.effectiveClipboardMaxPasteBytes)
+        statusMessage.showTransientMessage(message.text, style: message.style)
+    }
+
+    /// The status message a "Copy to Mac" outcome reads as, measured against
+    /// the paste ceiling `limitBytes`.
+    static func copyOutcomeMessage(
+        for outcome: HostPublishOutcome, limitBytes: Int
+    ) -> (text: String, style: ClipboardStatusMessageView.TransientStyle) {
         switch outcome {
         case .nothingServed(let reasons):
-            statusMessage.showTransientMessage(dropMessage(for: reasons), style: .error)
+            return (dropMessage(for: reasons, limitBytes: limitBytes), .error)
         case .stagingFailed:
-            statusMessage.showTransientMessage(
-                "Couldn't prepare the clipboard content to copy", style: .error)
+            return ("Couldn't prepare the clipboard content to copy", .error)
         case .written(_, let droppedReasons, _):
             if droppedReasons.isEmpty {
-                statusMessage.showTransientMessage("Copied to Mac clipboard", style: .info)
+                return ("Copied to Mac clipboard", .info)
             } else if droppedReasons.contains(.overPasteBudget) {
                 // Partial success — name the cap, since it is what the user has to
                 // act on to get the files across.
-                statusMessage.showTransientMessage(
-                    "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(instance.effectiveClipboardMaxPasteBytes)) clipboard transfer limit",
-                    style: .warning)
+                return (
+                    "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit",
+                    .warning
+                )
             } else {
                 // Partial success — don't claim an unqualified one.
                 let count = droppedReasons.count
-                statusMessage.showTransientMessage(
+                return (
                     "Copied to Mac clipboard — \(count) item\(count == 1 ? "" : "s") couldn't be prepared",
-                    style: .warning)
+                    .warning
+                )
             }
         case .writeFailed:
-            statusMessage.showTransientMessage("Couldn't write to the Mac clipboard", style: .error)
+            return ("Couldn't write to the Mac clipboard", .error)
         }
-        #if DEBUG
-        onCopyOutcomeForTesting?()
-        #endif
     }
 
     /// Shared intake for the Paste button, responder-chain `paste:`, and drag-and-drop.

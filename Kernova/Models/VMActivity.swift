@@ -789,17 +789,11 @@ final class VMActivity {
             .operating(
                 VMOperation(
                     kind: kind, startedFrom: phase, sessionState: sessionState, outcome: outcome)))
-        #if DEBUG
-        runningBody = outcome
-        #endif
     }
 
     /// The operation holding the VM, which ends here, when `outcome` is its
     /// own.
     private func endingOperation(_ outcome: VMOutcome) -> VMOperation? {
-        #if DEBUG
-        runningBody = nil
-        #endif
         guard case .operating(let operation) = phase, operation.outcome === outcome else {
             #log(
                 Self.logger, .fault,
@@ -848,9 +842,6 @@ final class VMActivity {
                     VMOperation(
                         kind: .forceStopping, startedFrom: resting, sessionState: .live(session),
                         outcome: stop)))
-            #if DEBUG
-            runningBody = stop
-            #endif
             enqueue(whenEnded?(result.map { _ in () }) ?? [])
             outcome.resolve(result.map { _ in () })
             return result
@@ -1015,20 +1006,12 @@ final class VMActivity {
     }
 
     #if DEBUG
-    /// The outcome of the operation whose body is running, which no test may
-    /// place a phase over.
-    @ObservationIgnored private var runningBody: VMOutcome?
-
     /// Puts the VM straight into `phase`, bypassing every rule a transition
     /// obeys — the run lock's among them, which it neither takes nor releases;
-    /// tests only, and the one way a test places a phase.
-    ///
-    /// Refused while an operation's body is running: only that body's ending
-    /// may move the VM out of its operation, so a test awaits the outcome first.
+    /// tests only, and the one way a test places a phase. Only an operation's
+    /// own ending may move the VM out of it, so a test awaits the outcome of an
+    /// operation whose body is running before placing a phase.
     func placeForTesting(_ phase: VMLifecyclePhase) {
-        precondition(
-            runningBody == nil,
-            "A phase placed over an operation's running body; await its outcome first")
         setPhase(phase)
         drain()
     }

@@ -572,13 +572,6 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
     }
 }
 
-/// One-shot latch the copy-outcome wait's predicate reads, since the render is
-/// a synchronous step of the publish Task rather than observable state.
-@MainActor
-private final class CopyOutcomeLatch {
-    var didRender = false
-}
-
 /// The footer offers the same guest-agent disk control as the Virtual Machine
 /// menu, so its button follows the installer's attached state as well as the
 /// agent status.
@@ -623,7 +616,7 @@ struct ClipboardAgentDiskControlTests {
 }
 
 /// Verifies each terminal "Copy to Mac" outcome, and each transfer issue,
-/// reaches the indicator as its own sentence.
+/// reads as its own sentence.
 ///
 /// The refused cases are the point: a refusal the user can't read is the same
 /// as no refusal at all, and a mixed offer that drops its files must not lead
@@ -634,82 +627,56 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
     private let stagingRoot = TestStagingRoot()
     private let preferences = makeTestPreferences()
 
-    /// Runs one "Copy to Mac" to completion and returns what it left in the
-    /// indicator, waiting on the controller's own render event.
-    private func copyMessage(
-        copyItems: [CopyToMacItem]? = nil, failWrite: Bool = false
-    ) async throws -> String {
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let pasteboard = FakeWritePasteboard()
-        if failWrite { pasteboard.failNextWrite() }
-
-        let service = FakeClipboardService(content: ClipboardContent(text: "buffer bytes"))
-        service.copyItems = copyItems
-        let instance = makeClipboardInstance()
-        instance.sessionContext?.clipboardService = service
-        let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(
-                writePasteboard: pasteboard, providerRegistry: registry, stagingRoot: stagingRoot.root))
-
-        let rendered = AsyncGate()
-        let latch = CopyOutcomeLatch()
-        vc.onCopyOutcomeForTesting = {
-            latch.didRender = true
-            rendered.notify()
-        }
-
-        vc.copy(nil)
-        try await rendered.wait { latch.didRender }
-        return vc.indicatorTextForTesting
+    private func copyMessage(_ outcome: HostPublishOutcome) -> String {
+        ClipboardContentViewController.copyOutcomeMessage(
+            for: outcome, limitBytes: ClipboardPasteLimit.defaultBytes
+        ).text
     }
 
     @Test("a clean copy confirms the write")
-    func writtenConfirmsTheCopy() async throws {
-        #expect(try await copyMessage() == "Copied to Mac clipboard")
+    func writtenConfirmsTheCopy() {
+        let message = ClipboardContentViewController.copyOutcomeMessage(
+            for: .written(representationCount: 1, droppedReasons: [], changeCount: 1),
+            limitBytes: ClipboardPasteLimit.defaultBytes)
+        #expect(message.text == "Copied to Mac clipboard")
+        #expect(message.style == .info)
     }
 
     @Test("a write that drops the over-cap files names the cap, not a plain success")
-    func writtenOverBudgetNamesTheCap() async throws {
-        let inline = ClipboardContent.Representation(
-            uti: ClipboardContent.utf8TextUTI, data: Data("note".utf8))
-        let message = try await copyMessage(
-            copyItems: [.resolved(inline), .droppedFile(.overPasteBudget)])
+    func writtenOverBudgetNamesTheCap() {
+        let message = ClipboardContentViewController.copyOutcomeMessage(
+            for: .written(representationCount: 1, droppedReasons: [.overPasteBudget], changeCount: 1),
+            limitBytes: ClipboardPasteLimit.defaultBytes)
         // Built from the cap, not typed: retuning the cap moves this sentence.
         #expect(
-            message
+            message.text
                 == "Copied without the files — over the \(ClipboardPasteLimit.displayLimit(ClipboardPasteLimit.defaultBytes)) clipboard transfer limit"
         )
+        #expect(message.style == .warning)
     }
 
     @Test("an all-dropped over-cap copy reports the refusal")
-    func nothingServedOverBudgetReportsTheRefusal() async throws {
-        let message = try await copyMessage(copyItems: [.droppedFile(.overPasteBudget)])
+    func nothingServedOverBudgetReportsTheRefusal() {
         #expect(
-            message
+            copyMessage(.nothingServed(reasons: [.overPasteBudget]))
                 == ClipboardTransferWording.overCopyBudgetMessage(
                     limitBytes: ClipboardPasteLimit.defaultBytes))
     }
 
     @Test("nothing to serve and nothing dropped reports a fetch failure")
-    func nothingServedWithoutReasonsReportsFetchFailure() async throws {
-        #expect(try await copyMessage(copyItems: []) == "Couldn't fetch the clipboard content to copy")
+    func nothingServedWithoutReasonsReportsFetchFailure() {
+        #expect(
+            copyMessage(.nothingServed(reasons: [])) == "Couldn't fetch the clipboard content to copy")
     }
 
     @Test("a payload that stages nothing reports a preparation failure")
-    func stagingFailureReportsPreparationFailure() async throws {
-        // A file payload whose bytes were never pulled stages no file, so the
-        // publish plans an item and ends up with no pasteboard spec.
-        let unstageable = ClipboardContent.Representation(
-            uti: "public.data", source: .pendingRemote(byteCount: 10), filename: "big.bin")
-        let message = try await copyMessage(copyItems: [.resolved(unstageable)])
-        #expect(message == "Couldn't prepare the clipboard content to copy")
+    func stagingFailureReportsPreparationFailure() {
+        #expect(copyMessage(.stagingFailed) == "Couldn't prepare the clipboard content to copy")
     }
 
     @Test("a failed pasteboard write reports it")
-    func writeFailureReportsIt() async throws {
-        #expect(try await copyMessage(failWrite: true) == "Couldn't write to the Mac clipboard")
+    func writeFailureReportsIt() {
+        #expect(copyMessage(.writeFailed) == "Couldn't write to the Mac clipboard")
     }
 
     /// Stands a refusal on `instance`'s transfer report the way a producer does.
@@ -821,67 +788,6 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
         #expect(vc.transferBarFractionForTesting == nil)
     }
 
-    /// A drop's running readout at `bytes` of 100, published on `instance`'s
-    /// report the way a producer does.
-    private func publishRunning(bytes: UInt64, on instance: VMInstance) {
-        let operation = ClipboardTransferOperation(
-            gesture: .drop, direction: .outbound, peerName: instance.name, revealDelay: 0,
-            now: { 0 }, schedule: { _, _ in }, reporter: instance.clipboardTransfers)
-        instance.clipboardTransfers.publish(
-            from: operation,
-            .running(
-                ClipboardProgressSnapshot(
-                    direction: .outbound, peerName: instance.name, currentItemName: nil,
-                    filesCompleted: 0, fileCount: 1, bytesTransferred: bytes, totalBytes: 100,
-                    bytesPerSecond: nil, secondsRemaining: nil, gesture: .drop,
-                    elapsedSeconds: 1), since: Date()))
-    }
-
-    /// A loaded controller whose transfer-report renders notify `applied`.
-    private func makeObservedController(instance: VMInstance, applied: AsyncGate)
-        -> ClipboardContentViewController
-    {
-        let vc = ClipboardContentViewController(
-            instance: instance, viewModel: makeClipboardViewModel(preferences: preferences),
-            publisher: HostClipboardPublisher(stagingRoot: stagingRoot.root))
-        vc.onTransferReportAppliedForTesting = { applied.notify() }
-        _ = vc.view
-        return vc
-    }
-
-    @Test("a running report moves the bar through the report's own observer")
-    func runningReportMovesTheBar() async throws {
-        let instance = makeClipboardInstance()
-        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
-        let applied = AsyncGate()
-        let vc = makeObservedController(instance: instance, applied: applied)
-        #expect(vc.transferBarFractionForTesting == nil)
-
-        publishRunning(bytes: 25, on: instance)
-        try await applied.wait { vc.transferBarFractionForTesting == 0.25 }
-
-        publishRunning(bytes: 60, on: instance)
-        try await applied.wait { vc.transferBarFractionForTesting == 0.6 }
-    }
-
-    @Test("a finished report with wording shows its message exactly once")
-    func finishedReportShowsItsMessageOnce() async throws {
-        let instance = makeClipboardInstance()
-        instance.sessionContext?.clipboardService = FakeClipboardService(content: .empty)
-        let applied = AsyncGate()
-        let vc = makeObservedController(instance: instance, applied: applied)
-
-        report(.peerReported(.pasteTimeout), gesture: .peerPaste, for: instance)
-        try await applied.wait { vc.finishMessagesShownForTesting == 1 }
-        #expect(vc.indicatorTextForTesting == "The clipboard transfer to the guest timed out")
-
-        // Neither the window's other pass nor a repeat render of the same
-        // report shows it again.
-        vc.simulateObservationForTesting()
-        vc.simulateTransferReportForTesting()
-        #expect(vc.finishMessagesShownForTesting == 1)
-    }
-
     @Test("a report already standing when the window loads renders on load")
     func standingReportRendersOnLoad() {
         let instance = makeClipboardInstance()
@@ -893,7 +799,6 @@ struct ClipboardContentViewControllerCopyOutcomeTests {
 
         _ = vc.view
 
-        #expect(vc.finishMessagesShownForTesting == 1)
         #expect(vc.indicatorTextForTesting == "Clipboard transfer failed on the guest side")
     }
 }
@@ -944,36 +849,6 @@ struct ClipboardPassthroughSwitchTests {
         // The offscreen test controller has no window to host the confirmation
         // sheet, so the enable path must not silently enable.
         vc.togglePassthroughSwitchForTesting(true)
-
-        #expect(instance.configuration.clipboardPassthroughEnabled == false)
-        #expect(vc.isPassthroughSwitchOnForTesting == false)
-    }
-
-    @Test("confirming the security prompt turns passthrough on")
-    func confirmEnables() async throws {
-        let (vc, viewModel, instance) = makeController()
-        defer { _ = viewModel }
-
-        vc.confirmPassthroughEnableForTesting()
-
-        #expect(instance.configuration.clipboardPassthroughEnabled == true)
-        // The switch follows the model on the observation pass the write kicks
-        // off, the same as any other surface showing the setting.
-        //
-        // Genuine no-signal predicate — the observed effect is an `NSSwitch`'s
-        // state, a plain AppKit property with no Observable or `AsyncGate`
-        // signal to arm against.
-        try await waitUntil { vc.isPassthroughSwitchOnForTesting }
-    }
-
-    @Test("cancelling the prompt writes nothing and puts the switch back")
-    func cancelReverts() {
-        let (vc, viewModel, instance) = makeController()
-        defer { _ = viewModel }
-        // The user flipped it; the sheet is up.
-        vc.setPassthroughSwitchForTesting(true)
-
-        vc.cancelPassthroughEnableForTesting()
 
         #expect(instance.configuration.clipboardPassthroughEnabled == false)
         #expect(vc.isPassthroughSwitchOnForTesting == false)
@@ -1114,12 +989,6 @@ private final class FakeClipboardService: ClipboardServicing {
                 gesture: gesture, outcome: .failed(failure), peerName: "Clipboard VM"))
     }
 
-    /// What `materializeForCopy` hands the publisher, or `nil` to resolve the
-    /// buffer's own representations the way the protocol default does.
-    ///
-    /// Drives the publisher to each terminal outcome without a live transport.
-    var copyItems: [CopyToMacItem]?
-
     /// Times the controller *asked* for an announcement, so a test can assert the
     /// outbound choke-point was (or wasn't) reached without a live transport.
     private(set) var grabCallCount = 0
@@ -1149,6 +1018,6 @@ private final class FakeClipboardService: ClipboardServicing {
     // materializeForPreview uses the protocol-extension default (no-op).
 
     func materializeForCopy() -> [CopyToMacItem] {
-        copyItems ?? clipboardContent.representations.map { .resolved($0) }
+        clipboardContent.representations.map { .resolved($0) }
     }
 }

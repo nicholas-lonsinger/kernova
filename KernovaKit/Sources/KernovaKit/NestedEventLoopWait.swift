@@ -42,10 +42,6 @@ final class NestedEventLoopWait: @unchecked Sendable {
     private static let sliceSeconds: TimeInterval = 0.1
 
     #if DEBUG
-    /// Test seam: replaces `sliceSeconds`, so a test can tell a wait the wake
-    /// broke from one the next slice noticed.
-    @MainActor static var sliceSecondsForTesting: TimeInterval?
-
     /// Test seam: makes `current()` decline on the main thread, standing in for
     /// the tracking or modal loop a test bundle has no way to enter.
     @MainActor static var declinesForTesting = false
@@ -76,16 +72,12 @@ final class NestedEventLoopWait: @unchecked Sendable {
             // Uptime, like the parked branch's semaphore deadline — a wall-clock
             // step must not stretch or cut the backstop.
             let deadline = DispatchTime.now() + timeout
-            var slice = Self.sliceSeconds
-            #if DEBUG
-            slice = Self.sliceSecondsForTesting ?? slice
-            #endif
             while !isResolved() {
                 let now = DispatchTime.now()
                 guard now < deadline else { return }
                 let remaining =
                     Double(deadline.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000_000
-                let sliceEnd = Date(timeIntervalSinceNow: min(remaining, slice))
+                let sliceEnd = Date(timeIntervalSinceNow: min(remaining, Self.sliceSeconds))
                 // One pool per pass, as `NSApplication.run` drains: what the
                 // event dispatch autoreleases is freed per event, not held for
                 // the whole pull by the callout's own pool.

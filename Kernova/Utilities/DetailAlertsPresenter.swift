@@ -215,40 +215,6 @@ final class DetailAlertsPresenter: NSObject {
     /// Whether a Take Snapshot sheet request is waiting behind another alert.
     var isSnapshotSheetQueuedForTesting: Bool { isSnapshotSheetQueued }
 
-    /// The revert confirmation's rendered copy, so a test can assert on what it
-    /// tells the user is lost.
-    func revertSnapshotAlertForTesting(
-        _ snapshot: VMSnapshot, for instance: VMInstance
-    ) -> AlertConfiguration {
-        revertSnapshotConfig(snapshot, instance)
-    }
-
-    /// The delete-snapshot confirmation's rendered copy.
-    func deleteSnapshotAlertForTesting(
-        _ snapshot: VMSnapshot, for instance: VMInstance
-    ) -> AlertConfiguration {
-        deleteSnapshotConfig(snapshot, instance)
-    }
-
-    /// The Force Stop / Discard Saved State confirmation's rendered copy, so a
-    /// test can assert on what it tells the user will happen.
-    func forceStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
-        forceStopConfig(instance)
-    }
-
-    /// The paused VM's Stop sheet, so a test can assert its copy and layout.
-    func pausedStopAlertForTesting(_ instance: VMInstance) -> AlertConfiguration {
-        pausedStopConfig(instance)
-    }
-
-    /// The start-failed removal offer's rendered copy and buttons, so a test can
-    /// assert what each case states and that nothing destructive takes Return.
-    func startFailedAttachmentAlertForTesting(
-        _ failure: StartFailedAttachment, on instance: VMInstance
-    ) -> AlertConfiguration {
-        startFailedAttachmentConfig(failure, instance)
-    }
-
     /// The VM whose delete is in flight, or `nil` if none.
     var pendingDeleteInstanceIDForTesting: UUID? { pendingDelete?.instance.id }
 
@@ -264,10 +230,6 @@ final class DetailAlertsPresenter: NSObject {
     /// Drives the delete sheet's close handler directly, with no live window to
     /// present a real sheet.
     func handleDeleteSheetClosedForTesting(token: Int) { handleDeleteSheetClosed(token: token) }
-
-    /// Awaited inside `resolveAndEnqueueDelete` right after the externals
-    /// resolve, so a test can drive a retarget into that exact gap.
-    var afterDeleteResolveForTesting: (@MainActor () async -> Void)?
     #endif
 
     // MARK: - Imperative presentation
@@ -316,21 +278,13 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     private func resolveAndEnqueueDelete() async {
-        // Loop so a retarget to a different VM *during* the resolve re-resolves
-        // the new VM's externals instead of caching stale ones.
-        while let request = pendingDelete {
-            let externals = await viewModel.externalAttachments(for: request.instance)
-            #if DEBUG
-            await afterDeleteResolveForTesting?()
-            #endif
-            // `stop()` ran (cancel + clear), or a teardown cleared the request.
-            guard !Task.isCancelled, let latest = pendingDelete else { return }
-            if latest.instance.id != request.instance.id { continue }  // retargeted → re-resolve
-            resolvedDelete = (request.instance.id, externals)
-            deleteResolutionTask = nil
-            enqueue { $0.showDeleteSheet() }
-            return
-        }
+        guard let request = pendingDelete else { return }
+        let externals = await viewModel.externalAttachments(for: request.instance)
+        // `stop()` ran (cancel + clear), or a teardown cleared the request.
+        guard !Task.isCancelled, pendingDelete != nil else { return }
+        resolvedDelete = (request.instance.id, externals)
+        deleteResolutionTask = nil
+        enqueue { $0.showDeleteSheet() }
     }
 
     func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
@@ -644,10 +598,10 @@ final class DetailAlertsPresenter: NSObject {
 
     private func showDeleteSheet() {
         guard let window, let request = pendingDelete else { return }
-        // If the request retargeted to a different VM after this show was
-        // enqueued (e.g. while queued behind another alert), the cached externals
-        // belong to the wrong VM — re-resolve for the new one instead of showing
-        // stale data.
+        // If the request retargeted to a different VM since its externals'
+        // resolve began (during the resolve, or while the show queued behind
+        // another alert), they belong to the wrong VM — re-resolve for the new
+        // one instead of showing stale data.
         guard let resolved = resolvedDelete, resolved.instanceID == request.instance.id else {
             resolvedDelete = nil
             deleteResolutionTask?.cancel()
@@ -727,7 +681,7 @@ final class DetailAlertsPresenter: NSObject {
     }
 
     /// The revert confirmation.
-    private func revertSnapshotConfig(
+    func revertSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
         AlertConfiguration(
@@ -756,7 +710,7 @@ final class DetailAlertsPresenter: NSObject {
 
     /// The delete-snapshot confirmation; for the VM's Ephemeral baseline, one
     /// that also turns Ephemeral Mode off, which the delete then does first.
-    private func deleteSnapshotConfig(
+    func deleteSnapshotConfig(
         _ snapshot: VMSnapshot, _ vm: VMInstance
     ) -> AlertConfiguration {
         let turningOffEphemeralMode = vm.isEphemeralBaseline(snapshot)
@@ -787,7 +741,7 @@ final class DetailAlertsPresenter: NSObject {
             dismissTitle: "Cancel")
     }
 
-    private func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+    func forceStopConfig(_ vm: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
             confirming: VMCommandCore.forceStopPrompt(vm),
             confirm: { [weak self] in
@@ -820,7 +774,7 @@ final class DetailAlertsPresenter: NSObject {
 
     /// The Stop a paused VM offers: the guest takes the shutdown request only
     /// awake, so the app resumes it and then stops it, or force stops it.
-    private func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
+    func pausedStopConfig(_ vm: VMInstance) -> AlertConfiguration {
         // Both choices end in a power-off, and an Ephemeral VM's power-off is
         // a revert, so the outcome the mode produces belongs here as much as in
         // the force-stop refusal.
@@ -852,7 +806,7 @@ final class DetailAlertsPresenter: NSObject {
         .acknowledgement(title: title, message: message)
     }
 
-    private func startFailedAttachmentConfig(
+    func startFailedAttachmentConfig(
         _ failure: StartFailedAttachment, _ vm: VMInstance
     ) -> AlertConfiguration {
         // The heading names the bring-up that failed; the button names what the

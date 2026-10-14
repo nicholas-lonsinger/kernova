@@ -154,24 +154,28 @@ struct DetailAlertsPresenterTests {
         #expect(presenter.pendingDeletePermanentlyForTesting == false)
     }
 
-    @Test("A retarget landing DURING the off-main resolve re-resolves the new VM")
-    func retargetDuringResolveReResolves() async {
+    @Test("A retarget after the resolve is re-resolved for the new VM before its sheet shows")
+    func retargetAfterResolveReResolvesAtShow() async throws {
         let (presenter, viewModel) = makePresenter()
-        let vmA = makeInstance(name: "A", in: viewModel)
+        let vmA = makeInstanceWithExternalDisk(name: "A", in: viewModel)
         let vmB = makeInstance(name: "B", in: viewModel)
 
-        // Drive a one-shot vmB request into the gap right after vmA's externals
-        // resolve but before the loop checks whether the request changed — this
-        // is the across-the-await `continue` re-resolve path (the #364 core) that
-        // a synchronous retarget (handled before the Task body runs) can't reach.
-        presenter.afterDeleteResolveForTesting = { [weak presenter] in
-            presenter?.afterDeleteResolveForTesting = nil
-            presenter?.presentDeleteSheet(for: vmB)
-        }
+        // No window yet, so vmA's resolved show waits in the queue.
         presenter.presentDeleteSheet(for: vmA)
         await presenter.deleteResolutionTaskForTesting?.value
-
         #expect(presenter.pendingCountForTesting == 1)
+        presenter.presentDeleteSheet(for: vmB)
+        let shownBefore = presenter.deleteSheetTokenForTesting
+
+        // The show finds vmA's externals under a vmB request: it shows nothing
+        // and resolves again, and only that resolve's show puts the sheet up.
+        presenter.start(window: showTestWindow(styleMask: [.titled]))
+        #expect(presenter.deleteSheetTokenForTesting == shownBefore)
+        let reResolve = try #require(presenter.deleteResolutionTaskForTesting)
+        await reResolve.value
+
+        #expect(presenter.deleteSheetTokenForTesting == shownBefore + 1)
+        #expect(presenter.pendingCountForTesting == 0)
         #expect(presenter.pendingDeleteInstanceIDForTesting == vmB.id)
     }
 
@@ -353,7 +357,7 @@ struct DetailAlertsPresenterTests {
         #expect(vm.isSuspended)
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         // A suspended VM can now check-point before reverting, so the
         // snapshot-first button is offered — but the copy still names the
@@ -368,7 +372,7 @@ struct DetailAlertsPresenterTests {
         let vm = makeInstance(in: viewModel)
         vm.activity.placeForTesting(.running(sessionID: UUID()))
 
-        let alert = presenter.forceStopAlertForTesting(vm)
+        let alert = presenter.forceStopConfig(vm)
 
         // Added trailing-edge first, so this reads right-to-left on screen:
         // Force Stop on the leading edge, Shut Down on Return.
@@ -396,7 +400,7 @@ struct DetailAlertsPresenterTests {
         let vm = makeInstance(in: viewModel)
         let failure = makeStartFailure(.notFound, message: "Storage disk 'Archive' not found.")
 
-        let alert = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+        let alert = presenter.startFailedAttachmentConfig(failure, vm)
 
         #expect(alert.buttons.map(\.title) == ["Remove and Start", "Cancel"])
         #expect(alert.buttons.map(\.role) == [.destructive, .cancel])
@@ -411,11 +415,11 @@ struct DetailAlertsPresenterTests {
         let vm = makeInstance(in: viewModel)
         try VMInstanceFixture.writeSaveFile(for: vm)
 
-        let media = presenter.startFailedAttachmentAlertForTesting(
+        let media = presenter.startFailedAttachmentConfig(
             makeStartFailure(.notFound, message: "gone", verb: .resume, kind: .removableMedia),
-            on: vm)
-        let disk = presenter.startFailedAttachmentAlertForTesting(
-            makeStartFailure(.notFound, message: "gone", verb: .resume), on: vm)
+            vm)
+        let disk = presenter.startFailedAttachmentConfig(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), vm)
 
         #expect(media.buttons.map(\.title) == ["Remove and Resume", "Cancel"])
         #expect(disk.buttons.map(\.title) == ["Remove and Start", "Cancel"])
@@ -426,10 +430,10 @@ struct DetailAlertsPresenterTests {
         let (presenter, viewModel) = makePresenter()
         let vm = makeInstance(name: "Builder", in: viewModel)
 
-        let started = presenter.startFailedAttachmentAlertForTesting(
-            makeStartFailure(.notFound, message: "gone"), on: vm)
-        let resumed = presenter.startFailedAttachmentAlertForTesting(
-            makeStartFailure(.notFound, message: "gone", verb: .resume), on: vm)
+        let started = presenter.startFailedAttachmentConfig(
+            makeStartFailure(.notFound, message: "gone"), vm)
+        let resumed = presenter.startFailedAttachmentConfig(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), vm)
 
         #expect(started.title == "Couldn't Start “Builder”")
         #expect(resumed.title == "Couldn't Resume “Builder”")
@@ -537,9 +541,9 @@ struct DetailAlertsPresenterTests {
         let failure = makeStartFailure(
             .notFound, message: "gone", verb: .resume, kind: .sharedDirectory)
 
-        let stopped = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+        let stopped = presenter.startFailedAttachmentConfig(failure, vm)
         try VMInstanceFixture.writeSaveFile(for: vm)
-        let suspended = presenter.startFailedAttachmentAlertForTesting(failure, on: vm)
+        let suspended = presenter.startFailedAttachmentConfig(failure, vm)
 
         #expect(stopped.buttons.map(\.title) == ["Remove and Start", "Cancel"])
         #expect(suspended.buttons.map(\.title) == ["Remove and Start", "Cancel"])
@@ -628,7 +632,7 @@ struct DetailAlertsPresenterTests {
         let vm = makeInstance(in: viewModel, hostState: hostState)
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline, later]))
 
-        let alert = presenter.deleteSnapshotAlertForTesting(baseline, for: vm)
+        let alert = presenter.deleteSnapshotConfig(baseline, vm)
         #expect(alert.title == "Delete \u{201C}Clean install\u{201D}?")
         #expect(
             alert.message
@@ -638,7 +642,7 @@ struct DetailAlertsPresenterTests {
                 + "disk copies move to the Trash.")
         #expect(alert.buttons.map(\.title) == ["Delete", "Cancel"])
 
-        let plain = presenter.deleteSnapshotAlertForTesting(later, for: vm)
+        let plain = presenter.deleteSnapshotConfig(later, vm)
         #expect(plain.message == VMCommandCore.deleteSnapshotPrompt(later, on: vm).message)
     }
 
@@ -653,7 +657,7 @@ struct DetailAlertsPresenterTests {
         try VMInstanceFixture.writeSaveFile(for: vm)
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id))
 
-        let alert = presenter.forceStopAlertForTesting(vm)
+        let alert = presenter.forceStopConfig(vm)
 
         #expect(alert.buttons.contains { $0.title == "Revert to Baseline" })
         #expect(alert.message.contains("Clean install"))
@@ -667,7 +671,7 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.suspended)
         try VMInstanceFixture.writeSaveFile(for: vm)
 
-        let alert = presenter.forceStopAlertForTesting(vm)
+        let alert = presenter.forceStopConfig(vm)
 
         #expect(alert.buttons.contains { $0.title == "Discard" })
         #expect(alert.message.contains("permanently delete the saved state"))
@@ -680,7 +684,7 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
         #expect(!alert.message.contains("suspended session"))
@@ -693,7 +697,7 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.stopped)
         let snapshot = VMSnapshot(name: "Before the update", kind: .cold, macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
     }
@@ -707,7 +711,7 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         #expect(alert.buttons.map(\.title) == ["Revert", "Cancel"])
     }
@@ -718,7 +722,7 @@ struct DetailAlertsPresenterTests {
         let vm = makeInstance(in: viewModel)
         vm.activity.placeForTesting(.livePaused(sessionID: UUID()))
 
-        let alert = presenter.pausedStopAlertForTesting(vm)
+        let alert = presenter.pausedStopConfig(vm)
 
         #expect(alert.title == "Stop \u{201C}\(vm.name)\u{201D}?")
         #expect(alert.buttons.map(\.title) == ["Resume and Shut Down", "Cancel", "Force Stop"])
@@ -736,7 +740,7 @@ struct DetailAlertsPresenterTests {
         vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
         vm.activity.placeForTesting(.livePaused(sessionID: UUID()))
 
-        let alert = presenter.pausedStopAlertForTesting(vm)
+        let alert = presenter.pausedStopConfig(vm)
 
         // Resume-and-shut-down and force-stop both power the VM off, and a
         // power-off is the revert.
@@ -750,7 +754,7 @@ struct DetailAlertsPresenterTests {
         vm.activity.placeForTesting(.running(sessionID: UUID()))
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         #expect(alert.message.contains("powered off"))
         #expect(alert.message.contains("session it is running now ends"))
@@ -764,7 +768,7 @@ struct DetailAlertsPresenterTests {
         try VMInstanceFixture.writeSaveFile(for: vm)
         let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
 
-        let alert = presenter.revertSnapshotAlertForTesting(snapshot, for: vm)
+        let alert = presenter.revertSnapshotConfig(snapshot, vm)
 
         #expect(alert.message.contains("powered off"))
         #expect(alert.message.contains("discarded"))

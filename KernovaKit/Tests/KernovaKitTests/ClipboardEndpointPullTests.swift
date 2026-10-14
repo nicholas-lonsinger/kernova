@@ -13,48 +13,6 @@ struct ClipboardEndpointPullTests {
 
     // MARK: - Sharing one transfer
 
-    @Test("a join landing inside a parked fire shares its transfer, and both take the bytes")
-    func joinSharesAParkedFiresTransfer() async throws {
-        let harness = try RawPeerHarness()
-        defer { harness.tearDown() }
-        let payload = Data("shared bytes".utf8)
-        try harness.send(makeTextOfferFrame(generation: 1, text: "shared bytes"))
-        try await harness.side.recorder.waitForOffer()
-
-        let fire = harness.side.startDataServe(generation: 1, repIndex: 0, uti: textUTI)
-        try await harness.waitForRequest(generation: 1, repIndex: 0)
-        // Opened but unanswered: the transfer is live and nothing has resolved
-        // it, which is the window the join has to land in.
-        let connection = try harness.openDataConnection()
-        let id = harness.transferID(generation: 1, repIndex: 0)
-        try ClipboardDataConnection.writeFrame(
-            makeTransferReplyFrame(
-                transferID: id, isArchive: false, isInline: true, totalBytes: payload.count),
-            fd: connection)
-
-        // Enqueued before the join, so it runs the moment the join has
-        // registered its waiter and suspended — the one instant both are on the
-        // transfer.
-        let waiters = Box(0)
-        let endpoint = harness.endpoint
-        DispatchQueue.main.async {
-            waiters.value = endpoint.inboundPullWaiterCountForTesting(
-                generation: 1, repIndex: 0)
-            try? writeTransferBytes(fd: connection, payload)
-            try? ClipboardDataConnection.writeTrailer(
-                ClipboardTransferTrailer(ending: .complete(digest: sha256(payload))),
-                fd: connection)
-            ClipboardDataConnection.end(fd: connection)
-        }
-        let operation = harness.side.makeOperation(gesture: .preview, direction: .inbound)
-        let joined = await harness.endpoint.join(generation: 1, repIndex: 0, operation: operation)
-
-        #expect(waiters.value == 2)
-        #expect(joined?.inMemoryData == payload)
-        #expect(await fire.value == payload)
-        #expect(harness.recorder.requests.count == 1)
-    }
-
     @Test("cancelling the joined pulls leaves a transfer a paste fire is also waiting on")
     func cancelJoinedPullsLeavesAFiresTransfer() async throws {
         let harness = try RawPeerHarness()

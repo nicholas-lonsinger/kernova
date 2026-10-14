@@ -106,9 +106,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
     private let lock = NSLock()
     private var descriptor: Int32?
     private var isCancelled = false
-    #if DEBUG
-    private var trailerSearchCount = 0
-    #endif
 
     /// Creates a receiver for one transfer.
     ///
@@ -640,9 +637,6 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
         -> ClipboardTransferTrailer.Ending?
     {
         guard let reader else { return nil }
-        #if DEBUG
-        lock.withLock { trailerSearchCount += 1 }
-        #endif
         do {
             try reader.drain(allowance: ClipboardStreamTuning.archiveTailAllowance)
         } catch {
@@ -726,13 +720,4 @@ final class ClipboardTransferReceiver: @unchecked Sendable {
             transferID: transferID, rawCode: stop.rawCode, message: stop.message,
             neededBytes: stop.neededBytes, availableBytes: stop.availableBytes)
     }
-
-    #if DEBUG
-    /// Times this transfer went looking for the ending the sender wrote.
-    ///
-    /// The only thing separating a failure read off the connection from one read
-    /// out of the archive: both end the transfer, and a peer that has gone quiet
-    /// answers the search with nothing but a second whole `socketTimeout`.
-    var trailerSearchesForTesting: Int { lock.withLock { trailerSearchCount } }
-    #endif
 }

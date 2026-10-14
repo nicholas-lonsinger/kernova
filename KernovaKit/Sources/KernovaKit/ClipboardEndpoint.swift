@@ -649,19 +649,6 @@ public final class ClipboardEndpoint {
         handleControlFrame(frame)
     }
 
-    /// Waiters sharing the pull for `(generation, repIndex)` — a preview loop
-    /// and a paste fire on the one transfer read as 2.
-    nonisolated public func inboundPullWaiterCountForTesting(
-        generation: UInt64, repIndex: Int
-    ) -> Int {
-        inbound?.inboundPullWaiterCountForTesting(generation: generation, repIndex: repIndex) ?? 0
-    }
-
-    /// Test seam for the refusal hop's staleness check.
-    public func recordRefusalForTesting(_ code: ClipboardErrorCode, generation: UInt64) {
-        inbound?.recordRefusalForTesting(code, generation: generation)
-    }
-
     /// Accepted data connections whose opening frame is being read right now,
     /// and those waiting for a slot to read it in.
     nonisolated var dataAcceptsForTesting: (running: Int, waiting: Int) {

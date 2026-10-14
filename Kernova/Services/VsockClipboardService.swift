@@ -151,12 +151,6 @@ final class VsockClipboardService: VsockFeatureService, ClipboardServicing,
         get { endpoint.afterInboundPullForTesting }
         set { endpoint.afterInboundPullForTesting = newValue }
     }
-
-    /// Waiters sharing the inbound pull for `(generation, repIndex)` — a preview
-    /// loop and a paste fire on the one transfer read as 2.
-    nonisolated func inboundPullWaiterCountForTesting(generation: UInt64, repIndex: Int) -> Int {
-        endpoint.inboundPullWaiterCountForTesting(generation: generation, repIndex: repIndex)
-    }
     #endif
 
     // `nonisolated` because a `Logger` needs no actor; it is Sendable.
