@@ -113,15 +113,13 @@ struct LazyPullCoordinatorTests {
     @Test("a main-thread pull with no event loop available is refused, not parked")
     @MainActor
     func mainThreadPullWithoutEventLoopIsRefused() {
-        // The seam stands in for the tracking or modal loop this bundle cannot
-        // enter, so the answer does not depend on whether the host happens to
-        // have an `NSApplication`. Parking here is what used to freeze the main
-        // thread for the length of a transfer; the app-hosted counterpart
-        // proving the served wait still wins is
+        // A wait source that declines stands in for the tracking or modal loop
+        // this bundle cannot enter, so the answer does not depend on whether
+        // the host happens to have an `NSApplication`. Parking here is what
+        // used to freeze the main thread for the length of a transfer; the
+        // app-hosted counterpart proving the served wait still wins is
         // `LazyPullCoordinatorMainThreadTests`.
-        NestedEventLoopWait.declinesForTesting = true
-        defer { NestedEventLoopWait.declinesForTesting = false }
-        let coordinator = LazyPullCoordinator()
+        let coordinator = LazyPullCoordinator(eventLoopWait: { nil })
         let starts = Tally()
 
         // The refusal is immediate, so no timeout of this call's is ever read
