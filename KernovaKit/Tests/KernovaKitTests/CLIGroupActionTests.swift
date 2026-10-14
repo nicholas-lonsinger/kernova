@@ -77,7 +77,6 @@ struct CLIGroupActionTests {
     func singleVMFlagsAreRefused() {
         let refused: [[String]] = [
             ["start", "--folder", "Lab", "--recovery"],
-            ["start", "--folder", "Lab", "--resolve-mac-conflict", "own-network"],
             ["start", "--folder", "Lab", "--yes"],
             ["stop", "--folder", "Lab", "--force"],
             ["stop", "--folder", "Lab", "--timeout", "5"],

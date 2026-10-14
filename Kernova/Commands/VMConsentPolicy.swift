@@ -31,42 +31,46 @@ enum VMConsentPolicy {
     ) async throws {
         try await run(
             prompting: prompting,
-            choosingMACAddressRemedy: { throw CommandError.macAddressRemedyRequired($0) },
-            { consent, _ in try await body(consent) })
+            choosingRoute: { throw CommandError.stepRequired($0) },
+            taking: { _ in },
+            body)
     }
 
-    /// ``run(prompting:_:)`` for a bring-up, which also refuses over a MAC
-    /// address another active VM uses on its network: a
-    /// ``CommandError/macAddressRemedyRequired(_:)`` goes to
-    /// `choosingMACAddressRemedy`, and `body` runs again carrying the remedy
-    /// chosen beside every consent given so far.
+    /// ``run(prompting:_:)`` for a door that chains steps — the app's own
+    /// view model: a ``CommandError/stepRequired(_:)`` naming routes goes to
+    /// `choosingRoute`, each step of the route it answers goes to `taking` in
+    /// order, and `body` then runs again with every consent given so far.
     ///
     /// One loop rather than two nested ones, because the answers arrive in
-    /// either order — a remedy can uncover a machine identity to confirm, and
-    /// a confirmation can be asked before the conflict is reached — and each
-    /// re-run has to carry both. One remedy per run: a second MAC address
-    /// refusal is the remedy not having taken, and is rethrown. What
-    /// `choosingMACAddressRemedy` throws is how a door says nobody chose.
+    /// either order — a route can uncover a machine identity to confirm, and
+    /// a confirmation can be asked before the step refusal is reached — and
+    /// each re-run has to carry the consents. One route per run: a second
+    /// step refusal is the route not having taken, and is rethrown, as is a
+    /// step refusal naming no route. What `choosingRoute` or `taking` throws
+    /// ends the run: how a door says nobody chose, and a step that failed.
     @MainActor
     static func run(
         prompting: (ConfirmationPrompt) async throws -> Void,
-        choosingMACAddressRemedy: (MACAddressRemedyPrompt) async throws -> MACAddressRemedy,
-        _ body: (Consent, MACAddressRemedy?) async throws -> Void
+        choosingRoute: (StepRequirement) async throws -> StepRoute,
+        taking: (CommandStep) async throws -> Void,
+        _ body: (Consent) async throws -> Void
     ) async throws {
         var consent = Consent.none
-        var remedy: MACAddressRemedy?
+        var tookRoute = false
         while true {
             do {
-                try await body(consent, remedy)
+                try await body(consent)
                 return
             } catch let error as CommandError {
                 if let prompt = error.confirmationPrompt, !consent.covers(prompt.kind) {
                     try await prompting(prompt)
                     consent = consent.adding(prompt.kind)
-                } else if let prompt = error.macAddressRemedyPrompt, remedy == nil,
-                    !prompt.offers.isEmpty
+                } else if let requirement = error.stepRequirement, !tookRoute,
+                    !requirement.routes.isEmpty
                 {
-                    remedy = try await choosingMACAddressRemedy(prompt)
+                    let route = try await choosingRoute(requirement)
+                    tookRoute = true
+                    for step in route.steps { try await taking(step) }
                 } else {
                     throw error
                 }

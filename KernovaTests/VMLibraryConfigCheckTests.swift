@@ -686,13 +686,13 @@ struct VMLibraryConfigCheckTests {
         let router = VMCommandEnvelopeRouter(commands: harness.core)
         let response = await router.respond(
             to: VMCommandRequest(
-                verb: .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil)))
+                verb: .start(.id(instance.id), recovery: false, consent: .none)))
         #expect(response.result == .failure(refusal.dto))
         let intents = VMIntentGateway(
             commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
         await #expect(throws: refusal) {
-            try await intents.start(instance.id, recovery: false, consent: .none, macAddressRemedy: nil)
+            try await intents.start(instance.id, recovery: false, consent: .none)
         }
         let scripting = VMScriptingGateway(
             commands: harness.core, readiness: LibraryReadiness(awaitReady: {}), prepareToSurface: {})

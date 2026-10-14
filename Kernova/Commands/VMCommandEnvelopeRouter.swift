@@ -158,9 +158,8 @@ struct VMCommandEnvelopeRouter {
                     message: "This transport does not deliver event subscriptions.",
                     recovery: nil))
 
-        case .start(let selector, let recovery, let consent, let remedy):
-            try await commands.start(
-                selector, recovery: recovery, consent: consent, macAddressRemedy: remedy)
+        case .start(let selector, let recovery, let consent):
+            try await commands.start(selector, recovery: recovery, consent: consent)
             return .ok
         case .cancelGuestSetup(let selector, let consent):
             try commands.cancelGuestSetup(selector, consent: consent)
@@ -172,15 +171,14 @@ struct VMCommandEnvelopeRouter {
         case .pause(let selector):
             try await commands.pause(selector)
             return .ok
-        case .resume(let selector, let consent, let remedy):
-            try await commands.resume(selector, consent: consent, macAddressRemedy: remedy)
+        case .resume(let selector, let consent):
+            try await commands.resume(selector, consent: consent)
             return .ok
         case .suspend(let selector):
             try await commands.suspend(selector)
             return .ok
-        case .restart(let selector, let timeout, let consent, let remedy):
-            try await commands.restart(
-                selector, timeout: timeout, consent: consent, macAddressRemedy: remedy)
+        case .restart(let selector, let timeout, let consent):
+            try await commands.restart(selector, timeout: timeout, consent: consent)
             return .ok
         case .groupAction(let action, let group):
             return .groupAction(try await commands.groupAction(action, on: group))
@@ -196,9 +194,8 @@ struct VMCommandEnvelopeRouter {
 
         case .takeSnapshot(let selector, let name, let notes):
             return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
-        case .revertToSnapshot(let selector, let snapshot, let consent, let remedy):
-            try await commands.revertToSnapshot(
-                selector, snapshot: snapshot, consent: consent, macAddressRemedy: remedy)
+        case .revertToSnapshot(let selector, let snapshot, let consent):
+            try await commands.revertToSnapshot(selector, snapshot: snapshot, consent: consent)
             return .ok
         case .deleteSnapshot(let selector, let snapshot, let consent):
             try await commands.deleteSnapshot(selector, snapshot: snapshot, consent: consent)

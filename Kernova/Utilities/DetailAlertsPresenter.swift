@@ -52,8 +52,8 @@ private final class OneShotQuestion<Prompt, Answer> {
 
 /// A ``ConfirmationRequest`` answered at most once.
 private typealias OneShotConfirmation = OneShotQuestion<ConfirmationPrompt, Bool>
-/// A ``MACAddressRemedyRequest`` answered at most once.
-private typealias OneShotRemedy = OneShotQuestion<MACAddressRemedyPrompt, MACAddressRemedy?>
+/// A ``StepRouteRequest`` answered at most once.
+private typealias OneShotRouteChoice = OneShotQuestion<StepRequirement, StepRoute?>
 
 /// Presents the detail pane's lifecycle confirmation alerts and the delete
 /// sheet on behalf of `DetailContainerViewController`.
@@ -129,8 +129,8 @@ final class DetailAlertsPresenter: NSObject {
     /// The confirmation on screen, with a verb suspended behind it, held so
     /// ``stop()`` can decline it.
     private var outstandingConfirmations: [OneShotConfirmation] = []
-    /// The MAC address remedy questions on screen, each answered at most once.
-    private var outstandingRemedies: [OneShotRemedy] = []
+    /// The route questions on screen, each answered at most once.
+    private var outstandingRouteChoices: [OneShotRouteChoice] = []
 
     init(viewModel: VMLibraryViewModel) {
         self.viewModel = viewModel
@@ -172,8 +172,8 @@ final class DetailAlertsPresenter: NSObject {
         outstandingGuestAccount = nil
         for confirmation in outstandingConfirmations { confirmation(.unasked) }
         outstandingConfirmations.removeAll()
-        for remedy in outstandingRemedies { remedy(.unasked) }
-        outstandingRemedies.removeAll()
+        for choice in outstandingRouteChoices { choice(.unasked) }
+        outstandingRouteChoices.removeAll()
         // The alert on screen is attached to a window that is going away, so
         // it is dismissed as a cancel: its buttons would otherwise stay on a
         // sheet nobody can act on, with `isShowingAlert` left true under them.
@@ -436,30 +436,29 @@ final class DetailAlertsPresenter: NSObject {
         show(confirmationRequestConfig(confirmation), in: window)
     }
 
-    /// Asks which change to a VM's network a MAC address conflict takes,
-    /// answered unasked rather than queued for the reason
-    /// ``presentConfirmationRequest(_:)`` is.
-    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest) {
-        let remedy = OneShotRemedy(prompt: request.prompt, answer: request.answer)
+    /// Asks which route through a step refusal to take, answered unasked
+    /// rather than queued for the reason ``presentConfirmationRequest(_:)`` is.
+    func presentStepRoutes(_ request: StepRouteRequest) {
+        let choice = OneShotRouteChoice(prompt: request.requirement, answer: request.answer)
         guard let window, !isShowingAlert, !deleteSheetPresenter.isShown,
             !snapshotSheetPresenter.isShown, pending.isEmpty
         else {
             #log(
                 Self.logger, .notice,
-                "Nowhere to ask how '\(request.prompt.vm.name, privacy: .public)' leaves a MAC address conflict; leaving its refusal standing"
-            )
-            remedy(.unasked)
+                "Nowhere to ask '\(request.requirement.title, privacy: .public)'; leaving its refusal standing")
+            choice(.unasked)
             return
         }
-        outstandingRemedies.append(remedy)
-        let settle: (MACAddressRemedy?) -> Void = { [weak self, weak remedy] value in
-            guard let remedy else { return }
-            self?.outstandingRemedies.removeAll { $0 === remedy }
-            remedy(.answered(value))
+        outstandingRouteChoices.append(choice)
+        let settle: (StepRoute?) -> Void = { [weak self, weak choice] value in
+            guard let choice else { return }
+            self?.outstandingRouteChoices.removeAll { $0 === choice }
+            choice(.answered(value))
         }
         show(
             AlertConfiguration(
-                offering: request.prompt, choose: { settle($0) }, dismiss: { settle(nil) }),
+                offering: request.requirement, then: request.verbTitle, choose: { settle($0) },
+                dismiss: { settle(nil) }),
             in: window)
     }
 

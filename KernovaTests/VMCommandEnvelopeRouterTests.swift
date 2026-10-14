@@ -172,10 +172,22 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 13)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 12, expected: VMCommandRequest.currentProtocolVersion)))
+    }
+
+    @Test("A request in the vocabulary before MAC address step routes is refused as another version")
+    func requestOfThePreMACRouteVocabularyIsRefused() async throws {
+        let harness = makeHarness()
+        let request = Data(#"{"protocolVersion":13,"verb":{"list":{}}}"#.utf8)
+
+        let response = try await harness.transport.sendRaw(request)
+
+        #expect(VMCommandRequest.currentProtocolVersion == 14)
+        #expect(
+            response.result
+                == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
     }
 
     @Test("A group action written in the vocabulary before group actions is refused as another version")
@@ -364,7 +376,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness)
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         #expect(response.result == .ok)
         #expect(harness.virtualization.startCallCount == 1)
@@ -439,7 +451,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         guard case .invalidState(_, let current, let allowed, _)? = response.failure else {
             Issue.record("expected an invalid state, got \(String(describing: response.failure))")
@@ -483,7 +495,7 @@ struct VMCommandEnvelopeRouterTests {
         let instance = makeInstance(in: harness, name: "Capped")
 
         let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            .start(.id(instance.id), recovery: false, consent: .none))
 
         guard case .operationFailed(_, let title, _, _)? = response.failure else {
             Issue.record("expected an operation failure, got \(String(describing: response.failure))")
@@ -564,7 +576,7 @@ struct VMCommandEnvelopeRouterTests {
         }
 
         let started = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            .start(.id(instance.id), recovery: false, consent: .none))
         #expect(started.result == .ok)
         for await _ in installService.installStartedStream { break }
 
@@ -619,7 +631,7 @@ struct VMCommandEnvelopeRouterTests {
         }
 
         let started = try await transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            .start(.id(instance.id), recovery: false, consent: .none))
         #expect(started.result == .ok)
 
         // The install completes synchronously (`MockMacOSInstallService` has no
@@ -987,7 +999,7 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
         var request = VMCommandRequest(
-            verb: .start(.id(instance.id), recovery: false, consent: .none, macAddressRemedy: nil))
+            verb: .start(.id(instance.id), recovery: false, consent: .none))
         request.protocolVersion = VMCommandRequest.currentProtocolVersion + 1
 
         let response = try await harness.transport.sendRaw(try JSONEncoder().encode(request))

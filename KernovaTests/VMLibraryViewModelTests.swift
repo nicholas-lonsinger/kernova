@@ -1580,36 +1580,81 @@ struct VMLibraryViewModelTests {
         #expect(starting.status == .stopped)
     }
 
-    @Test("start beside a MAC address twin asks how to change the VM's network, and starts with the change chosen")
-    func startAsksForAMACAddressRemedy() async {
+    @Test(
+        "start beside a MAC address twin takes the route chosen, then starts"
+    )
+    func startTakesAMACAddressRoute() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMACAddressPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
-        presenter.macAddressRemedyAnswer = .answered(.newAddress)
+        presenter.choosesRouteTitled = "Use a New MAC Address"
 
         await viewModel.start(starting)
 
-        #expect(presenter.macAddressRemedyRequests.map(\.prompt.vm.id) == [starting.id])
+        let request = presenter.stepRouteRequests.first
+        #expect(presenter.stepRouteRequests.count == 1)
+        #expect(request?.verbTitle == "Start")
+        #expect(request?.requirement.routes.first?.steps.first?.vm.id == starting.id)
         #expect(starting.configuration.macAddress != other.configuration.macAddress)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
     }
 
     @Test("start beside a MAC address twin, walked away from, starts nothing and says nothing")
-    func startDeclinedAtTheMACAddressRemedy() async {
+    func startDeclinedAtTheMACAddressRoute() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMACAddressPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
-        presenter.macAddressRemedyAnswer = .answered(nil)
+        presenter.stepRouteAnswer = .answered(nil)
 
         await viewModel.start(starting)
 
-        #expect(presenter.macAddressRemedyRequests.count == 1)
+        #expect(presenter.stepRouteRequests.count == 1)
         #expect(starting.configuration.macAddress == other.configuration.macAddress)
         #expect(virtService.startCallCount == 0)
         #expect(presenter.showError == false)
+    }
+
+    @Test(
+        "Resume beside a MAC address twin through a discarding route starts the VM it leaves stopped"
+    )
+    func resumeTakesADiscardingRouteThenStarts() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMACAddressPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        resuming.activity.placeForTesting(.suspended)
+        try VMInstanceFixture.writeSaveFile(for: resuming)
+        presenter.choosesRouteTitled = "Use a New MAC Address"
+
+        await viewModel.resume(resuming)
+
+        #expect(presenter.stepRouteRequests.map(\.verbTitle) == ["Resume"])
+        #expect(resuming.configuration.macAddress != other.configuration.macAddress)
+        #expect(!resuming.hasSaveFile)
+        #expect(virtService.lastStartRoute == .coldBoot)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("Resume and Shut Down beside a MAC address twin takes the route, restores, then stops")
+    func resumeAndStopTakesARouteThenStops() async throws {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (resuming, other) = appendMACAddressPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        resuming.activity.placeForTesting(.suspended)
+        try VMInstanceFixture.writeSaveFile(for: resuming)
+        presenter.choosesRouteTitled = "Move to a Network of Its Own"
+
+        await viewModel.resumeAndStop(resuming)
+
+        #expect(presenter.stepRouteRequests.count == 1)
+        #expect(resuming.configuration.networkMembership == .isolated)
+        #expect(virtService.lastStartRoute == .restoredSavedState)
+        #expect(virtService.stopCallCount == 1)
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("start is refused while the MAC address twin is live-paused (it still holds the address)")
@@ -1802,7 +1847,7 @@ struct VMLibraryViewModelTests {
         #expect(outcome == .refused)
         // The question that could not be asked stands as the refusal, once.
         try await waitForChange { !presenter.errorTitles.isEmpty }
-        #expect(presenter.macAddressRemedyRequests.count == 1)
+        #expect(presenter.stepRouteRequests.count == 1)
         #expect(presenter.errorTitles == ["Duplicate MAC Address"])
         #expect(switching.configuration.networkMode == .hostOnly)
     }
@@ -1814,16 +1859,16 @@ struct VMLibraryViewModelTests {
             to: viewModel, mode: .hostOnly, otherMode: .nat)
         switching.activity.placeForTesting(.running(sessionID: UUID()))
         other.activity.placeForTesting(.running(sessionID: UUID()))
-        presenter.macAddressRemedyAnswer = .answered(.ownNetwork)
+        presenter.choosesRouteTitled = "Join a Network of Its Own"
 
         viewModel.setConfiguration(
             [VMConfigurationKeyRegistry.networkMode.assigning(VMNetworkMode.nat.rawValue)],
             on: switching)
 
         try await waitForChange { switching.configuration.networkMode == .nat }
-        let request = try #require(presenter.macAddressRemedyRequests.first)
-        #expect(request.prompt.verb == .setConfiguration)
-        #expect(request.prompt.offers.map(\.title) == ["Join a Network of Its Own"])
+        let request = try #require(presenter.stepRouteRequests.first)
+        #expect(request.verbTitle == nil)
+        #expect(request.requirement.routes.map(\.title) == ["Join a Network of Its Own"])
         #expect(switching.configuration.networkMembership == .isolated)
         #expect(presenter.errorTitles.isEmpty)
     }

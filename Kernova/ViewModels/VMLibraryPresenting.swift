@@ -136,13 +136,16 @@ struct ConfirmationRequest {
     let answer: @MainActor (PresenterAnswer<Bool>) -> Void
 }
 
-/// The change to a VM's network a bring-up refused over its MAC address
-/// offers, put to the user while that bring-up waits for the answer.
-struct MACAddressRemedyRequest {
-    /// What the core offers, in its own words.
-    let prompt: MACAddressRemedyPrompt
-    /// Answers the prompt: the remedy chosen, or `nil` to walk away.
-    let answer: @MainActor (PresenterAnswer<MACAddressRemedy?>) -> Void
+/// The routes a refusal a verb the user started raised names, put to the
+/// user while that verb waits for the answer.
+struct StepRouteRequest {
+    /// What the core refused with, in its own words.
+    let requirement: StepRequirement
+    /// The verb asked again once a route is taken, as each button names it
+    /// after the route's title; `nil` names the route alone.
+    let verbTitle: String?
+    /// Answers the request: the route chosen, or `nil` to walk away.
+    let answer: @MainActor (PresenterAnswer<StepRoute?>) -> Void
 }
 
 /// Imperative presentation interface the view model calls to surface alerts,
@@ -198,13 +201,13 @@ protocol VMLibraryPresenting: AnyObject {
     /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
     /// there is nowhere to ask right now.
     func presentConfirmationRequest(_ request: ConfirmationRequest)
-    /// Ask the user which change to a VM's network removes the MAC address
-    /// conflict a verb they started refused over.
+    /// Ask the user which route through a refusal a verb they started raised
+    /// to take.
     ///
     /// The request's `answer` is called exactly once — the verb that raised it
     /// is suspended until it arrives — with ``PresenterAnswer/unasked`` when
     /// there is nowhere to ask right now.
-    func presentMACAddressRemedy(_ request: MACAddressRemedyRequest)
+    func presentStepRoutes(_ request: StepRouteRequest)
     /// Present the VM creation wizard sheet.
     func presentCreationWizard()
     /// Move keyboard focus into `instance`'s inline guest display, called at

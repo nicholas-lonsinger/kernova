@@ -129,9 +129,8 @@ public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
     /// The action does not concern the VM, for `reason`, and asked nothing of
     /// it.
     case passedOver(reason: PassOver)
-    /// The VM's own verb `verb` asks a question first — a confirmation, its
-    /// account's password, or a change to its network — which a group action
-    /// asks nobody. `question` is that refusal.
+    /// The VM's own verb `verb` asks a question first — a confirmation or its
+    /// account's password — which a group action asks nobody. `question` is that refusal.
     case needsAnswer(verb: VMVerb, question: CommandErrorDTO)
     /// The verb was tried and did not complete.
     case failed(error: CommandErrorDTO)

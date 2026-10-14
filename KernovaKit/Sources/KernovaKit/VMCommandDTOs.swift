@@ -525,73 +525,6 @@ public struct GuestAccountPrompt: Codable, Sendable, Hashable {
     }
 }
 
-/// A change to a VM's network that removes a MAC address conflict: another
-/// active VM uses the VM's MAC address on the network the VM would join. Each
-/// is a change to the VM's configuration, and none runs both VMs on one
-/// network.
-public enum MACAddressRemedy: String, Codable, Sendable, Hashable, CaseIterable {
-    /// Joins a network of its own in its mode, which no other VM shares.
-    case ownNetwork
-    /// Takes a new MAC address.
-    case newAddress
-    /// Takes the network device away.
-    case noNetwork
-}
-
-/// One way out of a MAC address conflict, as a surface offers it.
-public struct MACAddressRemedyOffer: Codable, Sendable, Hashable {
-    /// What re-issuing the verb with this remedy changes.
-    public let remedy: MACAddressRemedy
-    /// What the user sees on the button.
-    public let title: String
-    /// Whether taking it discards the VM's saved state, so a surface tints it
-    /// and keeps it off the Return key.
-    public let isDestructive: Bool
-
-    /// Offers one remedy.
-    public init(remedy: MACAddressRemedy, title: String, isDestructive: Bool) {
-        self.remedy = remedy
-        self.title = title
-        self.isDestructive = isDestructive
-    }
-}
-
-/// What a refusal over a MAC address conflict offers, as data.
-///
-/// A choice among changes rather than a yes, so it is not a
-/// ``ConfirmationPrompt``: a surface shows ``offers`` and re-issues ``verb``
-/// with the chosen remedy.
-public struct MACAddressRemedyPrompt: Codable, Sendable, Hashable {
-    /// The VM being brought up or edited.
-    public let vm: VMSummary
-    /// The active VM using the same MAC address on that network.
-    public let other: VMSummary
-    /// The verb that applies a remedy when re-issued with one.
-    public let verb: VMVerb
-    /// The heading a surface shows it under.
-    public let title: String
-    /// What the user reads above the offers.
-    public let message: String
-    /// The remedies this VM can take, in the order a surface shows them.
-    public let offers: [MACAddressRemedyOffer]
-    /// The title of the action that walks away.
-    public let dismissTitle: String
-
-    /// Describes one MAC address conflict and its ways out.
-    public init(
-        vm: VMSummary, other: VMSummary, verb: VMVerb, title: String, message: String,
-        offers: [MACAddressRemedyOffer], dismissTitle: String
-    ) {
-        self.vm = vm
-        self.other = other
-        self.verb = verb
-        self.title = title
-        self.message = message
-        self.offers = offers
-        self.dismissTitle = dismissTitle
-    }
-}
-
 /// One standalone request a refused verb needs taken first.
 public enum CommandStep: Codable, Sendable, Hashable {
     /// Resumes the VM.
@@ -771,10 +704,6 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// The start would spend the one boot macOS creates a guest account on, and
     /// no answer about that account was supplied.
     case guestAccountPasswordRequired(prompt: GuestAccountPrompt)
-    /// Another active VM uses the VM's MAC address on the network it would
-    /// join, and the verb takes a change to the VM's network that removes the
-    /// conflict.
-    case macAddressRemedyRequired(prompt: MACAddressRemedyPrompt)
     /// An argument named something the verb does not offer, or carried a value
     /// it cannot use. `message` is the whole refusal.
     case invalidArgument(message: String)
@@ -872,8 +801,6 @@ extension CommandErrorDTO {
             prompt.title
         case .guestAccountPasswordRequired(let prompt):
             "Couldn\u{2019}t Start \u{201C}\(prompt.vm.name)\u{201D}"
-        case .macAddressRemedyRequired(let prompt):
-            prompt.title
         case .conflict(_, _, let reason):
             reason.title
         case .operationFailed(_, let title, _, _):
@@ -933,11 +860,6 @@ extension CommandErrorDTO {
             prompt.message
         case .guestAccountPasswordRequired(let prompt):
             prompt.message
-        case .macAddressRemedyRequired(let prompt):
-            // The refusal, for a door that does not show the offers.
-            Self.conflictMessage(
-                vm: prompt.vm.name, other: prompt.other.name,
-                otherHeldByAnotherCopy: prompt.other.heldByAnotherCopy, reason: .macAddress)
         case .invalidArgument(let message):
             message
         case .stepRequired(let requirement):
@@ -997,8 +919,8 @@ extension CommandErrorDTO {
 
     /// The sentences naming the VM `vm` shares its MAC address with on one
     /// network, who is running it, and the rule they break — public so the
-    /// question that offers changing `vm`'s network opens with the words its
-    /// refusal does.
+    /// refusal that names the steps changing `vm`'s network opens with the
+    /// words the plain conflict does.
     public static func sharedMACAddressSentences(
         vm: String, other: String, otherHeldByAnotherCopy: Bool
     ) -> String {

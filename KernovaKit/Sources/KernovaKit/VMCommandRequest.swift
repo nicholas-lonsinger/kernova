@@ -9,7 +9,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 13
+    public static let currentProtocolVersion = 14
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -55,25 +55,18 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// ``CommandErrorDTO/guestAccountPasswordRequired(prompt:)``: the wire
         /// carries no way to answer that, so every out-of-process caller gets
         /// the refusal.
-        ///
-        /// `macAddressRemedy` is the change to the VM's network that a refusal
-        /// over a MAC address another active VM uses on the same network asks
-        /// for (``CommandErrorDTO/macAddressRemedyRequired(prompt:)``), `nil`
-        /// for none; the same on every bring-up verb below.
-        case start(
-            VMSelector, recovery: Bool, consent: Consent, macAddressRemedy: MACAddressRemedy?)
+        case start(VMSelector, recovery: Bool, consent: Consent)
         case cancelGuestSetup(VMSelector, consent: Consent)
         /// `timeout` bounds the wait for the guest to power off, in seconds;
         /// `nil` returns as soon as the guest has been asked to go down.
         case stop(
             VMSelector, disposition: StopDisposition, consent: Consent, timeout: TimeInterval?)
         case pause(VMSelector)
-        case resume(VMSelector, consent: Consent, macAddressRemedy: MACAddressRemedy?)
+        case resume(VMSelector, consent: Consent)
         case suspend(VMSelector)
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(
-            VMSelector, timeout: TimeInterval?, consent: Consent, macAddressRemedy: MACAddressRemedy?)
+        case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
         /// `action` on every VM in `group`, one after another, asking nothing:
         /// a VM whose own verb would ask a question is passed by and reported.
         case groupAction(VMGroupAction, group: VMGroupReference)
@@ -83,9 +76,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case showInFinder(VMSelector)
 
         case takeSnapshot(VMSelector, name: String, notes: String)
-        case revertToSnapshot(
-            VMSelector, snapshot: UUID, consent: Consent,
-            macAddressRemedy: MACAddressRemedy?)
+        case revertToSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case deleteSnapshot(VMSelector, snapshot: UUID, consent: Consent)
         case renameSnapshot(VMSelector, snapshot: UUID, newName: String)
         case setSnapshotNotes(VMSelector, snapshot: UUID, notes: String)

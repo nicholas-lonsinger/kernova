@@ -103,20 +103,24 @@ struct AlertConfiguration {
             buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss))
     }
 
-    /// Draws the changes a MAC address refusal offers, laid out by the rule
-    /// ``init(confirming:confirm:alternative:dismiss:)`` states: one that
+    /// Draws the routes a step refusal names, each button reading the route
+    /// and then `verbTitle`, laid out by the rule
+    /// ``init(confirming:confirm:alternative:dismiss:)`` states: a route that
     /// discards a saved state never takes Return.
     init(
-        offering prompt: MACAddressRemedyPrompt,
-        choose: @escaping (MACAddressRemedy) -> Void,
+        offering requirement: StepRequirement, then verbTitle: String?,
+        choose: @escaping (StepRoute) -> Void,
         dismiss: @escaping () -> Void = {}
     ) {
-        let actions = prompt.offers.map { offer -> (title: String, isDestructive: Bool, action: () -> Void) in
-            (offer.title, offer.isDestructive, { choose(offer.remedy) })
+        let actions = requirement.routes.map { route -> (title: String, isDestructive: Bool, action: () -> Void) in
+            (
+                verbTitle.map { "\(route.title) and \($0)" } ?? route.title, route.discardsSavedState,
+                { choose(route) }
+            )
         }
         self.init(
-            title: prompt.title, message: prompt.message,
-            buttons: Self.buttons(actions, dismissTitle: prompt.dismissTitle, dismiss: dismiss))
+            title: requirement.title, message: requirement.message,
+            buttons: Self.buttons(actions, dismissTitle: "Cancel", dismiss: dismiss))
     }
 
     /// `actions` and the dismiss, in the order and roles the two initializers

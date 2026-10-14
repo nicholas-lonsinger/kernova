@@ -117,9 +117,6 @@ extension KernovaCommand.Snapshot {
         @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
         var snapshot: String
 
-        /// The change a MAC address conflict takes, for a revert that resumes.
-        @OptionGroup var macConflict: MACConflictOption
-
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
@@ -132,8 +129,7 @@ extension KernovaCommand.Snapshot {
                 snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
             _ = try client.send(
                 .revertToSnapshot(
-                    selector, snapshot: target.id, consent: options.consent,
-                    macAddressRemedy: macConflict.remedy)
+                    selector, snapshot: target.id, consent: options.consent)
             ).payload()
         }
     }

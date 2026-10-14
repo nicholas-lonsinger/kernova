@@ -328,7 +328,7 @@ struct VMCommandCoreGroupActionTests {
         }
 
         await #expect(throws: VMCommandCore.UnattendedGuestSetupRefusal.self) {
-            try await harness.core.start(fresh, recovery: false, policy: .group, macAddressRemedy: nil)
+            try await harness.core.startNow(fresh, recovery: false, policy: .group).value()
         }
         #expect(fresh.status == .initialBoot)
         #expect(VMCommandCore.StartPolicy.group.presence == VMCommandCore.StartPolicy.standing.presence)
@@ -672,13 +672,7 @@ struct VMCommandCoreGroupActionTests {
                 dismissTitle: "D"))
         let account = CommandError.guestAccountPasswordRequired(
             GuestAccountPrompt(vm: vm, username: "me", fullName: "Me", message: "M"))
-        let remedy = CommandError.macAddressRemedyRequired(
-            MACAddressRemedyPrompt(
-                vm: vm, other: vm, verb: .resume, title: "T", message: "M",
-                offers: [MACAddressRemedyOffer(remedy: .ownNetwork, title: "Own", isDestructive: false)],
-                dismissTitle: "D"))
-
-        for question in [confirmation, account, remedy] {
+        for question in [confirmation, account] {
             #expect(
                 VMCommandCore.outcome(of: question, takenBy: .resume)
                     == .needsAnswer(verb: .resume, question: question.dto))
@@ -686,6 +680,13 @@ struct VMCommandCoreGroupActionTests {
         #expect(
             VMCommandCore.outcome(of: .terminating, takenBy: .start)
                 == .passedOver(reason: .refused(error: .terminating)))
+        // A step refusal names a step of its own, which a group action takes
+        // for nobody.
+        let step = CommandError.stepRequired(
+            StepRequirement(
+                message: "M",
+                routes: [StepRoute(title: "Own", steps: [.setConfiguration(vm: vm, assignments: [])])]))
+        #expect(VMCommandCore.outcome(of: step, takenBy: .resume) == .failed(error: step.dto))
         let failed = CommandError.operationFailed(verb: .start, message: "No.")
         #expect(VMCommandCore.outcome(of: failed, takenBy: .start) == .failed(error: failed.dto))
         #expect(

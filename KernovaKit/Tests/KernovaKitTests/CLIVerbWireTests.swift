@@ -98,7 +98,7 @@ struct CLIVerbWireTests {
         let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted)
         #expect(
             plain.sent == [
-                .start(.idOrName("Alpha"), recovery: false, consent: .none, macAddressRemedy: nil)
+                .start(.idOrName("Alpha"), recovery: false, consent: .none)
             ])
         #expect(try plain.answer.payload() == .ok)
 
@@ -106,83 +106,51 @@ struct CLIVerbWireTests {
             ["start", "Alpha", "--recovery"], answering: accepted)
         #expect(
             recovery.sent == [
-                .start(.idOrName("Alpha"), recovery: true, consent: .none, macAddressRemedy: nil)
+                .start(.idOrName("Alpha"), recovery: true, consent: .none)
             ])
 
         let anyway = try CLIWire.exchange(["start", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
-                .start(.idOrName("Alpha"), recovery: false, consent: .all, macAddressRemedy: nil)
+                .start(.idOrName("Alpha"), recovery: false, consent: .all)
             ])
     }
 
-    @Test("Each bring-up verb crosses carrying the change --resolve-mac-conflict names")
-    func bringUpsSendTheirMACConflictRemedy() throws {
-        let start = try CLIWire.exchange(
-            ["start", "Alpha", "--resolve-mac-conflict", "own-network"], answering: accepted)
-        #expect(
-            start.sent == [
-                .start(
-                    .idOrName("Alpha"), recovery: false, consent: .none,
-                    macAddressRemedy: .ownNetwork)
+    @Test("A MAC address refusal prints each route as the command lines that take it")
+    func macAddressRefusalPrintsItsRoutes() throws {
+        let requirement = StepRequirement(
+            title: "Duplicate MAC Address", message: "Change its network first.",
+            routes: [
+                StepRoute(
+                    title: "Move to a Network of Its Own",
+                    steps: [
+                        .setConfiguration(
+                            vm: alpha,
+                            assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")])
+                    ]),
+                StepRoute(
+                    title: "Use a New MAC Address",
+                    steps: [
+                        .discardSavedState(vm: alpha),
+                        .setConfiguration(
+                            vm: alpha, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
+                    ]),
             ])
-
-        let resume = try CLIWire.exchange(
-            ["resume", "Alpha", "--resolve-mac-conflict", "new-address"], answering: accepted)
-        #expect(
-            resume.sent == [.resume(.idOrName("Alpha"), consent: .none, macAddressRemedy: .newAddress)])
-
-        let restart = try CLIWire.exchange(
-            ["restart", "Alpha", "--resolve-mac-conflict", "no-network"], answering: accepted)
-        #expect(
-            restart.sent == [
-                .restart(
-                    .idOrName("Alpha"), timeout: nil, consent: .none, macAddressRemedy: .noNetwork)
-            ])
-
-        #expect(throws: (any Error).self) {
-            try KernovaCommand.parseAsRoot(["start", "Alpha", "--resolve-mac-conflict", "ownNetwork"])
-        }
-    }
-
-    @Test("A MAC address refusal names the flag spelling of each change it offers, and what discards")
-    func macAddressRefusalNamesTheFlag() throws {
-        let other = VMSummary(
-            id: UUID(), name: "Alpha Copy", status: "running", ipAddress: .unavailable,
-            heldByAnotherCopy: false)
-        let prompt = MACAddressRemedyPrompt(
-            vm: alpha, other: other, verb: .resume, title: "Duplicate MAC Address",
-            message: "Change its network:",
-            offers: [
-                MACAddressRemedyOffer(remedy: .ownNetwork, title: "Own", isDestructive: false),
-                MACAddressRemedyOffer(remedy: .newAddress, title: "New", isDestructive: true),
-                MACAddressRemedyOffer(remedy: .noNetwork, title: "None", isDestructive: true),
-            ],
-            dismissTitle: "Cancel")
         let exchanged = try CLIWire.exchange(
             ["resume", "Alpha"],
-            answering: VMCommandResponse(result: .failure(.macAddressRemedyRequired(prompt: prompt))))
+            answering: VMCommandResponse(result: .failure(.stepRequired(requirement: requirement))))
 
         do {
             _ = try exchanged.answer.payload()
             Issue.record("expected a MAC address refusal")
         } catch let failure as CLIFailure {
             #expect(failure.code == .refusedByState)
-            #expect(failure.message.contains("which is active"))
             #expect(
-                failure.message.hasSuffix(
-                    "Pass --resolve-mac-conflict with own-network, new-address or no-network to "
-                        + "change \u{201C}Alpha\u{201D}\u{2019}s network first. new-address and "
-                        + "no-network discard its saved state."))
+                failure.message
+                    == "Change its network first.\n\n"
+                    + "Move to a Network of Its Own with: kernova set Alpha network.membership=isolated\n"
+                    + "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new")
         }
-
-        // A live mode switch's one offer is a key in the same `set`.
-        let live = MACAddressRemedyPrompt(
-            vm: alpha, other: other, verb: .setConfiguration, title: "Duplicate MAC Address",
-            message: "", offers: [prompt.offers[0]], dismissTitle: "Cancel")
-        #expect(
-            VMCommandResponse.macAddressRemedyHint(live)
-                == "Add network.membership=isolated to put \u{201C}Alpha\u{201D} on a network of its own instead.")
     }
 
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")
@@ -249,10 +217,10 @@ struct CLIVerbWireTests {
     func resumeSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(
             ["resume", "Alpha"], answering: accepted)
-        #expect(exchanged.sent == [.resume(.idOrName("Alpha"), consent: .none, macAddressRemedy: nil)])
+        #expect(exchanged.sent == [.resume(.idOrName("Alpha"), consent: .none)])
 
         let anyway = try CLIWire.exchange(["resume", "Alpha", "--yes"], answering: accepted)
-        #expect(anyway.sent == [.resume(.idOrName("Alpha"), consent: .all, macAddressRemedy: nil)])
+        #expect(anyway.sent == [.resume(.idOrName("Alpha"), consent: .all)])
     }
 
     @Test("restart crosses with the deadline bounding its shutdown half")
@@ -260,20 +228,20 @@ struct CLIVerbWireTests {
         let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted)
         #expect(
             bare.sent == [
-                .restart(.idOrName("Alpha"), timeout: nil, consent: .none, macAddressRemedy: nil)
+                .restart(.idOrName("Alpha"), timeout: nil, consent: .none)
             ])
 
         let bounded = try CLIWire.exchange(
             ["restart", "Alpha", "--timeout", "45"], answering: accepted)
         #expect(
             bounded.sent == [
-                .restart(.idOrName("Alpha"), timeout: 45, consent: .none, macAddressRemedy: nil)
+                .restart(.idOrName("Alpha"), timeout: 45, consent: .none)
             ])
 
         let anyway = try CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
-                .restart(.idOrName("Alpha"), timeout: nil, consent: .all, macAddressRemedy: nil)
+                .restart(.idOrName("Alpha"), timeout: nil, consent: .all)
             ])
     }
 

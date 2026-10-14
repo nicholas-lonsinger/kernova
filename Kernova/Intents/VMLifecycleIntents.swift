@@ -30,9 +30,8 @@ struct StartVMIntent: AppIntent {
     /// without the vendor's claim in front of the user.
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runBringUpWithConsent { consent, remedy in
-            try await gateway.start(
-                vm.id, recovery: recovery, consent: consent, macAddressRemedy: remedy)
+        try await runWithConsent { consent in
+            try await gateway.start(vm.id, recovery: recovery, consent: consent)
         }
         return .result()
     }
@@ -106,8 +105,8 @@ struct ResumeVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runBringUpWithConsent { consent, remedy in
-            try await gateway.resume(vm.id, consent: consent, macAddressRemedy: remedy)
+        try await runWithConsent { consent in
+            try await gateway.resume(vm.id, consent: consent)
         }
         return .result()
     }
@@ -152,8 +151,8 @@ struct RestartVMIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        try await runBringUpWithConsent { consent, remedy in
-            try await gateway.restart(vm.id, consent: consent, macAddressRemedy: remedy)
+        try await runWithConsent { consent in
+            try await gateway.restart(vm.id, consent: consent)
         }
         return .result()
     }

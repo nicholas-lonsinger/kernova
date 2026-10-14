@@ -156,42 +156,37 @@ final class VMLibraryViewModel {
                 .id(instance.id), assignments: assignments, consent: consent)
             return .applied
         } catch let error as CommandError {
-            guard let prompt = error.macAddressRemedyPrompt, !prompt.offers.isEmpty else {
+            guard let requirement = error.stepRequirement, !requirement.routes.isEmpty else {
                 return route(error, ofEditOn: instance)
             }
-            offerOwnNetwork(prompt, for: assignments, on: instance, consent: consent)
+            offerRoute(through: requirement, thenSetting: assignments, on: instance, consent: consent)
             return .refused
         } catch {
             return route(error, ofEditOn: instance)
         }
     }
 
-    /// Asks whether a running VM refused a network change over its MAC address
-    /// joins a network of its own instead, and makes the change with that
-    /// membership when it does — the one remedy a live session takes.
+    /// Asks which route through an edit's step refusal to take, takes its
+    /// steps, and makes the same edit again — a network change a running VM
+    /// was refused over its MAC address, moved to a network of its own first.
     ///
     /// Asked after the refusal returns, since the edit that raised it answers
     /// synchronously; a refusal that could not be asked takes the error path.
-    private func offerOwnNetwork(
-        _ prompt: MACAddressRemedyPrompt, for assignments: [ConfigurationEntry],
+    private func offerRoute(
+        through requirement: StepRequirement, thenSetting assignments: [ConfigurationEntry],
         on instance: VMInstance, consent: Consent
     ) {
         Task {
             do {
-                guard try await askForMACAddressRemedy(prompt) == .ownNetwork else { return }
+                let route = try await askForRoute(through: requirement, then: nil)
+                for step in route.steps { try await commands.take(step) }
             } catch is ConfirmationDeclined {
                 return
             } catch {
                 present(error, for: instance)
                 return
             }
-            setConfiguration(
-                assignments
-                    + [
-                        VMConfigurationKeyRegistry.networkMembership.assigning(
-                            VMNetworkMembership.isolated.rawValue)
-                    ],
-                on: instance, consent: consent)
+            setConfiguration(assignments, on: instance, consent: consent)
         }
     }
 
@@ -932,10 +927,9 @@ final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommanding`` and moves nothing.
     func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance) { consent, remedy in
+        await runAsking(on: instance, then: "Start") { consent in
             try await self.commands.start(
-                .id(instance.id), recovery: bootIntoRecovery, consent: consent,
-                macAddressRemedy: remedy)
+                .id(instance.id), recovery: bootIntoRecovery, consent: consent)
         }
     }
 
@@ -975,14 +969,16 @@ final class VMLibraryViewModel {
     private struct ConfirmationDeclined: Error {}
 
     /// Runs a bring-up through
-    /// ``VMConsentPolicy/run(prompting:choosingMACAddressRemedy:_:)`` and,
-    /// inside it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``,
-    /// asking on screen for each consent, the change a MAC address conflict
-    /// takes, and the account it refuses without.
+    /// ``VMConsentPolicy/run(prompting:choosingRoute:taking:_:)`` and, inside
+    /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking
+    /// on screen for each consent, the route through a step refusal — each
+    /// button naming the route and then `verbTitle` — and the account it
+    /// refuses without.
     ///
     /// Asking is the door's job and deciding is the verb's: this presents the
-    /// questions and hands each answer to the verb, writing nothing itself. A
-    /// verb that refuses nothing never shows one.
+    /// questions and hands each answer to the verbs, writing nothing itself;
+    /// a route's steps are each a verb of their own. A verb that refuses
+    /// nothing never shows one.
     ///
     /// A declined question ends the verb with nothing on screen — the user just
     /// said no to it. A question that could not be asked leaves its refusal
@@ -992,16 +988,18 @@ final class VMLibraryViewModel {
     /// Answers whether the verb ran.
     @discardableResult
     private func runAsking(
-        on instance: VMInstance, _ verb: (Consent, MACAddressRemedy?) async throws -> Void
+        on instance: VMInstance, then verbTitle: String?,
+        _ verb: (Consent) async throws -> Void
     ) async -> Bool {
         do {
             try await VMConsentPolicy.run(
                 prompting: { try await self.askToConfirm($0) },
-                choosingMACAddressRemedy: { try await self.askForMACAddressRemedy($0) }
-            ) { consent, remedy in
+                choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle) },
+                taking: { try await self.commands.take($0) }
+            ) { consent in
                 try await VMConsentPolicy.runGatheringGuestAccount(
                     prompting: { try await self.askForGuestAccount($0) },
-                    { try await verb(consent, remedy) })
+                    { try await verb(consent) })
             }
             return true
         } catch is GuestAccountPromptDismissed {
@@ -1038,24 +1036,25 @@ final class VMLibraryViewModel {
         }
     }
 
-    /// Puts the changes a MAC address conflict offers on screen and waits for
-    /// the user's choice.
+    /// Puts the routes a step refusal names on screen and waits for the
+    /// user's choice.
     ///
     /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
     ///   refusal itself when it could not be asked.
-    private func askForMACAddressRemedy(
-        _ prompt: MACAddressRemedyPrompt
-    ) async throws -> MACAddressRemedy {
-        guard let presenter else { throw CommandError.macAddressRemedyRequired(prompt) }
+    private func askForRoute(
+        through requirement: StepRequirement, then verbTitle: String?
+    ) async throws -> StepRoute {
+        guard let presenter else { throw CommandError.stepRequired(requirement) }
         let answer = await withCheckedContinuation { continuation in
-            presenter.presentMACAddressRemedy(
-                MACAddressRemedyRequest(
-                    prompt: prompt, answer: { continuation.resume(returning: $0) }))
+            presenter.presentStepRoutes(
+                StepRouteRequest(
+                    requirement: requirement, verbTitle: verbTitle,
+                    answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .answered(let remedy?): return remedy
+        case .answered(let route?): return route
         case .answered(nil): throw ConfirmationDeclined()
-        case .unasked: throw CommandError.macAddressRemedyRequired(prompt)
+        case .unasked: throw CommandError.stepRequired(requirement)
         }
     }
 
@@ -1103,9 +1102,8 @@ final class VMLibraryViewModel {
     /// sheet's default action, as two verbs. The resume asks what any resume
     /// asks, and a resume that does not happen stops nothing.
     func resumeAndStop(_ instance: VMInstance) async {
-        let resumed = await runAsking(on: instance) { consent, remedy in
-            try await self.commands.resume(
-                .id(instance.id), consent: consent, macAddressRemedy: remedy)
+        let resumed = await runAsking(on: instance, then: "Resume") { consent in
+            try await self.bringUpResuming(instance, consent: consent)
         }
         guard resumed else { return }
         await run(on: instance) {
@@ -1140,9 +1138,19 @@ final class VMLibraryViewModel {
     /// surfaces for the same reason.
     func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance) { consent, remedy in
-            try await self.commands.resume(
-                .id(instance.id), consent: consent, macAddressRemedy: remedy)
+        await runAsking(on: instance, then: "Resume") { consent in
+            try await self.bringUpResuming(instance, consent: consent)
+        }
+    }
+
+    /// The bring-up a Resume asks for, as the VM's state names it on each run:
+    /// a resume while it holds a session to resume, and a start once a route
+    /// discarded its saved state.
+    private func bringUpResuming(_ instance: VMInstance, consent: Consent) async throws {
+        if instance.holdsSuspendedSession || instance.isLivePaused {
+            try await commands.resume(.id(instance.id), consent: consent)
+        } else {
+            try await commands.start(.id(instance.id), recovery: false, consent: consent)
         }
     }
 
@@ -1239,10 +1247,10 @@ final class VMLibraryViewModel {
                 return
             }
         }
-        await runAsking(on: instance) { consent, remedy in
+        await runAsking(on: instance, then: nil) { consent in
             try await self.commands.revertToSnapshot(
                 .id(instance.id), snapshot: snapshot.id,
-                consent: consent.adding(.revertToSnapshot), macAddressRemedy: remedy)
+                consent: consent.adding(.revertToSnapshot))
         }
     }
 
@@ -1818,7 +1826,7 @@ final class VMLibraryViewModel {
     ///
     /// A Stop the user asked for that only the core can tell is destructive
     /// opens one: a suspended VM whose stop discards its saved state. A start beside a VM sharing its machine identity
-    /// arrives here only when it could not be asked (``runAsking(on:_:)``),
+    /// arrives here only when it could not be asked (``runAsking(on:then:_:)``),
     /// and is shown as the refusal it stands for. Every other confirmation is
     /// raised by the `request…` method that opens its own sheet and knows the
     /// arguments — which VM, which snapshot, Trash or immediate — that the
