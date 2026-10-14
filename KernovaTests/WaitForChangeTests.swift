@@ -1,6 +1,5 @@
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 import Testing
 
 @Suite("waitForChange Tests", .caseScoped)

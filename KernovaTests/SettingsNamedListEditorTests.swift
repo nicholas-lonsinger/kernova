@@ -1,6 +1,5 @@
 import AppKit
 import KernovaLogging
-import KernovaTestSupport
 import Testing
 
 @testable import Kernova

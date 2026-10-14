@@ -3,7 +3,6 @@ import Testing
 import Foundation
 import Darwin
 import KernovaKit
-import KernovaTestSupport
 import UniformTypeIdentifiers
 @testable import Kernova
 

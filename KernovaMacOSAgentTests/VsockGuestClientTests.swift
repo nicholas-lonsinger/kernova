@@ -2,7 +2,6 @@ import Testing
 import Foundation
 import Darwin
 import KernovaKit
-import KernovaTestSupport
 
 @Suite("VsockGuestClient connect/retry/stop lifecycle", .caseScoped)
 struct VsockGuestClientTests {

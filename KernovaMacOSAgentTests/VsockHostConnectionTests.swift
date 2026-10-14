@@ -3,7 +3,6 @@ import Testing
 import Foundation
 import Darwin
 import KernovaKit
-import KernovaTestSupport
 
 // Substrings identifying the connection's own records; production owns the
 // wording, these pick the line out of a ring or a recorder.

@@ -2,8 +2,6 @@ import Foundation
 
 /// A `@Sendable`-safe mutable cell — lets a synchronous test closure record what
 /// it observed from a concurrency-checked context.
-///
-/// One copy for every test target, since all three need it.
 public final class Box<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: T

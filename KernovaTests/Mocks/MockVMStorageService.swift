@@ -1,6 +1,5 @@
 import Foundation
 import KernovaKit
-import KernovaTestSupport
 @testable import Kernova
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —

@@ -7,7 +7,7 @@ import KernovaKit
 /// A test standing in for the producing side writes its payload with this, and
 /// one standing in for the consuming side checks the bytes it collected against
 /// `extractedClipboardArchive(_:)`.
-public func clipboardArchiveBytes(of source: ClipboardArchiveSource) throws -> Data {
+func clipboardArchiveBytes(of source: ClipboardArchiveSource) throws -> Data {
     try ClipboardArchive.archiveBytes(of: source)
 }
 

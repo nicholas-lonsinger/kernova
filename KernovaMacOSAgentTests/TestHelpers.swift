@@ -1,11 +1,5 @@
 import Foundation
 import KernovaKit
-import KernovaTestSupport
-
-// Bundle-specific test helpers for KernovaMacOSAgentTests. The event-driven/
-// poll wait primitives (`AsyncGate`, `waitUntil`, `TestFailure`) and the
-// blocking-bridge GCD hop (`offCooperativePool`) live in the shared
-// `KernovaTestSupport` package product — see its doc comments.
 
 // MARK: - awaitFirst
 

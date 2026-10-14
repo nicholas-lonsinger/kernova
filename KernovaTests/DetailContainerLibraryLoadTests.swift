@@ -1,7 +1,6 @@
 import AppKit
 import Testing
 import Foundation
-import KernovaTestSupport
 @testable import Kernova
 
 /// The detail pane across the library's empty-until-read interval. The app now
